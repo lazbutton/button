@@ -1,0 +1,9 @@
+{
+  "folders": [
+    { "name": "plateforme", "path": "." },
+    { "name": "radiotomate", "path": "../RC_WEB_RADIO/radiotomate" },
+    { "name": "console", "path": "../ntr-console" },
+    { "name": "ops", "path": "../ntr-ops" }
+  ],
+  "settings": {}
+}
