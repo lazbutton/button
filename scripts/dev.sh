@@ -4,7 +4,7 @@
 set -eu
 
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
-radio=${RADIOTOMATE_DIR:-$root/../RC_WEB_RADIO/radiotomate}
+radio=${RADIOTOMATE_DIR:-$root/radiotomate}
 console=${CONSOLE_DIR:-$root/../ntr-console}
 export PATH="/opt/homebrew/bin:$PATH"
 

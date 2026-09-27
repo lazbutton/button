@@ -4,13 +4,13 @@ Projet de travail de la plateforme (une radio, puis plusieurs), à part du dép�
 
 Le plan est dans [`docs/plan-phase-0.md`](docs/plan-phase-0.md). La phase 0 va du 28 septembre au 20 décembre 2026. La première radio bêta est prévue le 7 décembre.
 
-## Où est le code, pour l’instant
+## Où est le code
 
-L’accord écrit avec l’association n’est pas signé. Tant qu’il ne l’est pas, on ne copie pas `radiotomate/` hors de `RC_WEB_RADIO` (lot L0 du plan). Ce dossier est le poste de travail : le plan, et le lancement des trois dépôts déjà sur la machine.
+L’accord sur Radiotomate est signé (27 septembre 2026). Le moteur est dans `radiotomate/` ici. La prod Nasgul lit encore `RC_WEB_RADIO` : les deux copies vont diverger tant que le déploiement n’a pas basculé.
 
 | Rôle | Dossier |
 |---|---|
-| Moteur et Liquidsoap | `../RC_WEB_RADIO/radiotomate` |
+| Moteur et Liquidsoap | `radiotomate/` |
 | Console | `../ntr-console` |
 | Exploitation Nasgul | `../ntr-ops` |
 

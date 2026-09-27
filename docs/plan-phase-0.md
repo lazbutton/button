@@ -45,7 +45,7 @@ Ces choix se font le premier jour du sprint 1. La recommandation suffit pour ava
 | Liquidsoap | rester en 2.4.5 toute la phase 0 | la 2.5 n'est pas publiée ; les fondus passent par un crossfade sur la file auto-DJ |
 | Accès des radios | UI Radiotomate et console derrière HTTPS, un compte par personne | l'interface unifiée attend la phase 1 |
 | Nom et domaine | un domaine de travail neutre, distinct de BUTTON | le nom commercial se décide plus tard sans bloquer le dev |
-| Dépôts | sortir `radiotomate/` de RC\_WEB\_RADIO dans un dépôt à toi ; `button-console` et `button-ops` deviennent la base de la plateforme | l'offre ne dépend plus du dépôt de l'association, une fois l'accord écrit signé |
+| Dépôts | Radiotomate est dans ce dépôt depuis le 27 septembre 2026 (accord signé). `button-console` et `button-ops` restent les clones d’à côté tant que la bascule Nasgul n’est pas faite | l'offre ne dépend plus du dépôt de l'association pour le moteur |
 
 ## Machine du moment — 27 septembre 2026
 
@@ -84,7 +84,7 @@ Chaque lot porte une charge et un sprint. La case « Fini quand » est le test q
 
 Objectif : un serveur propre, reconstructible d'une commande.
 
-- [ ] Accord écrit avec l'association sur ce qui, dans RC\_WEB\_RADIO, est à toi
+- [x] Accord écrit sur Radiotomate — signé le 27 septembre 2026. Le moteur est dans ce dépôt (`radiotomate/`). Nasgul déploie encore depuis `RC_WEB_RADIO` tant que le pipeline n’a pas basculé.
 - [ ] Créer le dépôt plateforme à partir du fork Radiotomate, de la console et des fichiers d'exploitation
 - [ ] Acheter un domaine de travail neutre
 - [ ] Commander le KS-5, installer Debian et un rôle Ansible : utilisateur, pare-feu, Docker, mises à jour automatiques
