@@ -83,10 +83,10 @@ Chaque lot porte une charge et un sprint. La case « Fini quand » est le test q
 Objectif : un serveur propre, reconstructible d'une commande.
 
 - [x] Accord écrit sur Radiotomate — signé le 27 septembre 2026. Le moteur est dans ce dépôt (`radiotomate/`). Nasgul déploie encore depuis `RC_WEB_RADIO` tant que le pipeline n’a pas basculé.
-- [ ] Créer le dépôt plateforme à partir du fork Radiotomate, de la console et des fichiers d'exploitation
-- [ ] Acheter un domaine de travail neutre
-- [ ] Commander le KS-5, installer Debian et un rôle Ansible : utilisateur, pare-feu, Docker, mises à jour automatiques
-- [ ] Écrire la fiche « reconstruire le serveur de zéro » et la tester une fois
+- [x] Créer le dépôt plateforme — `github.com/lazbutton/button`, moteur dans `radiotomate/`. La console et l’exploitation restent les dépôts d’à côté.
+- [x] Acheter un domaine de travail neutre — `gabbler.band` (OVH). Console `https://gabbler.band`, flux `https://flux.gabbler.band/nom.mp3`. L’apex ne pointe que vers le VPS.
+- [x] Frontal VPS-1 : Debian, pare-feu, Docker, Caddy, Icecast. Les stations restent sur Nasgul. Pas de KS-5.
+- [x] Écrire la fiche « reconstruire le serveur de zéro » et la tester une fois — `runbook-vps1.md` dans `ntr-ops`. Le 27 septembre 2026 le frontal a été reposé depuis le dépôt (Caddy rechargé, pare-feu du port 8000). Debian n’a pas été réinstallé : le lecteur, le journal et la vague ne sont que sur le disque du VPS.
 
 **Fini quand** le serveur se réinstalle depuis le dépôt en moins d'une heure.
 
@@ -94,10 +94,10 @@ Objectif : un serveur propre, reconstructible d'une commande.
 
 Objectif : un flux et une console joignables en HTTPS, sans Tailscale.
 
-- [ ] Caddy en frontal, certificats Let's Encrypt, renouvellement compris
-- [ ] Schéma d'adresses arrêté (console `nom.domaine.fr`, flux `flux.domaine.fr/nom.mp3`)
-- [ ] Flux Icecast servi sur 443 ; le harbor garde son port
-- [ ] Vérifier le player de BUTTON sur une page HTTPS, puis sur téléphone
+- [x] Caddy en frontal, certificats Let's Encrypt, renouvellement compris — Caddyfile rechargé le 27 septembre 2026, vhost en HTTP/1.1
+- [x] Schéma d'adresses arrêté — console `https://gabbler.band`, flux `https://flux.gabbler.band/nom.mp3`. Le flux BUTTON reste `https://radio.lazbutton.xyz/button.mp3`
+- [x] Flux Icecast servi sur 443 ; le harbor garde son port. Le 8000 n’est plus public : le SOURCE n’y passe que depuis Nasgul
+- [x] Player de BUTTON sur une page HTTPS — `https://radio.lazbutton.xyz/`, bureau et viewport 390 px, le 27 septembre 2026
 
 **Fini quand** un player HTTPS lit le flux, sur ordinateur comme sur mobile.
 
@@ -105,11 +105,11 @@ Objectif : un flux et une console joignables en HTTPS, sans Tailscale.
 
 Objectif : n'exposer que l'utile, cloisonner les radios.
 
-- [ ] Un compte par personne, mots de passe longs
-- [ ] Limiter les tentatives de connexion (Caddy ou fail2ban)
-- [ ] N'exposer que les écrans nécessaires ; hub et catalogue restent internes ; seuls 443 et le harbor ouverts
-- [ ] Secrets par station, hors du dépôt
-- [ ] Tester l'étanchéité entre deux stations
+- [ ] Un compte par personne, mots de passe longs — les comptes BUTTON existent ; leur longueur n’a pas été mesurée
+- [x] Limiter les tentatives de connexion (Caddy ou fail2ban) — `POST /login` sur `https://gabbler.band` : 10 par minute et par adresse, le 11e répond 429 (27 septembre 2026)
+- [x] Hub, catalogue, harbor et interface fermés au scan du 27 septembre 2026. Ouverts : 22, 80, 443. Le 8000 est filtré. `/admin` répond 404. Le harbor public attend L4
+- [x] Secrets par station, hors du dépôt
+- [x] Épreuve d’étanchéité — deux bases sur le Mac, ports 6811 et 6812 ; notée dans `ntr-ops/runbook-vps1.md`
 
 **Fini quand** un scan ne montre que 443 et le harbor, et qu'aucun compte ne passe d'une station à l'autre.
 

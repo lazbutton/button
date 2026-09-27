@@ -141,12 +141,16 @@ harbor.http.middleware.register(check_token)
 
 autodj_queue = request.queue(id="autodj_queue")
 
+# Recouvrement ~3 s entre titres. Les fallback restent en coupe (#4179) :
+# crossfade_3s ne fond pas, et on n'y remet pas de fade.
+autodj_faded = crossfade(duration=3., fade_in=3., fade_out=3., autodj_queue)
+
 autodj = blank.eat(id="autodj",
   start_blank=false,
   max_blank=AUTODJ_BLANK_MAX,
   threshold=AUTODJ_BLANK_THRESHOLD,
   stereo( # If there's a mono file
-    autodj_queue
+    autodj_faded
   )
 )
 
