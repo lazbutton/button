@@ -5,7 +5,7 @@ alwaysApply: true
 
 # Automate — contexte
 
-Seul dépôt de l’automate. `RC_WEB_RADIO` ne contient plus le moteur. Répondre en français. Plan : `docs/plan-phase-0.md`. Anciens cahiers : `docs/depuis-rc-web-radio/`.
+Seul dépôt de l’automate : https://github.com/lazbutton/button (`origin` = `git@github.com:lazbutton/button.git`, branche `main`). `RC_WEB_RADIO` ne contient plus le moteur. Répondre en français. Plan : `docs/plan-phase-0.md`. Anciens cahiers : `docs/depuis-rc-web-radio/`.
 
 ## Où travailler
 

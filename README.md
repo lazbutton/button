@@ -1,5 +1,7 @@
 # Automate — phase 0
 
+Dépôt : https://github.com/lazbutton/button
+
 Projet de travail de la plateforme (une radio, puis plusieurs), à part du dépôt de l’association.
 
 Le plan est dans [`docs/plan-phase-0.md`](docs/plan-phase-0.md). La phase 0 va du 28 septembre au 20 décembre 2026. La première radio bêta est prévue le 7 décembre.
