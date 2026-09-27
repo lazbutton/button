@@ -5,19 +5,22 @@ alwaysApply: true
 
 # Automate — contexte
 
-Dépôt de travail de la phase 0, distinct de `RC_WEB_RADIO` (association). Répondre en français. Plan : `docs/plan-phase-0.md`.
+Seul dépôt de l’automate. `RC_WEB_RADIO` ne contient plus le moteur. Répondre en français. Plan : `docs/plan-phase-0.md`. Anciens cahiers : `docs/depuis-rc-web-radio/`.
 
-## Décisions déjà prises (27 septembre 2026)
+## Où travailler
 
-- L'accord sur Radiotomate est signé. Le moteur est dans `radiotomate/` ici. Ne pas le recopier depuis `RC_WEB_RADIO`.
-- Nasgul déploie encore `RC_WEB_RADIO`. Ne pas basculer la prod, ne pas poser de `HOLD`, ne pas redémarrer le playout Nasgul depuis ce dépôt.
-- Dev = VPS-1 OVHcloud 2027 (2 vCores, 4 Go, 40 Go), hôte de `radio.lazbutton.xyz`. Un seul automate d'essai. Le mount public de BUTTON reste en place.
-- Deux automates plus tard = VPS-3 (6 vCores, 12 Go, 100 Go). Pas de KS-5 pour l'instant.
+Le développement se fait **sur Nasgul** (TrueNAS, l’antenne BUTTON qui tourne). Pas sur le VPS-1. Le VPS-1 (`radio.lazbutton.xyz`) ne fait que publier le flux. Deux automates plus tard : VPS-3. Pas de KS-5.
+
+Nasgul déploie encore les images construites depuis l’ancien `RC_WEB_RADIO`. Ne pas pousser la suppression tant que ce dépôt n’est pas la source du cron, sinon le prochain déploiement cherche un dossier qui n’existe plus.
+
+## Déjà fait
+
+- Accord Radiotomate signé le 27 septembre 2026. Moteur dans `radiotomate/` ici.
 - Liquidsoap 2.4.5. Pas de fondu dans les transitions `fallback` (bug #4179).
-- Console : `../ntr-console`. Exploitation Nasgul : `../ntr-ops`. Banc Mac : `./scripts/dev.sh` (interface `:6811`, console `:5175`).
+- Console : `../ntr-console`. Exploitation : `../ntr-ops`.
 
 ## Ne pas faire
 
 - Copier des secrets, `radio_data/`, ou le `.env` de Nasgul dans git.
-- Héberger deux stations ou la banque BUTTON sur le VPS-1.
-- Traiter `docs/automate.md` et `docs/automate-horloges.md` de l'association comme l'état réel. L'état réel est `RC_WEB_RADIO/docs/automate-projet.md`.
+- Remplacer le mount public `button.mp3` par un essai.
+- Redémarrer `radiotomate-playout` seul (interface et scheduler partagent son réseau).

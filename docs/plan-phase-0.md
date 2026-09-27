@@ -51,11 +51,11 @@ Ces choix se font le premier jour du sprint 1. La recommandation suffit pour ava
 
 | Quand | Machine | Rôle |
 | --- | --- | --- |
-| Maintenant, le dev | **VPS-1** (2 vCores, 4 Go, 40 Go, 500 Mbit/s) | Un automate d’essai, Caddy, Icecast. Déjà `radio.lazbutton.xyz`. |
-| Deux automates, plus tard | **VPS-3** (6 vCores, 12 Go, 100 Go) | Les deux stations, le frontal HTTPS et les banques MP3 plafonnées. |
-| Prod BUTTON en attendant | Nasgul | L’antenne actuelle. On n’y touche pas depuis le VPS de dev. |
+| Maintenant, le dev | **Nasgul** | L’antenne BUTTON qui tourne. C’est là qu’on modifie l’automate. |
+| Public | **VPS-1** (2 vCores, 4 Go, 40 Go) | Icecast et `radio.lazbutton.xyz` seulement. |
+| Deux automates, plus tard | **VPS-3** (6 vCores, 12 Go, 100 Go) | Les deux stations et le frontal HTTPS. |
 
-Le VPS-1 ne reçoit pas les deux radios. Un Liquidsoap de démo, le scheduler et Caddy y tiennent. La banque d’essai reste petite : 40 Go partent vite, et le flux public de BUTTON passe déjà par cet Icecast. Un essai ne remplace pas ce mount.
+Le moteur a quitté `RC_WEB_RADIO` le 27 septembre 2026. Nasgul est la machine de développement. Le VPS-1 ne reçoit pas l’automate.
 
 ## Calendrier
 

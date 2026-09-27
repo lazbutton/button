@@ -16,7 +16,7 @@ L’accord sur Radiotomate est signé (27 septembre 2026). Le moteur est dans `r
 
 Ouvre [`automate.code-workspace`](automate.code-workspace) dans Cursor : les quatre dossiers sont dans la même fenêtre.
 
-Le dev se fait sur le VPS-1 OVHcloud (`radio.lazbutton.xyz`) : un automate d’essai à côté du flux public, pas les deux radios. Celles-ci attendront un VPS-3. BUTTON en prod reste sur Nasgul. Le script ci-dessous ne parle qu’au Mac.
+Le développement se fait sur Nasgul. Le VPS-1 ne publie que le flux (`radio.lazbutton.xyz`). Deux automates plus tard : un VPS-3. Le script ci-dessous ne sert que de banc sur le Mac.
 
 ## Lancer le banc
 
