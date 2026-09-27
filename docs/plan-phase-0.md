@@ -51,7 +51,7 @@ Ces choix se font le premier jour du sprint 1. La recommandation suffit pour ava
 
 La phase 0 s'étale sur six sprints de deux semaines. La première radio bêta démarre le 7 décembre, une fois la migration de BUTTON bouclée au sprint 4. Le compteur de trente jours court ensuite du 21 décembre au 15 janvier.
 
-&#91;embedded content: calendrier · 11 lots, 3 jalons, l'observation et le critère\]
+Le tableau reprend les onze lots. L’observation et le critère de passage sont plus bas.
 
 | Sprint | Dates | Lots | Charge |
 | --- | --- | --- | --- |
