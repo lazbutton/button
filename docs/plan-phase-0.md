@@ -37,7 +37,7 @@ Ces choix se font le premier jour du sprint 1. La recommandation suffit pour ava
 
 | Décision | Recommandation | Pourquoi |
 | --- | --- | --- |
-| Serveur des stations | Kimsufi KS-5 (OVHcloud) sous Debian, configuré par Ansible | environ 20 € HT par mois pour 32 Go de RAM et 2 To utiles en RAID 1 ; trafic non mesuré à 500 Mbit/s |
+| Serveur des stations | Kimsufi KS-5 plus tard. **Pour l’instant : VPS-1 2027** (OVHcloud) en frontal, stations sur Nasgul | le VPS-1 a 2 vCores, 4 Go de RAM et 40 Go NVMe : il publie le flux, il n’héberge pas Liquidsoap ni la banque |
 | Adresses | console sur `nom.domaine.fr`, flux sur `flux.domaine.fr/nom.mp3` | Caddy obtient et renouvelle les certificats seul ; l'adresse d'un flux ne change plus une fois inscrite dans les annuaires |
 | Icecast | un Icecast partagé, avec un mount et un mot de passe source par station | un seul service à exposer derrière Caddy ; quota d'auditeurs réglable par mount |
 | Base de chaque station | une base SQLite par station, comme aujourd'hui | stations isolées ; sauvegarde continue par Litestream |
@@ -46,6 +46,18 @@ Ces choix se font le premier jour du sprint 1. La recommandation suffit pour ava
 | Accès des radios | UI Radiotomate et console derrière HTTPS, un compte par personne | l'interface unifiée attend la phase 1 |
 | Nom et domaine | un domaine de travail neutre, distinct de BUTTON | le nom commercial se décide plus tard sans bloquer le dev |
 | Dépôts | sortir `radiotomate/` de RC\_WEB\_RADIO dans un dépôt à toi ; `button-console` et `button-ops` deviennent la base de la plateforme | l'offre ne dépend plus du dépôt de l'association, une fois l'accord écrit signé |
+
+## Machine du moment — 27 septembre 2026
+
+Le KS-5 n’est pas commandé. La machine publique est un **VPS-1 2027** OVHcloud : 2 vCores, 4 Go de RAM, 40 Go NVMe, trafic non mesuré, 500 Mbit/s. C’est déjà l’hôte de `radio.lazbutton.xyz` (Icecast public, edge Ondes).
+
+| Rôle | Où, tant que le KS-5 n’est pas là |
+| --- | --- |
+| Liquidsoap, horloges, banque, SQLite | Nasgul |
+| HTTPS, Icecast public, certificats | VPS-1 |
+| Plusieurs stations avec leur musique | impossible sur 40 Go et 4 Go : ça attend le KS-5 (L6, L8) |
+
+Le sprint 1 (L0–L2) se fait donc sur ce VPS pour l’adresse publique, sans y déplacer l’automate. La migration de BUTTON hors de Nasgul reste le lot L6, et elle ne tient pas sur le VPS-1.
 
 ## Calendrier
 

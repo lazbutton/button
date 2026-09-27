@@ -16,7 +16,7 @@ L’accord écrit avec l’association n’est pas signé. Tant qu’il ne l’e
 
 Ouvre [`automate.code-workspace`](automate.code-workspace) dans Cursor : les quatre dossiers sont dans la même fenêtre.
 
-BUTTON en prod sur Nasgul n’est pas lancé d’ici. Ce script ne parle qu’au Mac.
+BUTTON en prod tourne sur Nasgul. Le public passe par un VPS-1 2027 OVHcloud (`radio.lazbutton.xyz`) : 4 Go de RAM et 40 Go de disque, assez pour Icecast et HTTPS, pas pour héberger les stations. Le script ci-dessous ne parle qu’au Mac.
 
 ## Lancer le banc
 
