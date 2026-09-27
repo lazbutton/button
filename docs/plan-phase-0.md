@@ -47,17 +47,15 @@ Ces choix se font le premier jour du sprint 1. La recommandation suffit pour ava
 | Nom et domaine | un domaine de travail neutre, distinct de BUTTON | le nom commercial se décide plus tard sans bloquer le dev |
 | Dépôts | Radiotomate est dans ce dépôt depuis le 27 septembre 2026 (accord signé). `button-console` et `button-ops` restent les clones d’à côté tant que la bascule Nasgul n’est pas faite | l'offre ne dépend plus du dépôt de l'association pour le moteur |
 
-## Machine du moment — 27 septembre 2026
+## Machines — 27 septembre 2026
 
-Le KS-5 n’est pas commandé. La machine publique est un **VPS-1 2027** OVHcloud : 2 vCores, 4 Go de RAM, 40 Go NVMe, trafic non mesuré, 500 Mbit/s. C’est déjà l’hôte de `radio.lazbutton.xyz` (Icecast public, edge Ondes).
+| Quand | Machine | Rôle |
+| --- | --- | --- |
+| Maintenant, le dev | **VPS-1** (2 vCores, 4 Go, 40 Go, 500 Mbit/s) | Un automate d’essai, Caddy, Icecast. Déjà `radio.lazbutton.xyz`. |
+| Deux automates, plus tard | **VPS-3** (6 vCores, 12 Go, 100 Go) | Les deux stations, le frontal HTTPS et les banques MP3 plafonnées. |
+| Prod BUTTON en attendant | Nasgul | L’antenne actuelle. On n’y touche pas depuis le VPS de dev. |
 
-| Rôle | Où, tant que le KS-5 n’est pas là |
-| --- | --- |
-| Liquidsoap, horloges, banque, SQLite | Nasgul |
-| HTTPS, Icecast public, certificats | VPS-1 |
-| Plusieurs stations avec leur musique | impossible sur 40 Go et 4 Go : ça attend le KS-5 (L6, L8) |
-
-Le sprint 1 (L0–L2) se fait donc sur ce VPS pour l’adresse publique, sans y déplacer l’automate. La migration de BUTTON hors de Nasgul reste le lot L6, et elle ne tient pas sur le VPS-1.
+Le VPS-1 ne reçoit pas les deux radios. Un Liquidsoap de démo, le scheduler et Caddy y tiennent. La banque d’essai reste petite : 40 Go partent vite, et le flux public de BUTTON passe déjà par cet Icecast. Un essai ne remplace pas ce mount.
 
 ## Calendrier
 
