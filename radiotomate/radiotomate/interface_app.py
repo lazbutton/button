@@ -25,6 +25,7 @@ from radiotomate.interface import (
     health,
     home,
     library,
+    system,
     live,
     login,
     spa,
@@ -111,6 +112,7 @@ def app_factory(config: dict, reload: bool, beets: BeetsIntegration):
     apply_automate_config(app.config)
 
     app.register_blueprint(health.blueprint)
+    app.register_blueprint(system.blueprint)
     app.register_blueprint(home.blueprint)
     app.register_blueprint(users.blueprint)
     app.register_blueprint(account.blueprint)
