@@ -1,10 +1,10 @@
 # BUTTON — Radiotomate
 
-Ce dossier fait partie du monorepo **RC_WEB_RADIO**. 
+Ce dossier est le moteur de la plateforme, dans le dépôt [`lazbutton/button`](https://github.com/lazbutton/button). Il a quitté le monorepo `RC_WEB_RADIO` le 27 septembre 2026 ; Nasgul déploie encore l’ancienne copie tant que le pipeline n’a pas basculé.
 
 Code dérivé de [Radiotomate](https://radiotomate.org/) (Martin Kirchgessner), **AGPL-3.0-or-later**. Le `README.md` de ce dossier reste celui de l’amont.
 
-Libellés UI : [`button/brand.json`](../button/brand.json) (`INTERFACE_NAME` au boot). Inventaire : [`docs/radiotomate-inventaire.md`](../docs/radiotomate-inventaire.md).
+Libellés UI : [`radiotomate/brand.json`](radiotomate/brand.json) (`INTERFACE_NAME` au boot). Écarts avec l’amont : [`docs/radiotomate-changements.md`](../docs/radiotomate-changements.md). Ancien inventaire : [`docs/depuis-rc-web-radio/radiotomate-inventaire.md`](../docs/depuis-rc-web-radio/radiotomate-inventaire.md).
 
 ## Patches (volontairement minces)
 
@@ -40,7 +40,7 @@ poetry run radiotomate -c radio_data/radiotomate.yaml interface --demo --reload
 ```
 
 - UI HTMX : http://127.0.0.1:6811
-- Console admin : repo `button-console` (http://127.0.0.1:5175/)
+- Console admin : repo `button-console`, cloné en `../ntr-console` (http://127.0.0.1:5175/)
 
 Données locales (gitignorées) : `radio_data/`.
 

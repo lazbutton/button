@@ -1,4 +1,4 @@
-"""Charge button/brand.json (identité, labels, URLs). Aucun secret."""
+"""Charge brand.json (identité, labels, URLs). Aucun secret."""
 
 from __future__ import annotations
 
