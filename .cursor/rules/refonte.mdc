@@ -1,0 +1,42 @@
+---
+description: Règles de refonte de la console NTR (toujours actives)
+globs:
+alwaysApply: true
+---
+
+# Règles — refonte console NTR
+
+## Contexte
+- Trois dépôts dans ce workspace : `ntr-console` (front React, l'app à refondre), `radiotomate/` (moteur Python, expose une API JSON), `ntr-ops` (Docker, Caddy, Icecast, cron).
+- La console **ne produit pas le son** : elle envoie des ordres au moteur en JSON et lit son état. Le plan complet est dans `docs/refonte/PLAN.md` — réfère-t'y (`@PLAN.md`).
+
+## Interdits
+- Ne jamais casser le moteur. Toute modification de `radiotomate/` doit être **minimale, justifiée en tête de commit, et rétro-compatible**. Vérifie que l'ancienne admin sur `:6811` marche encore.
+- Ne jamais exposer les six drapeaux moteur bruts (`admin`, `stream`, `live`, `carts`, `autodj`, `not_audio`) dans l'UI.
+- Ne jamais laisser une route qui redirige vers une autre, ni du code d'écran sans route.
+- Ne jamais échouer en silence : session expirée, droit manquant, moteur injoignable → message clair.
+
+## Modèle de rôles (raisonner toujours ainsi)
+- Trois rôles : **Animateur**, **Programmateur**, **Admin**, + un interrupteur **« Peut passer en direct »**.
+- Traduction rôle → drapeaux, posée par la console à l'écriture d'un compte :
+  - Animateur → `live` ; Programmateur → `live`, `carts`, `autodj` ; Admin → `admin`.
+  - Interrupteur direct ON → ajoute `stream` (+ `live`).
+  - `not_audio` : jamais posé, absent de l'UI.
+- Lecture inverse : `admin` → Admin ; sinon `carts||autodj` → Programmateur ; sinon Animateur. `stream` → interrupteur ON.
+
+## API (contrat à préserver)
+- Conserve les endpoints JSON existants et leurs formes : `/account.json`, `/live.json` (GET + DELETE = passer), `/autodj/conducteur.json`, `/antenne/state.json`, `/antenne/emissions.json`, `/antenne/flush.json`, `/carts.json`, `/carts/{id}/sounds/{id}/now.json`, `/library/search`.
+- **Lis le code concerné (console + moteur) AVANT d'écrire**, pour confirmer les formes exactes des requêtes/réponses, et préserve-les.
+- Priorité des sources du moteur (ne pas toucher) : harbor > relais > carts > jingles > auto-DJ.
+
+## Qualité
+- UI **en français**. Thème **clair et sombre**. **Mobile** propre (colonnes empilées, cibles tactiles ≥ 40 px). Navigable au **clavier**, focus visibles, contrastes suffisants.
+- Reste dans la stack React existante ; pas de dépendance lourde inutile. Upload = **Uppy + tusd** uniquement.
+- Garder un lien **« Code source »** (AGPL) accessible dans l'interface.
+
+## Méthode de travail
+- Travaille **lot par lot** (étapes de `@PLAN.md`). **Reste strictement dans le périmètre de l'étape demandée** — n'« améliore » rien ailleurs.
+- Avant d'implémenter : propose un **plan en lecture seule** (fichiers à toucher) et **attends validation**.
+- Garde les diffs **petits**. Un commit par étape.
+- Garde l'**ancien écran derrière la route** tant que le nouveau ne passe pas ses critères d'acceptation — pas de page blanche en prod.
+- À la fin d'une étape : coche ses critères d'acceptation et dis comment les vérifier.

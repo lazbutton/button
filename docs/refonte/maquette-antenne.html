@@ -1,0 +1,767 @@
+<!doctype html>
+<html lang="fr" data-appearance="dark" data-state="on" data-library="results">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Antenne — maquette</title>
+<style>
+/* ============================================================
+   TOKENS — copie de antenne-tokens.css. À porter dans le React.
+   ============================================================ */
+:root {
+  color-scheme: light;
+  --app-bg: #f3f2ee;
+  --app-surface-1: #ffffff;
+  --app-surface-2: #f7f6f2;
+  --app-surface-3: #ebeae5;
+  --app-surface-hover: #e6e4de;
+  --app-border: rgb(20 18 14 / 0.10);
+  --app-border-strong: rgb(20 18 14 / 0.18);
+  --app-text: #14120e;
+  --app-text-muted: #5b574f;
+  --app-text-faint: #8a857b;
+  --app-accent: #14120e;
+  --app-focus: #2b6cb0;
+  --state-on: #1a7f4b;
+  --state-on-soft: rgb(26 127 75 / 0.12);
+  --state-silence: #a8650a;
+  --state-silence-soft: rgb(168 101 10 / 0.14);
+  --state-direct: #c0332b;
+  --state-direct-soft: rgb(192 51 43 / 0.12);
+  --state-problem: #b9420f;
+  --state-problem-soft: rgb(185 66 15 / 0.14);
+  --state-off: #6f6b63;
+  --state-off-soft: rgb(111 107 99 / 0.12);
+  --kind-musique: #14120e;
+  --kind-jingle: #4a463f;
+  --kind-son: #7b776f;
+  --kind-pub: #a8a49b;
+  --font-ui: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
+  --fs-hero: clamp(2.6rem, 6.5vw, 5rem);
+  --fs-banner: clamp(1.15rem, 2vw, 1.5rem);
+  --fs-title: 1.2rem;
+  --fs-body: 0.95rem;
+  --fs-meta: 0.8rem;
+  --fs-micro: 0.72rem;
+  --lh-tight: 1.05;
+  --lh-body: 1.4;
+  --sp-1: 0.25rem; --sp-2: 0.5rem; --sp-3: 0.75rem; --sp-4: 1rem; --sp-5: 1.5rem; --sp-6: 2rem;
+  --r-sm: 8px; --r-md: 12px; --r-lg: 16px; --r-pill: 999px;
+  --elev-flat: 0 1px 0 rgb(20 18 14 / 0.05);
+  --elev-float: 0 18px 50px rgb(20 18 14 / 0.16);
+  --motion-fast: 120ms; --motion-base: 200ms; --motion-slow: 320ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --tap: 2.5rem;
+}
+[data-appearance="dark"] {
+  color-scheme: dark;
+  --app-bg: #0c0c0f;
+  --app-surface-1: #141418;
+  --app-surface-2: #1a1a20;
+  --app-surface-3: #23232a;
+  --app-surface-hover: #2b2b33;
+  --app-border: rgb(255 255 255 / 0.09);
+  --app-border-strong: rgb(255 255 255 / 0.18);
+  --app-text: #f2f1ec;
+  --app-text-muted: #a7a39a;
+  --app-text-faint: #7b776f;
+  --app-accent: #f2f1ec;
+  --app-focus: #8ab4f8;
+  --state-on: #3ecf8e;
+  --state-on-soft: rgb(62 207 142 / 0.16);
+  --state-silence: #f0b23d;
+  --state-silence-soft: rgb(240 178 61 / 0.16);
+  --state-direct: #ff5a52;
+  --state-direct-soft: rgb(255 90 82 / 0.18);
+  --state-problem: #ff8a3d;
+  --state-problem-soft: rgb(255 138 61 / 0.16);
+  --state-off: #8a857b;
+  --state-off-soft: rgb(138 133 123 / 0.14);
+  --kind-musique: #f2f1ec;
+  --kind-jingle: #c9c5bc;
+  --kind-son: #9a968d;
+  --kind-pub: #6f6b63;
+  --elev-flat: 0 1px 0 rgb(255 255 255 / 0.03);
+  --elev-float: 0 18px 50px rgb(0 0 0 / 0.5);
+}
+
+/* La couleur d'état courante, choisie par data-state sur <html>. */
+[data-state="on"]       { --state: var(--state-on);      --state-soft: var(--state-on-soft); }
+[data-state="silence"]  { --state: var(--state-silence); --state-soft: var(--state-silence-soft); }
+[data-state="direct"]   { --state: var(--state-direct);  --state-soft: var(--state-direct-soft); }
+[data-state="problem"]  { --state: var(--state-problem); --state-soft: var(--state-problem-soft); }
+[data-state="off"]      { --state: var(--state-off);     --state-soft: var(--state-off-soft); }
+
+/* ============================================================
+   BASE
+   ============================================================ */
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  color: var(--app-text);
+  background: var(--app-bg);
+  -webkit-font-smoothing: antialiased;
+}
+button, input { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:where(button, a, input, [role="tab"]):focus-visible {
+  outline: 2px solid var(--app-focus);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* ============================================================
+   PAGE : une grille qui tient dans la hauteur. Rien ne défile sauf
+   l'intérieur de la File et de la Bibliothèque.
+   ============================================================ */
+.pupitre {
+  height: 100dvh;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: var(--sp-3);
+  padding: var(--sp-3);
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+/* ---------- Bandeau d'état ---------- */
+.banner {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--sp-3);
+  min-height: 3.5rem;
+  padding: var(--sp-2) var(--sp-4);
+  border-radius: var(--r-md);
+  background: var(--state-soft);
+  border: 1px solid color-mix(in srgb, var(--state) 35%, transparent);
+  transition: background var(--motion-slow) var(--ease-out), border-color var(--motion-slow) var(--ease-out);
+}
+.banner-dot {
+  width: 0.8rem; height: 0.8rem; border-radius: 50%;
+  background: var(--state);
+  box-shadow: 0 0 0 0 var(--state);
+  transition: background var(--motion-slow) var(--ease-out);
+}
+[data-state="direct"] .banner-dot,
+[data-state="silence"][data-hot="true"] .banner-dot { animation: pulse 1.6s ease-in-out infinite; }
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--state) 45%, transparent); }
+  60% { box-shadow: 0 0 0 8px transparent; }
+}
+.banner-copy { display: flex; align-items: baseline; gap: var(--sp-3); min-width: 0; flex-wrap: wrap; }
+.banner-label {
+  font-size: var(--fs-banner); font-weight: 750; letter-spacing: -0.02em;
+  color: var(--state);
+  transition: color var(--motion-slow) var(--ease-out);
+}
+.banner-cause { font-size: var(--fs-body); font-weight: 600; color: var(--app-text); }
+.banner-cause:empty { display: none; }
+.banner-clock { font-size: var(--fs-banner); font-weight: 650; font-variant-numeric: tabular-nums; }
+.banner-direct {
+  min-height: var(--tap); padding: 0 var(--sp-2);
+  border: 0; background: transparent;
+  font-weight: 650; text-decoration: underline; text-underline-offset: 0.2em;
+  text-decoration-color: color-mix(in srgb, var(--app-text) 40%, transparent);
+}
+.banner-direct:hover { text-decoration-color: currentColor; }
+
+/* ---------- Passer en direct : feuille flottante, ne pousse rien ---------- */
+.direct-sheet {
+  position: fixed; top: 4.5rem; right: var(--sp-3);
+  width: min(28rem, calc(100vw - 2 * var(--sp-3)));
+  max-height: calc(100dvh - 6rem);
+  overflow: auto;
+  padding: var(--sp-4);
+  background: var(--app-surface-1);
+  border: 1px solid var(--app-border-strong);
+  border-radius: var(--r-lg);
+  box-shadow: var(--elev-float);
+  z-index: 20;
+  display: grid; gap: var(--sp-3);
+}
+.direct-sheet[hidden] { display: none; }
+.direct-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); }
+.direct-head h2 { margin: 0; font-size: 1rem; font-weight: 700; }
+.direct-phase {
+  display: inline-flex; align-items: center; gap: var(--sp-2);
+  font-weight: 650; padding: 0.2rem 0.6rem; border-radius: var(--r-pill);
+  border: 1px solid var(--app-border);
+}
+.direct-phase::before { content: ""; width: 0.55rem; height: 0.55rem; border-radius: 50%; background: var(--state-off); }
+.direct-phase[data-phase="connected"]::before { background: var(--state-direct); }
+.direct-phase[data-phase="waiting"]::before { background: var(--state-silence); }
+.direct-sheet p { margin: 0; color: var(--app-text-muted); }
+.direct-sheet p strong { color: var(--app-text); }
+.direct-sheet dl { display: grid; grid-template-columns: 5.5rem minmax(0, 1fr); gap: var(--sp-1) var(--sp-3); margin: 0; font-size: var(--fs-meta); }
+.direct-sheet dt { color: var(--app-text-faint); font-weight: 600; }
+.direct-sheet dd { margin: 0; font-variant-numeric: tabular-nums; }
+.direct-close { min-height: var(--tap); min-width: var(--tap); border: 1px solid var(--app-border); background: var(--app-surface-2); border-radius: var(--r-sm); }
+
+/* ---------- Carte maintenant ---------- */
+.now {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--sp-4) var(--sp-5);
+  padding: var(--sp-4) var(--sp-5) var(--sp-4) calc(var(--sp-5) + 6px);
+  background: var(--app-surface-1);
+  border: 1px solid var(--app-border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--elev-flat);
+  overflow: hidden;
+}
+/* Le rail : la seule couleur d'état hors du bandeau. */
+.now::before {
+  content: ""; position: absolute; inset: 0 auto 0 0; width: 6px;
+  background: var(--state);
+  transition: background var(--motion-slow) var(--ease-out);
+}
+.now-remain {
+  font-size: var(--fs-hero); font-weight: 780; line-height: var(--lh-tight);
+  letter-spacing: -0.045em; font-variant-numeric: tabular-nums;
+  transition: color var(--motion-base) var(--ease-out), transform var(--motion-base) var(--ease-out);
+}
+.now-remain small { display: block; font-size: var(--fs-micro); font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--app-text-faint); margin-top: 0.1rem; }
+[data-ending="true"] .now-remain { color: var(--state-silence); }
+[data-ending="true"] .now::before { background: var(--state-silence); }
+[data-state="off"] .now-remain { color: var(--app-text-faint); }
+
+.now-copy { min-width: 0; display: grid; gap: var(--sp-2); }
+.now-title {
+  margin: 0; font-size: var(--fs-title); font-weight: 650; letter-spacing: -0.01em;
+  display: flex; align-items: center; gap: var(--sp-2); min-width: 0;
+}
+.now-title span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.now-title em { font-style: normal; color: var(--app-text-muted); font-weight: 500; }
+.kind { flex: 0 0 auto; width: 0.55rem; height: 0.55rem; border-radius: 50%; background: var(--kind-son); }
+.kind.is-musique { background: var(--kind-musique); }
+.kind.is-jingle { background: var(--kind-jingle); border-radius: 2px; } /* forme différente, pas que la couleur */
+.kind.is-pub { background: var(--kind-pub); }
+
+.progress { position: relative; height: 6px; border-radius: var(--r-pill); background: var(--app-surface-3); overflow: hidden; }
+.progress-fill {
+  position: absolute; inset: 0 auto 0 0;
+  width: var(--pct, 0%);
+  background: var(--app-text);
+  border-radius: inherit;
+  transition: width 1s linear, background var(--motion-slow) var(--ease-out);
+}
+[data-ending="true"] .progress-fill { background: var(--state-silence); }
+.progress-head {
+  position: absolute; top: -3px; bottom: -3px; width: 2px;
+  left: var(--pct, 0%);
+  background: var(--app-text);
+  transition: left 1s linear;
+}
+[data-state="direct"] .progress-fill, [data-state="direct"] .progress-head { display: none; }
+
+.now-meta { display: flex; align-items: center; gap: var(--sp-3); font-size: var(--fs-meta); color: var(--app-text-muted); flex-wrap: wrap; }
+.source {
+  display: inline-flex; align-items: center; gap: var(--sp-1);
+  padding: 0.12rem 0.55rem; border-radius: var(--r-pill);
+  background: var(--app-surface-3); font-weight: 650; color: var(--app-text);
+}
+[data-state="direct"] .source { background: var(--state-direct-soft); color: var(--state-direct); }
+.keys { color: var(--app-text-faint); font-size: var(--fs-micro); }
+.keys kbd { font: inherit; padding: 0 0.3rem; border: 1px solid var(--app-border-strong); border-radius: 4px; }
+
+.btn-next {
+  display: inline-flex; align-items: center; gap: var(--sp-2);
+  min-height: 3rem; padding: 0 var(--sp-5);
+  border-radius: var(--r-md);
+  border: 1px solid var(--app-border-strong);
+  background: var(--app-text); color: var(--app-bg);
+  font-weight: 700; font-size: 1rem;
+  transition: transform var(--motion-fast) var(--ease-out), opacity var(--motion-fast);
+}
+.btn-next:hover:not(:disabled) { transform: translateY(-1px); }
+.btn-next:active:not(:disabled) { transform: translateY(0) scale(0.98); }
+.btn-next:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Direct : l'horloge est en pause. */
+.now-live { display: none; grid-column: 2 / -1; align-items: center; gap: var(--sp-3); flex-wrap: wrap; font-weight: 600; }
+[data-state="direct"] .now-live { display: flex; }
+.now-live button, .rename button { min-height: var(--tap); padding: 0 var(--sp-3); border-radius: var(--r-sm); border: 1px solid var(--app-border-strong); background: var(--app-surface-2); font-weight: 650; }
+.rename { display: none; gap: var(--sp-2); flex-wrap: wrap; align-items: end; width: 100%; }
+.rename.is-open { display: flex; }
+.rename label { display: grid; gap: 0.2rem; font-size: var(--fs-micro); color: var(--app-text-faint); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+.rename input { min-height: var(--tap); padding: 0 var(--sp-3); border-radius: var(--r-sm); border: 1px solid var(--app-border-strong); background: var(--app-surface-1); min-width: 12rem; }
+
+/* Arrêt */
+.now-off { display: none; grid-column: 2 / -1; color: var(--app-text-muted); }
+[data-state="off"] .now-off { display: block; }
+[data-state="off"] .now-copy, [data-state="off"] .btn-next { opacity: 0.35; }
+
+/* ---------- Scène : File | Bibliothèque ---------- */
+.stage {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  gap: var(--sp-3);
+  min-height: 0;
+}
+.panel {
+  display: grid; grid-template-rows: auto minmax(0, 1fr) auto;
+  min-height: 0;
+  background: var(--app-surface-1);
+  border: 1px solid var(--app-border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--elev-flat);
+  overflow: hidden;
+}
+.panel-head {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  border-bottom: 1px solid var(--app-border);
+}
+.panel-head h2 { margin: 0; font-size: var(--fs-body); font-weight: 700; letter-spacing: 0.02em; text-transform: uppercase; color: var(--app-text-muted); }
+.panel-hint { font-size: var(--fs-micro); color: var(--app-text-faint); text-align: right; }
+.panel-foot { padding: var(--sp-2) var(--sp-4); font-size: var(--fs-micro); color: var(--app-text-faint); border-top: 1px solid var(--app-border); }
+.chip { font-size: var(--fs-micro); font-weight: 650; padding: 0.1rem 0.5rem; border-radius: var(--r-pill); border: 1px solid var(--app-border-strong); color: var(--app-text-muted); }
+
+/* File */
+.queue { list-style: none; margin: 0; padding: var(--sp-2); overflow: auto; display: grid; gap: 2px; align-content: start; }
+.queue li {
+  display: grid;
+  grid-template-columns: 1.6rem 3.2rem 1.4rem minmax(0, 1fr) 3.2rem var(--tap);
+  align-items: center; gap: var(--sp-2);
+  min-height: var(--tap);
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--r-sm);
+  transition: background var(--motion-fast);
+}
+.queue li:hover { background: var(--app-surface-2); }
+.queue li.is-next { background: var(--app-surface-2); box-shadow: inset 0 0 0 1px var(--app-border-strong); }
+.queue li.is-added { animation: added var(--motion-slow) var(--ease-out); }
+@keyframes added { from { background: var(--state-on-soft); transform: translateY(4px); } to { transform: none; } }
+.q-n { font-size: var(--fs-micro); font-weight: 700; color: var(--app-text-faint); text-align: center; }
+.is-next .q-n { color: var(--app-text); }
+.q-until { font-size: var(--fs-meta); font-variant-numeric: tabular-nums; color: var(--app-text-muted); }
+.q-mark { display: inline-flex; align-items: center; justify-content: center; width: 1.4rem; height: var(--tap); color: var(--app-text-faint); }
+.q-grip { cursor: grab; }
+.q-grip svg, .q-lock svg { width: 14px; height: 14px; }
+.q-anchor { font-size: var(--fs-micro); font-weight: 700; color: var(--state-direct); font-variant-numeric: tabular-nums; }
+.q-copy { min-width: 0; display: grid; line-height: 1.2; }
+.q-copy .t { font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.q-copy .a { font-size: var(--fs-meta); color: var(--app-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.q-dur { font-size: var(--fs-meta); font-variant-numeric: tabular-nums; color: var(--app-text-muted); text-align: right; }
+.q-remove { width: var(--tap); height: var(--tap); border: 0; background: transparent; color: var(--app-text-faint); border-radius: var(--r-sm); display: inline-flex; align-items: center; justify-content: center; }
+.q-remove:hover { background: var(--app-surface-3); color: var(--app-text); }
+.q-remove svg { width: 14px; height: 14px; }
+.queue-empty { display: none; padding: var(--sp-6) var(--sp-4); text-align: center; color: var(--app-text-muted); }
+.queue-empty strong { display: block; color: var(--app-text); margin-bottom: var(--sp-1); }
+[data-queue="empty"] .queue { display: none; }
+[data-queue="empty"] .queue-empty { display: block; }
+[data-queue="empty"] .panel-foot.q-foot { visibility: hidden; }
+
+/* Bibliothèque */
+.search { padding: var(--sp-3) var(--sp-4) 0; display: grid; gap: var(--sp-2); }
+.search-field { position: relative; }
+.search-field svg { position: absolute; left: 0.8rem; top: 50%; translate: 0 -50%; width: 16px; height: 16px; color: var(--app-text-faint); }
+.search-field input {
+  width: 100%; min-height: var(--tap); padding: 0 var(--sp-3) 0 2.3rem;
+  border-radius: var(--r-md); border: 1px solid var(--app-border-strong); background: var(--app-surface-2);
+}
+.tabs { display: flex; gap: var(--sp-1); flex-wrap: wrap; }
+.tabs button { min-height: 2.1rem; padding: 0 var(--sp-3); border-radius: var(--r-pill); border: 1px solid var(--app-border); background: transparent; color: var(--app-text-muted); font-size: var(--fs-meta); font-weight: 600; }
+.tabs button[aria-selected="true"] { background: var(--app-text); color: var(--app-bg); border-color: var(--app-text); }
+.hits { list-style: none; margin: 0; padding: var(--sp-2) var(--sp-2) var(--sp-3); overflow: auto; display: grid; gap: 2px; align-content: start; }
+.hits-title { padding: var(--sp-3) var(--sp-3) 0; font-size: var(--fs-micro); font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--app-text-faint); }
+.hits li { display: grid; grid-template-columns: minmax(0, 1fr) var(--tap); align-items: center; gap: var(--sp-1); }
+.hit {
+  display: grid; grid-template-columns: 1.4rem minmax(0, 1fr) 3rem; align-items: center; gap: var(--sp-2);
+  min-height: var(--tap); padding: var(--sp-1) var(--sp-2);
+  text-align: left; border: 0; background: transparent; border-radius: var(--r-sm);
+  transition: background var(--motion-fast);
+}
+.hit:hover { background: var(--app-surface-2); }
+.hit .kind { justify-self: center; }
+.hit .q-copy .t { font-weight: 600; }
+.hit-dur { font-size: var(--fs-meta); font-variant-numeric: tabular-nums; color: var(--app-text-muted); text-align: right; }
+.play {
+  width: var(--tap); height: var(--tap); border-radius: var(--r-sm);
+  border: 1px solid var(--app-border-strong); background: var(--app-surface-2);
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: transform var(--motion-fast) var(--ease-out), background var(--motion-fast);
+}
+.play svg { width: 14px; height: 14px; }
+.play:hover:not(:disabled) { background: var(--app-surface-3); }
+.play:active:not(:disabled) { transform: scale(0.94); }
+.play:disabled { opacity: 0.35; cursor: not-allowed; }
+.play.is-fired { animation: fired var(--motion-slow) var(--ease-out); }
+@keyframes fired { 0% { background: var(--state-on-soft); border-color: var(--state-on); } 100% {} }
+.lib-state { display: none; padding: var(--sp-5) var(--sp-4); text-align: center; color: var(--app-text-muted); }
+.lib-state strong { display: block; color: var(--app-text); margin-bottom: var(--sp-1); }
+.lib-state button { min-height: var(--tap); margin-top: var(--sp-3); padding: 0 var(--sp-4); border-radius: var(--r-sm); border: 1px solid var(--app-border-strong); background: var(--app-surface-2); font-weight: 650; }
+[data-library="results"] .lib-results, [data-library="recents"] .lib-recents { display: block; }
+[data-library="empty"] .lib-empty, [data-library="error"] .lib-error { display: block; }
+.lib-results, .lib-recents { display: none; min-height: 0; overflow: auto; }
+[data-library="error"] .lib-error { color: var(--state-problem); }
+[data-library="error"] .lib-error strong { color: var(--state-problem); }
+
+/* Toast : retour visuel court, en bas. */
+.toast {
+  position: fixed; left: 50%; bottom: 1.2rem; translate: -50% 0;
+  padding: var(--sp-2) var(--sp-4); border-radius: var(--r-pill);
+  background: var(--app-text); color: var(--app-bg); font-weight: 650;
+  box-shadow: var(--elev-float); opacity: 0; pointer-events: none;
+  transition: opacity var(--motion-base), translate var(--motion-base) var(--ease-out);
+}
+.toast.is-on { opacity: 1; translate: -50% -4px; }
+
+/* ---------- Mobile ---------- */
+@media (max-width: 900px) {
+  .pupitre { padding: var(--sp-2); gap: var(--sp-2); }
+  .banner { grid-template-columns: auto minmax(0, 1fr) auto; padding: var(--sp-2) var(--sp-3); }
+  .banner-direct { grid-column: 1 / -1; justify-self: start; min-height: 2.25rem; padding: 0; }
+  .now { grid-template-columns: auto minmax(0, 1fr); gap: var(--sp-2) var(--sp-3); padding: var(--sp-3) var(--sp-3) var(--sp-3) calc(var(--sp-3) + 6px); }
+  .btn-next { grid-column: 1 / -1; justify-content: center; }
+  .keys { display: none; }
+  .stage { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1.2fr) minmax(0, 1fr); }
+  .queue li { grid-template-columns: 1.4rem 2.8rem 1.2rem minmax(0, 1fr) var(--tap); }
+  .q-dur { display: none; }
+  .panel-hint { display: none; }
+}
+@media (max-width: 420px) {
+  .banner-clock { font-size: 1rem; }
+  .now-remain small { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+
+/* ---------- Barre de maquette (hors produit) ---------- */
+.demo {
+  position: fixed; left: 0.5rem; bottom: 0.5rem; z-index: 30;
+  display: flex; gap: var(--sp-1); flex-wrap: wrap; align-items: center;
+  padding: 0.25rem 0.5rem; border-radius: var(--r-md);
+  background: var(--app-surface-3); border: 1px solid var(--app-border);
+  font-size: var(--fs-micro); opacity: 0.85;
+}
+.demo:hover, .demo:focus-within { opacity: 1; }
+.toast { bottom: 3.2rem; }
+.demo select, .demo button { min-height: 1.6rem; font-size: var(--fs-micro); border-radius: 6px; border: 1px solid var(--app-border-strong); background: var(--app-surface-1); padding: 0 0.4rem; }
+.demo span { align-self: center; color: var(--app-text-faint); font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+</style>
+</head>
+<body>
+
+<!-- Barre de maquette. N'existe pas dans le produit. -->
+<div class="demo" aria-label="Réglages de la maquette">
+  <span>Maquette</span>
+  <select id="demo-state" aria-label="État">
+    <option value="on">En onde</option>
+    <option value="silence">Silence</option>
+    <option value="direct">Direct</option>
+    <option value="problem">Problème</option>
+    <option value="off">Arrêt</option>
+  </select>
+  <button id="demo-ending" type="button" aria-pressed="false">Fin proche</button>
+  <select id="demo-library" aria-label="Bibliothèque">
+    <option value="results">Résultats</option>
+    <option value="recents">Récents</option>
+    <option value="empty">Vide</option>
+    <option value="error">Erreur</option>
+  </select>
+  <button id="demo-queue" type="button" aria-pressed="false">File vide</button>
+  <button id="demo-theme" type="button">Clair / sombre</button>
+</div>
+
+<main class="pupitre">
+
+  <!-- Bandeau d'état -->
+  <div class="banner" role="status" aria-live="polite">
+    <span class="banner-dot" aria-hidden="true"></span>
+    <div class="banner-copy">
+      <span class="banner-label" id="banner-label">En onde</span>
+      <span class="banner-cause" id="banner-cause"></span>
+    </div>
+    <time class="banner-clock" id="clock" datetime="01:55">01:55</time>
+    <button class="banner-direct" type="button" id="direct-toggle" aria-expanded="false" aria-controls="direct-sheet">Passer en direct ?</button>
+  </div>
+
+  <!-- Passer en direct : feuille repliée -->
+  <section class="direct-sheet" id="direct-sheet" hidden aria-labelledby="direct-title">
+    <div class="direct-head">
+      <h2 id="direct-title">Passer en direct</h2>
+      <span class="direct-phase" id="direct-phase" data-phase="absent">Absent</span>
+    </div>
+    <p id="direct-detail">Pas d’encodeur branché. La rotation continue.</p>
+    <p><strong>Créneau.</strong> Si une émission nomme un identifiant, seul ce compte ou un admin passe sur ce créneau. Sinon, tout compte avec le droit Stream peut se brancher.</p>
+    <dl>
+      <dt>Type</dt><dd>Icecast, BUTT ou Mixxx</dd>
+      <dt>Adresse</dt><dd>192.168.1.100 sur place · nasgul.taild4714f.ts.net hors studio</dd>
+      <dt>Port</dt><dd>6800</dd>
+      <dt>Mount</dt><dd>/stream</dd>
+      <dt>Compte</dt><dd>Ton identifiant, droit Stream. Mot de passe : celui du compte.</dd>
+      <dt>Format</dt><dd>MP3, 128 à 192 kbps</dd>
+    </dl>
+    <button class="direct-close" type="button" id="direct-close">Fermer</button>
+  </section>
+
+  <!-- Carte maintenant -->
+  <section class="now" aria-label="À l’antenne">
+    <div class="now-remain" id="remain">01:26<small>restant</small></div>
+    <div class="now-copy">
+      <p class="now-title"><span class="kind is-musique" aria-hidden="true"></span><span id="now-title">radioart space-wide <em>— Who broadcasts</em></span></p>
+      <div class="progress" aria-hidden="true"><div class="progress-fill" id="fill"></div><div class="progress-head" id="head"></div></div>
+      <div class="now-meta">
+        <span class="source" id="source">Auto-DJ</span>
+        <span id="ends">fin 01:56</span>
+        <span class="keys"><kbd>Espace</kbd> suivant · <kbd>/</kbd> chercher · <kbd>Entrée</kbd> à la suite</span>
+      </div>
+    </div>
+    <button class="btn-next" type="button" id="btn-next">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4l10 8-10 8V4z"/><path d="M19 5v14"/></svg>
+      Suivant
+    </button>
+    <div class="now-live">
+      <span>Direct — l’horloge est en pause.</span>
+      <button type="button" id="rename-open">Renommer</button>
+      <form class="rename" id="rename">
+        <label>Nom de l’émission <input id="rename-title" value="Hop Pop Hop" /></label>
+        <label>Phrase artiste <input id="rename-artist" value="soirée du camp" /></label>
+        <button type="submit">Renommer</button>
+        <button type="button" id="rename-cancel">Annuler</button>
+      </form>
+    </div>
+    <p class="now-off">L’antenne ne répond pas. Réessaie. Si ça continue, un admin regarde Réglages → Automate.</p>
+  </section>
+
+  <!-- File | Bibliothèque -->
+  <div class="stage">
+    <section class="panel" aria-labelledby="file-title">
+      <header class="panel-head">
+        <h2 id="file-title">File</h2>
+        <span class="chip">24/24 Rotation habillée</span>
+      </header>
+      <ol class="queue" id="queue">
+        <li class="is-next">
+          <span class="q-n">N</span><span class="q-until">01:26</span>
+          <span class="q-mark q-lock" title="Verrouillé : c’est le prochain"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span class="visually-hidden">Verrouillé</span></span>
+          <span class="q-copy"><span class="kind is-musique" hidden></span><span class="t">toward More</span><span class="a">Popular Sometimes</span></span>
+          <span class="q-dur">03:00</span><span></span>
+        </li>
+        <li>
+          <span class="q-n">2</span><span class="q-until">04:26</span>
+          <span class="q-mark q-grip" title="Ajouté à la main, déplaçable" aria-label="Ajouté à la main, déplaçable"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg></span>
+          <span class="q-copy"><span class="t">However remains</span><span class="a">"narrowcasting" station</span></span>
+          <span class="q-dur">03:00</span>
+          <button class="q-remove" type="button" aria-label="Retirer However remains"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+        </li>
+        <li>
+          <span class="q-n">3</span><span class="q-until">07:26</span>
+          <span class="q-mark"><span class="q-anchor" title="Ancre d’horloge">:20</span></span>
+          <span class="q-copy"><span class="t">Jingles</span><span class="a">Jingles</span></span>
+          <span class="q-dur">00:08</span>
+          <span class="q-mark q-lock" title="Verrouillé : ancre"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span class="visually-hidden">Verrouillé</span></span>
+        </li>
+        <li><span class="q-n">4</span><span class="q-until">07:34</span><span class="q-mark"></span><span class="q-copy"><span class="t">broadly toward</span><span class="a">positively done</span></span><span class="q-dur">03:00</span><button class="q-remove" type="button" aria-label="Retirer broadly toward"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></li>
+        <li><span class="q-n">5</span><span class="q-until">10:34</span><span class="q-mark"></span><span class="q-copy"><span class="t">still radio</span><span class="a">done the</span></span><span class="q-dur">03:00</span><button class="q-remove" type="button" aria-label="Retirer still radio"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></li>
+        <li><span class="q-n">6</span><span class="q-until">13:34</span><span class="q-mark"></span><span class="q-copy"><span class="t">function positively</span><span class="a">worldwide radio</span></span><span class="q-dur">03:00</span><button class="q-remove" type="button" aria-label="Retirer function positively"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></li>
+        <li><span class="q-n">7</span><span class="q-until">16:34</span><span class="q-mark"><span class="q-anchor" title="Ancre d’horloge">:40</span></span><span class="q-copy"><span class="t">Jingles</span><span class="a">Jingles</span></span><span class="q-dur">00:08</span><span class="q-mark q-lock" title="Verrouillé : ancre"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span class="visually-hidden">Verrouillé</span></span></li>
+        <li><span class="q-n">8</span><span class="q-until">16:42</span><span class="q-mark"></span><span class="q-copy"><span class="t">would been</span><span class="a">toward radio</span></span><span class="q-dur">03:00</span><button class="q-remove" type="button" aria-label="Retirer would been"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></li>
+        <li><span class="q-n">9</span><span class="q-until">19:42</span><span class="q-mark"></span><span class="q-copy"><span class="t">remains such</span><span class="a">meaning meaning</span></span><span class="q-dur">03:00</span><button class="q-remove" type="button" aria-label="Retirer remains such"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></li>
+        <li><span class="q-n">10</span><span class="q-until">22:42</span><span class="q-mark"></span><span class="q-copy"><span class="t">and broadly'</span><span class="a">radioart? positively</span></span><span class="q-dur">03:00</span><button class="q-remove" type="button" aria-label="Retirer and broadly'"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></li>
+      </ol>
+      <div class="queue-empty"><strong>Rien à la suite.</strong>Cherche un titre dans la bibliothèque et touche-le : il se met ici.</div>
+      <footer class="panel-foot q-foot">encore 763 dans le conducteur</footer>
+    </section>
+
+    <section class="panel" aria-labelledby="lib-title">
+      <header class="panel-head">
+        <h2 id="lib-title">Bibliothèque</h2>
+        <span class="panel-hint">Toucher un titre le met à la suite. ▶ le joue maintenant.</span>
+      </header>
+      <div style="display:grid;grid-template-rows:auto minmax(0,1fr);min-height:0;">
+        <div class="search">
+          <div class="search-field">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+            <input type="search" id="search" placeholder="Titre, artiste…" aria-label="Recherche bibliothèque" />
+          </div>
+          <div class="tabs" role="tablist" aria-label="Filtres">
+            <button role="tab" aria-selected="true">Tous</button>
+            <button role="tab" aria-selected="false">Musique</button>
+            <button role="tab" aria-selected="false">Jingles</button>
+            <button role="tab" aria-selected="false">Archives</button>
+          </div>
+        </div>
+
+        <div class="lib-results">
+          <ol class="hits" id="hits">
+            <li><button class="hit" type="button"><span class="kind is-musique" aria-hidden="true"></span><span class="q-copy"><span class="t">Trois notes</span><span class="a">Loeiz ar Mor</span></span><span class="hit-dur">02:56</span></button><button class="play" type="button" aria-label="Jouer Trois notes maintenant" title="Jouer maintenant"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4l12 8-12 8z"/></svg></button></li>
+            <li><button class="hit" type="button"><span class="kind is-musique" aria-hidden="true"></span><span class="q-copy"><span class="t">Nuit au camp</span><span class="a">Camille Tester</span></span><span class="hit-dur">03:41</span></button><button class="play" type="button" aria-label="Jouer Nuit au camp maintenant" title="Jouer maintenant"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4l12 8-12 8z"/></svg></button></li>
+            <li><button class="hit" type="button"><span class="kind is-jingle" aria-hidden="true"></span><span class="q-copy"><span class="t">ID BUTTON</span><span class="a">Jingles</span></span><span class="hit-dur">00:08</span></button><button class="play" type="button" aria-label="Jouer ID BUTTON maintenant" title="Jouer maintenant"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4l12 8-12 8z"/></svg></button></li>
+            <li><button class="hit" type="button"><span class="kind is-son" aria-hidden="true"></span><span class="q-copy"><span class="t">Archive NTF 2 — plateau du soir</span><span class="a">NTF 2</span></span><span class="hit-dur">48:12</span></button><button class="play" type="button" aria-label="Jouer Archive NTF 2 maintenant" title="Jouer maintenant"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4l12 8-12 8z"/></svg></button></li>
+            <li><button class="hit" type="button"><span class="kind is-musique" aria-hidden="true"></span><span class="q-copy"><span class="t">Virgule bombardes</span><span class="a">Ensemble Kreiz</span></span><span class="hit-dur">04:05</span></button><button class="play" type="button" aria-label="Jouer Virgule bombardes maintenant" title="Jouer maintenant"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4l12 8-12 8z"/></svg></button></li>
+            <li><button class="hit" type="button"><span class="kind is-musique" aria-hidden="true"></span><span class="q-copy"><span class="t">Accroche webradio</span><span class="a">More tool</span></span><span class="hit-dur">03:12</span></button><button class="play" type="button" aria-label="Jouer Accroche webradio maintenant" title="Jouer maintenant"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4l12 8-12 8z"/></svg></button></li>
+          </ol>
+        </div>
+
+        <div class="lib-recents">
+          <p class="hits-title">Récents</p>
+          <ol class="hits">
+            <li><button class="hit" type="button"><span class="kind is-musique" aria-hidden="true"></span><span class="q-copy"><span class="t">Nuit au camp</span><span class="a">Camille Tester</span></span><span class="hit-dur">03:41</span></button><button class="play" type="button" aria-label="Jouer Nuit au camp maintenant"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4l12 8-12 8z"/></svg></button></li>
+            <li><button class="hit" type="button"><span class="kind is-jingle" aria-hidden="true"></span><span class="q-copy"><span class="t">ID BUTTON</span><span class="a">Jingles</span></span><span class="hit-dur">00:08</span></button><button class="play" type="button" aria-label="Jouer ID BUTTON maintenant"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4l12 8-12 8z"/></svg></button></li>
+          </ol>
+        </div>
+
+        <div class="lib-state lib-empty"><strong>Aucun titre.</strong>Essaie un autre mot, ou change d’onglet.</div>
+        <div class="lib-state lib-error"><strong>Le catalogue ne répond pas.</strong>Réessaie. S’il reste muet, un admin regarde Réglages → Automate.<br /><button type="button">Réessayer</button></div>
+      </div>
+      <footer class="panel-foot" id="lib-foot">6 résultats</footer>
+    </section>
+  </div>
+</main>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(function () {
+  const html = document.documentElement;
+  const $ = (id) => document.getElementById(id);
+
+  // Données figées de la maquette.
+  const STATES = {
+    on:      { label: "En onde", cause: "" },
+    silence: { label: "Silence 12 s", cause: "" },
+    direct:  { label: "Direct : Hop Pop Hop", cause: "" },
+    problem: { label: "Problème", cause: "Playout injoignable" },
+    off:     { label: "Problème", cause: "L’antenne ne répond pas" },
+  };
+  const PHASES = {
+    direct: ["connected", "Branché", "L’encodeur est à l’antenne. Couper BUTT ou Mixxx rend la grille : le moteur vide les files."],
+    silence: ["waiting", "En attente", "Un créneau est ouvert, l’encodeur n’est pas là. L’horloge tient l’antenne."],
+    on: ["absent", "Absent", "Pas d’encodeur branché. La rotation continue."],
+    problem: ["absent", "Absent", "Pas d’encodeur branché. La rotation continue."],
+    off: ["absent", "Absent", "L’antenne ne répond pas."],
+  };
+
+  let remaining = 86, duration = 180;
+  let toastTimer = null;
+
+  function toast(text) {
+    const el = $("toast");
+    el.textContent = text;
+    el.classList.add("is-on");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove("is-on"), 1800);
+  }
+  const mmss = (s) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+
+  function paint() {
+    const state = html.dataset.state;
+    const s = STATES[state];
+    $("banner-label").textContent = s.label;
+    $("banner-cause").textContent = s.cause;
+    html.dataset.hot = state === "silence" ? "true" : "false";
+    const [phase, phaseLabel, detail] = PHASES[state];
+    const ph = $("direct-phase"); ph.dataset.phase = phase; ph.textContent = phaseLabel;
+    $("direct-detail").textContent = detail;
+    $("btn-next").disabled = state === "direct" || state === "off";
+    $("source").textContent = state === "direct" ? "Direct" : state === "off" ? "Arrêt" : "Auto-DJ";
+    $("now-title").innerHTML = state === "direct" ? "Hop Pop Hop <em>— soirée du camp</em>" : "radioart space-wide <em>— Who broadcasts</em>";
+    $("ends").textContent = state === "direct" || state === "off" ? "" : "fin 01:56";
+    html.dataset.ending = (remaining <= 15 && state !== "direct" && state !== "off") ? "true" : "false";
+    $("remain").innerHTML = (state === "off" ? "--:--" : state === "direct" ? mmss(42 * 60 + 11) : mmss(remaining)) + "<small>" + (state === "direct" ? "en direct" : "restant") + "</small>";
+    const pct = Math.max(0, Math.min(100, Math.round(((duration - remaining) / duration) * 100)));
+    $("fill").style.setProperty("--pct", pct + "%");
+    $("head").style.setProperty("--pct", pct + "%");
+  }
+
+  // Horloge + barre vivante.
+  setInterval(() => {
+    const now = new Date();
+    $("clock").textContent = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+    if (html.dataset.state === "on" || html.dataset.state === "silence" || html.dataset.state === "problem") {
+      remaining = remaining > 0 ? remaining - 1 : duration;
+    }
+    paint();
+  }, 1000);
+
+  // Maquette : états.
+  $("demo-state").addEventListener("change", (e) => { html.dataset.state = e.target.value; paint(); });
+  $("demo-ending").addEventListener("click", (e) => {
+    const on = e.currentTarget.getAttribute("aria-pressed") !== "true";
+    e.currentTarget.setAttribute("aria-pressed", String(on));
+    remaining = on ? 14 : 86; paint();
+  });
+  $("demo-library").addEventListener("change", (e) => {
+    html.dataset.library = e.target.value;
+    $("lib-foot").textContent = e.target.value === "results" ? "6 résultats" : e.target.value === "recents" ? "" : e.target.value === "empty" ? "0 résultat" : "";
+  });
+  $("demo-queue").addEventListener("click", (e) => {
+    const on = e.currentTarget.getAttribute("aria-pressed") !== "true";
+    e.currentTarget.setAttribute("aria-pressed", String(on));
+    html.dataset.queue = on ? "empty" : "full";
+  });
+  $("demo-theme").addEventListener("click", () => {
+    html.dataset.appearance = html.dataset.appearance === "dark" ? "light" : "dark";
+  });
+
+  // Passer en direct ? : feuille.
+  const sheet = $("direct-sheet"), toggle = $("direct-toggle");
+  const openSheet = (open) => { sheet.hidden = !open; toggle.setAttribute("aria-expanded", String(open)); if (open) $("direct-close").focus(); else toggle.focus(); };
+  toggle.addEventListener("click", () => openSheet(sheet.hidden));
+  $("direct-close").addEventListener("click", () => openSheet(false));
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !sheet.hidden) openSheet(false); });
+
+  // Renommer le live.
+  $("rename-open").addEventListener("click", () => { $("rename").classList.add("is-open"); $("rename-open").hidden = true; $("rename-title").focus(); });
+  $("rename-cancel").addEventListener("click", () => { $("rename").classList.remove("is-open"); $("rename-open").hidden = false; });
+  $("rename").addEventListener("submit", (e) => {
+    e.preventDefault();
+    STATES.direct.label = "Direct : " + $("rename-title").value.trim();
+    $("rename").classList.remove("is-open"); $("rename-open").hidden = false;
+    toast("Live renommé."); paint();
+  });
+
+  // Suivant.
+  $("btn-next").addEventListener("click", () => { remaining = duration; toast("Titre suivant."); paint(); });
+  document.addEventListener("keydown", (e) => {
+    if (e.target.matches("input, textarea")) return;
+    if (e.code === "Space") { e.preventDefault(); if (!$("btn-next").disabled) $("btn-next").click(); }
+    if (e.key === "/") { e.preventDefault(); $("search").focus(); }
+  });
+
+  // Bibliothèque : toucher = à la suite ; ▶ = maintenant.
+  document.querySelectorAll(".hit").forEach((btn) => btn.addEventListener("click", () => {
+    const li = btn.closest("li").cloneNode(true);
+    const t = btn.querySelector(".t").textContent, a = btn.querySelector(".a").textContent, d = btn.querySelector(".hit-dur").textContent;
+    const row = document.createElement("li");
+    row.className = "is-added";
+    row.innerHTML = `<span class="q-n">${$("queue").children.length + 1}</span><span class="q-until">25:42</span><span class="q-mark q-grip" title="Ajouté à la main, déplaçable"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg></span><span class="q-copy"><span class="t">${t}</span><span class="a">${a}</span></span><span class="q-dur">${d}</span><button class="q-remove" type="button" aria-label="Retirer ${t}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>`;
+    $("queue").appendChild(row);
+    row.scrollIntoView({ block: "nearest" });
+    toast("Mis à la suite.");
+    void li;
+  }));
+  document.querySelectorAll(".play").forEach((btn) => btn.addEventListener("click", () => {
+    if (btn.disabled) return;
+    btn.classList.remove("is-fired"); void btn.offsetWidth; btn.classList.add("is-fired");
+    const t = btn.closest("li").querySelector(".t").textContent, a = btn.closest("li").querySelector(".a").textContent;
+    $("now-title").innerHTML = `${a} <em>— ${t}</em>`;
+    remaining = duration; toast("À l’antenne — coupe.");
+    const card = document.querySelector(".now"); card.animate([{ transform: "scale(1.008)" }, { transform: "none" }], { duration: 240, easing: "cubic-bezier(.22,1,.36,1)" });
+  }));
+  document.querySelector(".queue").addEventListener("click", (e) => {
+    const b = e.target.closest(".q-remove"); if (!b) return;
+    b.closest("li").remove(); toast("Retiré de la file. Annuler");
+  });
+  document.querySelectorAll(".tabs button").forEach((tab) => tab.addEventListener("click", () => {
+    document.querySelectorAll(".tabs button").forEach((b) => b.setAttribute("aria-selected", "false"));
+    tab.setAttribute("aria-selected", "true");
+  }));
+
+  paint();
+  html.dataset.queue = "full";
+})();
+</script>
+</body>
+</html>

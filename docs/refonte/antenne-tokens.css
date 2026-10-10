@@ -1,0 +1,115 @@
+/*
+ * Antenne — tokens de design.
+ * À porter dans ntr-console/src/styles/tokens.css. Les --app-* existants gardent leur nom.
+ * Les tokens d'état (--state-*) sont nouveaux : une seule famille de couleur porte l'état,
+ * toujours accompagnée d'un mot. Ailleurs, la page est neutre.
+ */
+
+:root {
+  color-scheme: light;
+
+  /* Surfaces, texte */
+  --app-bg: #f3f2ee;
+  --app-surface-1: #ffffff;
+  --app-surface-2: #f7f6f2;
+  --app-surface-3: #ebeae5;
+  --app-surface-hover: #e6e4de;
+  --app-border: rgb(20 18 14 / 0.10);
+  --app-border-strong: rgb(20 18 14 / 0.18);
+  --app-text: #14120e;
+  --app-text-muted: #5b574f;
+  --app-text-faint: #8a857b;
+  --app-accent: #14120e;
+  --app-focus: #2b6cb0;
+
+  /* États d'antenne : la couleur ET le mot. */
+  --state-on: #1a7f4b;
+  --state-on-soft: rgb(26 127 75 / 0.12);
+  --state-silence: #a8650a;
+  --state-silence-soft: rgb(168 101 10 / 0.14);
+  --state-direct: #c0332b;
+  --state-direct-soft: rgb(192 51 43 / 0.12);
+  --state-problem: #b9420f;
+  --state-problem-soft: rgb(185 66 15 / 0.14);
+  --state-off: #6f6b63;
+  --state-off-soft: rgb(111 107 99 / 0.12);
+
+  /* Genres, en neutre : ils n'ont pas à crier. */
+  --kind-musique: #14120e;
+  --kind-jingle: #4a463f;
+  --kind-son: #7b776f;
+  --kind-pub: #a8a49b;
+
+  /* Typographie */
+  --font-ui: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
+  --fs-hero: clamp(2.6rem, 6.5vw, 5rem); /* temps restant */
+  --fs-banner: clamp(1.15rem, 2vw, 1.5rem); /* état, heure */
+  --fs-title: 1.2rem; /* artiste — titre */
+  --fs-body: 0.95rem;
+  --fs-meta: 0.8rem;
+  --fs-micro: 0.72rem;
+  --lh-tight: 1.05;
+  --lh-body: 1.4;
+
+  /* Espacement, 4 pt */
+  --sp-1: 0.25rem;
+  --sp-2: 0.5rem;
+  --sp-3: 0.75rem;
+  --sp-4: 1rem;
+  --sp-5: 1.5rem;
+  --sp-6: 2rem;
+
+  /* Rayons */
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-pill: 999px;
+
+  /* Élévation : deux niveaux, pas plus. */
+  --elev-flat: 0 1px 0 rgb(20 18 14 / 0.05);
+  --elev-float: 0 18px 50px rgb(20 18 14 / 0.16);
+
+  /* Mouvement */
+  --motion-fast: 120ms;
+  --motion-base: 200ms;
+  --motion-slow: 320ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* Cibles */
+  --tap: 2.5rem; /* 40 px */
+}
+
+[data-appearance="dark"] {
+  color-scheme: dark;
+  --app-bg: #0c0c0f;
+  --app-surface-1: #141418;
+  --app-surface-2: #1a1a20;
+  --app-surface-3: #23232a;
+  --app-surface-hover: #2b2b33;
+  --app-border: rgb(255 255 255 / 0.09);
+  --app-border-strong: rgb(255 255 255 / 0.18);
+  --app-text: #f2f1ec;
+  --app-text-muted: #a7a39a;
+  --app-text-faint: #7b776f;
+  --app-accent: #f2f1ec;
+  --app-focus: #8ab4f8;
+
+  --state-on: #3ecf8e;
+  --state-on-soft: rgb(62 207 142 / 0.16);
+  --state-silence: #f0b23d;
+  --state-silence-soft: rgb(240 178 61 / 0.16);
+  --state-direct: #ff5a52;
+  --state-direct-soft: rgb(255 90 82 / 0.18);
+  --state-problem: #ff8a3d;
+  --state-problem-soft: rgb(255 138 61 / 0.16);
+  --state-off: #8a857b;
+  --state-off-soft: rgb(138 133 123 / 0.14);
+
+  --kind-musique: #f2f1ec;
+  --kind-jingle: #c9c5bc;
+  --kind-son: #9a968d;
+  --kind-pub: #6f6b63;
+
+  --elev-flat: 0 1px 0 rgb(255 255 255 / 0.03);
+  --elev-float: 0 18px 50px rgb(0 0 0 / 0.5);
+}
