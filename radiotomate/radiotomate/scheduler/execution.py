@@ -394,7 +394,7 @@ def _coverage_rows(rows: list[RundownItem]) -> list[RundownItem]:
     return [row for row in rows if row.status not in ignored]
 
 
-async def ensure_forecast(
+async def ensure_forecast(  # noqa: PLR0913
     session: ormSession,
     beets: BeetsIntegration,
     now: datetime | None = None,

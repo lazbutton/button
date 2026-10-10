@@ -10,15 +10,19 @@ from __future__ import annotations
 import math
 import struct
 import wave
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session as ormSession
 
 from radiotomate.enums import CartMode, ScheduleMode
 from radiotomate.models import AutoDJSlot, Cart, Clock, MusicCategory, Sound, User
 from radiotomate.models.cart import JINGLES_QUEUE
 from radiotomate.services.autodj import apply_clock, create_clock, save_slot
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from sqlalchemy.orm import Session as ormSession
 
 JOUR = "Jour habillé"
 NUIT = "Nuit nappe"
@@ -146,7 +150,7 @@ async def _ensure_clock(session: ormSession, payload: dict) -> Clock:
     return await Clock.from_name(session, payload["name"])
 
 
-async def _point_slot(
+async def _point_slot(  # noqa: PLR0913
     session: ormSession,
     *,
     day: int,

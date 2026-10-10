@@ -206,7 +206,7 @@ async def _make_position(
     return position
 
 
-async def apply_clock(
+async def apply_clock(  # noqa: PLR0912
     session: ormSession,
     clock: Clock,
     data: dict,

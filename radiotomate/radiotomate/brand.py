@@ -73,7 +73,10 @@ def infra(key: str, data: Brand | None = None) -> str:
 
 
 def apply_automate_config(config: dict, data: Brand | None = None) -> dict:
-    """Pose les libellés automate (INTERFACE_NAME, sous-titre, login) sur un mapping Quart."""
+    """Pose les libellés automate sur un mapping Quart.
+
+    INTERFACE_NAME, sous-titre et page de connexion.
+    """
     brand = data or load_brand()
     config["INTERFACE_NAME"] = label("automate", "interfaceName", brand)
     config["SUITE_SUBTITLE"] = label("automate", "subtitle", brand)

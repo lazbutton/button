@@ -22,7 +22,8 @@ async def test_ntf_grille_is_idempotent(
     jour = await Clock.from_name(dbsession, JOUR)
     nuit = await Clock.from_name(dbsession, NUIT)
     assert first["jour"] == JOUR
-    assert jour is not None and nuit is not None
+    assert jour is not None
+    assert nuit is not None
     loaded = await Clock.from_id(dbsession, jour.id, load_positions=True)
     assert [row.kind for row in loaded.sequential_positions()] == [
         "jingle",
@@ -37,8 +38,10 @@ async def test_ntf_grille_is_idempotent(
 
     midnight = await AutoDJSlot.from_time(dbsession, 0, day_of_week=0, exact=True)
     morning = await AutoDJSlot.from_time(dbsession, 7 * 60, day_of_week=3, exact=True)
-    assert midnight is not None and midnight.clock_id == nuit.id
-    assert morning is not None and morning.title == JOUR
+    assert midnight is not None
+    assert midnight.clock_id == nuit.id
+    assert morning is not None
+    assert morning.title == JOUR
     jingles = list((media / "30-habillage" / "jingles").glob("REMPLACANT*.wav"))
     archives = list((media / "20-archives").rglob("REMPLACANT*.wav"))
     assert len(jingles) == 3

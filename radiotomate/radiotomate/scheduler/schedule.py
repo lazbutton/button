@@ -75,7 +75,7 @@ async def push_named_sound(
     return True
 
 
-async def push_bank_path(
+async def push_bank_path(  # noqa: PLR0913
     session: ormSession,
     current_app,
     path: str,

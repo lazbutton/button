@@ -1313,7 +1313,8 @@ async def test_cart_bank_folder_sync_once(  # noqa: PLR0913
     dbsession.expire_all()
     cart = await Cart.from_id(dbsession, cart_id, load_sounds=True)
     user = await User.from_username(dbsession, "cart-bank-sync")
-    assert cart is not None and user is not None
+    assert cart is not None
+    assert user is not None
     first = await sync_bank_folder(dbsession, cart, user.id)
     await dbsession.commit()
     assert [sound.title for sound in first] == ["one.mp3"]
@@ -1359,7 +1360,7 @@ async def test_spa_serves_console_dist(
     assert b"spa-admin" in await carts.get_data()
 
 
-async def test_conducteur_post_refresh_and_reset(  # noqa: PLR0913
+async def test_conducteur_post_refresh_and_reset(  # noqa: PLR0913, PLR0915
     raw_app,
     app_configration: dict,
     beets_integration: BeetsIntegration,

@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 from asyncio import Lock, Queue
+from contextlib import suppress
 from time import monotonic, perf_counter
 
 import httpx
@@ -31,8 +32,7 @@ watching_clients = set()
 
 _flag_sequencer_running = Lock()
 _next_sig_lock = Lock()
-_last_next_sig: tuple | None = None
-_last_clock_at = 0.0
+_relay_state: dict = {"next_sig": None, "clock_at": 0.0}
 _playout_source_state: dict[str, str | None] = {"last": None}
 
 _log = logging.getLogger(__name__)
@@ -99,10 +99,8 @@ async def _post_sidecar(payload: dict) -> None:
         return
     timeout = 2.0
     retry = current_app.config.get("RELAY_METADATA_RETRY") or {}
-    try:
+    with suppress(TypeError, ValueError):
         timeout = max(0.1, min(30.0, float(retry.get("timeout_seconds", timeout))))
-    except (TypeError, ValueError):
-        pass
     async with httpx.AsyncClient(timeout=timeout) as client:
         for target in targets:
             if not isinstance(target, dict):
@@ -120,7 +118,6 @@ async def _post_sidecar(payload: dict) -> None:
 
 
 async def _relay_next_if_changed(live_data: dict) -> None:
-    global _last_next_sig, _last_clock_at
     targets = current_app.config.get("RELAY_METADATA_TO") or []
     if not targets:
         return
@@ -139,12 +136,12 @@ async def _relay_next_if_changed(live_data: dict) -> None:
     send_next = False
     send_clock = False
     async with _next_sig_lock:
-        if sig != _last_next_sig:
-            _last_next_sig = sig
+        if sig != _relay_state["next_sig"]:
+            _relay_state["next_sig"] = sig
             send_next = True
         now = monotonic()
-        if send_next or now - _last_clock_at >= 3.0:
-            _last_clock_at = now
+        if send_next or now - _relay_state["clock_at"] >= 3.0:
+            _relay_state["clock_at"] = now
             send_clock = True
     if not send_clock:
         return

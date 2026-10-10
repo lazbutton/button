@@ -70,7 +70,7 @@ def source_id(live_data: dict) -> str:
         return raw
     if is_harbor_source(raw):
         return "stream"
-    # Auto-DJ, files d’attente internes LS (`insert_initial*`,
+    # Auto-DJ, files d'attente internes LS (`insert_initial*`,
     # `replay_metadata`, `programs`, …) : ne pas relancer les jingles.
     return "autodj"
 
@@ -170,7 +170,7 @@ def track_would_overflow_anchor(
 def can_push_sequential_jingle(live_data: dict) -> bool:
     """Avoid cutting a title mid-way; hard anchors still cut separately.
 
-    Ne jamais enchaîner un jingle pendant qu’un jingle/cart est à l’antenne :
+    Ne jamais enchaîner un jingle pendant qu'un jingle/cart est à l'antenne :
     le fallback Liquidsoap resterait collé sur cette file. Un jingle séquentiel
     ne coupe pas non plus les titres Auto-DJ déjà en file : il attend que la
     file autodj soit vide (fin du titre en cours).
@@ -181,7 +181,7 @@ def can_push_sequential_jingle(live_data: dict) -> bool:
         return False
     if queued_count(live_data, "autodj_queued", "next_autodj") > 0:
         return False
-    if remaining > JINGLE_PREEMPT_REMAINING:
+    if remaining > JINGLE_PREEMPT_REMAINING:  # noqa: SIM103 — NaN stays allowed
         return False
     return True
 

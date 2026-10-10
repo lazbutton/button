@@ -89,7 +89,7 @@ SETTING_CLOCK_SEQ_CLOCK_ID = "clock_seq_clock_id"
 SETTING_CLOCK_SEQ_EPOCH = "clock_seq_epoch"
 TARGET_QUEUE_DEPTH = 2
 # Une seule avance dans la file jingles : fallback Liquidsoap les joue
-# tant qu’il en reste, donc un stock de 2 bouche l’Auto-DJ.
+# tant qu'il en reste, donc un stock de 2 bouche l'Auto-DJ.
 JINGLE_QUEUE_DEPTH = 1
 AUTODJ_BURST_REMAINING = 8.0
 AUTODJ_BURST_DEPTH = 3
@@ -577,7 +577,7 @@ async def _beets_track_gain(beets_id: int) -> str | None:
         return None
 
 
-async def _push_existing_rundown_item(
+async def _push_existing_rundown_item(  # noqa: PLR0912
     session: ormSession,
     gateway: PlayoutGateway,
     item: RundownItem,
@@ -643,7 +643,7 @@ async def _push_existing_rundown_item(
     return True
 
 
-async def _fill_sequential_from_rundown(  # noqa: PLR0913
+async def _fill_sequential_from_rundown(  # noqa: PLR0912, PLR0913
     session: ormSession,
     gateway: PlayoutGateway,
     live_data: dict,

@@ -60,7 +60,10 @@ def forecast_still_covers(
     *,
     min_ahead_min: int = 15,
 ) -> bool:
-    """True if the cached rundown still has enough future, so we must not rebuild from *now*."""
+    """True if the cached rundown still has enough future.
+
+    In that case we must not rebuild from *now*.
+    """
     now = now_paris(now)
     last_end = None
     for item in payload.get("items") or []:
