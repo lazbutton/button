@@ -109,6 +109,38 @@ async def test_cart_ident_pads_and_relay(
     assert missing.status_code == 400
 
 
+async def test_account_password_json(
+    raw_app,
+    app_configration: dict,
+    beets_integration: BeetsIntegration,
+    dbsession: ormSession,
+    users_password: str,
+):
+    client = await _admin_client(
+        app_configration,
+        beets_integration,
+        dbsession,
+        users_password,
+        "self-pass",
+    )
+    empty = await client.put("/account.json", json={"password": "   "})
+    assert empty.status_code == 400
+    updated = await client.put("/account.json", json={"password": "nouveau-mot-de-passe"})
+    assert updated.status_code == 200, await updated.get_data(as_text=True)
+    assert (await updated.get_json())["username"] == "self-pass"
+    fresh = _interface_client(app_configration, beets_integration)
+    old = await fresh.post(
+        "/login.json",
+        json={"username": "self-pass", "password": users_password},
+    )
+    assert old.status_code == 401
+    new = await fresh.post(
+        "/login.json",
+        json={"username": "self-pass", "password": "nouveau-mot-de-passe"},
+    )
+    assert new.status_code == 200
+
+
 async def test_login_json(
     raw_app,
     app_configration: dict,

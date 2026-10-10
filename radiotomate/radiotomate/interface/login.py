@@ -71,7 +71,13 @@ async def log_in_json():
     g.dbsession.add(session)
     await g.dbsession.commit()
     login_user(RadiotomateAuth(session.id))
-    return jsonify({"ok": True})
+    return jsonify(
+        {
+            "ok": True,
+            "username": user.username,
+            "permissions": user.permissions_payload(),
+        },
+    )
 
 
 @blueprint.route("/logout")
