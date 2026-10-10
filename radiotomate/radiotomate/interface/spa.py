@@ -17,13 +17,12 @@ def console_dist() -> Path | None:
 
 
 def register(app: Quart) -> None:
+    # The console's own routes (ntr-console src/App.tsx).
     @app.get("/antenne")
-    @app.get("/horloges")
-    @app.get("/semaine")
     @app.get("/conducteur")
-    @app.get("/categories")
-    @app.get("/habillage")
-    @app.get("/comptes")
+    @app.get("/programmation")
+    @app.get("/sons")
+    @app.get("/reglages")
     async def spa_index():
         dist = console_dist()
         if dist is None:

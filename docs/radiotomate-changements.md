@@ -47,7 +47,7 @@ L’interface HTMX reste. À côté, les mêmes objets ont une forme JSON, avec 
 | Émissions | `/antenne/emissions.json` |
 | Antenne | `/live.json`, `/antenne/state.json`, `/antenne/flush.json` |
 
-`/antenne`, `/horloges`, `/semaine`, `/conducteur`, `/categories`, `/habillage` et `/comptes` renvoient la page d’accueil : la console est une application à part, le moteur sert les données.
+`/antenne`, `/conducteur`, `/programmation`, `/sons` et `/reglages` renvoient la page d’accueil de la console quand son build est posé à côté du moteur (`interface.console_dist`). En production, le nginx de la console sert ces pages lui-même : la console est une application à part, le moteur sert les données.
 
 ## Émissions, banque, comptes
 
