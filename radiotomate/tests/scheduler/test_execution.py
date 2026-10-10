@@ -456,6 +456,54 @@ async def test_reset_conducteur_rebuilds_ids(
     assert first_ids.isdisjoint(second_ids)
 
 
+async def test_reset_conducteur_rebuilds_when_on_air_is_hours_ahead(
+    dbsession: ormSession,
+    jingles_cart,
+    pubs_cart,
+    beets_integration: BeetsIntegration,
+):
+    """A planned_at six hours ahead must not count as coverage."""
+    from datetime import timedelta
+
+    from radiotomate.scheduler.timing import now_paris
+
+    now = datetime(2026, 9, 14, 10, 0, tzinfo=PARIS)
+    payload = await ensure_forecast(
+        dbsession,
+        beets_integration,
+        now=now,
+        cursor=0,
+    )
+    item_id = next(item["id"] for item in payload["items"])
+    row = await RundownItem.from_id(dbsession, item_id)
+    assert row is not None
+    started = datetime(2026, 9, 28, 13, 40)
+    row.status = "on_air"
+    row.started_at = started
+    row.planned_at = started + timedelta(hours=6)
+    later_id = next(
+        item["id"] for item in payload["items"] if item["id"] != item_id
+    )
+    later = await RundownItem.from_id(dbsession, later_id)
+    assert later is not None
+    later.status = "played"
+    later.planned_at = started + timedelta(hours=6, minutes=4)
+    later.closed_at = started
+    await dbsession.commit()
+
+    rebuilt = await reset_conducteur(dbsession, beets_integration)
+    wall = now_paris().replace(tzinfo=None)
+    planned = [
+        datetime.fromisoformat(item["at"]).replace(tzinfo=None)
+        for item in rebuilt["items"]
+        if item.get("status_code") != "played"
+    ]
+    assert planned
+    deltas = [(at - wall).total_seconds() for at in planned]
+    assert any(abs(delta) < 30 * 60 for delta in deltas)
+    assert all(delta < 2 * 3600 for delta in deltas)
+
+
 def test_now_from_live_keeps_the_paris_wall_clock():
     from radiotomate.scheduler.timing import now_from_live
 

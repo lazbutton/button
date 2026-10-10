@@ -383,11 +383,15 @@ async def _payload_from_visible(
 
 
 def _coverage_rows(rows: list[RundownItem]) -> list[RundownItem]:
-    """Rows that count as planned antenna. Failed rows stay visible for the
-    console but never as coverage: a burst of unresolvable pushes (files moved
-    by a bank relink) used to leave a window "full" of failures and nothing
-    playable — hence silence."""
-    return [row for row in rows if row.status != RundownStatus.FAILED.value]
+    """Rows that still count as runway ahead of now.
+
+    Failed rows stay visible for the console but never as coverage: a burst of
+    unresolvable pushes used to leave a window full of failures and silence.
+    Played rows stay in the history, but a planned_at hours ahead of the real
+    start must not count as runway either, or a reset keeps appending there.
+    """
+    ignored = {RundownStatus.FAILED.value, RundownStatus.PLAYED.value}
+    return [row for row in rows if row.status not in ignored]
 
 
 async def ensure_forecast(
@@ -614,6 +618,30 @@ async def clear_live_forecast(session: ormSession) -> None:
         await session.execute(delete(RundownItem).where(RundownItem.id.in_(doomed_ids)))
 
 
+async def _reanchor_on_air(session: ormSession) -> None:
+    """Snap a stuck on-air plan back to the real start.
+
+    As-run realign refuses a shift past ten minutes, so a planned_at hours
+    ahead stays on air. ``forecast_still_covers`` then treats that future as
+    enough runway and a reset rebuilds nothing.
+    """
+    now = naive_datetime(now_paris()) or datetime.now()
+    rows = list(
+        await session.scalars(
+            select(RundownItem).where(
+                RundownItem.status == RundownStatus.ON_AIR.value,
+            )
+        )
+    )
+    for row in rows:
+        if row.origin == DESK_ORIGIN or row.when_mode == WhenMode.ANCHORED.value:
+            continue
+        started = naive_datetime(row.started_at) or now
+        planned = naive_datetime(row.planned_at)
+        if planned is None or abs((planned - started).total_seconds()) > 10 * 60:
+            row.planned_at = started
+
+
 async def reset_conducteur(
     session: ormSession,
     beets: BeetsIntegration,
@@ -622,6 +650,7 @@ async def reset_conducteur(
     """Reset motif cursor, drop queued forecast, persist a fresh window from now."""
     await reset_sequencer(session, commit=False)
     await clear_live_forecast(session)
+    await _reanchor_on_air(session)
     await session.commit()
     payload = await ensure_forecast(session, beets, horizon_min=horizon_min)
     payload = dict(payload)
