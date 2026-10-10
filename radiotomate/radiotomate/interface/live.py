@@ -109,6 +109,8 @@ def normalize_live(md: dict) -> dict:
         "elapsed": _float_field(md.get("elapsed")),
         "duration": _float_field(md.get("duration")),
         "on_air": str(md.get("on_air") or md.get("time") or ""),
+        "initial_uri": str(md.get("initial_uri") or ""),
+        "radiotomate_sound_id": str(md.get("radiotomate_sound_id") or ""),
         "next_autodj": _cue(md.get("next_autodj")),
         "next_jingle": _cue(md.get("next_jingle")),
         "next_cart": _cue(md.get("next_cart")),
