@@ -42,6 +42,73 @@ async def _admin_client(  # noqa: PLR0913
     return client
 
 
+async def test_cart_ident_pads_and_relay(
+    raw_app,
+    app_configration: dict,
+    beets_integration: BeetsIntegration,
+    dbsession: ormSession,
+    users_password: str,
+):
+    client = await _admin_client(
+        app_configration,
+        beets_integration,
+        dbsession,
+        users_password,
+        "ident-relay",
+    )
+    first = await client.post(
+        "/carts.json",
+        json={
+            "title": "Jingles",
+            "mode": "playlist_loop",
+            "schedule_mode": "clock",
+            "ident_pads": True,
+        },
+    )
+    assert first.status_code == 201, await first.get_data(as_text=True)
+    assert (await first.get_json())["cart"]["ident_pads"] is True
+    second = await client.post(
+        "/carts.json",
+        json={"title": "Virgules", "mode": "playlist_loop", "schedule_mode": "clock"},
+    )
+    assert second.status_code == 201, await second.get_data(as_text=True)
+    other = (await second.get_json())["cart"]
+    flagged = await client.put(
+        f"/carts/{other['id']}.json",
+        json={"version": other["version"], "title": "Virgules", "ident_pads": True},
+    )
+    assert flagged.status_code == 200, await flagged.get_data(as_text=True)
+    listed = await (await client.get("/carts.json")).get_json()
+    flags = {row["title"]: row["ident_pads"] for row in listed["carts"]}
+    assert flags["Virgules"] is True
+    assert flags["Jingles"] is False
+    relay = await client.post(
+        "/carts.json",
+        json={
+            "title": "Partenaire",
+            "mode": "relay",
+            "schedule_mode": "clock",
+            "url": "https://radio.exemple/flux.mp3",
+            "max_duration": 1800,
+        },
+    )
+    assert relay.status_code == 201, await relay.get_data(as_text=True)
+    body = (await relay.get_json())["cart"]
+    assert body["mode"] == "relay"
+    assert body["url"] == "https://radio.exemple/flux.mp3"
+    assert body["max_duration"] == 1800
+    missing = await client.put(
+        f"/carts/{body['id']}.json",
+        json={
+            "version": body["version"],
+            "mode": "relay",
+            "url": "https://radio.exemple/flux.mp3",
+            "max_duration": 0,
+        },
+    )
+    assert missing.status_code == 400
+
+
 async def test_login_json(
     raw_app,
     app_configration: dict,

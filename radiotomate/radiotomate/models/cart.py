@@ -49,6 +49,7 @@ class Cart(Base):
     max_duration: Mapped[int] = mapped_column(Integer)
     notes: Mapped[str] = mapped_column(String, nullable=False, default="")
     bank_folder: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    ident_pads: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created: Mapped[datetime] = mapped_column(DATETIME, default=datetime.now)
     modified: Mapped[datetime] = mapped_column(
         DATETIME,

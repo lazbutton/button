@@ -293,6 +293,7 @@ def _cart_json(cart: Cart, sounds: list[Sound] | None = None) -> dict:
         "schedule_second": cart.schedule_second,
         "next_sound_id": nxt.id if nxt else None,
         "bank_folder": cart.bank_folder or "",
+        "ident_pads": bool(getattr(cart, "ident_pads", False)),
         "finder_path": (media_bank.finder_rel(cart.id, cart.title) if cart.id else ""),
         "sounds": [_sound_json(sound) for sound in listed],
     }
@@ -386,11 +387,23 @@ def _poke_schedule(cart: Cart) -> None:
     current_app.add_background_task(poke_scheduler, cart.id)
 
 
+async def _clear_other_ident_pads(cart_id: int) -> None:
+    from sqlalchemy import update
+
+    await g.dbsession.execute(
+        update(Cart)
+        .where(Cart.id != cart_id, Cart.ident_pads.is_(True))
+        .values(ident_pads=False)
+    )
+
+
 def _apply_cart_json(cart: Cart, data: dict) -> None:  # noqa: PLR0912
     if "mode" in data:
         cart.mode = _enum_from_json(CartMode, data.get("mode"), "mode")
     if "notes" in data:
         cart.notes = str(data.get("notes") or "")
+    if "ident_pads" in data:
+        cart.ident_pads = bool(data.get("ident_pads"))
     if "bank_folder" in data:
         try:
             cart.bank_folder = media_bank.normalize_bank_folder(data.get("bank_folder"))
@@ -513,6 +526,9 @@ async def create_cart_json():
     _apply_cart_json(cart, data)
     g.dbsession.add(cart)
     await g.dbsession.commit()
+    if cart.ident_pads:
+        await _clear_other_ident_pads(cart.id)
+        await g.dbsession.commit()
     cart_root = current_app.config["DATA_ROOT"] / "carts"
     cart.path = safe_path(cart_root, title, prefix=str(cart.id))
     cart.path.mkdir(parents=True)
@@ -540,6 +556,8 @@ async def update_cart_json(cart_id: int):
             raise BadRequest("Please provide a title")
         await _rename_cart_title(cart, title)
     _apply_cart_json(cart, data)
+    if cart.ident_pads:
+        await _clear_other_ident_pads(cart.id)
     media_bank.bind_cart_bank(cart)
     await g.dbsession.commit()
     _poke_schedule(cart)
