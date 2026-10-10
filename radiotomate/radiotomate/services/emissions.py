@@ -37,6 +37,42 @@ def set_on_air_cache(payload: dict | None) -> None:
     _on_air_cache["payload"] = payload
 
 
+async def harbor_allowed(session: ormSession, user, now: datetime | None = None) -> bool:
+    """Stream login is open until a weekly show names a host.
+
+    An admin can always connect. A stream user can connect at any time while
+    no weekly emission has a host. Once at least one show names a host, that
+    user can connect only during their own slot.
+    """
+    if not user.can_stream():
+        return False
+    if user.can_admin():
+        return True
+    moment = now_paris(now)
+    weeklies = await Emission.all_weekly(session)
+    hosted = [row for row in weeklies if (row.host_username or "").strip()]
+    if not hosted:
+        return True
+    name = (user.username or "").strip().lower()
+    for row in hosted:
+        if (
+            row.day_of_week is None
+            or row.start_minute is None
+            or row.end_minute is None
+        ):
+            continue
+        if not weekly_contains(
+            moment,
+            int(row.day_of_week),
+            int(row.start_minute),
+            int(row.end_minute),
+        ):
+            continue
+        if (row.host_username or "").strip().lower() == name:
+            return True
+    return False
+
+
 def emission_payload(row: Emission) -> dict:
     payload = {
         "id": row.id,
@@ -49,6 +85,7 @@ def emission_payload(row: Emission) -> dict:
         payload["day_of_week"] = row.day_of_week
         payload["start_minute"] = row.start_minute
         payload["end_minute"] = row.end_minute
+        payload["host_username"] = row.host_username or ""
     else:
         payload["starts_at"] = row.starts_at.isoformat() if row.starts_at else None
         payload["ends_at"] = row.ends_at.isoformat() if row.ends_at else None
@@ -244,6 +281,7 @@ async def create_weekly(session: ormSession, data: dict) -> Emission:
         day_of_week=day,
         start_minute=start,
         end_minute=end,
+        host_username=str(data.get("host_username") or "").strip(),
     )
     session.add(row)
     await session.flush()
@@ -285,6 +323,8 @@ async def update_weekly(session: ormSession, row: Emission, data: dict) -> Emiss
     row.day_of_week = day
     row.start_minute = start
     row.end_minute = end
+    if "host_username" in data:
+        row.host_username = str(data.get("host_username") or "").strip()
     await session.flush()
     return row
 

@@ -22,6 +22,7 @@ class Emission(Base):
     scope: Mapped[str] = mapped_column(String, nullable=False, index=True)
     title: Mapped[str] = mapped_column(String, nullable=False)
     artist: Mapped[str] = mapped_column(String, nullable=False, default="")
+    host_username: Mapped[str] = mapped_column(String, nullable=False, default="")
     day_of_week: Mapped[int | None] = mapped_column(Integer, nullable=True)
     start_minute: Mapped[int | None] = mapped_column(Integer, nullable=True)
     end_minute: Mapped[int | None] = mapped_column(Integer, nullable=True)

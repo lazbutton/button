@@ -9,6 +9,7 @@ from werkzeug.exceptions import BadRequest, Unauthorized
 
 from radiotomate.auth import token_required
 from radiotomate.models import User
+from radiotomate.services.emissions import harbor_allowed
 
 _log = logging.getLogger(__name__)
 
@@ -30,7 +31,7 @@ async def can_stream():
     user = await User.check(g.dbsession, username, password)
     if not user:
         raise Unauthorized("Incorrect username or password")
-    if not user.can_stream():
+    if not await harbor_allowed(g.dbsession, user):
         raise Unauthorized("User is not authorized to stream")
 
     return ""
