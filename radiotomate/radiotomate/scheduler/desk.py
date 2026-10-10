@@ -171,10 +171,15 @@ async def _planned_at_for_insert(
     session: ormSession,
     *,
     after_id: str | None,
+    before_id: str | None,
     replace_at: str | None,
 ) -> datetime:
     if replace_at:
         return _parse_iso(replace_at)
+    if before_id:
+        target = await RundownItem.from_id(session, before_id)
+        if target is not None and target.planned_at is not None:
+            return target.planned_at - timedelta(milliseconds=500)
     if after_id:
         after = await RundownItem.from_id(session, after_id)
         if after is not None:
@@ -211,6 +216,7 @@ async def insert_desk_item(session: ormSession, data: dict) -> RundownItem:
     planned_at = await _planned_at_for_insert(
         session,
         after_id=str(data.get("after_id") or "").strip() or None,
+        before_id=str(data.get("before_id") or "").strip() or None,
         replace_at=str(data.get("replace_at") or "").strip() or None,
     )
     details = {
@@ -326,24 +332,29 @@ async def delete_desk_item(session: ormSession, item_id: str) -> None:
 
 
 async def reorder_desk_items(session: ormSession, ids: list[str]) -> None:
+    """Pack the given rows from the earliest of their start times.
+
+    Desk pins and clock rows in the antenna file both move. On-air and hard
+    anchors stay put.
+    """
     if not ids:
         raise DomainValidationError("Liste d'identifiants requise.", field="ids")
-    rows = {
-        row.id: row
-        for row in await list_active_desk_items(session)
-        if not (row.details or {}).get("suppress_at")
-    }
+    found = list(
+        await session.scalars(select(RundownItem).where(RundownItem.id.in_(ids)))
+    )
+    by_id = {row.id: row for row in found}
     ordered: list[RundownItem] = []
     for item_id in ids:
-        row = rows.get(item_id)
-        if row is None:
+        row = by_id.get(item_id)
+        if row is None or row.status in _CLOSED_DESK_STATUSES:
             continue
         if item_is_locked(row):
             raise DomainConflict("Impossible de réordonner un passage verrouillé.")
         ordered.append(row)
     if not ordered:
-        raise DomainValidationError("Aucun passage pupitre à réordonner.", field="ids")
-    cursor = await _on_air_end(session) or datetime.now()
+        raise DomainValidationError("Aucun passage à réordonner.", field="ids")
+    starts = [row.planned_at for row in ordered if row.planned_at is not None]
+    cursor = min(starts) if starts else await _on_air_end(session) or datetime.now()
     for index, row in enumerate(ordered):
         row.planned_at = naive_datetime(cursor) or datetime.now()
         row.sequence = index
