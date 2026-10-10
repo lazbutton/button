@@ -77,7 +77,9 @@ async def test_users_crud(admin_page: Page, page: Page):  # noqa: PLR0915
 
     # log that user in, so he'll be associated to basic data (like, a first session)
     await editeduser_page.goto("/")
-    await editeduser_page.nav("Connexion")
+    await expect(
+        editeduser_page.get_by_role("navigation").get_by_role("link", name="Connexion")
+    ).to_have_attribute("aria-current", "page")
     await editeduser_page.get_by_role("textbox", name="Identifiant").fill("editeduser")
     await editeduser_page.get_by_role("textbox", name="Mot de passe").fill(
         "testpassword"
@@ -100,7 +102,7 @@ async def test_users_crud(admin_page: Page, page: Page):  # noqa: PLR0915
     await expect(users_page.user_line("editeduser")).not_to_be_visible()
 
     # test that the user can't log in with the old password
-    await editeduser_page.nav("Connexion")
+    await editeduser_page.goto("/login")
     await editeduser_page.get_by_role("textbox", name="Identifiant").fill("editeduser")
     await editeduser_page.get_by_role("textbox", name="Mot de passe").fill(
         "testpassword"

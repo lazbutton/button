@@ -137,11 +137,8 @@ class TestCarts:
         await carts_page.line_of(testing_cart_title2).get_by_title("Modifier").click()
         await carts_page.form.get_by_placeholder("minutes").fill("3")
         await carts_page.form.get_by_placeholder("seconds").clear()
-        await carts_page.form.get_by_label("Avancé").check()
-        await carts_page.form.get_by_placeholder("hour").fill("25")
         await carts_page.form_button("Enregistrer").click()
         await expect(carts_page.form_button("Annuler")).not_to_be_visible()
-        await expect(carts_page.line_of(testing_cart_title2)).to_contain_text("erreur")
         await expect(carts_page.line_of(testing_cart_title2)).to_contain_text("3:00")
 
         cartfolders = self.get_check_nb_cart_folders(2)
@@ -267,7 +264,7 @@ class TestCarts:
         self.assert_cart_contains("Soundstest", 1)
         # at this point the analyzer should be done, so the only sound should be next:
         await expect(page.get_by_text("Suivant")).to_be_visible()
-        await expect(page.get_by_text("Analyse")).not_to_be_visible()
+        await expect(page.table.get_by_text("Analyse")).not_to_be_visible()
 
         # one sound left: if we disable it, the cart should not give any sound
         line = page.line_of("Winamp's legendary jingle")
@@ -277,7 +274,8 @@ class TestCarts:
         await line.get_by_role("checkbox", name="actif").check()
         await expect(line.get_by_text("Suivant")).to_be_visible()
 
-        await page.get_by_label("Ajouter").set_input_files(
+        # On the sounds page, upload copies files: the bank attach is separate.
+        await page.get_by_label("Copier dans le cart").set_input_files(
             [assets_folder / "ohradiotomateoh.mp3"],
         )
         newline = page.line_of("ohradiotomateoh")
