@@ -20,7 +20,7 @@ from quart import (
     url_for,
 )
 from quart_auth import Unauthorized
-from sqlalchemy import select
+from sqlalchemy import select, update
 from werkzeug.exceptions import BadRequest, Conflict, NotFound
 
 from radiotomate.auth import current_user, login_required, permission_required
@@ -31,6 +31,7 @@ from radiotomate.interface.autodj import invalidate_conducteur_cache
 from radiotomate.interface.json_util import forbidden_unless, read_json_object
 from radiotomate.interface.spa import console_dist
 from radiotomate.models import Cart, Sound
+from radiotomate.models.execution import RundownItem
 from radiotomate.models.cart import URL_TO_AUTODJ_QUEUE
 from radiotomate.scheduler_api import Scheduler
 from radiotomate.services import media_bank
@@ -693,12 +694,23 @@ async def delete_sounds_json(cart_id: int):
         if not sound or sound.cart_id != cart_id:
             raise NotFound(f"Sound {sound_id} not found")
         await release_sound_file(g.dbsession, cart, sound)
+        await _detach_sound_refs(sound.id)
         await g.dbsession.delete(sound)
     await g.dbsession.flush()
     await Sound.update_ranks(g.dbsession, cart_id)
     await g.dbsession.commit()
     cart = await _load_cart_json(cart_id)
     return jsonify({"cart": _cart_json(cart)})
+
+
+async def _detach_sound_refs(sound_id: int) -> None:
+    """Le conducteur garde la ligne, sans pointeur vers un son supprimé."""
+    await g.dbsession.execute(
+        update(RundownItem)
+        .where(RundownItem.sound_id == sound_id)
+        .values(sound_id=None)
+    )
+    await g.dbsession.flush()
 
 
 @blueprint.delete("/carts/<int:cart_id>/sounds/<int:sound_id>.json")
@@ -714,6 +726,7 @@ async def delete_sound_json(cart_id: int, sound_id: int):
     if not cart:
         raise NotFound(f"Cart {cart_id} not found")
     await release_sound_file(g.dbsession, cart, sound)
+    await _detach_sound_refs(sound.id)
     await g.dbsession.delete(sound)
     await g.dbsession.flush()
     await Sound.update_ranks(g.dbsession, cart_id)
@@ -1108,6 +1121,7 @@ async def delete_sound(cart_id: int, sound_id: int):
         raise NotFound(f"Sound {sound_id} is not in cart {cart_id}")
 
     await release_sound_file(g.dbsession, sound.cart, sound)
+    await _detach_sound_refs(sound.id)
     await g.dbsession.delete(sound)
     await g.dbsession.flush()
 
