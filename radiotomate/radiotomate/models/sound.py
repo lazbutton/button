@@ -8,7 +8,7 @@ from sqlalchemy import Boolean, ForeignKey, Integer, String, func, or_, select
 from sqlalchemy.dialects.sqlite import DATETIME
 from sqlalchemy.orm import Mapped, Session, mapped_column, relationship
 
-from radiotomate.db import Base
+from radiotomate.db import Base, PathLike
 
 _log = logging.getLogger(__name__)
 
@@ -62,19 +62,22 @@ class Sound(Base):
     @classmethod
     async def from_media_path(cls, session: Session, path: str) -> Sound | None:
         raw = str(path or "").strip().replace("\\", "/")
+        if raw.startswith(PathLike.MEDIA_PREFIX):
+            raw = raw[len(PathLike.MEDIA_PREFIX) :]
+        raw = raw.lstrip("/")
         if not raw:
             return None
-        exact = await session.scalar(select(Sound).where(Sound.path == Path(raw)))
+        candidate = Path(raw)
+        if not candidate.is_absolute():
+            candidate = PathLike.media_root() / raw
+        exact = await session.scalar(select(Sound).where(Sound.path == candidate))
         if exact is not None:
             return exact
         sounds = list(await session.scalars(select(Sound)))
+        needle = candidate.as_posix()
         for sound in sounds:
             stored = str(sound.path or "").replace("\\", "/")
-            if (
-                stored == raw
-                or stored.endswith("/" + raw)
-                or raw.endswith("/" + stored)
-            ):
+            if stored == needle or stored.endswith("/" + raw) or needle.endswith("/" + stored):
                 return sound
         return None
 
