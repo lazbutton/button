@@ -162,10 +162,10 @@ class TestCarts:
 
     async def test_carts_simple_timing(self, admin_page: Page):
         """
-        Switch between simple and advanced timing
+        Schedule modes and queue choice
 
-        When using the advanced mode, we also push to the Auto-DJ queue: when switching
-        back to simple timing it should fallback to the Carts queue automatically.
+        Only Horloge and Jingles are offered. A non-relay cart keeps its queue
+        choice (its own queue, or Auto-DJ) across saves.
         """
         carts_page = CartsPage(admin_page)
         await admin_page.goto("/carts")
@@ -189,11 +189,12 @@ class TestCarts:
         await carts_page.form.get_by_label("Auto-DJ").click()
         await carts_page.form_button("Ajouter").click()
 
-        await carts_page.line_of("Testing cart modes").get_by_title("Modifier").click()
-        await expect(carts_page.form.get_by_label("Auto-DJ")).to_be_checked()
+        # The edit form is its own page: read the list line before opening it.
         await expect(carts_page.line_of("Testing cart modes")).to_contain_text(
             "Jingles"
         )
+        await carts_page.line_of("Testing cart modes").get_by_title("Modifier").click()
+        await expect(carts_page.form.get_by_label("Auto-DJ")).to_be_checked()
 
     async def test_carts_sounds(self, admin_page: Page, luser_page: Page):  # noqa: PLR0915
         """

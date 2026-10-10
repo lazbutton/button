@@ -131,6 +131,29 @@
         </div>
     </div>
 
+    <template x-if="mode != '{{ CartMode.RELAY.name }}'">
+        <div class="field is-horizontal">
+            <div class="field-label">
+                <label class="label">File</label>
+            </div>
+            <div class="field-body">
+                <div class="field">
+                    <div class="radios">
+                        <label class="radio">
+                            <input type="radio" name="queue" value="carts" {{ 'checked' if not cart or cart.url !='autodj' else '' }} />
+                            <span x-text="schedule == '{{ ScheduleMode.JINGLES.name }}' ? 'Jingles' : 'Carts'">Carts</span>
+                        </label>
+                        <label class="radio">
+                            <input type="radio" name="queue" value="autodj" {{ 'checked' if cart and cart.url=='autodj' else '' }} />
+                            Auto-DJ
+                        </label>
+                    </div>
+                    <p class="help">Auto-DJ : les sons passent dans la file de la musique, sans couper le titre en cours.</p>
+                </div>
+            </div>
+        </div>
+    </template>
+
     <template x-if="schedule == '{{ ScheduleMode.TIMED.name }}'"><div>
         <template x-if="advanced">
             <div>
@@ -140,21 +163,6 @@
                     </div>
                     <div class="field-body">
                         {{ cron_formula(cart) }}
-                    </div>
-                </div>
-                <div class="field is-horizontal">
-                    <div class="field-label">
-                        <label class="label">File</label>
-                    </div>
-                    <div class="field-body radios">
-                        <label class="radio">
-                            <input type="radio" name="queue" value="carts" {{ 'checked' if not cart or cart.url !='autodj' else '' }} />
-                            Carts
-                        </label>
-                        <label class="radio">
-                            <input type="radio" name="queue" value="autodj" {{ 'checked' if cart and cart.url=='autodj' else '' }} />
-                            Auto-DJ
-                        </label>
                     </div>
                 </div>
             </div>
