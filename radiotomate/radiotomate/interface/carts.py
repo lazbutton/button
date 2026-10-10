@@ -389,8 +389,6 @@ def _poke_schedule(cart: Cart) -> None:
 
 
 async def _clear_other_ident_pads(cart_id: int) -> None:
-    from sqlalchemy import update
-
     await g.dbsession.execute(
         update(Cart)
         .where(Cart.id != cart_id, Cart.ident_pads.is_(True))
