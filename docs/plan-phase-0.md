@@ -4,7 +4,7 @@ Sep 27, 2026 · @LAZ
 
 La phase 0 tient en six sprints de deux semaines, du 28 septembre au 20 décembre 2026, pour 96 à 165 h de travail. La première radio bêta arrive le 7 décembre, et le critère de passage se vérifie le 15 janvier 2027.
 
-Chaque lot dit ce qu'il faut construire et à quoi on reconnaît qu'il est fini ; aucune ligne de code. Le plan découle du doc [Business model de l'automate BUTTON](https://claude.ai/code/artifact/978701ac-52e6-40d2-a1b7-0c4961139071).
+Chaque lot dit ce qu'il faut construire et à quoi on reconnaît qu'il est fini ; aucune ligne de code. Le plan découle du doc [Business model de l'automate BUTTON](https://claude.ai/code/artifact/978701ac-52e6-40d2-a1b7-0c4961139071). La radio du festival est dans [`ntf-radio-plan-v0.md`](ntf-radio-plan-v0.md).
 
 ## Périmètre
 
@@ -117,10 +117,10 @@ Objectif : n'exposer que l'utile, cloisonner les radios.
 
 Objectif : des transitions douces sur l'auto-DJ, sans casser les ancres horaires. Le bug [savonet/liquidsoap#4179](https://github.com/savonet/liquidsoap/issues/4179) laisse les transitions de `fallback` en coupe ; le fondu se fait donc en amont, sur la file.
 
-- [ ] Fondu sur la file auto-DJ, avant le `fallback`
-- [ ] Durées réglées à l'oreille : environ 3 s entre titres, court ou nul vers un jingle
-- [ ] Coupe franche assumée sur live ↔ automate, jusqu'à la 2.5
-- [ ] Ancres dures toujours à l'heure
+- [x] Fondu sur la file auto-DJ, avant le `fallback` — `crossfade` 3 s sur `autodj_queue` (27 septembre 2026). Pas encore à l'antenne : Nasgul tire encore `RC_WEB_RADIO`
+- [ ] Durées réglées à l'oreille : environ 3 s entre titres, court ou nul vers un jingle — le banc montre un recouvrement de 3 s ; l'écoute sur l'antenne n'est pas faite
+- [x] Coupe franche assumée sur live ↔ automate, jusqu'à la 2.5 — `crossfade_3s` inchangé
+- [x] Ancres dures toujours à l'heure — ancre à la minute 0, dure sur `Jour habillé`, molle sur `Nuit nappe` (`radiotomate ntf-grille`)
 - [ ] Écouter 50 enchaînements sur BUTTON
 
 **Fini quand** 50 enchaînements passent sans coupe audible et que les ancres tombent à l'heure.
@@ -130,20 +130,20 @@ Objectif : des transitions douces sur l'auto-DJ, sans casser les ancres horaires
 Objectif : un vrai direct où le DJ entre seul et revient à la grille sans accroc.
 
 - [ ] Brancher un vrai encodeur sur le harbor en suivant `live-qg.md` : BUTT, puis Mixxx
-- [ ] Un identifiant par DJ, valable seulement sur son créneau
-- [ ] Retour à la grille sans reprendre un titre en cours (EF-07)
-- [ ] Filet et alerte quand l'encodeur manque (EF-01)
+- [x] Un identifiant par DJ, valable seulement sur son créneau — émission hebdo `host_username`, refus au harbor hors créneau une fois qu’un animateur est nommé (27 septembre 2026). Pas encore sur Nasgul : migration `v15`
+- [x] Retour à la grille sans reprendre un titre en cours (EF-07) — test `test_harbor_disconnect_flushes_jingles_and_autodj`
+- [x] Filet et alerte quand l'encodeur manque (EF-01) — `live_absent` après la grâce, l’horloge reste à l’antenne
 - [ ] Éprouver une coupure réseau de 30 s pendant un direct
-- [ ] Fiche « passer en direct », une page
+- [x] Fiche « passer en direct », une page — [`passer-en-direct.md`](passer-en-direct.md)
 
-**Fini quand** trois directs d'une heure passent sans intervention et qu'un DJ hors créneau est refusé.
+**Fini quand** trois directs d'une heure passent sans intervention et qu'un DJ hors créneau est refusé. Le refus est testé ; les trois directs non.
 
 ### L5 · Dépôt de musique par le navigateur — 15–25 h, S3
 
 Objectif : une radio envoie sa musique depuis un navigateur, sans toi.
 
 - [ ] Page d'envoi reprenable (Uppy + tusd) vers l'inbox
-- [ ] Promotion automatique via `promote-inbox`, conversion et ReplayGain
+- [x] Promotion automatique via `promote-inbox`, conversion et ReplayGain — la boucle du conteneur dropbox promeut `00-inbox` à chaque tour, convertit wav/aiff, puis Beets indexe (plugin ReplayGain). Actif sur Nasgul à la prochaine recréation de ce conteneur. Pas de page d’envoi.
 - [ ] Refus des formats inconnus, doublons signalés
 - [ ] Avancement et rejets affichés avec leur raison
 - [ ] Quota de stockage par station
@@ -200,7 +200,7 @@ Objectif : déployer sans risquer toutes les stations d'un coup.
 Objectif : une radio s'installe seule avec la doc.
 
 - [ ] Doc courte : envoyer sa musique, régler une horloge, passer en direct, lire ses alertes
-- [ ] Deux modèles d'horloges : rotation habillée et nuit
+- [x] Deux modèles d'horloges : rotation habillée et nuit — `Jour habillé` et `Nuit nappe`, commande `radiotomate ntf-grille`, banc local seulement
 - [ ] Convention de bêta, une page : gratuité sans garantie ; SACEM et SPRE à la charge de la radio
 - [ ] Point hebdomadaire de 15 min et formulaire de retour
 

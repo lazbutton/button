@@ -1,0 +1,107 @@
+# Radiotomate — ce qui a changé
+
+28 septembre 2026.
+
+Ce texte décrit le moteur dans `radiotomate/` par rapport à l’amont [Radiotomate](https://radiotomate.org/) de Martin Kirchgessner, commit `130030bb` (`https://git.sr.ht/~martink/radiotomate`). Licence inchangée : AGPL-3.0-or-later. Le `README.md` et le `CHANGELOG.md` du dossier restent ceux de l’amont.
+
+Sur 127 fichiers de l’amont, 58 sont identiques et 69 ont été modifiés. Les modules nouveaux sont listés plus bas. `radio_data/` (base, YAML, sons de remplacement) est une donnée locale, pas une modification du logiciel.
+
+L’amont programme les carts avec APScheduler et des formules cron. Ici, l’antenne est tenue par des horloges, un conducteur et des files Liquidsoap. La console (`ntr-console`) parle au moteur en JSON. L’interface HTMX d’origine est toujours là.
+
+## Horloges à la place du cron
+
+APScheduler est retiré (`pyproject.toml`, migration v14). Le mode `TIMED` devient `CLOCK`. Les tables `apscheduler_*` sont supprimées. `max_duration` n’est plus un job cron : c’est une minuterie dans le processus (`scheduler/timers.py`). `GET /schedule/<id>` donne la prochaine coupure.
+
+Une horloge est un motif de positions (`musique`, `jingle`, `son`, `pub`), enchaînées ou calées sur une minute. Une ancre est dure ou molle. Les jingles coupent l’auto-DJ, pas le direct, pas un relais, pas un cart déjà à l’antenne. Pendant un harbor, l’horloge se met en pause : elle ne saute rien et n’empile pas les ancres dues pour les lâcher après le direct.
+
+Le tick d’une seconde venu de Liquidsoap ne recalcule l’horloge que si l’état a changé, à la minute, ou à moins de dix secondes de la fin du titre (`live.should_run_tick`).
+
+Deux grilles prêtes : `Jour habillé` (jingle et trois titres, ancre dure à l’heure, de 7 h à minuit) et `Nuit nappe` (virgule et six titres, ancre molle, de minuit à 7 h). La commande `radiotomate ntf-grille` les pose et crée des sons de remplacement dans la banque.
+
+La séparation des artistes et des titres est dans `scheduler/music_rules.py`.
+
+## Conducteur et vérité d’antenne
+
+Le scheduler ne pousse plus un son au moment où le cron sonne. Il prévoit une file (`rundown_items`), envoie des commandes (`playout_commands`) et réconcilie ce qui a vraiment joué.
+
+Les statuts d’une ligne vont de `planned` à `played`, en passant par `on_air`, `skipped`, `rescue` ou `failed`. Une commande est `pending`, `acknowledged` ou `expired`.
+
+Liquidsoap 2.4.5 annote chaque push avec `radiotomate_queue`. Le journal d’antenne s’appuie sur cette annotation. Les transitions `fallback` restent en coupe (bug [savonet/liquidsoap#4179](https://github.com/savonet/liquidsoap/issues/4179)) : `current_source_id` seul marquait à tort un cart comme de l’auto-DJ. Le fondu de trois secondes est sur la file auto-DJ, avant le `fallback`.
+
+`/queue/flush` accepte un corps optionnel `{"queues": […]}`. L’URL de relais vient de `playout_process_config.relay_url`. Le script expose aussi `/health`, un gain ReplayGain, et des mesures de charge.
+
+Un titre Beets sans `rg_track_gain` est analysé à la prévision (`analyze_item_soon`), puis au push si le gain manque encore (`ensure_item_gain`). Rien n’est poussé sans gain.
+
+## API pour la console
+
+L’interface HTMX reste. À côté, les mêmes objets ont une forme JSON, avec un jeton CSRF (`GET /csrf.json`, en-tête `X-CSRF-Token`) sur les écritures authentifiées par cookie. `POST /login` et `POST /login.json` en sont exemptés.
+
+| Domaine | Chemins |
+| --- | --- |
+| Compte | `/account.json`, `/login.json` |
+| Utilisateurs | `/users.json` |
+| Carts et sons | `/carts.json`, sons, rangs, lecture immédiate |
+| Banque | `/media/bank.json` |
+| Horloges | `/autodj/clocks.json`, `/slots.json`, `/categories.json` |
+| Conducteur | `/autodj/conducteur.json` |
+| Émissions | `/antenne/emissions.json` |
+| Antenne | `/live.json`, `/antenne/state.json`, `/antenne/flush.json` |
+
+`/antenne`, `/horloges`, `/semaine`, `/conducteur`, `/categories`, `/habillage` et `/comptes` renvoient la page d’accueil : la console est une application à part, le moteur sert les données.
+
+## Émissions, banque, comptes
+
+Une émission (`emissions`, migrations v10 et v15) a un titre, un créneau hebdomadaire ou daté, et un `host_username`. Le créneau live sans encodeur est l’alerte `live_absent` (EF-01) : le filet est l’horloge du moment, pas un silence.
+
+Un cart peut pointer un dossier de la banque (`bank_folder`, v12) et marquer ses sons comme pads d’identifiant (`ident_pads`, v16). Les jingles par défaut prennent le dossier `30-habillage/jingles`.
+
+Chaque personne a une page de compte. Les utilisateurs se créent et se modifient aussi en JSON.
+
+## Exploitation
+
+Le scheduler surveille l’antenne (`scheduler/alerts.py`) : silence, playout injoignable, heartbeat perdu, sortie Icecast coupée, créneau live sans encodeur. Une alerte part une fois, puis une note de retour, vers un webhook JSON ou une tâche Vikunja. Le bloc YAML est `alerts:`.
+
+`/metrics` est écrit dans `data/metrics.json`, et une ligne par heure dans `data/exports/metrics.jsonl`.
+
+`scheduler/retention.py` purge ce qui est fini : conducteur joué, commandes acquittées, versions orphelines. Le journal `metadata_log` est exporté en JSONL avant suppression. Rien de futur n’est effacé.
+
+`/health/live` et `/health/ready` existent sur l’interface et le scheduler. L’installateur Podman ajoute les sondes correspondantes, et peut monter la banque (`MEDIA_HOST`, `MEDIA_ROOT`) dans les conteneurs.
+
+`beets/compat.py` corrige l’import de Beets 2.5 sous Python 3.14 : l’ioctl de taille de terminal demandait 4 octets, le noyau en écrit 8.
+
+## Marque et interface
+
+`brand.json` et `brand.py` portent le nom affiché (`INTERFACE_NAME`), le logo et les libellés. `layout.jinja` est en `lang=fr`, avec `suite.css`. La feuille `sass/_suite.scss` est la charte noir et blanc du pupitre. Les pages HTMX d’origine (live, carts, auto-DJ, utilisateurs) restent servies par le même processus.
+
+## Schéma, de v7 à v16
+
+L’amont s’arrête à v6. Les versions suivantes :
+
+| Version | Effet |
+| --- | --- |
+| v7 | Catégories musicales, horloges, positions, créneaux du jour et de la nuit |
+| v8 | Versions de programmation, lignes de conducteur, commandes vers le playout |
+| v9 | La catégorie Rotation cherche `path:/media/10-rotation` |
+| v10 | Table des émissions |
+| v11 | Les libellés NTR deviennent BUTTON |
+| v12 | `carts.bank_folder` |
+| v13 | Les crons laissés par défaut passent en mode horloge |
+| v14 | Tous les carts `TIMED` passent en `CLOCK`, tables APScheduler supprimées |
+| v15 | `emissions.host_username` |
+| v16 | `carts.ident_pads` |
+
+## Modules ajoutés
+
+Horloges et antenne : `scheduler/clock.py`, `timing.py`, `music_rules.py`, `desk.py`, `execution.py`, `rundown.py`, `playout.py`, `antenne.py`, `timers.py`, `queue_cleaner.py`, `bank_sync.py`, `outbox.py`.
+
+Exploitation : `alerts.py`, `metrics.py`, `retention.py`, `health.py`, et `interface/health.py`.
+
+Métier : `domain/`, `services/` (carts, auto-DJ, émissions, banque, grille NTF), `models/clock.py`, `emission.py`, `execution.py`, `music_category.py`.
+
+Interface : `account.py`, `csrf.py`, `emissions.py`, `integrity.py`, `json_util.py`, `spa.py`.
+
+Les tests nouveaux couvrent l’horloge, le conducteur, les alertes, le harbor, la rétention, la grille NTF, le CSRF, les JSON d’admin et le tick filtré. `liquidsoap --check` sur `playout/radiotomate.liq` fait partie de la vérification.
+
+## Ce qui n’a pas bougé
+
+Le choix d’un son dans un cart (playlist, boucle, aléatoire, relais), les filtres Beets de l’auto-DJ, le harbor, les comptes et les droits, les sorties Icecast, PulseAudio et ALSA, et le rendu serveur HTMX. L’installateur Podman et les quadlets restent le chemin d’installation de l’amont, avec les sondes et le montage de banque en plus.
