@@ -123,9 +123,7 @@ async def migrate_cart_sounds_to_bank(session: ormSession, cart: Cart) -> list[P
         dest = resolve_bank_dir(raw)
     except DomainValidationError:
         return stale
-    sounds = list(
-        await session.scalars(select(Sound).where(Sound.cart_id == cart.id))
-    )
+    sounds = list(await session.scalars(select(Sound).where(Sound.cart_id == cart.id)))
     for sound in sounds:
         resolved = _resolved(sound.path)
         if resolved is None:
@@ -188,9 +186,7 @@ async def sync_bank_folder(
     if not folder.is_dir() or not media_root().is_dir():
         return []
     files = await asyncio.to_thread(iter_bank_audio, folder)
-    sounds = list(
-        await session.scalars(select(Sound).where(Sound.cart_id == cart.id))
-    )
+    sounds = list(await session.scalars(select(Sound).where(Sound.cart_id == cart.id)))
     already: set[Path] = set()
     for sound in sounds:
         resolved = _resolved(sound.path)

@@ -16,10 +16,10 @@ from radiotomate.models import AutoDJSlot, Clock, MusicCategory
 from radiotomate.scheduler.execution import (
     attach_desk_pins,
     delete_desk_item,
+    ensure_forecast,
     insert_desk_item,
     item_to_payload,
     patch_desk_item,
-    ensure_forecast,
     reorder_desk_items,
     reset_conducteur,
 )
@@ -488,11 +488,7 @@ async def update_slot_json(slot_id: int):
     if not slot:
         raise NotFound("Auto-DJ slot not found")
     data = await read_json_object()
-    title = (
-        str(data.get("title") or "").strip()
-        if "title" in data
-        else slot.title
-    )
+    title = str(data.get("title") or "").strip() if "title" in data else slot.title
     next_color = slot.color
     color = data.get("color")
     if isinstance(color, str) and len(color) == 7:

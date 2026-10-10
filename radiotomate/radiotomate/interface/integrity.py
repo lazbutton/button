@@ -23,9 +23,7 @@ def assert_slot_time_mutable(
     day_of_week: int,
     minute: int,
 ) -> None:
-    if slot.minute == 0 and (
-        day_of_week != slot.day_of_week or minute != slot.minute
-    ):
+    if slot.minute == 0 and (day_of_week != slot.day_of_week or minute != slot.minute):
         raise Conflict("The midnight slot cannot be moved.")
 
 
@@ -40,9 +38,7 @@ async def assert_clock_deletable(
         .limit(1)
     )
     if usage is not None:
-        raise Conflict(
-            "This clock is assigned to a daypart and cannot be deleted."
-        )
+        raise Conflict("This clock is assigned to a daypart and cannot be deleted.")
 
 
 def _cart_titles(clock: Clock, data: dict, *, creating: bool) -> set[str]:
@@ -82,9 +78,7 @@ async def validate_clock_cart_references(
     titles = _cart_titles(clock, data, creating=creating)
     if not titles:
         return
-    found = set(
-        await session.scalars(select(Cart.title).where(Cart.title.in_(titles)))
-    )
+    found = set(await session.scalars(select(Cart.title).where(Cart.title.in_(titles))))
     missing = sorted(titles - found)
     if missing:
         raise BadRequest(f"Unknown cart: {', '.join(missing)}")

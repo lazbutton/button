@@ -32,10 +32,7 @@ def _retry_config() -> tuple[int, float, list[float]]:
         timeout = DEFAULT_TIMEOUT_SECONDS
     try:
         configured_backoff = raw.get("backoff_seconds", DEFAULT_BACKOFF_SECONDS)
-        backoff = [
-            max(0.0, min(5.0, float(value)))
-            for value in configured_backoff
-        ]
+        backoff = [max(0.0, min(5.0, float(value))) for value in configured_backoff]
     except (AttributeError, TypeError, ValueError):
         backoff = list(DEFAULT_BACKOFF_SECONDS)
     return max_attempts, timeout, backoff

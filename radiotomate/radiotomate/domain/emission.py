@@ -17,6 +17,7 @@ def now_paris(now: datetime | None = None) -> datetime:
         return now.replace(tzinfo=PARIS)
     return now.astimezone(PARIS)
 
+
 MINUTES_PER_DAY = 24 * 60
 SCOPE_WEEKLY = "weekly"
 SCOPE_SESSION = "session"

@@ -155,4 +155,3 @@ async def test_autodj_beets_file_streams_mp3(  # noqa: PLR0913
     body = await response.get_data()
     assert body[:3] == b"ID3"
     assert "audio" in (response.headers.get("Content-Type") or "")
-

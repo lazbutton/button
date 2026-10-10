@@ -192,6 +192,4 @@ class PlayoutCommand(Base):
         session: ormSession,
         key: str,
     ) -> PlayoutCommand | None:
-        return await session.scalar(
-            select(cls).where(cls.idempotency_key == key)
-        )
+        return await session.scalar(select(cls).where(cls.idempotency_key == key))

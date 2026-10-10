@@ -35,7 +35,9 @@ async def update_json():
     current_user.user.update_password(password)
     await g.dbsession.commit()
     user = current_user.user
-    return jsonify({"username": user.username, "permissions": user.permissions_payload()})
+    return jsonify(
+        {"username": user.username, "permissions": user.permissions_payload()}
+    )
 
 
 @blueprint.put("/account")

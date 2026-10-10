@@ -51,7 +51,9 @@ async def test_autodj_calendar(admin_page: Page, luser_page: Page):  # noqa: PLR
     await slot.get_by_role("link").click()
     await expect(page.form_input("Jour")).to_be_visible()
     assert (
-        await page.form_input("Jour").get_by_role("option", name="Tous les jours").count()
+        await page.form_input("Jour")
+        .get_by_role("option", name="Tous les jours")
+        .count()
         == 0
     )
     await page.form_input("Jour").select_option(label="Mercredi")

@@ -117,7 +117,9 @@ async def _ensure_sound(
     existing = await Sound.from_media_path(session, str(path))
     if existing is not None:
         return
-    rank = 1 + len(list(await session.scalars(select(Sound).where(Sound.cart_id == cart.id))))
+    rank = 1 + len(
+        list(await session.scalars(select(Sound).where(Sound.cart_id == cart.id)))
+    )
     session.add(
         Sound(
             cart_id=cart.id,

@@ -267,9 +267,8 @@ async def _resolve_cart(
         sound = _next_preview_sound(cart, used)
         if sound and cart:
             used.add(sound.id)
-            rescue = (
-                (primary_id is not None and cart.id != primary_id)
-                or (primary_id is None and title != primary_title)
+            rescue = (primary_id is not None and cart.id != primary_id) or (
+                primary_id is None and title != primary_title
             )
             return sound, cart, rescue
     return None, None, False
@@ -601,10 +600,7 @@ async def build_rundown(  # noqa: PLR0912, PLR0915
             overflow_anchor = False
 
         if overflow_anchor and upcoming is not None:
-            if (
-                upcoming_soft is not None
-                and upcoming_soft[0] < upcoming[0]
-            ):
+            if upcoming_soft is not None and upcoming_soft[0] < upcoming[0]:
                 skipped = await _prepare_cart(
                     session,
                     upcoming_soft[1],

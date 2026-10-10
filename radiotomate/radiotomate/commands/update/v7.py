@@ -61,9 +61,7 @@ async def upgrade(conn):
             WHERE when_mode = 'anchored'"""
         )
     )
-    await conn.execute(
-        text("ALTER TABLE autodj_slots ADD COLUMN clock_id INTEGER")
-    )
+    await conn.execute(text("ALTER TABLE autodj_slots ADD COLUMN clock_id INTEGER"))
 
     result = await conn.execute(
         text(

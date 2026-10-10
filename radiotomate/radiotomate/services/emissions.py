@@ -37,7 +37,9 @@ def set_on_air_cache(payload: dict | None) -> None:
     _on_air_cache["payload"] = payload
 
 
-async def harbor_allowed(session: ormSession, user, now: datetime | None = None) -> bool:
+async def harbor_allowed(
+    session: ormSession, user, now: datetime | None = None
+) -> bool:
     """Stream login is open until a weekly show names a host.
 
     An admin can always connect. A stream user can connect at any time while

@@ -481,9 +481,7 @@ async def test_reset_conducteur_rebuilds_when_on_air_is_hours_ahead(
     row.status = "on_air"
     row.started_at = started
     row.planned_at = started + timedelta(hours=6)
-    later_id = next(
-        item["id"] for item in payload["items"] if item["id"] != item_id
-    )
+    later_id = next(item["id"] for item in payload["items"] if item["id"] != item_id)
     later = await RundownItem.from_id(dbsession, later_id)
     assert later is not None
     later.status = "played"

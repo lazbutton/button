@@ -253,14 +253,17 @@ async def _seed_next_rundown(dbsession: ormSession, spec: dict) -> None:
 async def test_overlay_rundown_next_when_ls_empty(dbsession: ormSession):
     from radiotomate.scheduler.clock import overlay_rundown_next
 
-    await _seed_next_rundown(dbsession, {
-        "vid": "pv-next-empty",
-        "rid": "ri-next-empty",
-        "kind": "jingle",
-        "queue": "jingles",
-        "title": "Gerbera",
-        "path": "/data/carts/1Jingles/nowave-Gerbera.wav",
-    })
+    await _seed_next_rundown(
+        dbsession,
+        {
+            "vid": "pv-next-empty",
+            "rid": "ri-next-empty",
+            "kind": "jingle",
+            "queue": "jingles",
+            "title": "Gerbera",
+            "path": "/data/carts/1Jingles/nowave-Gerbera.wav",
+        },
+    )
     live = {
         "title": "nowave - Ancolie.wav",
         "artist": "Jingles",
@@ -278,14 +281,17 @@ async def test_overlay_rundown_next_when_ls_empty(dbsession: ormSession):
 async def test_overlay_rundown_next_replaces_on_air_duplicate(dbsession: ormSession):
     from radiotomate.scheduler.clock import overlay_rundown_next
 
-    await _seed_next_rundown(dbsession, {
-        "vid": "pv-next-dup",
-        "rid": "ri-next-dup",
-        "kind": "jingle",
-        "queue": "jingles",
-        "title": "Poinsetta",
-        "path": "/data/carts/1Jingles/nowave-Poinsetta.wav",
-    })
+    await _seed_next_rundown(
+        dbsession,
+        {
+            "vid": "pv-next-dup",
+            "rid": "ri-next-dup",
+            "kind": "jingle",
+            "queue": "jingles",
+            "title": "Poinsetta",
+            "path": "/data/carts/1Jingles/nowave-Poinsetta.wav",
+        },
+    )
     live = {
         "title": "nowave - Ancolie.wav",
         "artist": "Jingles",
@@ -303,14 +309,17 @@ async def test_overlay_rundown_next_replaces_on_air_duplicate(dbsession: ormSess
 async def test_overlay_rundown_next_keeps_real_ls_cue(dbsession: ormSession):
     from radiotomate.scheduler.clock import overlay_rundown_next
 
-    await _seed_next_rundown(dbsession, {
-        "vid": "pv-next-keep",
-        "rid": "ri-next-keep",
-        "kind": "musique",
-        "queue": "autodj",
-        "title": "Peeked",
-        "path": "/media/peeked.mp3",
-    })
+    await _seed_next_rundown(
+        dbsession,
+        {
+            "vid": "pv-next-keep",
+            "rid": "ri-next-keep",
+            "kind": "musique",
+            "queue": "autodj",
+            "title": "Peeked",
+            "path": "/media/peeked.mp3",
+        },
+    )
     live = {
         "title": "Now",
         "artist": "A",

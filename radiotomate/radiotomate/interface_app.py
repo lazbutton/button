@@ -13,8 +13,8 @@ from werkzeug.exceptions import HTTPException
 
 import radiotomate.models
 from radiotomate.auth import RadiotomateAuth, redirect_to_login
-from radiotomate.brand import apply_automate_config
 from radiotomate.beets import BeetsIntegration
+from radiotomate.brand import apply_automate_config
 from radiotomate.db import PathLike, QuartAlchemy
 from radiotomate.domain import DomainError
 from radiotomate.interface import (
@@ -22,15 +22,15 @@ from radiotomate.interface import (
     autodj,
     carts,
     csrf,
+    emissions,
     health,
     home,
     library,
-    system,
     live,
     login,
     spa,
+    system,
     users,
-    emissions,
 )
 from radiotomate.quart import CustomQuart
 from radiotomate.templates import RADIOTOMATE_HELPERS
@@ -100,9 +100,7 @@ def app_factory(config: dict, reload: bool, beets: BeetsIntegration):
                 config.get("interface", {}).get("cookie_secure", False)
             ),
             "QUART_AUTH_SALT": config["interface"]["cookie_salt"],
-            "CSRF_ENABLED": bool(
-                config.get("interface", {}).get("csrf_enabled", True)
-            ),
+            "CSRF_ENABLED": bool(config.get("interface", {}).get("csrf_enabled", True)),
             "MAX_CONTENT_LENGTH": 10 * 1024 * 1024 * 1024,  # 10GB,
             "DATA_ROOT": Path(config["data"]["root"]),
             "PLAYOUT_TOKEN": config["playout_process_config"]["token"],

@@ -22,9 +22,7 @@ async def upgrade(conn):
             """
         )
     )
-    await conn.execute(
-        text("CREATE INDEX ix_emissions_scope ON emissions (scope)")
-    )
+    await conn.execute(text("CREATE INDEX ix_emissions_scope ON emissions (scope)"))
 
 
 async def downgrade(conn):

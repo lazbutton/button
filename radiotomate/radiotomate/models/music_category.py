@@ -36,7 +36,5 @@ class MusicCategory(Base):
 
     @classmethod
     async def all(cls, session: ormSession) -> list[MusicCategory]:
-        rows = await session.scalars(
-            select(MusicCategory).order_by(MusicCategory.name)
-        )
+        rows = await session.scalars(select(MusicCategory).order_by(MusicCategory.name))
         return list(rows)

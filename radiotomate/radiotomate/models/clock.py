@@ -55,9 +55,7 @@ class Clock(Base):
             q = q.options(
                 selectinload(Clock.positions).selectinload(ClockPosition.category),
                 selectinload(Clock.positions).selectinload(ClockPosition.cart),
-                selectinload(Clock.positions).selectinload(
-                    ClockPosition.fallback_cart
-                ),
+                selectinload(Clock.positions).selectinload(ClockPosition.fallback_cart),
                 selectinload(Clock.fallback_cart),
             )
         return await session.scalar(q)
@@ -73,9 +71,7 @@ class Clock(Base):
             q = q.options(
                 selectinload(Clock.positions).selectinload(ClockPosition.category),
                 selectinload(Clock.positions).selectinload(ClockPosition.cart),
-                selectinload(Clock.positions).selectinload(
-                    ClockPosition.fallback_cart
-                ),
+                selectinload(Clock.positions).selectinload(ClockPosition.fallback_cart),
                 selectinload(Clock.fallback_cart),
             )
         rows = await session.scalars(q)
@@ -86,16 +82,10 @@ class Clock(Base):
         return await session.scalar(select(Clock).filter(Clock.name == name))
 
     def sequential_positions(self) -> list[ClockPosition]:
-        return [
-            p
-            for p in self.positions
-            if p.when_mode == WhenMode.SEQUENTIAL.value
-        ]
+        return [p for p in self.positions if p.when_mode == WhenMode.SEQUENTIAL.value]
 
     def anchored_positions(self) -> list[ClockPosition]:
-        return [
-            p for p in self.positions if p.when_mode == WhenMode.ANCHORED.value
-        ]
+        return [p for p in self.positions if p.when_mode == WhenMode.ANCHORED.value]
 
 
 class ClockPosition(Base):

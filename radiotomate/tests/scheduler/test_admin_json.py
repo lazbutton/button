@@ -125,7 +125,9 @@ async def test_account_password_json(
     )
     empty = await client.put("/account.json", json={"password": "   "})
     assert empty.status_code == 400
-    updated = await client.put("/account.json", json={"password": "nouveau-mot-de-passe"})
+    updated = await client.put(
+        "/account.json", json={"password": "nouveau-mot-de-passe"}
+    )
     assert updated.status_code == 200, await updated.get_data(as_text=True)
     assert (await updated.get_json())["username"] == "self-pass"
     fresh = _interface_client(app_configration, beets_integration)
@@ -1489,7 +1491,7 @@ async def test_conducteur_post_refresh_and_reset(  # noqa: PLR0913
     assert queued_cmd.rundown_item_id is None
 
 
-async def test_conducteur_post_forbidden_without_autodj(  # noqa: PLR0913
+async def test_conducteur_post_forbidden_without_autodj(
     raw_app,
     app_configration: dict,
     beets_integration: BeetsIntegration,

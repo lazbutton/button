@@ -430,8 +430,7 @@ def copy_into_bank(
         if dest.exists():
             dest_res = dest.resolve()
             same_size = (
-                dest_res.is_file()
-                and dest_res.stat().st_size == src_res.stat().st_size
+                dest_res.is_file() and dest_res.stat().st_size == src_res.stat().st_size
             )
             if dest_res == src_res or (
                 same_size and inspect_audio(dest_res) is not None

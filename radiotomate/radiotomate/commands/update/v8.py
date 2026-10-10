@@ -63,9 +63,7 @@ async def upgrade(conn):
         )
     )
     await conn.execute(
-        text(
-            "CREATE INDEX ix_clocks_fallback_cart_id ON clocks (fallback_cart_id)"
-        )
+        text("CREATE INDEX ix_clocks_fallback_cart_id ON clocks (fallback_cart_id)")
     )
     await conn.execute(
         text("CREATE INDEX ix_clock_positions_cart_id ON clock_positions (cart_id)")

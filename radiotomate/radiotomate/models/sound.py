@@ -77,7 +77,11 @@ class Sound(Base):
         needle = candidate.as_posix()
         for sound in sounds:
             stored = str(sound.path or "").replace("\\", "/")
-            if stored == needle or stored.endswith("/" + raw) or needle.endswith("/" + stored):
+            if (
+                stored == needle
+                or stored.endswith("/" + raw)
+                or needle.endswith("/" + stored)
+            ):
                 return sound
         return None
 

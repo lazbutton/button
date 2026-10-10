@@ -25,7 +25,12 @@ def brand_path() -> Path:
         if candidate.is_file():
             return candidate
         packaged = parent / "brand.json"
-        if packaged.is_file() and packaged.parent.name in {"ingest", "radiotomate", "inboxzero", "button"}:
+        if packaged.is_file() and packaged.parent.name in {
+            "ingest",
+            "radiotomate",
+            "inboxzero",
+            "button",
+        }:
             return packaged
     raise FileNotFoundError("brand.json introuvable (BUTTON_BRAND ou dossier button/)")
 
