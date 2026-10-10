@@ -456,6 +456,16 @@ async def test_reset_conducteur_rebuilds_ids(
     assert first_ids.isdisjoint(second_ids)
 
 
+def test_now_from_live_keeps_the_paris_wall_clock():
+    from radiotomate.scheduler.timing import now_from_live
+
+    parsed = now_from_live({"time": "2026-09-28T13:50:48+0100"})
+    assert parsed.hour == 13
+    assert parsed.minute == 50
+    assert parsed.tzinfo is not None
+    assert parsed.utcoffset().total_seconds() == 2 * 3600
+
+
 async def test_as_run_realigns_following_items(
     dbsession: ormSession,
     jingles_cart,

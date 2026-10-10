@@ -30,9 +30,13 @@ def now_from_live(live_data: dict, now: datetime | None = None) -> datetime:
     raw = live_data.get("time")
     if isinstance(raw, str) and raw:
         try:
-            return now_paris(datetime.fromisoformat(raw))
+            parsed = datetime.fromisoformat(raw)
         except ValueError:
-            pass
+            parsed = None
+        if parsed is not None:
+            # Liquidsoap stamps the Paris wall clock, but %z can stay +0100
+            # in summer. Converting that offset would plan an hour ahead.
+            return now_paris(parsed.replace(tzinfo=None))
     return now_paris()
 
 
