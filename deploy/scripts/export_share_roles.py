@@ -36,7 +36,7 @@ async def load_rows() -> list[dict]:
     from radiotomate.db import QuartAlchemy
     from radiotomate.models import User
 
-    config = load_config(os.environ.get("RTCONFIG", "/data/radiotomate.yaml"))
+    config = load_config(Path(os.environ.get("RTCONFIG", "/data/radiotomate.yaml")))
     db = QuartAlchemy()
     db.init_from_config(config["db"], {})
     async with db.session() as session:
