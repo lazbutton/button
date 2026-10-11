@@ -1,49 +1,54 @@
-import { Badge, Button, Checkbox, Flex, Text, TextField, Tooltip } from "@radix-ui/themes";
 import {
+  Badge,
+  Button,
+  Checkbox,
+  DropdownMenu,
+  IconButton,
+  Spinner,
+  Switch,
+  TextField,
+  Tooltip,
+} from "@radix-ui/themes";
+import {
+  ChevronDown,
   FolderOpen,
   GripVertical,
-  ListChecks,
-  Music2,
+  Link2,
+  MoreHorizontal,
+  Pause,
+  Pencil,
   Play,
+  Plus,
   RadioTower,
   Search,
-  Square,
   Trash2,
   Upload,
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type MouseEvent, type RefObject } from "react";
-import { formatHhMmSs, formatMmSs } from "../../lib/parisClock";
 import { audioFilesFromList, filesFromDataTransfer, isFileDrag } from "../../api/audioDrop";
-import { lastPlayedLabel, MODE_LABELS, splitSoundTitle } from "../../api/cartMeta";
+import { lastPlayedLabel, splitSoundTitle } from "../../api/cartMeta";
 import { deleteCartSounds, type CartImportProgress } from "../../api/cartSounds";
-import { BankAttachDialog } from "./BankAttachDialog";
+import { apiBlob, apiDeleteJson, apiPost, apiPut, ApiForbiddenError, ApiRequestError } from "../../api/client";
 import { fuzzyTitleMatch } from "../../api/fuzzyTitle";
-import {
-  apiBlob,
-  apiDeleteJson,
-  apiPost,
-  apiPut,
-  ApiForbiddenError,
-  ApiRequestError,
-} from "../../api/client";
+import { formatClock, percentOf } from "../../api/soundsView";
 import type { Cart, Sound } from "../../api/types";
+import type { ToastTone } from "../../ui/AppToast";
 import { ConfirmDialog } from "../../ui/ConfirmDialog";
-import { EmptyState } from "../../ui/EmptyState";
-import { Panel, SectionHeader } from "../../ui/Panel";
+import { BankAttachDialog } from "./BankAttachDialog";
 
 export function SoundTable({
   cart,
   importProgress,
   onCart,
-  onError,
+  notify,
   onImport,
   onAttachBank,
 }: {
   cart: Cart;
   importProgress: CartImportProgress | null;
   onCart: (cart: Cart) => void;
-  onError: (text: string) => void;
+  notify: (text: string, tone?: ToastTone) => void;
   onImport: (collect: () => Promise<File[]>) => Promise<void>;
   onAttachBank: (folders: string[]) => Promise<void>;
 }) {
@@ -53,6 +58,7 @@ export function SoundTable({
   const dropDepth = useRef(0);
   const lastClicked = useRef<number | null>(null);
   const [dragging, setDragging] = useState<number | null>(null);
+  const [dropTarget, setDropTarget] = useState<number | null>(null);
   const [playingId, setPlayingId] = useState<number | null>(null);
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -66,6 +72,7 @@ export function SoundTable({
   const [selected, setSelected] = useState<Set<number>>(() => new Set());
   const [busyDelete, setBusyDelete] = useState(false);
   const [titleQuery, setTitleQuery] = useState("");
+  const [attachOpen, setAttachOpen] = useState(false);
 
   cartIdRef.current = cart.id;
   playingIdRef.current = playingId;
@@ -104,14 +111,14 @@ export function SoundTable({
   }, [cart.sounds]);
 
   const fail = (caught: unknown, fallback: string) => {
-    if (caught instanceof ApiForbiddenError) onError("Droit insuffisant.");
-    else onError(caught instanceof ApiRequestError ? caught.message : fallback);
+    if (caught instanceof ApiForbiddenError) notify("Il faut le rôle Programmateur pour modifier ce bac.", "error");
+    else notify(caught instanceof ApiRequestError ? caught.message : fallback, "error");
   };
 
   const takeFiles = (list: FileList | File[] | null) => {
     const audio = list ? audioFilesFromList(list) : [];
     if (!audio.length) {
-      onError("Aucun fichier audio.");
+      notify("Aucun fichier audio dans ce choix.", "error");
       return;
     }
     void onImport(() => Promise.resolve(audio));
@@ -194,14 +201,8 @@ export function SoundTable({
     [cart.sounds, titleQuery],
   );
   queueRef.current = visibleSounds.length ? visibleSounds : cart.sounds;
-
-  const totalDuration = useMemo(
-    () => cart.sounds.reduce((sum, sound) => sum + (sound.duration || 0), 0),
-    [cart.sounds],
-  );
-
-  const nextSound = cart.sounds.find((sound) => sound.id === cart.next_sound_id) ?? null;
-  const nextCopy = nextSound ? splitSoundTitle(nextSound.title) : null;
+  const filtering = Boolean(titleQuery.trim());
+  const canDrag = cart.mode !== "random" && !filtering;
 
   const toggleSelect = (id: number, shift: boolean) => {
     const ids = visibleSounds.map((sound) => sound.id);
@@ -247,277 +248,298 @@ export function SoundTable({
 
   const playing = cart.sounds.find((s) => s.id === playingId) ?? null;
   const playingCopy = playing ? splitSoundTitle(playing.title) : null;
-  const dropClass = dropOver ? " is-drop-target" : "";
+  const reading = importProgress?.phase === "reading" || !importProgress?.total;
+  const importPercent = importProgress ? percentOf(importProgress.done, importProgress.total) : 0;
 
   return (
-    <Panel padded={false} className={`app-carts-col app-carts-sounds${dropClass}${importing ? " is-importing" : ""}`}>
-      <div
-        className="app-carts-drop-surface"
-        aria-busy={importing}
-        onDragEnter={(event) => {
-          if (!isFileDrag(event) || importing) return;
-          dropDepth.current += 1;
-          setDropOver(true);
-        }}
-        onDragOver={(event) => {
-          if (!isFileDrag(event) || importing) return;
-          event.preventDefault();
-          event.dataTransfer.dropEffect = "copy";
-          setDropOver(true);
-        }}
-        onDragLeave={(event) => {
-          if (!isFileDrag(event)) return;
-          dropDepth.current -= 1;
-          if (dropDepth.current <= 0) {
-            dropDepth.current = 0;
-            setDropOver(false);
-          }
-        }}
-        onDrop={(event) => {
-          if (!isFileDrag(event) || importing) return;
-          event.preventDefault();
-          event.stopPropagation();
+    <div
+      className={`bacs-sounds${dropOver ? " is-drop" : ""}`}
+      aria-busy={importing}
+      onDragEnter={(event) => {
+        if (!isFileDrag(event) || importing) return;
+        dropDepth.current += 1;
+        setDropOver(true);
+      }}
+      onDragOver={(event) => {
+        if (!isFileDrag(event) || importing) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "copy";
+        setDropOver(true);
+      }}
+      onDragLeave={(event) => {
+        if (!isFileDrag(event)) return;
+        dropDepth.current -= 1;
+        if (dropDepth.current <= 0) {
           dropDepth.current = 0;
           setDropOver(false);
-          const data = event.dataTransfer;
-          void onImport(() => filesFromDataTransfer(data));
-        }}
-      >
-        {dropOver || importing ? (
-          <div className="app-carts-drop-overlay" role="status" aria-live="polite">
-            <span className="app-carts-drop-icon">
-              <Upload />
-            </span>
-            {importing && importProgress ? (
-              <ImportStatus progress={importProgress} cartTitle={cart.title} />
-            ) : (
-              <>
-                <strong>Ajouter dans « {cart.title} »</strong>
-                <span>Relâchez les fichiers ou le dossier audio</span>
-              </>
-            )}
-          </div>
-        ) : null}
-        <div className="app-carts-sounds-toolbar">
-          <SectionHeader
-            title={cart.title}
-            count={cart.sounds.length}
-            actions={
-              <Flex gap="1" wrap="wrap" align="center">
-                <Button size="1" variant="soft" disabled={importing} onClick={() => inputRef.current?.click()}>
-                  <Upload className="ui-button-icon" />
-                  Ajouter des fichiers
-                </Button>
-                <Tooltip content="Copie les fichiers d’un dossier de l’ordinateur dans le bac.">
-                  <Button
-                    size="1"
-                    variant="ghost"
-                    color="gray"
-                    disabled={importing}
-                    aria-label="Ajouter un dossier de l’ordinateur"
-                    onClick={() => folderRef.current?.click()}
-                  >
-                    <FolderOpen className="ui-button-icon" />
-                    Dossier
-                  </Button>
-                </Tooltip>
-                <BankAttachDialog disabled={importing} busy={importing} onAttach={onAttachBank} />
-              </Flex>
+        }
+      }}
+      onDrop={(event) => {
+        if (!isFileDrag(event) || importing) return;
+        event.preventDefault();
+        event.stopPropagation();
+        dropDepth.current = 0;
+        setDropOver(false);
+        const data = event.dataTransfer;
+        void onImport(() => filesFromDataTransfer(data));
+      }}
+    >
+      {selected.size > 0 ? (
+        <div className="bacs-toolbar bacs-toolbar--selection" role="toolbar" aria-label="Sélection">
+          <strong className="bacs-selection-count">
+            {selected.size} son{selected.size === 1 ? "" : "s"} sélectionné{selected.size === 1 ? "" : "s"}
+          </strong>
+          <span className="bacs-muted bacs-hide-narrow">Maj + clic pour une plage</span>
+          <span className="bacs-spacer" />
+          <Button size="1" variant="ghost" color="gray" onClick={() => setSelected(new Set())}>
+            <X className="ui-button-icon" />
+            Désélectionner
+          </Button>
+          <ConfirmDialog
+            trigger={
+              <Button size="1" color="red" variant="soft" disabled={busyDelete}>
+                <Trash2 className="ui-button-icon" />
+                Retirer
+              </Button>
             }
+            title={`Retirer ${selected.size} son${selected.size === 1 ? "" : "s"} du bac ?`}
+            description="Les sons quittent ce bac. Un fichier lié depuis un dossier de la banque y reste ; un fichier ajouté dans ce bac part dans la corbeille de la banque."
+            confirmLabel={`Retirer ${selected.size} son${selected.size === 1 ? "" : "s"}`}
+            busy={busyDelete}
+            onConfirm={deleteSelected}
           />
-          <div className="app-carts-sound-stats">
-            <span className="app-carts-mode">{MODE_LABELS[cart.mode]}</span>
-            {titleQuery.trim() ? (
-              <span>
-                {visibleSounds.length} résultat{visibleSounds.length === 1 ? "" : "s"}
-              </span>
-            ) : (
-              <>
-                {totalDuration > 0 ? <span>{formatHhMmSs(totalDuration)}</span> : null}
-                {cart.average_duration ? <span>moy. {formatMmSs(cart.average_duration)}</span> : null}
-                {cart.schedule_summary ? <span>{cart.schedule_summary}</span> : null}
-              </>
-            )}
-          </div>
-          {nextCopy ? (
-            <p className="app-carts-next-line">
-              <span>Suivant</span>
-              <strong>{nextCopy.title}</strong>
-              {nextCopy.artist ? <em>{nextCopy.artist}</em> : null}
-            </p>
-          ) : null}
-          <div className="app-carts-tools-row">
+        </div>
+      ) : (
+        <div className="bacs-toolbar" role="toolbar" aria-label="Sons du bac">
+          {cart.sounds.length ? (
             <TextField.Root
               size="1"
-              className="app-sound-search"
-              placeholder="Filtrer les titres…"
+              className="bacs-filter-field"
+              placeholder="Filtrer les sons"
               value={titleQuery}
+              aria-label="Filtrer les sons"
               onChange={(event) => setTitleQuery(event.target.value)}
-              aria-label="Filtrer les titres"
+              onKeyDown={(event) => {
+                if (event.key === "Escape") setTitleQuery("");
+              }}
             >
               <TextField.Slot>
                 <Search size={14} aria-hidden="true" />
               </TextField.Slot>
             </TextField.Root>
-            <span className={`app-carts-import-state${importing ? " is-active" : ""}`} aria-live="polite">
-              <span aria-hidden="true" />
-              {importing && importProgress
-                ? importProgress.phase === "reading"
-                  ? "Lecture des fichiers…"
-                  : `Ajout ${importProgress.done} / ${importProgress.total}`
-                : "Déposez les fichiers ici"}
-            </span>
-          </div>
-          {selected.size > 0 ? (
-            <div className="app-carts-selection-bar" role="status">
-              <div>
-                <ListChecks size={16} aria-hidden="true" />
-                <strong>
-                  {selected.size} piste{selected.size === 1 ? "" : "s"} sélectionnée
-                  {selected.size === 1 ? "" : "s"}
-                </strong>
-                <span>Maj+clic pour sélectionner une plage</span>
-              </div>
-              <Flex gap="1" align="center">
-                <Button size="1" variant="ghost" color="gray" onClick={() => setSelected(new Set())}>
-                  <X className="ui-button-icon" />
-                  Effacer
-                </Button>
-                <ConfirmDialog
-                  trigger={
-                    <Button size="1" color="red" variant="soft" disabled={busyDelete}>
-                      <Trash2 className="ui-button-icon" />
-                      Supprimer
-                    </Button>
-                  }
-                  title={`Supprimer ${selected.size} son${selected.size === 1 ? "" : "s"} ?`}
-                  description="Les fichiers quitteront ce bac définitivement. Cette action ne peut pas être annulée."
-                  confirmLabel={`Supprimer ${selected.size} son${selected.size === 1 ? "" : "s"}`}
-                  busy={busyDelete}
-                  onConfirm={deleteSelected}
-                />
-              </Flex>
-            </div>
-          ) : null}
-        </div>
-        <input
-          ref={inputRef}
-          type="file"
-          accept="audio/*,.mp3,.wav,.flac,.ogg,.opus,.m4a,.aac,.aiff"
-          multiple
-          hidden
-          onChange={(event) => {
-            const files = Array.from(event.target.files ?? []);
-            event.target.value = "";
-            takeFiles(files);
-          }}
-        />
-        <input
-          ref={folderRef}
-          type="file"
-          multiple
-          hidden
-          // @ts-expect-error vendor directory picker
-          webkitdirectory=""
-          directory=""
-          onChange={(event) => {
-            const files = Array.from(event.target.files ?? []);
-            event.target.value = "";
-            takeFiles(files);
-          }}
-        />
-        <div className="app-sound-table-wrap ui-table-shell">
-          {cart.sounds.length === 0 ? (
-            <EmptyState
-              icon={Music2}
-              title="Ce bac est vide"
-              description="Déposez ici des fichiers ou un dossier audio, ou ouvrez le sélecteur de fichiers."
-              actionLabel="Ajouter des fichiers"
-              onAction={() => inputRef.current?.click()}
-            />
           ) : (
-            <>
-              <table className="app-sound-table">
-                <thead>
-                  <tr>
-                    <th className="app-sound-check">
-                      <Checkbox
-                        checked={allSelected ? true : someSelected ? "indeterminate" : false}
-                        disabled={!visibleSounds.length}
-                        aria-label="Tout sélectionner"
-                        onCheckedChange={(checked) => {
-                          if (checked === true) {
-                            setSelected(new Set(visibleSounds.map((sound) => sound.id)));
-                          } else {
-                            setSelected(new Set());
-                          }
-                        }}
-                      />
-                    </th>
-                    {cart.mode !== "random" ? <th className="app-sound-handle">#</th> : null}
-                    <th className="app-sound-preview">
-                      <span className="ui-visually-hidden">Aperçu</span>
-                    </th>
-                    <th className="app-sound-title">Titre</th>
-                    <th className="app-sound-duration">Durée</th>
-                    <th className="app-sound-active">On</th>
-                    <th className="app-sound-actions">
-                      <span className="ui-visually-hidden">Actions</span>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {visibleSounds.map((sound, index) => (
-                    <SoundRow
-                      key={sound.id}
-                      cart={cart}
-                      sound={sound}
-                      index={index}
-                      canDrag={cart.mode !== "random"}
-                      dragging={dragging}
-                      playing={playingId === sound.id}
-                      selected={selected.has(sound.id)}
-                      onToggleSelect={toggleSelect}
-                      onDragStart={setDragging}
-                      onDrop={reorder}
-                      onPlay={() => void play(sound)}
-                      onCart={onCart}
-                      onError={onError}
-                    />
-                  ))}
-                </tbody>
-              </table>
-              {visibleSounds.length === 0 ? (
-                <EmptyState
-                  icon={Search}
-                  title="Aucun titre trouvé"
-                  description="Modifiez le filtre pour afficher les autres sons du bac."
-                  actionLabel="Effacer le filtre"
-                  onAction={() => setTitleQuery("")}
-                />
-              ) : (
-                <Text size="1" color="gray" className="app-sound-hint">
-                  Cliquez un titre pour le renommer
-                  {cart.mode !== "random" ? " · glissez le numéro pour réordonner" : ""}
-                  {" · la préécoute enchaîne les pistes"}.
-                </Text>
-              )}
-            </>
+            <span className="bacs-muted">Aucun son pour l'instant</span>
           )}
+          {filtering ? (
+            <span className="bacs-muted">
+              {visibleSounds.length} sur {cart.sounds.length}
+            </span>
+          ) : null}
+          <span className="bacs-spacer" />
+          <DropdownMenu.Root>
+            <DropdownMenu.Trigger disabled={importing}>
+              <Button size="1" highContrast>
+                <Plus className="ui-button-icon" />
+                Ajouter
+                <ChevronDown size={13} aria-hidden="true" />
+              </Button>
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Content align="end" className="bacs-menu">
+              <DropdownMenu.Item onSelect={() => inputRef.current?.click()}>
+                <Upload size={15} aria-hidden="true" />
+                <span className="bacs-menu-copy">
+                  Fichiers de l'ordinateur
+                  <small>Copiés dans le bac</small>
+                </span>
+              </DropdownMenu.Item>
+              <DropdownMenu.Item onSelect={() => folderRef.current?.click()}>
+                <FolderOpen size={15} aria-hidden="true" />
+                <span className="bacs-menu-copy">
+                  Dossier de l'ordinateur
+                  <small>Tous ses fichiers audio, copiés</small>
+                </span>
+              </DropdownMenu.Item>
+              <DropdownMenu.Separator />
+              <DropdownMenu.Item onSelect={() => setAttachOpen(true)}>
+                <Link2 size={15} aria-hidden="true" />
+                <span className="bacs-menu-copy">
+                  Dossier de la banque
+                  <small>Lié, sans copie</small>
+                </span>
+              </DropdownMenu.Item>
+            </DropdownMenu.Content>
+          </DropdownMenu.Root>
         </div>
+      )}
+
+      {importing && importProgress ? (
+        <div className="bacs-import" role="status" aria-live="polite">
+          <Spinner size="1" />
+          <span className="bacs-import-copy">
+            <strong>
+              {reading
+                ? "Lecture des fichiers…"
+                : `Ajout de ${importProgress.total} fichier${importProgress.total === 1 ? "" : "s"}`}
+            </strong>
+            {!reading ? (
+              <span>
+                {importProgress.done} / {importProgress.total}
+                {importProgress.current ? ` · ${importProgress.current}` : ""}
+              </span>
+            ) : null}
+          </span>
+          <span className={`bacs-bar${reading ? " is-busy" : ""}`} aria-hidden="true">
+            <i style={reading ? undefined : { width: `${importPercent}%` }} />
+          </span>
+        </div>
+      ) : null}
+
+      <input
+        ref={inputRef}
+        type="file"
+        accept="audio/*,.mp3,.wav,.flac,.ogg,.opus,.m4a,.aac,.aiff"
+        multiple
+        hidden
+        onChange={(event) => {
+          const files = Array.from(event.target.files ?? []);
+          event.target.value = "";
+          takeFiles(files);
+        }}
+      />
+      <input
+        ref={folderRef}
+        type="file"
+        multiple
+        hidden
+        // @ts-expect-error vendor directory picker
+        webkitdirectory=""
+        directory=""
+        onChange={(event) => {
+          const files = Array.from(event.target.files ?? []);
+          event.target.value = "";
+          takeFiles(files);
+        }}
+      />
+
+      <div className="bacs-table-wrap">
+        {cart.sounds.length === 0 ? (
+          <div className="bacs-dropzone">
+            <span className="bacs-dropzone-icon" aria-hidden="true">
+              <Upload size={20} />
+            </span>
+            <strong>Ce bac est vide</strong>
+            <p>Glisse des fichiers audio ou un dossier ici, ou choisis d'où viennent les sons.</p>
+            <div className="bacs-dropzone-actions">
+              <Button size="2" highContrast disabled={importing} onClick={() => inputRef.current?.click()}>
+                <Upload className="ui-button-icon" />
+                Ajouter des fichiers
+              </Button>
+              <Button size="2" variant="soft" color="gray" disabled={importing} onClick={() => setAttachOpen(true)}>
+                <Link2 className="ui-button-icon" />
+                Lier un dossier de la banque
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <table className="bacs-table">
+            <thead>
+              <tr>
+                <th className="c-check">
+                  <Checkbox
+                    size="1"
+                    checked={allSelected ? true : someSelected ? "indeterminate" : false}
+                    disabled={!visibleSounds.length}
+                    aria-label="Tout sélectionner"
+                    onCheckedChange={(checked) => {
+                      setSelected(checked === true ? new Set(visibleSounds.map((sound) => sound.id)) : new Set());
+                    }}
+                  />
+                </th>
+                {cart.mode !== "random" ? <th className="c-rank">#</th> : null}
+                <th className="c-play">
+                  <span className="ui-visually-hidden">Écouter</span>
+                </th>
+                <th className="c-title">Titre</th>
+                <th className="c-last">Diffusé</th>
+                <th className="c-len">Durée</th>
+                <th className="c-on">Actif</th>
+                <th className="c-more">
+                  <span className="ui-visually-hidden">Actions</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleSounds.map((sound) => (
+                <SoundRow
+                  key={sound.id}
+                  cart={cart}
+                  sound={sound}
+                  rank={cart.sounds.indexOf(sound) + 1}
+                  showRank={cart.mode !== "random"}
+                  canDrag={canDrag}
+                  dragging={dragging}
+                  dropTarget={dropTarget === sound.id}
+                  playing={playingId === sound.id}
+                  selected={selected.has(sound.id)}
+                  onToggleSelect={toggleSelect}
+                  onDragStart={setDragging}
+                  onDragTarget={setDropTarget}
+                  onDrop={reorder}
+                  onPlay={() => void play(sound)}
+                  onCart={onCart}
+                  notify={notify}
+                />
+              ))}
+            </tbody>
+          </table>
+        )}
+        {cart.sounds.length > 0 && visibleSounds.length === 0 ? (
+          <div className="bacs-table-empty">
+            <p>Aucun son ne correspond à « {titleQuery.trim()} ».</p>
+            <Button size="1" variant="soft" color="gray" onClick={() => setTitleQuery("")}>
+              Effacer le filtre
+            </Button>
+          </div>
+        ) : null}
+      </div>
+
+      {cart.sounds.length ? (
         <PreviewBar
           audioRef={audioRef}
           objectUrl={objectUrl}
           playing={playing}
           copy={playingCopy}
+          hint={
+            cart.mode === "random"
+              ? "Double-clic sur un titre pour le renommer"
+              : "Double-clic pour renommer, glisser le numéro pour classer"
+          }
           onEnded={onPreviewEnded}
           onToggle={() => {
             if (playing) void play(playing);
             else if (visibleSounds[0]) void play(visibleSounds[0]);
           }}
         />
-      </div>
-    </Panel>
+      ) : null}
+
+      {dropOver ? (
+        <div className="bacs-drop-overlay" aria-hidden="true">
+          <span className="bacs-dropzone-icon">
+            <Upload size={20} />
+          </span>
+          <strong>Déposer dans « {cart.title} »</strong>
+          <span>Les fichiers audio sont copiés dans le bac.</span>
+        </div>
+      ) : null}
+
+      <BankAttachDialog
+        open={attachOpen}
+        onOpenChange={setAttachOpen}
+        busy={importing}
+        cartTitle={cart.title}
+        onAttach={onAttachBank}
+      />
+    </div>
   );
 }
 
@@ -526,6 +548,7 @@ function PreviewBar({
   objectUrl,
   playing,
   copy,
+  hint,
   onEnded,
   onToggle,
 }: {
@@ -533,6 +556,7 @@ function PreviewBar({
   objectUrl: string | null;
   playing: Sound | null;
   copy: { title: string; artist: string } | null;
+  hint: string;
   onEnded: () => void;
   onToggle: () => void;
 }) {
@@ -573,110 +597,84 @@ function PreviewBar({
   };
 
   return (
-    <div className={`app-carts-player${playing ? " is-playing" : ""}`}>
+    <div className={`bacs-player${playing ? " is-playing" : ""}`}>
       <button
         type="button"
-        className={`app-sound-play${playing ? " is-on" : ""}`}
+        className={`bacs-play bacs-play--lg${playing ? " is-on" : ""}`}
         onClick={onToggle}
-        aria-label={playing ? "Arrêter l’aperçu" : "Écouter"}
+        aria-label={playing ? "Arrêter la pré-écoute" : "Pré-écouter le bac"}
       >
-        {playing ? <Square /> : <Play />}
+        {playing ? <Pause size={15} /> : <Play size={15} />}
       </button>
-      <div className="app-carts-player-copy">
-        <strong>{copy?.title || "Aucune piste"}</strong>
-        {copy?.artist ? <em>{copy.artist}</em> : <em>{playing ? "Aperçu" : "Prêt"}</em>}
+      <div className="bacs-player-copy">
+        <strong>{copy?.title || "Pré-écoute"}</strong>
+        <span>{copy ? copy.artist || "Lecture locale, hors antenne" : "Écoute ici, sans toucher à l'antenne"}</span>
       </div>
-      <div className="app-carts-player-clock">
-        <span>
-          {playing ? `${formatMmSs(elapsed)} / ${formatMmSs(total)}` : "—"}
-        </span>
-        <button
-          type="button"
-          className="app-carts-seek"
-          disabled={!playing || total <= 0}
-          aria-label="Position dans le titre"
-          onClick={seek}
-        >
-          <i style={{ width: `${Math.round(ratio * 1000) / 10}%` }} />
-        </button>
-      </div>
-      <audio
-        ref={audioRef}
-        className="app-carts-player-audio"
-        src={objectUrl ?? undefined}
-        onEnded={onEnded}
-      />
-    </div>
-  );
-}
-
-function ImportStatus({
-  progress,
-  cartTitle,
-}: {
-  progress: CartImportProgress;
-  cartTitle: string;
-}) {
-  const reading = progress.phase === "reading" || progress.total === 0;
-  const ratio = reading ? 0 : Math.min(1, progress.done / Math.max(1, progress.total));
-  const percent = Math.round(ratio * 100);
-  return (
-    <>
-      <strong>{reading ? "Lecture des fichiers…" : `Ajout dans « ${cartTitle} »`}</strong>
-      {reading ? (
-        <span>Préparation du dossier, un instant</span>
+      {playing ? (
+        <div className="bacs-player-track">
+          <span className="bacs-time">{formatClock(elapsed)}</span>
+          <button
+            type="button"
+            className="bacs-seek"
+            disabled={total <= 0}
+            aria-label="Position dans le titre"
+            onClick={seek}
+          >
+            <i style={{ width: `${Math.round(ratio * 1000) / 10}%` }} />
+          </button>
+          <span className="bacs-time">{formatClock(total)}</span>
+        </div>
       ) : (
-        <>
-          <span className="app-carts-import-count">
-            {progress.done} / {progress.total}
-            <em> · {percent} %</em>
-          </span>
-          {progress.current ? <span className="app-carts-import-file">{progress.current}</span> : null}
-        </>
+        <span className="bacs-player-hint">{hint}</span>
       )}
-      <span className={`app-carts-import-bar${reading ? " is-busy" : ""}`} aria-hidden="true">
-        <span style={reading ? undefined : { width: `${percent}%` }} />
-      </span>
-    </>
+      <audio ref={audioRef} className="bacs-audio" src={objectUrl ?? undefined} onEnded={onEnded} />
+    </div>
   );
 }
 
 function SoundRow({
   cart,
   sound,
-  index,
+  rank,
+  showRank,
   canDrag,
   dragging,
+  dropTarget,
   playing,
   selected,
   onToggleSelect,
   onDragStart,
+  onDragTarget,
   onDrop,
   onPlay,
   onCart,
-  onError,
+  notify,
 }: {
   cart: Cart;
   sound: Sound;
-  index: number;
+  rank: number;
+  showRank: boolean;
   canDrag: boolean;
   dragging: number | null;
+  dropTarget: boolean;
   playing: boolean;
   selected: boolean;
   onToggleSelect: (id: number, shift: boolean) => void;
   onDragStart: (id: number | null) => void;
+  onDragTarget: (id: number | null) => void;
   onDrop: (fromId: number, toId: number) => Promise<void>;
   onPlay: () => void;
   onCart: (cart: Cart) => void;
-  onError: (text: string) => void;
+  notify: (text: string, tone?: ToastTone) => void;
 }) {
   const [title, setTitle] = useState(sound.title);
   const [editing, setEditing] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   useEffect(() => setTitle(sound.title), [sound.title]);
-  const isNext = cart.next_sound_id === sound.id;
+  const isNext = cart.mode !== "random" && cart.next_sound_id === sound.id;
   const parsed = splitSoundTitle(sound.title);
   const analysing = sound.gain == null;
-  const inactive = !sound.active || !sound.available;
+  const unavailable = !sound.available && !analysing;
 
   const saveTitle = async () => {
     const next = title.trim();
@@ -691,29 +689,47 @@ function SoundRow({
       });
       onCart(payload.cart);
     } catch (caught) {
-      onError(caught instanceof ApiRequestError ? caught.message : "Titre impossible.");
+      notify(caught instanceof ApiRequestError ? caught.message : "Renommage impossible.", "error");
       setTitle(sound.title);
     }
   };
 
   const deleteSound = async () => {
     try {
-      const payload = await apiDeleteJson<{ cart: Cart }>(
-        `/carts/${cart.id}/sounds/${sound.id}.json`,
-      );
+      const payload = await apiDeleteJson<{ cart: Cart }>(`/carts/${cart.id}/sounds/${sound.id}.json`);
       onCart(payload.cart);
     } catch (caught) {
-      onError(caught instanceof ApiRequestError ? caught.message : "Suppression impossible.");
+      notify(caught instanceof ApiRequestError ? caught.message : "Retrait impossible.", "error");
+    }
+  };
+
+  const fire = async () => {
+    try {
+      await apiPost(`/carts/${cart.id}/sounds/${sound.id}/now.json`);
+      notify(`« ${parsed.title} » envoyé à l'antenne`, "success");
+    } catch (caught) {
+      if (caught instanceof ApiForbiddenError) notify("Il faut le droit Antenne pour diffuser.", "error");
+      else notify(caught instanceof ApiRequestError ? caught.message : "Diffusion impossible.", "error");
+    }
+  };
+
+  const setActive = async (active: boolean) => {
+    try {
+      const payload = await apiPut<{ cart: Cart }>(`/carts/${cart.id}/sounds/${sound.id}.json`, { active });
+      onCart(payload.cart);
+    } catch (caught) {
+      notify(caught instanceof ApiRequestError ? caught.message : "Mise à jour impossible.", "error");
     }
   };
 
   const rowClass = [
-    "app-sound-row",
+    "bacs-track-row",
     isNext ? "is-next" : "",
     playing ? "is-playing" : "",
     dragging === sound.id ? "is-dragging" : "",
+    dropTarget && dragging != null && dragging !== sound.id ? "is-drop-target" : "",
     selected ? "is-selected" : "",
-    inactive && !analysing ? "is-inactive" : "",
+    !sound.active || unavailable ? "is-off" : "",
   ]
     .filter(Boolean)
     .join(" ");
@@ -722,21 +738,24 @@ function SoundRow({
     <tr
       className={rowClass}
       aria-selected={selected}
-      onDragOver={(e) => {
-        if (isFileDrag(e) || !canDrag) return;
-        e.preventDefault();
+      onDragOver={(event) => {
+        if (isFileDrag(event) || !canDrag || dragging == null) return;
+        event.preventDefault();
+        onDragTarget(sound.id);
       }}
-      onDrop={(e) => {
-        if (isFileDrag(e)) return;
-        e.preventDefault();
+      onDrop={(event) => {
+        if (isFileDrag(event)) return;
+        event.preventDefault();
         if (dragging != null) void onDrop(dragging, sound.id);
         onDragStart(null);
+        onDragTarget(null);
       }}
     >
-      <td className="app-sound-check">
+      <td className="c-check">
         <Checkbox
+          size="1"
           checked={selected}
-          aria-label={`Sélectionner ${sound.title}`}
+          aria-label={`Sélectionner ${parsed.title}`}
           onClick={(event) => {
             event.preventDefault();
             event.stopPropagation();
@@ -744,40 +763,56 @@ function SoundRow({
           }}
         />
       </td>
-      {canDrag ? (
-        <td className="app-sound-handle">
-          <button
-            type="button"
-            className="app-drag"
-            draggable
-            aria-label={`Réordonner, rang ${index + 1}`}
-            onDragStart={() => onDragStart(sound.id)}
-            onDragEnd={() => onDragStart(null)}
-          >
-            <GripVertical className="ui-button-icon" />
-            <span className="app-sound-rank">{String(index + 1).padStart(2, "0")}</span>
-          </button>
+      {showRank ? (
+        <td className="c-rank">
+          {canDrag ? (
+            <span
+              className="bacs-grip"
+              draggable
+              title="Glisser pour réordonner"
+              onDragStart={(event) => {
+                event.dataTransfer.effectAllowed = "move";
+                onDragStart(sound.id);
+              }}
+              onDragEnd={() => {
+                onDragStart(null);
+                onDragTarget(null);
+              }}
+            >
+              <span className="bacs-rank">{rank}</span>
+              <GripVertical size={14} aria-hidden="true" />
+            </span>
+          ) : (
+            <span className="bacs-rank">{rank}</span>
+          )}
         </td>
       ) : null}
-      <td className="app-sound-preview">
-        <Tooltip content={playing ? "Arrêter l’aperçu" : "Écouter"}>
-          <button
-            type="button"
-            className={`app-sound-play${playing ? " is-on" : ""}`}
-            onClick={onPlay}
-            aria-label={playing ? "Arrêter l’aperçu" : `Écouter ${parsed.title}`}
-          >
-            {playing ? <Square /> : <Play />}
-          </button>
-        </Tooltip>
+      <td className="c-play">
+        <button
+          type="button"
+          className={`bacs-play${playing ? " is-on" : ""}`}
+          onClick={onPlay}
+          aria-label={playing ? "Arrêter la pré-écoute" : `Pré-écouter ${parsed.title}`}
+        >
+          {playing ? (
+            <span className="bacs-eq" aria-hidden="true">
+              <i />
+              <i />
+              <i />
+            </span>
+          ) : (
+            <Play size={13} />
+          )}
+        </button>
       </td>
-      <td className="app-sound-title">
+      <td className="c-title" onDoubleClick={() => setEditing(true)}>
         {editing ? (
           <TextField.Root
             size="1"
             autoFocus
-            className="app-sound-title-field"
+            className="bacs-rename"
             value={title}
+            aria-label="Nouveau titre"
             onChange={(event) => setTitle(event.target.value)}
             onBlur={() => void saveTitle()}
             onKeyDown={(event) => {
@@ -789,86 +824,80 @@ function SoundRow({
             }}
           />
         ) : (
-          <button
-            type="button"
-            className="app-sound-name"
-            title="Cliquer pour renommer"
-            onClick={() => setEditing(true)}
-          >
-            <span className="app-sound-name-title">{parsed.title}</span>
-            <span className="app-sound-name-meta">
-              {playing ? <em>Aperçu</em> : isNext ? <em>Suivant</em> : null}
+          <div className="bacs-cell-title">
+            <span className="bacs-track">{parsed.title}</span>
+            <span className="bacs-artist">
               {parsed.artist ? <span>{parsed.artist}</span> : null}
-              {sound.last_played ? (
-                <span className="app-sound-played">{lastPlayedLabel(sound.last_played)}</span>
-              ) : null}
-              {analysing ? (
-                <Badge size="1" color="gray">
-                  Analyse
+              <span className="bacs-inline-len">{formatClock(sound.duration)}</span>
+              {isNext ? (
+                <Badge size="1" variant="outline" color="gray" className="bacs-badge">
+                  Suivant
                 </Badge>
               ) : null}
-              {!sound.available && !analysing ? (
-                <Badge size="1" color="gray">
-                  Inactif
+              {analysing ? (
+                <Badge size="1" variant="soft" color="gray" className="bacs-badge">
+                  Analyse…
+                </Badge>
+              ) : null}
+              {unavailable ? (
+                <Badge size="1" variant="soft" color="orange" className="bacs-badge">
+                  Indisponible
                 </Badge>
               ) : null}
             </span>
-          </button>
+          </div>
         )}
       </td>
-      <td className="app-num app-sound-duration">{formatMmSs(sound.duration)}</td>
-      <td className="app-sound-active">
-        <Checkbox
-          checked={sound.active}
-          aria-label={`${sound.active ? "Désactiver" : "Activer"} ${sound.title}`}
-          onCheckedChange={(checked) => {
-            void (async () => {
-              try {
-                const payload = await apiPut<{ cart: Cart }>(
-                  `/carts/${cart.id}/sounds/${sound.id}.json`,
-                  { active: checked === true },
-                );
-                onCart(payload.cart);
-              } catch (caught) {
-                onError(caught instanceof ApiRequestError ? caught.message : "MAJ impossible.");
-              }
-            })();
+      <td className="c-last">{sound.last_played ? lastPlayedLabel(sound.last_played) : "Jamais"}</td>
+      <td className="c-len">{formatClock(sound.duration)}</td>
+      <td className="c-on">
+        <Tooltip content={sound.active ? "Actif : peut passer à l'antenne" : "Inactif : le bac le saute"}>
+          <Switch
+            size="1"
+            checked={sound.active}
+            aria-label={`${sound.active ? "Désactiver" : "Activer"} ${parsed.title}`}
+            onCheckedChange={(checked) => void setActive(checked)}
+          />
+        </Tooltip>
+      </td>
+      <td className="c-more">
+        <DropdownMenu.Root>
+          <DropdownMenu.Trigger>
+            <IconButton size="1" variant="ghost" color="gray" aria-label={`Actions pour ${parsed.title}`}>
+              <MoreHorizontal size={15} />
+            </IconButton>
+          </DropdownMenu.Trigger>
+          <DropdownMenu.Content align="end" className="bacs-menu">
+            <DropdownMenu.Item onSelect={onPlay}>
+              {playing ? <Pause size={15} aria-hidden="true" /> : <Play size={15} aria-hidden="true" />}
+              {playing ? "Arrêter la pré-écoute" : "Pré-écouter"}
+            </DropdownMenu.Item>
+            <DropdownMenu.Item onSelect={() => void fire()}>
+              <RadioTower size={15} aria-hidden="true" />
+              Diffuser maintenant
+            </DropdownMenu.Item>
+            <DropdownMenu.Item onSelect={() => setEditing(true)}>
+              <Pencil size={15} aria-hidden="true" />
+              Renommer
+            </DropdownMenu.Item>
+            <DropdownMenu.Separator />
+            <DropdownMenu.Item color="red" onSelect={() => setConfirmDelete(true)}>
+              <Trash2 size={15} aria-hidden="true" />
+              Retirer du bac…
+            </DropdownMenu.Item>
+          </DropdownMenu.Content>
+        </DropdownMenu.Root>
+        <ConfirmDialog
+          open={confirmDelete}
+          onOpenChange={setConfirmDelete}
+          title={`Retirer « ${parsed.title} » ?`}
+          description="Le son quitte ce bac. Un fichier lié depuis un dossier de la banque y reste ; un fichier ajouté dans ce bac part dans la corbeille de la banque."
+          confirmLabel="Retirer le son"
+          onConfirm={async () => {
+            await deleteSound();
+            setConfirmDelete(false);
           }}
         />
-      </td>
-      <td className="app-sound-actions">
-        <Flex gap="1" justify="end">
-          <Tooltip content="Diffuser maintenant">
-            <Button
-              size="1"
-              variant="ghost"
-              aria-label={`Diffuser ${sound.title}`}
-              onClick={() => {
-                void (async () => {
-                  try {
-                    await apiPost(`/carts/${cart.id}/sounds/${sound.id}/now.json`);
-                  } catch (caught) {
-                    if (caught instanceof ApiForbiddenError) onError("Droit Antenne requis.");
-                    else onError(caught instanceof ApiRequestError ? caught.message : "Diffusion impossible.");
-                  }
-                })();
-              }}
-            >
-              <RadioTower className="ui-button-icon" />
-            </Button>
-          </Tooltip>
-          <ConfirmDialog
-            trigger={
-              <Button size="1" variant="ghost" color="red" aria-label={`Supprimer ${sound.title}`}>
-                <Trash2 className="ui-button-icon" />
-              </Button>
-            }
-            title={`Supprimer « ${sound.title} » ?`}
-            description="Ce son sera retiré définitivement du bac. Cette action ne peut pas être annulée."
-            confirmLabel="Supprimer le son"
-            onConfirm={deleteSound}
-          />
-        </Flex>
       </td>
     </tr>
   );

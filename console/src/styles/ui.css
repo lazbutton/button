@@ -653,6 +653,8 @@
 .ui-toast-action:hover {
   background: var(--app-accent-soft);
 }
+
+.ui-toast-close {
   display: grid;
   place-items: center;
   width: 1.6rem;

@@ -21,7 +21,6 @@ export function SonsPage() {
 
   return (
     <SectionTabs
-      title="Sons"
       tabs={[
         { id: "bacs", label: "Bacs", panel: <CartsPage /> },
         { id: "importer", label: "Banque", panel: <ImporterPage /> },

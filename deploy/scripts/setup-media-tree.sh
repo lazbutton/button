@@ -1,12 +1,11 @@
 #!/bin/sh
 # Arbre unique de la banque BUTTON. Idempotent.
+# Les banques d'archives (dossiers de 20-archives) se créent depuis la console.
 set -eu
 ROOT="${1:-${MEDIA_ROOT:-/media}}"
 mkdir -p \
   "$ROOT/00-inbox/rotation" \
-  "$ROOT/00-inbox/archives/ntf1" \
-  "$ROOT/00-inbox/archives/ntf2" \
-  "$ROOT/00-inbox/archives/ntf3" \
+  "$ROOT/00-inbox/archives" \
   "$ROOT/00-inbox/habillage/jingles" \
   "$ROOT/00-inbox/habillage/ids" \
   "$ROOT/00-inbox/habillage/pubs" \
@@ -16,9 +15,7 @@ mkdir -p \
   "$ROOT/00-inbox/emissions/_modele/entiere" \
   "$ROOT/00-inbox/emissions/_modele/podcasts" \
   "$ROOT/10-rotation" \
-  "$ROOT/20-archives/ntf1" \
-  "$ROOT/20-archives/ntf2" \
-  "$ROOT/20-archives/ntf3" \
+  "$ROOT/20-archives" \
   "$ROOT/30-habillage/jingles" \
   "$ROOT/30-habillage/ids" \
   "$ROOT/30-habillage/pubs" \

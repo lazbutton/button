@@ -65,6 +65,7 @@ class InboxApiTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             media = root / "media"
+            (media / "20-archives" / "ntf1").mkdir(parents=True)
             tusd = root / "tusd"
             tusd.mkdir()
             stored = tusd / "abc"
@@ -83,6 +84,50 @@ class InboxApiTest(unittest.TestCase):
             target = media / "00-inbox" / "archives" / "ntf1" / "Artiste - Titre.mp3"
             self.assertEqual(target.read_bytes(), b"audio")
             self.assertFalse(stored.exists())
+
+    def test_banks_are_the_folders_of_20_archives(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            media = Path(raw)
+            for name in ("ntf1", "jazz-live", ".cache", "_vieux", "rotation"):
+                (media / "20-archives" / name).mkdir(parents=True)
+            (media / "20-archives" / "notes.txt").write_text("pas un dossier")
+            (media / "20-archives" / "jazz-live" / ".banque.json").write_text('{"nom": "Jazz en public"}')
+            self.assertEqual(list(inbox_api.destinations(media)), ["rotation", "jazz-live", "ntf1"])
+            rows = inbox_api.destination_list(media)
+            self.assertEqual(
+                [(row["id"], row["label"], row["group"]) for row in rows],
+                [("rotation", "Rotation", "rotation"), ("jazz-live", "Jazz en public", "archives"), ("ntf1", "NTF 1", "archives")],
+            )
+            self.assertEqual(inbox_api.inbox_status(media, None)["destinations"], rows)
+
+    def test_an_unknown_bank_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            media = Path(raw)
+            event = {"Upload": {"Size": 4, "MetaData": {"filename": "a.mp3", "destination": "ntf9"}}}
+            _status, body = inbox_api.hook_decision(event, media, media / "tusd")
+            self.assertEqual(body["HTTPResponse"]["Body"], "destination inconnue")
+
+    def test_create_bank(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            media = Path(raw)
+            (media / "20-archives" / "ntf1").mkdir(parents=True)
+            status, body = inbox_api.create_bank(media, "  Archives   jazz ", "jazz")
+            self.assertEqual(status, 201)
+            self.assertEqual(body["destination"]["label"], "Archives jazz")
+            self.assertTrue((media / "00-inbox" / "archives" / "jazz").is_dir())
+            self.assertEqual(inbox_api.bank_label(media, "jazz"), "Archives jazz")
+            self.assertIn("jazz", inbox_api.destinations(media))
+            for label, folder, code in [
+                ("Autre", "jazz", 409),
+                ("archives JAZZ", "jazz2", 409),
+                ("ntf 1", "ntf1", 409),
+                ("Rotation", "rot", 409),
+                ("Musique", "rotation", 409),
+                ("Sans dossier", "Jazz Live", 400),
+                ("Sans dossier", "../x", 400),
+                ("", "vide", 400),
+            ]:
+                self.assertEqual(inbox_api.create_bank(media, label, folder)[0], code, (label, folder))
 
 
 if __name__ == "__main__":

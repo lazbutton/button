@@ -1627,3 +1627,9 @@
     flex: 1 1 12rem;
   }
 }
+
+.app-carts-hour-empty {
+  margin: 0;
+  color: var(--app-text-faint);
+  font-size: 0.72rem;
+}

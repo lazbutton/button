@@ -32,13 +32,12 @@ AUTOMATE_URL = os.environ.get("AUTOMATE_URL", "").rstrip("/")
 TUSD_DIR = Path(os.environ.get("TUSD_DIR", "/tusd"))
 AUDIO_EXT = {".mp3", ".wav", ".flac", ".ogg", ".m4a", ".aac", ".aiff", ".aif", ".webm"}
 SKIP_TOP = {"00-inbox", "90-trash"}
+CARTS_ONLY_FLAG = ".library-carts-only"
+CART_PATHS_FILE = ".library-cart-paths"
 EMISSION_SLOTS = ("entiere", "podcasts")
 
 PROMOTE = (
     ("00-inbox/rotation", "10-rotation", "music"),
-    ("00-inbox/archives/ntf1", "20-archives/ntf1", "music"),
-    ("00-inbox/archives/ntf2", "20-archives/ntf2", "music"),
-    ("00-inbox/archives/ntf3", "20-archives/ntf3", "music"),
     ("00-inbox/habillage/jingles", "30-habillage/jingles", "file"),
     ("00-inbox/habillage/ids", "30-habillage/ids", "file"),
     ("00-inbox/habillage/pubs", "30-habillage/pubs", "file"),
@@ -46,6 +45,16 @@ PROMOTE = (
     ("00-inbox/habillage/stings", "30-habillage/stings", "file"),
     ("00-inbox/habillage/sfx", "30-habillage/sfx", "file"),
 )
+
+def promote_rules() -> list[tuple[str, str, str]]:
+    """The fixed rules, then one per archive bank: a folder of 20-archives."""
+    archives = [
+        (inbox, bank, "music")
+        for key, (inbox, bank) in inbox_api.destinations(MEDIA_ROOT).items()
+        if key != inbox_api.ROTATION
+    ]
+    return [*PROMOTE, *archives]
+
 
 KIND_FOLDERS = {
     "30-habillage/jingles": "jingle",
@@ -60,6 +69,28 @@ KIND_FOLDERS = {
 
 def rel_of(path: Path) -> str:
     return path.resolve().relative_to(MEDIA_ROOT).as_posix()
+
+
+def carts_only() -> bool:
+    return (MEDIA_ROOT / CARTS_ONLY_FLAG).is_file()
+
+
+def kept_cart_paths() -> set[str]:
+    path = MEDIA_ROOT / CART_PATHS_FILE
+    if not path.is_file():
+        return set()
+    return {line.strip() for line in path.read_text().splitlines() if line.strip()}
+
+
+def in_library(rel: str) -> bool:
+    """After a prune, the search only keeps files that are still in a bac."""
+    if rel.split("/", 1)[0] in SKIP_TOP:
+        return False
+    if not carts_only():
+        return True
+    if rel.startswith("50-carts/"):
+        return True
+    return rel in kept_cart_paths()
 
 
 def doc_id(rel: str) -> str:
@@ -183,6 +214,7 @@ def document_for(path: Path) -> dict | None:
         "kind": kind_of(rel),
         "grouping": grouping_of(rel),
         "folder": str(Path(rel).parent.as_posix()),
+        "top": top,
         "duration": round(duration, 3),
         "bytes": path.stat().st_size,
         "mime": mime,
@@ -228,7 +260,7 @@ def ensure_index() -> None:
         f"{MEILI_URL}/indexes/{INDEX}/settings",
         {
             "searchableAttributes": ["title", "artist", "filename", "path", "folder"],
-            "filterableAttributes": ["kind", "grouping", "folder"],
+            "filterableAttributes": ["kind", "grouping", "folder", "top"],
             "sortableAttributes": ["path", "title", "duration"],
         },
     )
@@ -250,7 +282,7 @@ def promote_file(path: Path) -> Path | None:
         rel = rel_of(path)
     except ValueError:
         return None
-    for src, dest, mode in PROMOTE:
+    for src, dest, mode in promote_rules():
         prefix = src + "/"
         if rel == src or not rel.startswith(prefix):
             continue
@@ -329,7 +361,9 @@ def index_path(path: Path) -> None:
     if not target.exists() or not is_audio(target):
         return
     try:
-        if rel_of(target).split("/", 1)[0] in SKIP_TOP:
+        rel = rel_of(target)
+        if rel.split("/", 1)[0] in SKIP_TOP or not in_library(rel):
+            delete_id(doc_id(rel))
             return
     except ValueError:
         return
@@ -352,11 +386,79 @@ def full_scan() -> None:
             if rel.startswith("00-inbox/"):
                 index_path(path)
             continue
+        if not in_library(rel):
+            continue
         doc = document_for(path)
         if doc:
             upsert(doc)
             n += 1
     print(f"scan {n} fichiers", flush=True)
+
+
+def indexed_rels() -> set[str]:
+    rels: set[str] = set()
+    offset = 0
+    while True:
+        page = meili(
+            "GET",
+            f"{MEILI_URL}/indexes/{INDEX}/documents?limit=200&offset={offset}&fields=path",
+        )
+        if not isinstance(page, dict):
+            return rels
+        results = page.get("results") or []
+        for doc in results:
+            path = str(doc.get("path") or "")
+            if path:
+                rels.add(path)
+        if len(results) < 200:
+            return rels
+        offset += 200
+
+
+def audio_on_disk() -> dict[str, Path]:
+    found: dict[str, Path] = {}
+    for path in MEDIA_ROOT.rglob("*"):
+        if not is_audio(path):
+            continue
+        try:
+            rel = rel_of(path)
+        except ValueError:
+            continue
+        if rel.split("/", 1)[0] in SKIP_TOP or not in_library(rel):
+            continue
+        found[rel] = path
+    return found
+
+
+def sync_library() -> None:
+    """Index files the watcher missed, and drop entries whose file is gone.
+
+    Copying a bac into the volume often overflows inotify, so the startup
+    scan is the only pass those files would ever get.
+    """
+    on_disk = audio_on_disk()
+    known = indexed_rels()
+    added = 0
+    for rel, path in on_disk.items():
+        if rel in known:
+            continue
+        index_path(path)
+        added += 1
+    removed = 0
+    for rel in known - set(on_disk):
+        delete_id(doc_id(rel))
+        removed += 1
+    if added or removed:
+        print(f"bibliothèque +{added} −{removed}", flush=True)
+
+
+def library_loop() -> None:
+    while True:
+        time.sleep(20)
+        try:
+            sync_library()
+        except Exception as exc:
+            print(f"sync bibliothèque: {exc}", flush=True)
 
 
 class Handler(FileSystemEventHandler):
@@ -379,6 +481,15 @@ def cors(handler: BaseHTTPRequestHandler) -> None:
     handler.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
     handler.send_header("Access-Control-Allow-Headers", "Range, Content-Type")
     handler.send_header("Access-Control-Expose-Headers", "Content-Range, Accept-Ranges, Content-Length")
+
+
+def any_of(field: str, raw: str) -> str:
+    """grouping=ntf1,ntf2 reads as ntf1 OR ntf2."""
+    values = [value.strip() for value in raw.split(",") if value.strip()]
+    clauses = [f"{field} = {json.dumps(value, ensure_ascii=False)}" for value in values]
+    if len(clauses) > 1:
+        return "(" + " OR ".join(clauses) + ")"
+    return clauses[0] if clauses else ""
 
 
 def json_response(handler: BaseHTTPRequestHandler, payload: dict, status: int = 200) -> None:
@@ -476,6 +587,7 @@ class CatalogHandler(BaseHTTPRequestHandler):
             kind = (qs.get("kind") or [""])[0]
             grouping = (qs.get("grouping") or [""])[0]
             folder = (qs.get("folder") or [""])[0]
+            top = (qs.get("top") or [""])[0]
             limit = min(int((qs.get("limit") or ["80"])[0] or 80), 200)
             filters = []
             if kind:
@@ -484,10 +596,10 @@ class CatalogHandler(BaseHTTPRequestHandler):
                     filters.append('(kind = "son" OR kind = "emission" OR kind = "podcast")')
                 elif token:
                     filters.append(f'kind = "{token}"')
-            if grouping:
-                filters.append(f'grouping = "{grouping}"')
-            if folder:
-                filters.append(f'folder = "{folder}"')
+            for field, raw in (("grouping", grouping), ("folder", folder), ("top", top)):
+                clause = any_of(field, raw)
+                if clause:
+                    filters.append(clause)
             body = {
                 "q": query,
                 "limit": limit,
@@ -530,6 +642,41 @@ class CatalogHandler(BaseHTTPRequestHandler):
             json_response(self, {"error": "corps trop gros"}, 413)
             return
         raw = self.rfile.read(length) if length else b""
+        if path == "/prune":
+            allowed, why = session_admin(self.headers.get("Cookie") or "")
+            if not allowed:
+                status = 401 if "session" in why else 403
+                json_response(self, {"error": why}, status)
+                return
+            try:
+                payload = prune_outside_carts(self.headers.get("Cookie") or "")
+            except (OSError, json.JSONDecodeError, RuntimeError, urllib.error.URLError) as exc:
+                json_response(self, {"error": str(exc) or "prune impossible"}, 502)
+                return
+            json_response(self, payload)
+            return
+        if path == "/banks.json":
+            if (self.headers.get("Content-Type") or "").split(";")[0].strip() != "application/json":
+                json_response(self, {"error": "JSON attendu"}, 415)
+                return
+            if (self.headers.get("Sec-Fetch-Site") or "same-origin") not in {"same-origin", "none"}:
+                json_response(self, {"error": "requête d'un autre site"}, 403)
+                return
+            allowed, why = cookie_allowed(self.headers.get("Cookie") or "")
+            if not allowed:
+                status = 401 if "session" in why else 403
+                json_response(self, {"error": why}, status)
+                return
+            try:
+                body = json.loads(raw.decode() or "{}")
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                body = None
+            if not isinstance(body, dict):
+                json_response(self, {"error": "json illisible"}, 400)
+                return
+            status, payload = inbox_api.create_bank(MEDIA_ROOT, body.get("label", ""), body.get("folder", ""))
+            json_response(self, payload, status)
+            return
         if path != "/tus-hook":
             json_response(self, {"error": "not_found"}, 404)
             return
@@ -574,11 +721,16 @@ def cookie_of(event: dict) -> str:
 
 
 def deposit_allowed(event: dict) -> tuple[bool, str]:
+    return cookie_allowed(cookie_of(event))
+
+
+def cookie_allowed(cookie: str) -> tuple[bool, str]:
+    """Depositing and creating a bank: admin, or a right on bacs or the auto-DJ."""
     if not AUTOMATE_URL:
         return False, "dépôt non relié à l'automate"
     req = urllib.request.Request(
         f"{AUTOMATE_URL}/account.json",
-        headers={"Cookie": cookie_of(event)},
+        headers={"Cookie": cookie},
     )
     try:
         with urllib.request.urlopen(req, timeout=4) as resp:
@@ -597,8 +749,73 @@ def deposit_allowed(event: dict) -> tuple[bool, str]:
     return False, "droit insuffisant"
 
 
+def session_admin(cookie: str) -> tuple[bool, str]:
+    if not AUTOMATE_URL:
+        return False, "catalogue non relié à l'automate"
+    req = urllib.request.Request(
+        f"{AUTOMATE_URL}/account.json",
+        headers={"Cookie": cookie},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=4) as resp:
+            payload = json.loads(resp.read().decode() or "{}")
+    except urllib.error.HTTPError as exc:
+        if exc.code in {401, 403}:
+            return False, "session expirée"
+        return False, "automate injoignable"
+    except (OSError, json.JSONDecodeError):
+        return False, "automate injoignable"
+    perms = payload.get("permissions") if isinstance(payload, dict) else None
+    if not isinstance(perms, dict) or not perms.get("admin"):
+        return False, "réservé à un admin"
+    return True, ""
+
+
+def cart_sound_paths(cookie: str) -> set[str]:
+    req = urllib.request.Request(
+        f"{AUTOMATE_URL}/carts.json",
+        headers={"Cookie": cookie},
+    )
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        payload = json.loads(resp.read().decode() or "{}")
+    carts = payload.get("carts") if isinstance(payload, dict) else None
+    if not isinstance(carts, list):
+        raise RuntimeError("carts.json illisible")
+    keep: set[str] = set()
+    for cart in carts:
+        if not isinstance(cart, dict):
+            continue
+        sounds = cart.get("sounds")
+        if not isinstance(sounds, list):
+            continue
+        for sound in sounds:
+            if not isinstance(sound, dict):
+                continue
+            rel = str(sound.get("path") or "").strip().lstrip("/")
+            if rel.startswith("media:"):
+                rel = rel[6:]
+            if rel and ".." not in Path(rel).parts:
+                keep.add(rel)
+    return keep
+
+
+def prune_outside_carts(cookie: str) -> dict:
+    """Drop search entries whose file is not a sound in a bac."""
+    keep = cart_sound_paths(cookie)
+    (MEDIA_ROOT / CART_PATHS_FILE).write_text("\n".join(sorted(keep)) + "\n")
+    (MEDIA_ROOT / CARTS_ONLY_FLAG).write_text("1\n")
+    removed = 0
+    for rel in indexed_rels():
+        if rel in keep:
+            continue
+        delete_id(doc_id(rel))
+        removed += 1
+    print(f"hors bacs −{removed}, gardés {len(keep)}", flush=True)
+    return {"removed": removed, "kept": len(keep)}
+
+
 def inbox_dirs() -> list[Path]:
-    folders = [MEDIA_ROOT / src for src, _dest, _mode in PROMOTE]
+    folders = [MEDIA_ROOT / src for src, _dest, _mode in promote_rules()]
     shows = MEDIA_ROOT / "00-inbox" / "emissions"
     if shows.is_dir():
         for show_dir in shows.iterdir():
@@ -633,6 +850,7 @@ def main() -> None:
     observer.schedule(Handler(), str(MEDIA_ROOT), recursive=True)
     observer.start()
     threading.Thread(target=inbox_loop, name="inbox", daemon=True).start()
+    threading.Thread(target=library_loop, name="library", daemon=True).start()
     server = ThreadingHTTPServer(("0.0.0.0", PORT), CatalogHandler)
     print(f"button-catalog {PORT} media={MEDIA_ROOT}", flush=True)
     try:

@@ -1,315 +1,314 @@
-import { Button, Dialog, TextField } from "@radix-ui/themes";
-import {
-  ListMusic,
-  Plus,
-  Repeat2,
-  Search,
-  SearchX,
-  Shuffle,
-  type LucideIcon,
-} from "lucide-react";
-import { useMemo, useState } from "react";
+import { Button, Kbd, Select, TextField } from "@radix-ui/themes";
+import { Plus, Search, SearchX } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { filesFromDataTransfer, isFileDrag } from "../../api/audioDrop";
 import type { BacFilter } from "../../api/cartFlags";
-import { isHabillageCart } from "../../api/cartFlags";
-import { MODE_HELP, MODE_LABELS, relayUrlOk } from "../../api/cartMeta";
+import { MODE_LABELS } from "../../api/cartMeta";
 import type { CartImportProgress } from "../../api/cartSounds";
+import { fuzzyTitleMatch } from "../../api/fuzzyTitle";
+import {
+  bacCounts,
+  bacKind,
+  cartTotalSeconds,
+  formatSpan,
+  groupBacs,
+  percentOf,
+  relayHost,
+  type BacKind,
+} from "../../api/soundsView";
 import type { Cart, CartMode } from "../../api/types";
-import { EmptyState } from "../../ui/EmptyState";
-import { FormField, SelectField } from "../../ui/FormField";
-import { Panel, SectionHeader } from "../../ui/Panel";
+import { MODE_ICONS } from "./bacIcons";
+import type { BacUsage } from "./BacHeader";
+import { CreateBacDialog, type CartCreateExtra } from "./CreateBacDialog";
 
-const BAC_FILTERS: { id: BacFilter; label: string }[] = [
+const FILTERS: { id: BacFilter; label: string }[] = [
   { id: "tous", label: "Tous" },
   { id: "fichiers", label: "Fichiers" },
   { id: "habillage", label: "Habillage" },
   { id: "relais", label: "Relais" },
 ];
 
-const PLAY_MODES: { value: CartMode; label: string }[] = [
-  { value: "playlist_loop", label: "Boucle" },
-  { value: "random", label: "Aléatoire" },
-  { value: "playlist", label: "Une fois" },
-  { value: "relay", label: "Relais" },
-];
-
-const CART_ICONS: Record<CartMode, LucideIcon> = {
-  playlist: ListMusic,
-  playlist_loop: Repeat2,
-  random: Shuffle,
-  relay: Repeat2,
-};
-
-export type CartCreateExtra = { url: string; max_duration: number };
+function isTyping(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  return target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName);
+}
 
 export function CartLibrary({
+  all,
   carts,
+  filter,
+  onFilter,
   selectedId,
+  usage,
   importProgress,
   onSelect,
-  onCreate,
   onImport,
-  clockUsage,
-  modes = PLAY_MODES,
-  defaultMode = "playlist_loop",
-  heading = "Bacs",
-  description = "Un bac n’apparaît qu’une fois. Le filtre sépare les types.",
-  filter = "tous",
-  onFilter,
+  onCreate,
 }: {
+  all: Cart[];
   carts: Cart[];
+  filter: BacFilter;
+  onFilter: (filter: BacFilter) => void;
   selectedId: number | null;
-  importProgress?: CartImportProgress | null;
+  usage: Record<number, BacUsage>;
+  importProgress: CartImportProgress | null;
   onSelect: (id: number) => void;
-  onCreate: (title: string, mode: CartMode, extra?: CartCreateExtra) => Promise<void>;
-  onImport?: (cartId: number, collect: () => Promise<File[]>) => Promise<void>;
-  clockUsage?: Record<number, string>;
-  modes?: { value: CartMode; label: string }[];
-  defaultMode?: CartMode;
-  heading?: string;
-  description?: string;
-  filter?: BacFilter;
-  onFilter?: (filter: BacFilter) => void;
+  onImport: (cartId: number, collect: () => Promise<File[]>) => Promise<void>;
+  onCreate: (title: string, mode: CartMode, extra: CartCreateExtra) => Promise<void>;
 }) {
   const [query, setQuery] = useState("");
-  const [open, setOpen] = useState(false);
-  const [title, setTitle] = useState("");
-  const [mode, setMode] = useState<CartMode>(defaultMode);
-  const [url, setUrl] = useState("");
-  const [maxDuration, setMaxDuration] = useState("1800");
-  const [busy, setBusy] = useState(false);
   const [dropId, setDropId] = useState<number | null>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const counts = useMemo(() => bacCounts(all), [all]);
+  const searching = Boolean(query.trim());
 
-  const visible = useMemo(() => {
-    const needle = query.trim().toLocaleLowerCase("fr");
-    if (!needle) return carts;
-    return carts.filter((cart) => cart.title.toLocaleLowerCase("fr").includes(needle));
-  }, [carts, query]);
+  const visible = useMemo(
+    () => (searching ? carts.filter((cart) => fuzzyTitleMatch(cart.title, query)) : carts),
+    [carts, query, searching],
+  );
+  const groups = useMemo(
+    () =>
+      filter === "tous" && !searching
+        ? groupBacs(visible)
+        : [{ kind: null as BacKind | null, label: "", carts: visible }],
+    [filter, searching, visible],
+  );
+  const flat = useMemo(() => groups.flatMap((group) => group.carts), [groups]);
+
+  useEffect(() => {
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "/" || event.metaKey || event.ctrlKey || isTyping(event.target)) return;
+      if (!searchRef.current || searchRef.current.offsetParent === null) return;
+      event.preventDefault();
+      searchRef.current.focus();
+      searchRef.current.select();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  const move = (event: KeyboardEvent<HTMLDivElement>) => {
+    const keys = ["ArrowDown", "ArrowUp", "Home", "End"];
+    if (!keys.includes(event.key) || !flat.length) return;
+    event.preventDefault();
+    const index = flat.findIndex((cart) => cart.id === selectedId);
+    let next = index < 0 ? 0 : index;
+    if (event.key === "ArrowDown") next = Math.min(flat.length - 1, next + 1);
+    if (event.key === "ArrowUp") next = Math.max(0, next - 1);
+    if (event.key === "Home") next = 0;
+    if (event.key === "End") next = flat.length - 1;
+    const target = flat[next];
+    onSelect(target.id);
+    requestAnimationFrame(() => {
+      listRef.current?.querySelector<HTMLElement>(`[data-cart="${target.id}"]`)?.focus();
+    });
+  };
 
   return (
-    <Panel as="aside" padded={false} className="app-carts-col app-carts-lib">
-      <div className="app-carts-library-toolbar">
-        <SectionHeader
-          title={heading}
-          count={carts.length}
-          description={description}
-          actions={
-            <Dialog.Root
-              open={open}
-              onOpenChange={(next) => {
-                setOpen(next);
-                if (next) setMode(defaultMode);
-              }}
-            >
-              <Dialog.Trigger>
-                <Button size="1">
-                  <Plus className="ui-button-icon" />
-                  Nouveau
-                </Button>
-              </Dialog.Trigger>
-              <Dialog.Content maxWidth="24rem" className="app-cart-dialog">
-                <Dialog.Title>Nouveau bac</Dialog.Title>
-                <Dialog.Description size="2" mb="3">
-                  Un nom, et comment ça se lit.
-                </Dialog.Description>
-                <form
-                  className="app-cart-create-form"
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    const seconds = Number(maxDuration);
-                    const relayReady =
-                      mode !== "relay" || (relayUrlOk(url) && Number.isFinite(seconds) && seconds > 0);
-                    if (busy || !title.trim() || !relayReady) return;
-                    void (async () => {
-                      setBusy(true);
-                      try {
-                        await onCreate(
-                          title.trim(),
-                          mode,
-                          mode === "relay" ? { url: url.trim(), max_duration: seconds } : undefined,
-                        );
-                        setTitle("");
-                        setUrl("");
-                        setMaxDuration("1800");
-                        setMode(defaultMode);
-                        setOpen(false);
-                      } finally {
-                        setBusy(false);
-                      }
-                    })();
-                  }}
-                >
-                  <FormField label="Titre">
-                    <TextField.Root
-                      className="ui-field-control"
-                      value={title}
-                      onChange={(event) => setTitle(event.target.value)}
-                      placeholder="Jingles"
-                      autoFocus
-                    />
-                  </FormField>
-                  <SelectField
-                    label="Mode"
-                    value={mode}
-                    options={modes}
-                    onValueChange={(value) => setMode(value as CartMode)}
-                    hint={MODE_HELP[mode]}
-                  />
-                  {mode === "relay" ? (
-                    <>
-                      <FormField
-                        label="URL du flux"
-                        hint="HTTP ou HTTPS, avec un chemin."
-                      >
-                        <TextField.Root
-                          className="ui-field-control"
-                          value={url}
-                          placeholder="https://radio.exemple/flux.mp3"
-                          onChange={(event) => setUrl(event.target.value)}
-                        />
-                      </FormField>
-                      <FormField label="Durée max (secondes)" hint="Obligatoire.">
-                        <TextField.Root
-                          className="ui-field-control"
-                          type="number"
-                          min={1}
-                          value={maxDuration}
-                          onChange={(event) => setMaxDuration(event.target.value)}
-                        />
-                      </FormField>
-                    </>
-                  ) : null}
-                  <div className="app-cart-dialog-actions">
-                    <Dialog.Close>
-                      <Button type="button" variant="soft" color="gray" disabled={busy}>
-                        Annuler
-                      </Button>
-                    </Dialog.Close>
-                    <Button
-                      type="submit"
-                      disabled={
-                        busy ||
-                        !title.trim() ||
-                        (mode === "relay" &&
-                          (!relayUrlOk(url) || !(Number(maxDuration) > 0)))
-                      }
-                    >
-                      {busy ? "Création…" : "Créer le bac"}
-                    </Button>
-                  </div>
-                </form>
-              </Dialog.Content>
-            </Dialog.Root>
+    <aside className="bacs-lib" aria-label="Bacs">
+      <header className="bacs-lib-head">
+        <h2 className="bacs-lib-title">
+          Bacs <span className="bacs-count">{all.length}</span>
+        </h2>
+        <CreateBacDialog
+          defaultKind={filter === "tous" ? "fichiers" : filter}
+          taken={all.map((cart) => cart.title)}
+          onCreate={onCreate}
+          trigger={
+            <Button size="1" highContrast>
+              <Plus className="ui-button-icon" />
+              Nouveau
+            </Button>
           }
         />
-        {onFilter ? (
-          <div className="app-bac-filters" role="group" aria-label="Type de bac">
-            {BAC_FILTERS.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                className={filter === item.id ? "is-on" : undefined}
-                aria-pressed={filter === item.id}
-                onClick={() => onFilter(item.id)}
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
-        ) : null}
+      </header>
+      <div className="bacs-lib-tools">
         <TextField.Root
-          size="1"
-          placeholder="Rechercher un bac…"
+          ref={searchRef}
+          size="2"
+          className="bacs-search"
+          placeholder="Rechercher"
           value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          className="app-cart-search"
           aria-label="Rechercher un bac"
+          onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              setQuery("");
+              event.currentTarget.blur();
+            }
+            if (event.key === "ArrowDown") {
+              event.preventDefault();
+              listRef.current?.querySelector<HTMLElement>("[data-cart]")?.focus();
+            }
+          }}
         >
           <TextField.Slot>
-            <Search size={14} aria-hidden="true" />
+            <Search size={15} aria-hidden="true" />
+          </TextField.Slot>
+          <TextField.Slot side="right">
+            <Kbd size="1">/</Kbd>
           </TextField.Slot>
         </TextField.Root>
+        <Select.Root size="2" value={filter} onValueChange={(value) => onFilter(value as BacFilter)}>
+          <Select.Trigger variant="soft" color="gray" className="bacs-filter" aria-label="Type de bac" />
+          <Select.Content position="popper" align="end" className="bacs-filter-menu">
+            {FILTERS.map((item) => (
+              <Select.Item key={item.id} value={item.id}>
+                {item.label}
+                <span className="bacs-filter-count">{counts[item.id]}</span>
+              </Select.Item>
+            ))}
+          </Select.Content>
+        </Select.Root>
       </div>
-      <div className="app-cart-list">
-        {visible.map((cart) => {
-          const active = cart.id === selectedId;
-          const dropping = dropId === cart.id;
-          const importing = importProgress?.cartId === cart.id;
-          const Icon = CART_ICONS[cart.mode] ?? Repeat2;
-          const soundLabel = `${cart.sounds.length} son${cart.sounds.length === 1 ? "" : "s"}`;
-          return (
-            <div
-              key={cart.id}
-              className={`app-cart-list-item${dropping ? " is-file-drop" : ""}${importing ? " is-importing" : ""}`}
-              onDragOver={(event) => {
-                if (!onImport || importProgress || !isFileDrag(event)) return;
-                event.preventDefault();
-                event.dataTransfer.dropEffect = "copy";
-                setDropId(cart.id);
-              }}
-              onDragLeave={(event) => {
-                const next = event.relatedTarget as Node | null;
-                if (next && event.currentTarget.contains(next)) return;
-                setDropId((id) => (id === cart.id ? null : id));
-              }}
-              onDrop={(event) => {
-                if (!onImport || importProgress || !isFileDrag(event)) return;
-                event.preventDefault();
-                event.stopPropagation();
-                const data = event.dataTransfer;
-                setDropId(null);
-                onSelect(cart.id);
-                void onImport(cart.id, () => filesFromDataTransfer(data));
-              }}
-            >
-              <button
-                type="button"
-                className={`app-cart-card${active ? " is-selected" : ""}`}
-                aria-pressed={active}
-                onClick={() => onSelect(cart.id)}
-              >
-                <span className="app-cart-card-icon" aria-hidden="true">
-                  <Icon size={16} strokeWidth={1.75} />
-                </span>
-                <span className="app-cart-card-body">
-                  <span className="app-cart-card-title">{cart.title}</span>
-                  <span className="app-cart-card-meta">
-                    {importing ? (
-                      <span className="app-cart-card-import">
-                        {importProgress.phase === "reading"
-                          ? "Lecture des fichiers…"
-                          : `Ajout ${importProgress.done} / ${importProgress.total}`}
-                      </span>
-                    ) : dropping ? (
-                      <span className="app-cart-card-import">Relâchez pour ajouter ici</span>
-                    ) : (
-                      <>
-                        <span>{soundLabel}</span>
-                        <span>{cart.mode === "relay" ? "Relais" : isHabillageCart(cart) ? "Habillage" : "Fichiers"}</span>
-                        <span className={clockUsage?.[cart.id]?.startsWith("pas dans") ? "app-cart-hour-miss" : "app-cart-hour-hit"}>
-                          {clockUsage?.[cart.id] ?? "pas dans l’Auto-DJ"}
-                        </span>
-                      </>
-                    )}
-                  </span>
-                </span>
-                <span className="app-cart-card-mode">{MODE_LABELS[cart.mode]}</span>
-              </button>
-            </div>
-          );
-        })}
-        {visible.length === 0 ? (
-          <EmptyState
-            icon={query.trim() ? SearchX : ListMusic}
-            title={query.trim() ? "Aucun résultat" : "Aucun bac"}
-            description={
-              query.trim()
-                ? "Essaie un autre nom."
-                : "Crée un bac, puis ajoute les fichiers."
-            }
-          />
+      <div className="bacs-lib-list" ref={listRef} role="listbox" aria-label="Bacs" onKeyDown={move}>
+        {groups.map((group) => (
+          <div key={group.kind ?? "liste"} className="bacs-lib-group" role="presentation">
+            {group.kind ? (
+              <p className="bacs-lib-group-label" role="presentation">
+                {group.label}
+                <span>{group.carts.length}</span>
+              </p>
+            ) : null}
+            {group.carts.map((cart) => (
+              <BacRow
+                key={cart.id}
+                cart={cart}
+                usage={usage[cart.id]}
+                selected={cart.id === selectedId}
+                dropping={dropId === cart.id}
+                importProgress={importProgress?.cartId === cart.id ? importProgress : null}
+                onSelect={() => onSelect(cart.id)}
+                onDragState={(over) => setDropId((id) => (over ? cart.id : id === cart.id ? null : id))}
+                onDropFiles={(collect) => {
+                  if (importProgress || cart.mode === "relay") return;
+                  onSelect(cart.id);
+                  void onImport(cart.id, collect);
+                }}
+              />
+            ))}
+          </div>
+        ))}
+        {flat.length === 0 ? (
+          <div className="bacs-lib-empty">
+            <SearchX size={18} aria-hidden="true" />
+            <p>{searching ? `Aucun bac ne correspond à « ${query.trim()} ».` : "Aucun bac de ce type."}</p>
+            {searching ? (
+              <Button size="1" variant="soft" color="gray" onClick={() => setQuery("")}>
+                Effacer la recherche
+              </Button>
+            ) : null}
+          </div>
         ) : null}
       </div>
-    </Panel>
+    </aside>
+  );
+}
+
+function BacRow({
+  cart,
+  usage,
+  selected,
+  dropping,
+  importProgress,
+  onSelect,
+  onDragState,
+  onDropFiles,
+}: {
+  cart: Cart;
+  usage?: BacUsage;
+  selected: boolean;
+  dropping: boolean;
+  importProgress: CartImportProgress | null;
+  onSelect: () => void;
+  onDragState: (over: boolean) => void;
+  onDropFiles: (collect: () => Promise<File[]>) => void;
+}) {
+  const kind = bacKind(cart);
+  const Icon = MODE_ICONS[cart.mode];
+  const relay = cart.mode === "relay";
+  const importing = importProgress != null;
+  const meta = relay ? relayHost(cart.url) || "Adresse à régler" : MODE_LABELS[cart.mode];
+  const percent = importing ? percentOf(importProgress.done, importProgress.total) : 0;
+
+  return (
+    <button
+      type="button"
+      role="option"
+      aria-selected={selected}
+      tabIndex={selected ? 0 : -1}
+      data-cart={cart.id}
+      className={["bacs-row", selected ? "is-selected" : "", dropping ? "is-drop" : "", importing ? "is-importing" : ""]
+        .filter(Boolean)
+        .join(" ")}
+      onClick={onSelect}
+      onDragOver={(event) => {
+        if (relay || !isFileDrag(event)) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "copy";
+        onDragState(true);
+      }}
+      onDragLeave={(event) => {
+        const next = event.relatedTarget as Node | null;
+        if (next && event.currentTarget.contains(next)) return;
+        onDragState(false);
+      }}
+      onDrop={(event) => {
+        if (relay || !isFileDrag(event)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        onDragState(false);
+        const data = event.dataTransfer;
+        onDropFiles(() => filesFromDataTransfer(data));
+      }}
+    >
+      <span className={`bacs-tile is-${kind}`} aria-hidden="true">
+        <Icon size={15} strokeWidth={1.75} />
+      </span>
+      <span className="bacs-row-main">
+        <span className="bacs-row-title">{cart.title}</span>
+        <span className="bacs-row-meta">
+          {dropping ? (
+            <span className="bacs-row-hint">Déposer pour ajouter ici</span>
+          ) : importing ? (
+            <span className="bacs-row-hint">
+              {importProgress.phase === "reading"
+                ? "Lecture des fichiers…"
+                : `Ajout ${importProgress.done} / ${importProgress.total}`}
+            </span>
+          ) : (
+            <>
+              <span>{meta}</span>
+              {usage ? (
+                <span className={`bacs-usage${usage.programmed ? " is-on" : ""}`} title={usage.detail || undefined}>
+                  <i aria-hidden="true" />
+                  {usage.label}
+                </span>
+              ) : null}
+              {cart.ident_pads ? <span className="bacs-tag">Pads</span> : null}
+            </>
+          )}
+        </span>
+      </span>
+      <span className="bacs-row-side">
+        {relay ? (
+          <>
+            <span className="bacs-row-num">{cart.max_duration ? formatSpan(cart.max_duration) : "—"}</span>
+            <span className="bacs-row-sub">max.</span>
+          </>
+        ) : (
+          <>
+            <span className="bacs-row-num">{cart.sounds.length}</span>
+            <span className="bacs-row-sub">{cart.sounds.length ? formatSpan(cartTotalSeconds(cart)) : "vide"}</span>
+          </>
+        )}
+      </span>
+      {importing ? (
+        <span className="bacs-row-progress" aria-hidden="true">
+          <i style={{ width: `${importProgress.phase === "reading" ? 8 : Math.max(4, percent)}%` }} />
+        </span>
+      ) : null}
+    </button>
   );
 }

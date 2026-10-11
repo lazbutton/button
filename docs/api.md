@@ -90,7 +90,11 @@ Créer un relais : `POST /carts.json` avec `mode:"relay"`, une URL HTTP complèt
 
 ### Catalogue (service à part du moteur)
 
-`GET /library/search?q=&limit=&kind=&grouping=&folder=` est le service catalogue (`services/catalog`). Réponse : `{hits:[{id, path, title, artist, kind, grouping, folder, duration}], estimatedTotalHits}`. `grouping` est une égalité simple : `ntf1,ntf2,ntf3` ne fait pas un OU.
+`GET /library/search?q=&limit=&kind=&grouping=&folder=&top=` est le service catalogue (`services/catalog`). Réponse : `{hits:[{id, path, title, artist, kind, grouping, folder, top, duration}], estimatedTotalHits}`. Une liste séparée par des virgules fait un OU : `grouping=ntf1,ntf2`. `top` est le dossier de premier niveau : `top=20-archives` donne toutes les banques d'archives.
 
-`GET /inbox.json` (via `/library/inbox.json`) : `{quota:{used, limit}, queue, rejected, progress}`. L’envoi reprend par tus sur `/tus/`, pas par Radiotomate.
+`GET /inbox.json` (via `/library/inbox.json`) : `{destinations, quota:{used, limit}, queue, rejected, progress}`. L’envoi reprend par tus sur `/tus/`, pas par Radiotomate.
+
+`destinations` : `[{id, label, group, folder}]`. D'abord `rotation`, puis une banque par dossier de `20-archives` (sauf ceux qui commencent par `.` ou `_`). `id` est le nom du dossier, et la métadonnée `destination` de l'envoi tus. `label` vient du fichier `.banque.json` du dossier (`{"nom": "…"}`), sinon du nom du dossier.
+
+`POST /banks.json` (via `/library/banks.json`), corps JSON `{label, folder}` : crée `20-archives/<folder>` et `00-inbox/archives/<folder>`. `folder` : minuscules, chiffres et tirets, 40 caractères au plus. Même droit que le dépôt (admin, bacs ou auto-DJ). Réponse `201 {destination}`, `400` ou `409 {error}` en français.
 

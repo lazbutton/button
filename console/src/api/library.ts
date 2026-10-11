@@ -43,7 +43,8 @@ const TAB_QUERY: Record<LibraryTabId, Record<string, string>> = {
   jingle: { kind: "jingle" },
   pub: { kind: "pub" },
   habillage: { folder: "30-habillage/beds,30-habillage/stings,30-habillage/sfx" },
-  archives: { grouping: "ntf1,ntf2,ntf3" },
+  // Every bank of 20-archives, the ones created later too.
+  archives: { top: "20-archives" },
   emission: { kind: "emission" },
 };
 

@@ -5,7 +5,7 @@
 #   docker exec button-radiotomate-dropbox-1 sh /promote-inbox.sh [--dry-run]
 #
 # - 00-inbox/rotation        -> 10-rotation
-# - 00-inbox/archives/ntfN   -> 20-archives/ntfN
+# - 00-inbox/archives/<banque> -> 20-archives/<banque>, pour chaque dossier de 20-archives
 # - Sans BROADCAST_CODEC : MP3 / FLAC / OGG / M4A déplacés tels quels ;
 #   WAV / AIFF convertis en FLAC ; l'original part dans 00-inbox/_sources.
 # - BROADCAST_CODEC=mp3 ou opus (petit disque) : tout fichier accepté est réencodé
@@ -111,7 +111,11 @@ promote_dir() {
 }
 
 promote_dir "$MEDIA/00-inbox/rotation" "$MEDIA/10-rotation"
-for ed in ntf1 ntf2 ntf3; do
+# Une banque d'archives = un dossier de 20-archives (sauf ceux en . ou _).
+for bank in "$MEDIA"/20-archives/*/; do
+  [ -d "$bank" ] || continue
+  ed=$(basename "$bank")
+  case "$ed" in .*|_*) continue ;; esac
   promote_dir "$MEDIA/00-inbox/archives/$ed" "$MEDIA/20-archives/$ed"
 done
 echo "promotion : $promoted promu(s), $skipped ignoré(s). Index Beets au prochain tour (${BEETS_IMPORT_INTERVAL:-45} s)."

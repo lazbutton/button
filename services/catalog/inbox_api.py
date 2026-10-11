@@ -1,25 +1,28 @@
-"""File d'attente, rejets et quota du dépôt navigateur.
+"""File d'attente, rejets, quota et banques du dépôt navigateur.
 
 tusd appelle le hook. Les fichiers acceptés vont dans 00-inbox.
 La promotion et l'indexation restent au dropbox et à Beets.
+
+Une banque d'archives est un dossier de 20-archives : il est découvert
+tout seul, et son nom affiché peut venir de son fichier .banque.json.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
 ACCEPTED = {".mp3", ".flac", ".ogg", ".opus", ".m4a", ".wav", ".aif", ".aiff"}
-DESTINATIONS = {
-    "rotation": ("00-inbox/rotation", "10-rotation"),
-    "ntf1": ("00-inbox/archives/ntf1", "20-archives/ntf1"),
-    "ntf2": ("00-inbox/archives/ntf2", "20-archives/ntf2"),
-    "ntf3": ("00-inbox/archives/ntf3", "20-archives/ntf3"),
-}
+ROTATION = "rotation"
+ARCHIVES = "20-archives"
+INBOX_ARCHIVES = "00-inbox/archives"
+LABEL_FILE = ".banque.json"
+BANK_SLUG = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?")
 DEFAULT_QUOTA = 100 * 1024 * 1024 * 1024
 _LOCK = threading.Lock()
 
@@ -44,6 +47,87 @@ def safe_name(raw: str) -> str:
     return name
 
 
+def is_bank_folder(name: str) -> bool:
+    if not name or name in {".", ".."} or name.startswith((".", "_")):
+        return False
+    return "/" not in name and "\\" not in name and "\x00" not in name
+
+
+def archive_names(media: Path) -> list[str]:
+    root = media / ARCHIVES
+    if not root.is_dir():
+        return []
+    return sorted(
+        path.name for path in root.iterdir() if path.is_dir() and is_bank_folder(path.name) and path.name != ROTATION
+    )
+
+
+def destinations(media: Path) -> dict[str, tuple[str, str]]:
+    """Rotation, then one destination per folder of 20-archives: (inbox, bank)."""
+    found = {ROTATION: ("00-inbox/rotation", "10-rotation")}
+    for name in archive_names(media):
+        found[name] = (f"{INBOX_ARCHIVES}/{name}", f"{ARCHIVES}/{name}")
+    return found
+
+
+def humanize(name: str) -> str:
+    """ntf1 -> NTF 1, jazz-live -> Jazz live."""
+    short = re.fullmatch(r"([a-z]{1,4})-?(\d+)", name)
+    if short:
+        return f"{short.group(1).upper()} {short.group(2)}"
+    text = re.sub(r"[-_]+", " ", name).strip()
+    return text[:1].upper() + text[1:]
+
+
+def bank_label(media: Path, name: str) -> str:
+    if name == ROTATION:
+        return "Rotation"
+    try:
+        data = json.loads((media / ARCHIVES / name / LABEL_FILE).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        data = {}
+    label = " ".join(str(data.get("nom") or "").split()) if isinstance(data, dict) else ""
+    return label or humanize(name)
+
+
+def destination_list(media: Path) -> list[dict]:
+    rows = [{"id": ROTATION, "label": "Rotation", "group": "rotation", "folder": "10-rotation"}]
+    archives = [
+        {"id": name, "label": bank_label(media, name), "group": "archives", "folder": f"{ARCHIVES}/{name}"}
+        for name in archive_names(media)
+    ]
+    archives.sort(key=lambda row: row["label"].casefold())
+    return rows + archives
+
+
+def create_bank(media: Path, label: str, folder: str) -> tuple[int, dict]:
+    """A new archive bank: its folder in 20-archives, its inbox, its name."""
+    label = " ".join(str(label or "").split())
+    folder = str(folder or "").strip()
+    if not label:
+        return 400, {"error": "Donne un nom à la banque."}
+    if len(label) > 60:
+        return 400, {"error": "Nom trop long : 60 caractères au plus."}
+    if not BANK_SLUG.fullmatch(folder):
+        return 400, {"error": "Dossier : minuscules, chiffres et tirets, 40 caractères au plus."}
+    if folder == ROTATION or label.casefold() == "rotation":
+        return 409, {"error": "« rotation » est réservé à la musique de l'auto-DJ."}
+    with _LOCK:
+        existing = archive_names(media)
+        if any(name.casefold() == folder for name in existing):
+            return 409, {"error": f"Le dossier {ARCHIVES}/{folder} existe déjà."}
+        if any(bank_label(media, name).casefold() == label.casefold() for name in existing):
+            return 409, {"error": "Une banque porte déjà ce nom."}
+        bank = media / ARCHIVES / folder
+        try:
+            bank.mkdir(parents=True)
+        except FileExistsError:
+            return 409, {"error": f"Le dossier {ARCHIVES}/{folder} existe déjà."}
+        (media / INBOX_ARCHIVES / folder).mkdir(parents=True, exist_ok=True)
+        (bank / LABEL_FILE).write_text(json.dumps({"nom": label}, ensure_ascii=False), encoding="utf-8")
+    return 201, {"destination": {"id": folder, "label": label, "group": "archives", "folder": f"{ARCHIVES}/{folder}"}}
+
+
 def judge_upload(
     name: str,
     destination: str,
@@ -53,8 +137,9 @@ def judge_upload(
     limit: int,
     in_inbox: bool,
     in_bank: bool,
+    known: bool = True,
 ) -> str | None:
-    if destination not in DESTINATIONS:
+    if not known:
         return "destination inconnue"
     if not name:
         return "nom refusé"
@@ -131,7 +216,7 @@ def inbox_status(media: Path, tusd_dir: Path | None) -> dict:
     used = used_bytes(media)
     queue: list[dict] = []
     sitting: list[dict] = []
-    for key, (inbox_rel, bank_rel) in DESTINATIONS.items():
+    for key, (inbox_rel, bank_rel) in destinations(media).items():
         folder = media / inbox_rel
         if not folder.is_dir():
             continue
@@ -147,6 +232,7 @@ def inbox_status(media: Path, tusd_dir: Path | None) -> dict:
                 queue.append(_file_row(path, key, None))
     progress = _progress(tusd_dir) if tusd_dir else []
     return {
+        "destinations": destination_list(media),
         "quota": {"used": used, "limit": limit},
         "queue": queue[:200],
         "rejected": sitting[:200] + read_rejets(media),
@@ -193,7 +279,10 @@ def place_upload(media: Path, tusd_dir: Path, storage: Path, name: str, destinat
     """Move a finished tus file into the inbox. Returns a rejection reason."""
     if not _inside(tusd_dir, storage) or not storage.is_file():
         return "fichier introuvable"
-    inbox_rel, bank_rel = DESTINATIONS[destination]
+    known = destinations(media)
+    if destination not in known:
+        return "destination inconnue"
+    inbox_rel, bank_rel = known[destination]
     target = media / inbox_rel / name
     bank = media / bank_rel / name
     reason = judge_upload(
@@ -225,7 +314,7 @@ def finish_upload(event: dict, media: Path, tusd_dir: Path) -> tuple[int, dict]:
     if isinstance(storage_info, dict):
         storage_raw = str(storage_info.get("Path") or "")
     storage = Path(storage_raw) if storage_raw else tusd_dir / str(upload.get("ID") or "")
-    if destination not in DESTINATIONS:
+    if destination not in destinations(media):
         record_rejet(media, name, destination, "destination inconnue")
         return 200, {"error": "destination inconnue"}
     reason = place_upload(media, tusd_dir, storage, name, destination)
@@ -261,7 +350,7 @@ def hook_decision(event: dict, media: Path, tusd_dir: Path) -> tuple[int, dict]:
         nbytes = int(size) if size is not None else None
     except (TypeError, ValueError):
         nbytes = None
-    inbox_rel, bank_rel = DESTINATIONS.get(destination, ("", ""))
+    inbox_rel, bank_rel = destinations(media).get(destination, ("", ""))
     in_inbox = bool(inbox_rel) and name and (media / inbox_rel / name).exists()
     in_bank = bool(bank_rel) and name and (media / bank_rel / name).exists()
     reason = judge_upload(
@@ -272,6 +361,7 @@ def hook_decision(event: dict, media: Path, tusd_dir: Path) -> tuple[int, dict]:
         limit=quota_limit(),
         in_inbox=bool(in_inbox),
         in_bank=bool(in_bank),
+        known=bool(inbox_rel),
     )
     if reason:
         record_rejet(media, name, destination, reason)

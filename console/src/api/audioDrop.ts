@@ -55,7 +55,11 @@ async function readDirectory(entry: FileSystemDirectoryEntry): Promise<File[]> {
   return files;
 }
 
-export async function filesFromDataTransfer(data: DataTransfer): Promise<File[]> {
+/** Files from a drop, folders walked. `keep` picks them: audio only unless the caller sorts them itself. */
+export async function filesFromDataTransfer(
+  data: DataTransfer,
+  keep: (file: File) => boolean = isAudioFile,
+): Promise<File[]> {
   const items = Array.from(data.items ?? []);
   const fromEntries: File[] = [];
   let sawEntry = false;
@@ -71,5 +75,5 @@ export async function filesFromDataTransfer(data: DataTransfer): Promise<File[]>
     }
   }
   const raw = sawEntry ? fromEntries : Array.from(data.files ?? []);
-  return raw.filter(isAudioFile);
+  return raw.filter(keep);
 }
