@@ -22,6 +22,7 @@ from beetsplug.replaygain import ReplayGainPlugin
 from quart import Quart, current_app
 
 from radiotomate.models.sound import Sound
+from radiotomate.quart import ShutdownError, or_shutdown
 
 if TYPE_CHECKING:
     from radiotomate.db import QuartAlchemy
@@ -129,7 +130,10 @@ class BeetsIntegration:
         """
         This should be started as a background task
         """
-        await sleep(self.BACKGROUND_ANALYSIS_DELAY)
+        try:
+            await or_shutdown(sleep(self.BACKGROUND_ANALYSIS_DELAY))
+        except (ShutdownError, CancelledError):
+            return
         async with db.session() as session:
             ids = await Sound.ids_without_gain(session)
             for i in ids:
@@ -142,7 +146,7 @@ class BeetsIntegration:
         job = None
         while True:
             try:
-                job = await self.analyzer_q.get()
+                job = await or_shutdown(self.analyzer_q.get())
                 if isinstance(job, tuple) and job and job[0] == "beets":
                     await self.ensure_item_gain(int(job[1]))
                     continue
@@ -151,7 +155,7 @@ class BeetsIntegration:
                     if sound:
                         await self._do_analyze_rg(sound)
                         await dbsession.commit()
-            except CancelledError:
+            except (ShutdownError, CancelledError):
                 return
             except Exception:
                 _log.exception("while attempting analysis job=%r", job)
