@@ -1,0 +1,19 @@
+# Système et éditeurs
+.DS_Store
+.vscode/
+.idea/
+.claude/settings.local.json
+
+# Python (le moteur a aussi son propre .gitignore)
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Déploiement : secrets, données et réglages propres à une machine
+deploy/.env
+deploy/data/
+deploy/media/
+deploy/compose.override.yml
+deploy/local/data/

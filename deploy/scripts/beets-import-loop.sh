@@ -1,0 +1,22 @@
+#!/bin/sh
+# Indexe sur place 10-rotation et 20-archives (pas de move Beets).
+set -eu
+MEDIA="${MEDIA_ROOT:-/media}"
+INTERVAL="${BEETS_IMPORT_INTERVAL:-45}"
+while true; do
+  if [ -f /promote-inbox.sh ]; then
+    sh /promote-inbox.sh || true
+  fi
+  if [ -d "$MEDIA/10-rotation" ]; then
+    beet import -A -q "$MEDIA/10-rotation" || true
+    beet modify -y grouping=rotation "path:$MEDIA/10-rotation" || true
+  fi
+  for ed in ntf1 ntf2 ntf3; do
+    dir="$MEDIA/20-archives/$ed"
+    if [ -d "$dir" ]; then
+      beet import -A -q "$dir" || true
+      beet modify -y grouping="$ed" genre=Archive "path:$dir" || true
+    fi
+  done
+  sleep "$INTERVAL"
+done

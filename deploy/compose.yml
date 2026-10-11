@@ -1,0 +1,239 @@
+name: button
+
+# The whole station: engine (playout + interface + scheduler), console,
+# Icecast, now playing, media catalogue and resumable uploads.
+# Variables: deploy/.env (copy of .env.example). See docs/deploiement.md.
+#
+# Docker rotates stdout/stderr; the interface and scheduler rotate their own
+# log files. playout.log needs a logrotate rule on the host.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
+x-radiotomate-data: &radiotomate-data
+  - ${RT_DATA:-./data/radiotomate}:/data
+  - ${BUTTON_MEDIA:-./media}:/media
+
+x-radiotomate-webapps: &radiotomate-webapps
+  # RT_TAG: `main` = continuous, or a dated tag (20260921-abc1234) to pin/rollback.
+  image: ${BUTTON_IMAGES:-ghcr.io/lazbutton}/button-radiotomate:${RT_TAG:-main}
+  platform: linux/amd64
+  build:
+    context: ../engine
+    dockerfile: Containerfile
+  restart: unless-stopped
+  logging: *logging
+  environment:
+    RTCONFIG: /data/radiotomate.yaml
+    BEETSDIR: /data/Beets
+    MEDIA_ROOT: /media
+    # Scheduler stores Paris-naive times (planned_at); keep created/reserved
+    # (datetime.now()) in the same zone instead of the image's UTC.
+    TZ: ${TZ:-Europe/Paris}
+  volumes: *radiotomate-data
+
+services:
+  console:
+    image: ${BUTTON_IMAGES:-ghcr.io/lazbutton}/button-console:main
+    platform: linux/amd64
+    build:
+      context: ../console
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      BUTTON_BACKEND: ${BUTTON_BACKEND:-http://radiotomate-playout:6811}
+      TUSD_UPSTREAM: http://tusd:8080
+    ports:
+      - "${CONSOLE_PORT:-30126}:80"
+    depends_on:
+      - radiotomate-playout
+      - tusd
+
+  icecast:
+    image: ${BUTTON_IMAGES:-ghcr.io/lazbutton}/button-icecast:main
+    platform: linux/amd64
+    build:
+      context: ../services/icecast
+    restart: unless-stopped
+    environment:
+      ICECAST_SOURCE_PASSWORD: ${ICECAST_SOURCE_PASSWORD:?ICECAST_SOURCE_PASSWORD manquant dans .env}
+      ICECAST_ADMIN_PASSWORD: ${ICECAST_ADMIN_PASSWORD:?ICECAST_ADMIN_PASSWORD manquant dans .env}
+      ICECAST_ADMIN_EMAIL: ${ICECAST_ADMIN_EMAIL:-admin@localhost}
+    ports:
+      - "${ICECAST_PORT:-18000}:8000"
+
+  nowplaying:
+    image: ${BUTTON_IMAGES:-ghcr.io/lazbutton}/button-nowplaying:main
+    platform: linux/amd64
+    build:
+      context: ../services/nowplaying
+    restart: unless-stopped
+    environment:
+      RT_NOWPLAYING_PORT: "6820"
+      RT_NOWPLAYING_SECRET: ${RT_NOWPLAYING_SECRET:?RT_NOWPLAYING_SECRET manquant dans .env}
+      RT_NOWPLAYING_FILE: /data/now.json
+      # Probes Hub (voiceover, PCM) : nowplaying parle au playout, jamais exposé.
+      RT_PLAYOUT_URL: http://radiotomate-playout:6833
+      RT_PLAYOUT_PCM: radiotomate-playout:6802
+      BUTTON_MEDIA_ROOT: /media
+    volumes:
+      - ${NOWPLAYING_DATA:-./data/nowplaying}:/data
+      # Lecture seule : yaml Radiotomate (token playout) et banque pour le PCM.
+      - ${RT_DATA:-./data/radiotomate}/radiotomate.yaml:/config/radiotomate.yaml:ro
+      - ${BUTTON_MEDIA:-./media}:/media:ro
+    ports:
+      - "${NOWPLAYING_PORT:-6820}:6820"
+
+  radiotomate-init:
+    image: ${BUTTON_IMAGES:-ghcr.io/lazbutton}/button-radiotomate:${RT_TAG:-main}
+    platform: linux/amd64
+    build:
+      context: ../engine
+      dockerfile: Containerfile
+    user: "0:0"
+    restart: "no"
+    environment:
+      RADIOTOMATE_DATA: /data
+      BEETSDIR: /data/Beets
+      MEDIA_ROOT: /media
+      ICECAST_SOURCE_PASSWORD: ${ICECAST_SOURCE_PASSWORD:?ICECAST_SOURCE_PASSWORD manquant dans .env}
+      RT_NOWPLAYING_SECRET: ${RT_NOWPLAYING_SECRET:?RT_NOWPLAYING_SECRET manquant dans .env}
+      RT_ADMIN_USER: ${RT_ADMIN_USER:-button}
+      RT_ADMIN_PASSWORD: ${RT_ADMIN_PASSWORD:-}
+    volumes:
+      - ${RT_DATA:-./data/radiotomate}:/data
+      - ${BUTTON_MEDIA:-./media}:/media
+      - ./scripts/init-radiotomate.sh:/init-radiotomate.sh:ro
+      - ./scripts/setup-media-tree.sh:/setup-media-tree.sh:ro
+    entrypoint: ["/bin/sh", "/init-radiotomate.sh"]
+
+  radiotomate-playout:
+    image: ${BUTTON_IMAGES:-ghcr.io/lazbutton}/button-playout:${RT_TAG:-main}
+    platform: linux/amd64
+    build:
+      context: ../engine/playout
+      dockerfile: Containerfile
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      RTCONFIG: /data/radiotomate.yaml
+      TZ: ${TZ:-Europe/Paris}
+    volumes: *radiotomate-data
+    # Harbor (live input, :6800) is not published here: add it in a
+    # compose.override.yml when the encoder connects to this machine.
+    # No curl in the Liquidsoap image: bash /dev/tcp against the harbor API.
+    healthcheck:
+      test:
+        - CMD
+        - bash
+        - -c
+        - 'exec 3<>/dev/tcp/127.0.0.1/6833 && printf "GET /health HTTP/1.0\r\n\r\n" >&3 && head -c 15 <&3 | grep -q " 200 "'
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+    depends_on:
+      radiotomate-init:
+        condition: service_completed_successfully
+      icecast:
+        condition: service_started
+
+  radiotomate-interface:
+    <<: *radiotomate-webapps
+    network_mode: service:radiotomate-playout
+    command: ["radiotomate", "interface"]
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:6811/health/ready', timeout=4).status == 200 else 1)"]
+      interval: 30s
+      timeout: 6s
+      retries: 3
+      start_period: 40s
+    depends_on:
+      radiotomate-playout:
+        condition: service_healthy
+
+  radiotomate-scheduler:
+    <<: *radiotomate-webapps
+    network_mode: service:radiotomate-playout
+    command: ["radiotomate", "scheduler"]
+    # /health/ready = DB + heartbeat Liquidsoap < 5 s + playout joignable.
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:6822/health/ready', timeout=4).status == 200 else 1)"]
+      interval: 30s
+      timeout: 6s
+      retries: 3
+      start_period: 60s
+    depends_on:
+      radiotomate-playout:
+        condition: service_healthy
+
+  radiotomate-dropbox:
+    <<: *radiotomate-webapps
+    volumes:
+      - ${RT_DATA:-./data/radiotomate}:/data
+      - ${BUTTON_MEDIA:-./media}:/media
+      - ./scripts/beets-import-loop.sh:/beets-import-loop.sh:ro
+      # La boucle Beets appelle ce script à chaque tour. À la main :
+      # docker exec button-radiotomate-dropbox-1 sh /promote-inbox.sh
+      - ./scripts/promote-inbox.sh:/promote-inbox.sh:ro
+    command: ["/bin/sh", "/beets-import-loop.sh"]
+    depends_on:
+      radiotomate-init:
+        condition: service_completed_successfully
+
+  meilisearch:
+    image: getmeili/meilisearch:v1.11
+    platform: linux/amd64
+    restart: unless-stopped
+    environment:
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:?MEILI_MASTER_KEY manquant dans .env}
+      MEILI_ENV: production
+    volumes:
+      - ${MEILI_DATA:-./data/meilisearch}:/meili_data
+
+  catalog:
+    image: ${BUTTON_IMAGES:-ghcr.io/lazbutton}/button-catalog:main
+    platform: linux/amd64
+    build:
+      # Repository root: the image also ships deploy/scripts/setup-media-tree.sh.
+      context: ..
+      dockerfile: services/catalog/Dockerfile
+    restart: unless-stopped
+    user: "0:0"
+    environment:
+      MEDIA_ROOT: /media
+      AUTOMATE_URL: http://radiotomate-playout:6811
+      TUSD_DIR: /tusd
+      INBOX_QUOTA_BYTES: ${INBOX_QUOTA_BYTES:-107374182400}
+      MEILI_URL: http://meilisearch:7700
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:?MEILI_MASTER_KEY manquant dans .env}
+      CATALOG_PORT: "30127"
+    volumes:
+      - ${BUTTON_MEDIA:-./media}:/media
+      - tusd-data:/tusd
+    ports:
+      - "${CATALOG_PORT:-30127}:30127"
+    depends_on:
+      - meilisearch
+
+  tusd:
+    image: tusproject/tusd:v2.8.0
+    restart: unless-stopped
+    command:
+      - "-host=0.0.0.0"
+      - "-port=8080"
+      - "-behind-proxy"
+      - "-base-path=/tus/"
+      - "-upload-dir=/tusd"
+      - "-hooks-http=http://catalog:30127/tus-hook"
+      - "-hooks-http-forward-headers=Cookie"
+      - "-hooks-enabled-events=pre-create,post-finish"
+    volumes:
+      - tusd-data:/tusd
+    depends_on:
+      - catalog
+
+volumes:
+  tusd-data:

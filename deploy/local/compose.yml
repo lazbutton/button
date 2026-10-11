@@ -1,0 +1,29 @@
+# Banc audio local : Icecast et nowplaying seuls, mots de passe de test.
+# Ne sert pas en production : voir ../compose.yml.
+services:
+  icecast:
+    build:
+      context: ../../services/icecast
+    environment:
+      ICECAST_SOURCE_PASSWORD: buttonhackme
+      ICECAST_ADMIN_PASSWORD: buttonadmin
+    ports:
+      - "18000:8000"
+    restart: unless-stopped
+
+  nowplaying:
+    image: python:3.13-slim-bookworm
+    working_dir: /app
+    command: ["python", "/app/nowplaying.py"]
+    environment:
+      RT_NOWPLAYING_PORT: "6820"
+      RT_NOWPLAYING_SECRET: button-dev-secret
+      RT_NOWPLAYING_FILE: /data/now.json
+      RT_PLAYOUT_URL: http://radiotomate-playout:6833
+      RT_PLAYOUT_PCM: radiotomate-playout:6802
+    volumes:
+      - ../../services/nowplaying/nowplaying.py:/app/nowplaying.py:ro
+      - ./data:/data
+    ports:
+      - "6820:6820"
+    restart: unless-stopped

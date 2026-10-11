@@ -1,0 +1,19 @@
+name: Proposer une idée
+description: Une fonction, une amélioration, un besoin de radio.
+labels: [idée]
+body:
+  - type: textarea
+    id: besoin
+    attributes:
+      label: Le besoin
+      description: Quel problème cela résout, et pour qui à la radio (animateur, programmateur, technicien…).
+    validations:
+      required: true
+  - type: textarea
+    id: proposition
+    attributes:
+      label: Ce que vous proposez
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Comment vous faites aujourd'hui

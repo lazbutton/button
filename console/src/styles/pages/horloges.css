@@ -1,0 +1,1629 @@
+/* Layout de base timeline / motif (extrait du monolithe). */
+.hour-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.hour-ruler {
+  position: relative;
+  height: 1.45rem;
+  width: 100%;
+  border: 0;
+  border-radius: 8px 8px 0 0;
+  background: var(--app-surface-2);
+  cursor: crosshair;
+  padding: 0;
+}
+
+.hour-track {
+  position: relative;
+  height: 5.1rem;
+  border: 1px solid var(--gray-a5);
+  border-radius: 0 0 8px 8px;
+  background: var(--app-surface-2);
+  overflow: visible;
+}
+
+.hour-fill {
+  position: absolute;
+  top: 0.45rem;
+  bottom: 0.45rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.28rem;
+  border: 0;
+  border-radius: 6px;
+  padding: 0.2rem 0.35rem;
+  background: color-mix(in srgb, var(--kind-musique) 16%, transparent);
+  color: var(--gray-11);
+  font: inherit;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.hour-fill-label {
+  font-size: 0.62rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-variant-numeric: tabular-nums;
+}
+
+.hour-fill-dots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.22rem;
+  justify-content: center;
+}
+
+.hour-fill-empty {
+  font-size: 0.7rem;
+}
+
+.hour-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 99px;
+  display: inline-block;
+  flex: 0 0 auto;
+}
+
+.hour-dot--musique { background: var(--kind-musique); }
+.hour-dot--jingle { background: var(--kind-jingle); }
+.hour-dot--son { background: var(--kind-son); }
+.hour-dot--pub { background: var(--kind-pub); }
+
+.hour-fill:hover,
+.hour-fill.is-selected {
+  background: color-mix(in srgb, var(--accent-9) 28%, transparent);
+  color: var(--gray-12);
+}
+
+.hour-fill.is-selected {
+  box-shadow: inset 0 0 0 1px var(--accent-9);
+}
+
+.hour-ghost {
+  position: absolute;
+  top: 0.2rem;
+  bottom: 0.2rem;
+  width: 2px;
+  background: var(--accent-9);
+  transform: translateX(-50%);
+  pointer-events: none;
+  z-index: 2;
+  opacity: 0.7;
+}
+
+.hour-ghost.is-pending {
+  opacity: 1;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--app-accent) 16%, transparent);
+}
+
+.hour-hover-min {
+  position: absolute;
+  top: 0.1rem;
+  transform: translateX(-50%);
+  font-size: 0.62rem;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent-11);
+  pointer-events: none;
+  z-index: 5;
+}
+
+.hour-anchor {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 3;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.hour-anchor button {
+  pointer-events: auto;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 0;
+}
+
+.hour-anchor-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.62rem;
+  font-weight: 650;
+  color: var(--gray-12);
+  background: color-mix(in srgb, var(--color-panel-solid) 92%, transparent);
+  border: 1px solid var(--gray-a6);
+  border-radius: 999px;
+  padding: 0.12rem 0.45rem;
+  white-space: nowrap;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-panel-solid) 70%, transparent);
+}
+
+.hour-anchor.is-selected .hour-anchor-badge {
+  border-color: var(--accent-9);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--app-accent) 16%, transparent);
+}
+
+.clock-spark {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 0.45rem;
+  margin: 0.2rem 0 0.15rem;
+  border-radius: 99px;
+  background: var(--gray-a3);
+  overflow: hidden;
+}
+
+.clock-spark-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: color-mix(in srgb, var(--kind-musique) 45%, transparent);
+}
+
+.clock-spark-pin {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  transform: translateX(-50%);
+  border-radius: 99px;
+}
+
+.hour-fill:focus-visible,
+.hour-ruler:focus-visible,
+.hour-anchor button:focus-visible,
+.motif-chip:focus-visible,
+.pad-btn:focus-visible {
+  outline: 2px solid var(--accent-9);
+  outline-offset: 2px;
+}
+
+.hour-label {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.68rem;
+  color: var(--gray-11);
+  z-index: 1;
+  pointer-events: none;
+}
+
+.hour-label.is-start {
+  transform: translate(0, -50%);
+}
+
+.hour-label.is-end {
+  transform: translate(-100%, -50%);
+}
+
+.hour-label.is-major {
+  color: var(--gray-12);
+  font-weight: 600;
+}
+
+.motif-loop {
+  min-width: 0;
+}
+
+.motif-loop-row {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+  overflow-x: auto;
+  padding-bottom: 0.2rem;
+}
+
+.motif-loop-item .motif-row {
+  flex: 0 0 auto;
+}
+
+.motif-loop-arrow,
+.motif-loop-back {
+  color: var(--gray-10);
+  font-size: 0.75rem;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.motif-loop-back {
+  padding-left: 0.25rem;
+}
+
+.motif-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.motif-row {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+  border: 1px solid var(--gray-a4);
+  border-radius: 8px;
+  padding: 0.12rem 0.25rem;
+  background: var(--app-surface-2);
+}
+
+.motif-row.is-selected {
+  border-color: var(--accent-8);
+  background: var(--accent-a3);
+}
+
+.motif-row.is-dragging {
+  opacity: 0.55;
+}
+
+.motif-row-main {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.8rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.motif-row-cible {
+  color: var(--gray-11);
+}
+
+.motif-chip {
+  min-height: 2.1rem;
+  padding: 0 0.75rem;
+  border: 1px dashed var(--gray-a6);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--gray-11);
+  font: inherit;
+  font-size: 0.8rem;
+}
+
+.motif-chip.is-selected {
+  border-style: solid;
+  border-color: var(--accent-8);
+  color: var(--gray-12);
+}
+
+.horloges-page {
+  flex: 1;
+  gap: 0.75rem;
+  overflow: hidden;
+}
+
+.horloges-page--tab {
+  overflow: visible;
+  min-height: 36rem;
+}
+
+.horloges-page > .ui-page-header {
+  flex: 0 0 auto;
+  padding: 0.1rem 0.1rem 0;
+}
+
+.horloges-busy {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 1.5rem;
+  color: var(--app-text-muted);
+  font-size: 0.7rem;
+  font-weight: 550;
+}
+
+.horloges-editor {
+  display: grid;
+  grid-template-columns: minmax(14.5rem, 18rem) minmax(0, 1fr);
+  gap: 0.75rem;
+  align-items: start;
+  min-width: 0;
+}
+
+.horloges-editor--empty {
+  grid-template-columns: minmax(14.5rem, 18rem) minmax(0, 1fr);
+}
+
+.horloges-editor-main {
+  display: grid;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.horloges-editor-head {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.horloges-editor-name {
+  flex: 1;
+  min-width: 0;
+  min-height: 2.5rem;
+  font-size: 1.15rem;
+  font-weight: 700;
+}
+
+.horloges-saved {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  min-height: 2.5rem;
+  color: var(--app-text-muted);
+  font-size: 0.82rem;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.horloges-saved.is-on {
+  color: var(--state-on, #1a7f4b);
+}
+
+.horloges-fallback .autodj-pubs-title,
+.autodj-pubs-title {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.autodj-pubs-copy {
+  margin: 0.25rem 0 0.6rem;
+  color: var(--app-text-muted);
+  font-size: 0.85rem;
+}
+
+.horloges-advanced {
+  padding: 0.35rem 0.9rem 0.9rem;
+  border: 1px solid var(--app-border);
+  border-radius: 12px;
+  background: var(--app-surface-1);
+}
+
+.horloges-advanced > :not(summary) {
+  margin-top: 0.75rem;
+}
+
+.horloges-advanced summary {
+  display: flex;
+  align-items: center;
+  min-height: 2.5rem;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.horloges-studio {
+  display: grid;
+  grid-template-columns: minmax(14.5rem, 16.5rem) minmax(25rem, 1fr) minmax(17rem, 19rem);
+  gap: 0.75rem;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.horloges-studio--empty {
+  grid-template-columns: minmax(14.5rem, 16.5rem) minmax(0, 1fr);
+}
+
+.horloges-library,
+.horloges-timeline-panel,
+.motif-loop,
+.horloges-inspector-panel,
+.horloges-empty-panel {
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--app-ink) 3%, transparent), transparent 8rem),
+    var(--app-surface-1);
+}
+
+.horloges-library {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  overflow: hidden;
+}
+
+.horloges-dialog-fields {
+  display: grid;
+  gap: 1rem;
+}
+
+.horloges-clock-list {
+  flex: 1;
+  overflow: auto;
+  padding-right: 0.15rem;
+  scrollbar-color: var(--app-border-strong) transparent;
+  scrollbar-width: thin;
+}
+
+.horloges-clock-card {
+  align-items: flex-start;
+  min-height: 5.45rem;
+}
+
+.horloges-clock-card .ui-entity-icon {
+  margin-top: 0.05rem;
+}
+
+.horloges-clock-card .ui-entity-meta {
+  overflow: visible;
+  white-space: normal;
+}
+
+.horloges-clock-card-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.horloges-clock-card-title > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.horloges-clock-card-meta {
+  display: grid;
+  gap: 0.25rem;
+  color: var(--app-text-faint);
+  font-size: 0.65rem;
+  line-height: 1.35;
+}
+
+.horloges-page .clock-spark {
+  height: 0.3rem;
+  margin: 0.25rem 0 0.05rem;
+  background: var(--app-surface-3);
+}
+
+.horloges-page .clock-spark-fill {
+  background: color-mix(in srgb, var(--kind-musique) 55%, transparent);
+}
+
+.horloges-live-mark {
+  display: grid;
+  place-items: center;
+  width: 1.7rem;
+  height: 1.7rem;
+  border-radius: 999px;
+  background: var(--app-live-soft);
+  color: var(--app-live);
+}
+
+.horloges-library-footer {
+  display: grid;
+  gap: 0.35rem;
+  padding-top: 0.65rem;
+  border-top: 1px solid var(--app-border);
+}
+
+.horloges-usage {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0;
+  color: var(--app-text-faint);
+  font-size: 0.67rem;
+  line-height: 1.45;
+}
+
+.horloges-usage a {
+  color: var(--app-accent-hover);
+  text-underline-offset: 0.15em;
+}
+
+.horloges-workbench {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-color: var(--app-border-strong) transparent;
+  scrollbar-width: thin;
+}
+
+.horloges-timeline-panel,
+.motif-loop {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.horloges-timeline-panel {
+  flex: 0 0 auto;
+  min-height: 13.5rem;
+}
+
+.horloges-page .hour-strip {
+  gap: 0.5rem;
+}
+
+.horloges-page .hour-ruler {
+  height: 2.25rem;
+  overflow: hidden;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md) var(--app-radius-md) 0 0;
+  background: var(--app-surface-2);
+  color: var(--app-text-muted);
+}
+
+.horloges-page .hour-ruler:hover {
+  border-color: var(--app-border-strong);
+  background: var(--app-surface-3);
+}
+
+.hour-ruler-caption {
+  position: absolute;
+  top: 0.25rem;
+  right: 0.45rem;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  color: var(--app-text-faint);
+  font-size: 0.58rem;
+  letter-spacing: 0.025em;
+  pointer-events: none;
+}
+
+.hour-tick {
+  position: absolute;
+  bottom: 0;
+  width: 1px;
+  height: 0.3rem;
+  background: var(--app-border);
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.hour-tick.is-major {
+  height: 0.55rem;
+  background: var(--app-border-strong);
+}
+
+.horloges-page .hour-label {
+  top: 58%;
+  color: var(--app-text-faint);
+  font-size: 0.62rem;
+}
+
+.horloges-page .hour-label.is-major {
+  color: var(--app-text-muted);
+}
+
+.horloges-page .hour-hover-min {
+  top: 0.18rem;
+  padding: 0.08rem 0.25rem;
+  border-radius: 999px;
+  background: var(--app-accent);
+  color: var(--app-bg);
+  font-size: 0.58rem;
+  line-height: 1.2;
+}
+
+.horloges-page .hour-track {
+  height: 8.75rem;
+  overflow: visible;
+  border-color: var(--app-border);
+  border-radius: 0 0 var(--app-radius-md) var(--app-radius-md);
+  background-color: var(--app-surface-2);
+  background-image:
+    linear-gradient(to right, var(--app-border) 1px, transparent 1px),
+    linear-gradient(to bottom, transparent 49%, var(--app-border) 50%, transparent 51%);
+  background-position: -1px 0, 0 0;
+  background-size: calc(100% / 6) 100%, 100% 100%;
+}
+
+.horloges-page .hour-fill {
+  top: 1.15rem;
+  bottom: 1.15rem;
+  gap: 0.25rem;
+  min-width: 1px;
+  border: 1px solid color-mix(in srgb, var(--kind-musique) 18%, transparent);
+  border-radius: var(--app-radius-sm);
+  background: color-mix(in srgb, var(--kind-musique) 9%, var(--app-surface-2));
+  color: var(--app-text-muted);
+}
+
+.horloges-page .hour-fill:hover {
+  border-color: color-mix(in srgb, var(--kind-musique) 42%, transparent);
+  background: color-mix(in srgb, var(--kind-musique) 14%, var(--app-surface-2));
+}
+
+.horloges-page .hour-fill.is-selected {
+  border-color: color-mix(in srgb, var(--app-accent) 70%, white 8%);
+  background: var(--app-accent-soft);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--app-accent) 24%, transparent),
+    0 0 0 3px color-mix(in srgb, var(--app-accent) 10%, transparent);
+  color: var(--app-text);
+}
+
+.hour-fill-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--app-text-muted);
+  font-size: 0.61rem;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.horloges-page .hour-fill-label {
+  color: var(--app-text-faint);
+  font-size: 0.58rem;
+}
+
+.horloges-page .hour-fill-dots {
+  flex-wrap: nowrap;
+  gap: 0.2rem;
+  max-width: 100%;
+}
+
+.hour-fill-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.17rem;
+  padding: 0.16rem 0.25rem;
+  border: 1px solid var(--app-border);
+  border-radius: 999px;
+  background: var(--app-surface-1);
+  color: var(--app-text-muted);
+  font-size: 0.56rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.hour-fill-step .hour-dot {
+  width: 0.38rem;
+  height: 0.38rem;
+}
+
+.horloges-page .hour-dot {
+  width: 0.48rem;
+  height: 0.48rem;
+}
+
+.horloges-page .hour-dot--musique {
+  background: var(--kind-musique);
+}
+
+.horloges-page .hour-dot--jingle {
+  background: var(--kind-jingle);
+}
+
+.horloges-page .hour-dot--son {
+  background: var(--kind-son);
+}
+
+.horloges-page .hour-dot--pub {
+  background: var(--kind-pub);
+}
+
+.horloges-page .hour-ghost {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  border-left: 1px dashed var(--app-accent-hover);
+  background: transparent;
+  opacity: 0.85;
+  z-index: 6;
+}
+
+.horloges-page .hour-ghost.is-pending {
+  border-left-style: solid;
+  box-shadow: 0 0 0 3px var(--app-accent-soft);
+}
+
+.hour-ghost-label {
+  position: absolute;
+  left: 50%;
+  bottom: 0.25rem;
+  padding: 0.12rem 0.3rem;
+  border: 1px solid color-mix(in srgb, var(--app-accent) 45%, transparent);
+  border-radius: 999px;
+  background: var(--app-surface-1);
+  color: var(--app-accent-hover);
+  font-size: 0.58rem;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  transform: translateX(-50%);
+}
+
+.horloges-page .hour-anchor {
+  z-index: 5;
+}
+
+.hour-anchor-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 2px;
+  background: var(--kind-pub);
+  opacity: 0.7;
+  transform: translateX(-50%);
+}
+
+.horloges-page .hour-anchor button {
+  top: 50%;
+}
+
+.horloges-page .hour-anchor.is-start button {
+  transform: translate(0, -50%);
+}
+
+.horloges-page .hour-anchor.is-end button {
+  transform: translate(-100%, -50%);
+}
+
+.horloges-page .hour-anchor-badge {
+  min-height: 1.55rem;
+  border-color: var(--app-border-strong);
+  border-left: 3px solid var(--kind-pub);
+  border-radius: var(--app-radius-sm);
+  background: var(--app-surface-1);
+  box-shadow: 0 5px 18px rgb(0 0 0 / 0.25);
+  color: var(--app-text);
+  font-size: 0.59rem;
+}
+
+.horloges-page .hour-anchor--jingle .hour-anchor-line {
+  background: var(--kind-jingle);
+}
+
+.horloges-page .hour-anchor--jingle .hour-anchor-badge {
+  border-left-color: var(--kind-jingle);
+}
+
+.horloges-page .hour-anchor--son .hour-anchor-line {
+  background: var(--kind-son);
+}
+
+.horloges-page .hour-anchor--son .hour-anchor-badge {
+  border-left-color: var(--kind-son);
+}
+
+.horloges-page .hour-anchor--musique .hour-anchor-line {
+  background: var(--kind-musique);
+}
+
+.horloges-page .hour-anchor--musique .hour-anchor-badge {
+  border-left-color: var(--kind-musique);
+}
+
+.horloges-page .hour-anchor.is-selected .hour-anchor-badge {
+  border-color: var(--app-accent-hover);
+  border-left-color: var(--app-accent-hover);
+  background: color-mix(in srgb, var(--app-accent) 12%, var(--app-surface-1));
+  box-shadow:
+    0 0 0 3px var(--app-accent-soft),
+    0 8px 24px rgb(0 0 0 / 0.3);
+}
+
+.hour-strip-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem 1rem;
+  flex-wrap: wrap;
+}
+
+.hour-legend {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  color: var(--app-text-faint);
+  font-size: 0.61rem;
+}
+
+.hour-legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.motif-loop {
+  flex: 1 0 auto;
+  min-height: 13rem;
+}
+
+.horloges-page .motif-loop-row {
+  align-items: stretch;
+  gap: 0.35rem;
+  padding: 0.1rem 0.05rem 0.35rem;
+  scrollbar-color: var(--app-border-strong) transparent;
+  scrollbar-width: thin;
+}
+
+.horloges-page .motif-loop-item {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.horloges-page .motif-loop-arrow {
+  margin-right: 0.35rem;
+  color: var(--app-text-faint);
+}
+
+.horloges-page .motif-row {
+  display: grid;
+  grid-template-rows: auto minmax(2.8rem, 1fr) auto;
+  gap: 0.25rem;
+  width: 10.5rem;
+  min-height: 7.2rem;
+  padding: 0.4rem;
+  border: 1px solid var(--app-border);
+  border-top: 3px solid var(--kind-musique);
+  border-radius: var(--app-radius-md);
+  background: var(--app-surface-2);
+}
+
+.horloges-page .motif-row--jingle {
+  border-top-color: var(--kind-jingle);
+}
+
+.horloges-page .motif-row--son {
+  border-top-color: var(--kind-son);
+}
+
+.horloges-page .motif-row--pub {
+  border-top-color: var(--kind-pub);
+}
+
+.horloges-page .motif-row:hover {
+  border-right-color: var(--app-border-strong);
+  border-bottom-color: var(--app-border-strong);
+  border-left-color: var(--app-border-strong);
+}
+
+.horloges-page .motif-row.is-selected {
+  border-color: var(--app-accent-hover);
+  border-top-color: var(--app-accent-hover);
+  background: var(--app-accent-soft);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--app-accent) 10%, transparent);
+}
+
+.horloges-page .motif-row.is-dragging {
+  opacity: 0.45;
+  transform: scale(0.98);
+}
+
+.horloges-page .motif-row.is-drop-target {
+  border-color: var(--app-accent-hover);
+  box-shadow: inset 0 0 0 1px var(--app-accent-hover);
+}
+
+.horloges-page .motif-row.is-missing {
+  border-color: color-mix(in srgb, var(--app-danger) 45%, var(--app-border));
+  background: color-mix(in srgb, var(--app-danger) 8%, var(--app-surface-2));
+}
+
+.motif-row-cible.is-missing {
+  color: var(--app-danger);
+}
+
+.motif-row-topline,
+.motif-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.motif-row-number {
+  color: var(--app-text-faint);
+  font-size: 0.62rem;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.06em;
+}
+
+.horloges-page .motif-drag {
+  border-radius: var(--app-radius-sm);
+}
+
+.horloges-page .motif-row-main {
+  align-items: flex-start;
+  padding: 0.25rem 0.15rem;
+  font-size: 0.75rem;
+}
+
+.motif-row-copy {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.motif-row-copy strong {
+  color: var(--app-text);
+  font-size: 0.74rem;
+  font-weight: 620;
+}
+
+.horloges-page .motif-row-cible {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--app-text-faint);
+  font-size: 0.65rem;
+  line-height: 1.3;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+.motif-row-actions {
+  justify-content: flex-end;
+  gap: 0.05rem;
+  padding-top: 0.25rem;
+  border-top: 1px solid var(--app-border);
+}
+
+.horloges-page .motif-loop-back {
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
+  gap: 0.3rem;
+  margin-left: 0.25rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px dashed var(--app-border-strong);
+  border-radius: 999px;
+  color: var(--app-text-faint);
+  font-size: 0.62rem;
+}
+
+.motif-loop-note {
+  margin: auto 0 0;
+  color: var(--app-text-faint);
+  font-size: 0.65rem;
+  line-height: 1.4;
+}
+
+.motif-loop .ui-empty {
+  min-height: 9rem;
+  padding: 1rem;
+}
+
+.clock-carts-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+
+.clock-carts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.clock-carts-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--app-surface-2) 70%, transparent);
+}
+
+.clock-carts-link {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.12rem;
+  color: inherit;
+  text-decoration: none;
+}
+
+.clock-carts-link strong {
+  font-size: 0.88rem;
+}
+
+.clock-carts-link span {
+  color: var(--app-text-muted);
+  font-size: 0.72rem;
+}
+
+.clock-carts-empty,
+.clock-carts-aside,
+.clock-carts-new {
+  margin: 0;
+  color: var(--app-text-faint);
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+.clock-carts-new {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.clock-carts-new a {
+  color: inherit;
+  font-weight: 600;
+}
+
+.horloges-inspector-panel {
+  overflow: hidden;
+}
+
+.horloges-page .app-clock-inspector {
+  height: 100%;
+  gap: 0.9rem;
+}
+
+.horloges-inspector-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  padding-bottom: 0.8rem;
+  border-bottom: 1px solid var(--app-border);
+}
+
+.horloges-inspector-icon {
+  display: grid;
+  place-items: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  flex: 0 0 auto;
+  border-radius: var(--app-radius-md);
+  background: var(--app-accent-soft);
+  color: var(--app-accent-hover);
+}
+
+.horloges-inspector-heading {
+  min-width: 0;
+}
+
+.horloges-inspector-eyebrow {
+  display: block;
+  margin-bottom: 0.15rem;
+  color: var(--app-text-faint);
+  font-size: 0.58rem;
+  font-weight: 650;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.horloges-inspector-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.horloges-inspector-title-row h2 {
+  overflow: hidden;
+  margin: 0;
+  color: var(--app-text);
+  font-size: 0.9rem;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.horloges-inspector-heading p {
+  margin: 0.25rem 0 0;
+  color: var(--app-text-faint);
+  font-size: 0.65rem;
+  line-height: 1.4;
+}
+
+.horloges-inspector-body {
+  display: grid;
+  gap: 1rem;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 0.15rem;
+  align-content: start;
+  scrollbar-color: var(--app-border-strong) transparent;
+  scrollbar-width: thin;
+}
+
+.horloges-context-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.65rem;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  background: var(--app-surface-2);
+  color: var(--app-text-faint);
+}
+
+.horloges-context-note svg {
+  flex: 0 0 auto;
+  margin-top: 0.05rem;
+  color: var(--app-accent-hover);
+}
+
+.horloges-context-note p {
+  margin: 0;
+  font-size: 0.65rem;
+  line-height: 1.45;
+}
+
+.horloges-sync-control {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-height: 2rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-sm);
+  background: var(--app-surface-2);
+  color: var(--app-text-muted);
+  font-size: 0.72rem;
+  font-weight: 560;
+}
+
+.horloges-inspector-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--app-border);
+}
+
+.horloges-inspector-save {
+  align-self: flex-start;
+}
+
+.horloges-empty-panel {
+  display: grid;
+  place-items: center;
+}
+
+.horloges-empty-panel .ui-empty {
+  width: min(100%, 34rem);
+}
+
+.horloges-inspector-sheet {
+  position: fixed;
+  inset: auto 0 0 auto;
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  width: min(28rem, 100vw);
+  max-width: none;
+  height: min(92dvh, 52rem);
+  max-height: none;
+  margin: 0;
+  padding: 1rem 0.9rem 1.1rem;
+  border-radius: var(--app-radius-lg) 0 0 0;
+  overflow: auto;
+}
+
+.horloges-inspector-sheet .horloges-inspector-body {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@media (max-width: 1220px) {
+  .horloges-page {
+    overflow: auto;
+  }
+
+  .horloges-studio {
+    grid-template-columns: minmax(14rem, 16rem) minmax(0, 1fr);
+    align-content: start;
+    overflow: visible;
+  }
+
+  .horloges-inspector-panel {
+    display: none;
+  }
+
+  .horloges-page .app-clock-inspector {
+    height: auto;
+  }
+
+  .horloges-inspector-body {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    overflow: visible;
+  }
+}
+
+@media (max-width: 860px) {
+  .horloges-editor,
+  .horloges-editor--empty,
+  .horloges-studio,
+  .horloges-studio--empty {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .horloges-library,
+  .horloges-workbench,
+  .horloges-inspector-panel {
+    grid-column: 1;
+  }
+
+  .horloges-clock-list {
+    max-height: 18rem;
+  }
+
+  .horloges-workbench {
+    overflow: visible;
+  }
+
+  .horloges-inspector-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 620px) {
+  .horloges-page {
+    height: auto;
+    overflow: visible;
+  }
+
+  .horloges-page > .ui-page-header {
+    padding-top: 0;
+  }
+
+  .horloges-timeline-panel {
+    overflow-x: auto;
+  }
+
+  .horloges-page .hour-strip {
+    min-width: 36rem;
+  }
+
+  .horloges-page .motif-loop-row {
+    flex-direction: column;
+    overflow: visible;
+  }
+
+  .horloges-page .motif-loop-item {
+    width: 100%;
+    flex-direction: column;
+  }
+
+  .horloges-page .motif-loop-arrow {
+    margin: 0.2rem 0;
+    transform: rotate(90deg);
+  }
+
+  .horloges-page .motif-row {
+    width: 100%;
+    min-height: 6.7rem;
+  }
+
+  .horloges-page .motif-loop-back {
+    margin: 0.35rem 0 0;
+  }
+}
+
+.autodj-page {
+  flex: none;
+  height: auto;
+  min-height: 0;
+  overflow: visible;
+  padding: 0.1rem 0.15rem 1.4rem;
+}
+
+.app-page--autodj {
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.app-page--autodj > .autodj-page {
+  min-height: min-content;
+}
+
+.autodj-page > .ui-page-header {
+  flex: 0 0 auto;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 0.55rem 0.9rem;
+  padding: 0.1rem 0.05rem 0.15rem;
+}
+
+.autodj-page .ui-page-actions {
+  flex: 0 0 auto;
+  align-self: flex-start;
+}
+
+.autodj-page .ui-page-actions > * {
+  flex: 0 0 auto;
+}
+
+.autodj-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  min-width: 0;
+}
+
+.autodj-edit-banner {
+  flex: none;
+}
+
+.autodj-rotation-pick {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  max-width: 22rem;
+  color: var(--app-text-muted);
+  font-size: 0.75rem;
+  font-weight: 650;
+}
+
+.autodj-rotation-pick .rt-SelectTrigger {
+  width: auto;
+  min-width: 11.5rem;
+  max-width: 18.5rem;
+  height: 2rem;
+  flex: 0 0 auto;
+}
+
+.autodj-rotation-menu {
+  width: max-content;
+  min-width: var(--radix-select-trigger-width);
+  max-width: min(24rem, calc(100vw - 2rem));
+  max-height: min(16rem, var(--radix-select-content-available-height, 16rem));
+}
+
+.autodj-loop-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.autodj-loop-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem 0.7rem;
+  min-width: 0;
+  min-height: 2.7rem;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  background: var(--app-surface-2);
+}
+
+.autodj-loop-row.is-missing {
+  border-color: color-mix(in srgb, var(--app-danger, #ff4d4d) 45%, var(--app-border));
+}
+
+.autodj-loop-role {
+  display: flex;
+  flex-direction: column;
+  gap: 0.08rem;
+  min-width: 0;
+}
+
+.autodj-loop-role strong {
+  font-size: 0.8rem;
+  font-weight: 650;
+}
+
+.autodj-loop-missing {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--app-danger, #ff4d4d);
+  font-size: 0.72rem;
+  font-weight: 650;
+}
+
+.autodj-loop-repair {
+  min-height: 2.5rem;
+  padding: 0 0.7rem;
+  border: 1px solid color-mix(in srgb, var(--app-danger, #ff4d4d) 45%, transparent);
+  border-radius: 8px;
+  background: var(--app-surface-1);
+  color: var(--app-text);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.autodj-loop-repair:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.autodj-loop-cart {
+  flex: 1 1 11rem;
+  width: auto;
+  min-width: 11rem;
+  max-width: 22rem;
+}
+
+.autodj-loop-row .rt-SelectTrigger {
+  min-width: 0;
+  width: 100%;
+}
+
+.autodj-loop-count {
+  color: var(--app-text-muted);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.autodj-loop-count:hover {
+  color: var(--app-text);
+}
+
+.autodj-loop-count.is-missing {
+  color: var(--app-text-faint);
+}
+
+.autodj-loop-actions {
+  display: flex;
+  align-items: center;
+}
+
+.autodj-loop-add {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.75rem;
+}
+
+.autodj-pubs-title {
+  margin: 0;
+  font-size: 0.82rem;
+  font-weight: 650;
+}
+
+.autodj-pubs-copy {
+  margin: 0.28rem 0 0.75rem;
+  color: var(--app-text-muted);
+  font-size: 0.78rem;
+}
+
+.autodj-pubs-row {
+  align-items: center;
+}
+
+.autodj-pubs-row .ui-field {
+  min-width: 10rem;
+  max-width: 16rem;
+}
+
+.autodj-pubs-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 2rem;
+  font-size: 0.92rem;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.autodj-week-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  min-width: 0;
+}
+
+.autodj-week-summary {
+  margin: 0;
+  color: var(--app-text-muted);
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.autodj-when {
+  min-width: 0;
+  padding: 0;
+  overflow: visible;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-lg);
+  background: var(--app-surface-1);
+  scroll-margin-top: 0.75rem;
+}
+
+.autodj-when > summary {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.7rem 0.95rem;
+  list-style: none;
+  cursor: pointer;
+  font-size: 0.92rem;
+  font-weight: 650;
+  user-select: none;
+}
+
+.autodj-when > summary::-webkit-details-marker {
+  display: none;
+}
+
+.autodj-when > summary::before {
+  content: "▸";
+  width: auto;
+  height: auto;
+  border: 0;
+  transform: none;
+  opacity: 0.7;
+  font-size: 0.72rem;
+  line-height: 1;
+}
+
+.autodj-when[open] > summary::before {
+  content: "▾";
+  transform: none;
+}
+
+.autodj-when[open] > summary {
+  border-bottom: 1px solid var(--app-border);
+}
+
+.autodj-week {
+  min-width: 0;
+  margin: 0;
+  padding: 0.7rem 0.7rem 0.85rem;
+}
+
+@media (max-width: 720px) {
+  .autodj-rotation-pick {
+    max-width: none;
+    width: 100%;
+  }
+
+  .autodj-rotation-pick .rt-SelectTrigger {
+    flex: 1 1 auto;
+    width: auto;
+    min-width: 0;
+    max-width: none;
+  }
+
+  .autodj-loop-cart {
+    flex: 1 1 100%;
+    max-width: none;
+    min-width: 0;
+  }
+
+  .autodj-loop-count,
+  .autodj-loop-actions {
+    margin-left: 0;
+  }
+
+  .autodj-pubs-row .ui-field {
+    max-width: none;
+    flex: 1 1 12rem;
+  }
+}

@@ -1,0 +1,41 @@
+name: Signaler un problème
+description: Quelque chose ne marche pas comme prévu.
+labels: [bug]
+body:
+  - type: dropdown
+    id: partie
+    attributes:
+      label: Partie concernée
+      options:
+        - Moteur (horloges, conducteur, playout)
+        - Console
+        - Services (catalogue, titre en cours, Icecast)
+        - Déploiement
+        - Documentation
+    validations:
+      required: true
+  - type: textarea
+    id: quoi
+    attributes:
+      label: Ce qui se passe
+      description: Ce que vous avez vu, avec les messages d'erreur ou des extraits de journaux.
+    validations:
+      required: true
+  - type: textarea
+    id: attendu
+    attributes:
+      label: Ce qui était attendu
+    validations:
+      required: true
+  - type: textarea
+    id: reproduire
+    attributes:
+      label: Comment le reproduire
+      placeholder: |
+        1. Ouvrir…
+        2. Cliquer sur…
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Tag de l'image (AAAAMMJJ-sha7) ou commit.

@@ -1,0 +1,101 @@
+name: services
+
+# Icecast, nowplaying and the catalogue: the side services of the stack.
+# The catalogue tests run first; the images are pushed only from main.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "services/**"
+      - "deploy/scripts/setup-media-tree.sh"
+      - ".github/workflows/services.yml"
+  pull_request:
+    paths:
+      - "services/**"
+      - "deploy/scripts/setup-media-tree.sh"
+      - ".github/workflows/services.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  check:
+    name: catalogue tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/catalog
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -r requirements.txt
+      - run: python test_inbox_api.py
+
+  docker:
+    name: build & push images
+    needs: [check]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dated tag
+        id: tag
+        run: echo "dated=$(date -u +%Y%m%d)-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@v3
+      - name: Build and push Icecast
+        uses: docker/build-push-action@v6
+        with:
+          context: ./services/icecast
+          platforms: linux/amd64
+          push: true
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/button-icecast:main
+            ghcr.io/${{ github.repository_owner }}/button-icecast:${{ steps.tag.outputs.dated }}
+            ghcr.io/${{ github.repository_owner }}/button-icecast:${{ github.sha }}
+          cache-from: type=gha,scope=icecast
+          cache-to: type=gha,mode=max,scope=icecast
+      - name: Build and push nowplaying
+        uses: docker/build-push-action@v6
+        with:
+          context: ./services/nowplaying
+          platforms: linux/amd64
+          push: true
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/button-nowplaying:main
+            ghcr.io/${{ github.repository_owner }}/button-nowplaying:${{ steps.tag.outputs.dated }}
+            ghcr.io/${{ github.repository_owner }}/button-nowplaying:${{ github.sha }}
+          cache-from: type=gha,scope=nowplaying
+          cache-to: type=gha,mode=max,scope=nowplaying
+      - name: Build and push catalogue
+        uses: docker/build-push-action@v6
+        with:
+          # Repository root: the image also ships deploy/scripts/setup-media-tree.sh.
+          context: .
+          file: ./services/catalog/Dockerfile
+          platforms: linux/amd64
+          push: true
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/button-catalog:main
+            ghcr.io/${{ github.repository_owner }}/button-catalog:${{ steps.tag.outputs.dated }}
+            ghcr.io/${{ github.repository_owner }}/button-catalog:${{ github.sha }}
+          cache-from: type=gha,scope=catalog
+          cache-to: type=gha,mode=max,scope=catalog

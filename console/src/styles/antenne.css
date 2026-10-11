@@ -1,0 +1,233 @@
+/* Santé et statut de l’automate. */
+
+.health-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0.1rem 0 0;
+}
+
+.health-strip.is-stale .health-pill {
+  opacity: 0.55;
+}
+
+.health-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 2.5rem;
+  padding: 0.28rem 0.6rem 0.28rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid var(--app-border);
+  background: var(--app-surface-2);
+  color: var(--app-text);
+  font: inherit;
+  font-size: 0.82rem;
+  line-height: 1.1;
+  cursor: pointer;
+  transition:
+    background var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out);
+}
+
+.health-pill:hover {
+  background: var(--app-surface-hover);
+}
+
+.health-pill:focus-visible {
+  outline: 2px solid var(--app-focus);
+  outline-offset: 1px;
+}
+
+.health-pill-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 999px;
+  background: var(--app-text-faint);
+  flex: 0 0 auto;
+}
+
+.health-pill-k {
+  color: var(--app-text-muted);
+  font-weight: 500;
+}
+
+.health-pill-v {
+  font-weight: 600;
+  white-space: nowrap;
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.health-pill.tone-ok .health-pill-dot {
+  background: var(--app-ok);
+}
+
+.health-pill.tone-warn {
+  border-color: color-mix(in srgb, var(--app-vu-hot) 55%, transparent);
+}
+
+.health-pill.tone-warn .health-pill-dot {
+  background: var(--app-vu-hot);
+}
+
+.health-pill.tone-alert {
+  border-color: color-mix(in srgb, var(--app-danger) 70%, transparent);
+  background: color-mix(in srgb, var(--app-danger) 12%, var(--app-surface-2));
+}
+
+.health-pill.tone-alert .health-pill-dot {
+  background: var(--app-danger);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--app-danger) 25%, transparent);
+  animation: health-pulse 1.2s ease-in-out infinite;
+}
+
+.health-pill.tone-off {
+  color: var(--app-text-faint);
+  border-style: dashed;
+}
+
+.health-strip-at {
+  margin-left: auto;
+  color: var(--app-text-faint);
+  font-size: 0.72rem;
+}
+
+.health-pop {
+  min-width: 16rem;
+  max-width: 26rem;
+}
+
+.health-pop-title {
+  margin: 0 0 0.35rem;
+}
+
+.health-pop-list {
+  margin: 0;
+  padding: 0 0 0 1rem;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.automate-page {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.automate-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.automate-actions .rt-Button {
+  min-height: 2.5rem;
+}
+
+.automate-status {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.automate-status h3 {
+  margin: 0 0 0.3rem;
+  font-size: 0.95rem;
+}
+
+.automate-status dl {
+  display: grid;
+  grid-template-columns: 8rem minmax(0, 1fr);
+  gap: 0.25rem 0.6rem;
+  margin: 0;
+}
+
+.automate-status dt {
+  color: var(--gray-11);
+}
+
+.automate-status dd,
+.automate-status p,
+.automate-status li {
+  margin: 0;
+}
+
+.automate-status ul {
+  margin: 0;
+  padding-left: 1.1rem;
+  display: grid;
+  gap: 0.35rem;
+}
+
+@media (max-width: 640px) {
+  .automate-status dl {
+    grid-template-columns: 1fr;
+  }
+}
+
+@keyframes health-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--app-danger) 30%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 5px color-mix(in srgb, var(--app-danger) 8%, transparent);
+  }
+}
+
+/* Glance : heure de fin et badge source. */
+
+.desk-glance-end {
+  color: var(--app-text-muted);
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.desk-glance-source {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  background: var(--app-surface-3);
+  color: var(--app-text-muted);
+}
+
+.desk-glance-source.is-stream,
+.desk-glance-source.is-relay {
+  background: var(--app-live-soft);
+  color: var(--app-live);
+}
+
+.desk-glance-source.is-offline {
+  border: 1px dashed var(--app-border-strong);
+  background: transparent;
+}
+
+.desk-glance-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 0.15rem;
+}
+
+.desk-glance-toolbar {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.4rem;
+}
+
+.ui-button-icon.is-spinning {
+  animation: health-spin 1s linear infinite;
+}
+
+@keyframes health-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

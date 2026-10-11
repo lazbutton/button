@@ -1,0 +1,110 @@
+/*
+ * BUTTON content design tokens.
+ * Light by default; [data-appearance="dark"] keeps the old palette if brand.theme flips.
+ * --app-* primitives can be overwritten by applyTheme() on :root.
+ */
+:root {
+  color-scheme: light;
+  --app-bg: #f5f5f7;
+  --app-surface-1: #ffffff;
+  --app-surface-2: #f0f0f0;
+  --app-surface-3: #e8e8e8;
+  --app-surface-hover: color-mix(in srgb, var(--app-ink) 6%, var(--app-surface-2));
+  --app-border: rgb(10 10 10 / 0.10);
+  --app-border-strong: rgb(10 10 10 / 0.16);
+  --app-text: #0a0a0a;
+  --app-text-muted: #525252;
+  --app-text-faint: #737373;
+  --app-accent: #0a0a0a;
+  --app-accent-hover: #000000;
+  --app-accent-soft: color-mix(in srgb, var(--app-accent) 10%, transparent);
+  --app-accent-strong: color-mix(in srgb, var(--app-accent) 16%, transparent);
+  --app-ink: #0a0a0a;
+  --app-live: #ff4d4d;
+  --app-live-soft: color-mix(in srgb, var(--app-live) 14%, transparent);
+  --app-ok: #3ecf8e;
+  --app-danger: #ff4d4d;
+  --app-warning: #737373;
+  --app-vu-ok: #3ecf8e;
+  --app-vu-warn: #f0e24a;
+  --app-vu-hot: #ff7a45;
+  --app-vu-clip: #ff4d4d;
+  --app-focus: color-mix(in srgb, var(--app-accent) 55%, var(--app-bg));
+  --kind-musique: #0a0a0a;
+  --kind-jingle: #404040;
+  --kind-son: #737373;
+  --kind-pub: #a3a3a3;
+  --app-radius-sm: var(--radius-2);
+  --app-radius-md: var(--radius-3);
+  --app-radius-lg: var(--radius-4);
+  --app-shadow-panel: 0 1px 0 rgb(10 10 10 / 0.04);
+  --app-shadow-float: 0 20px 60px rgb(10 10 10 / 0.12);
+  --motion-fast: 120ms;
+  --motion-base: 180ms;
+  --motion-slow: 240ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+[data-appearance="dark"] {
+  color-scheme: dark;
+  --app-bg: #0a0a0a;
+  --app-surface-1: #121212;
+  --app-surface-2: #1a1a1a;
+  --app-surface-3: #242424;
+  --app-surface-hover: #2e2e2e;
+  --app-border: color-mix(in srgb, white 10%, transparent);
+  --app-border-strong: color-mix(in srgb, white 16%, transparent);
+  --app-text: #f5f5f5;
+  --app-text-muted: #a3a3a3;
+  --app-text-faint: #737373;
+  --app-accent: #f5f5f5;
+  --app-accent-hover: #ffffff;
+  --app-focus: color-mix(in srgb, var(--app-accent) 72%, white);
+  --kind-musique: #f5f5f5;
+  --kind-jingle: #c4c4c4;
+  --kind-son: #9a9a9a;
+  --kind-pub: #737373;
+  --app-shadow-panel: 0 1px 0 rgb(255 255 255 / 0.025);
+  --app-shadow-float: 0 20px 60px rgb(0 0 0 / 0.38);
+}
+
+.app-sidebar,
+.app-page,
+.app-mobile-nav {
+  color: var(--app-text);
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
+}
+
+.app-page {
+  background: var(--app-bg);
+}
+
+.app-page ::selection,
+.app-sidebar ::selection {
+  color: var(--app-bg);
+  background: var(--app-accent);
+}
+
+.app-page :where(button, a, input, textarea, [role="button"], [role="tab"]):focus-visible,
+.app-sidebar :where(button, a):focus-visible {
+  outline: 2px solid var(--app-focus);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-page *,
+  .app-page *::before,
+  .app-page *::after,
+  .app-sidebar *,
+  .app-sidebar *::before,
+  .app-sidebar *::after,
+  .app-mobile-nav *,
+  .app-mobile-nav *::before,
+  .app-mobile-nav *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

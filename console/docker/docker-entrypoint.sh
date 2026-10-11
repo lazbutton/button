@@ -1,0 +1,13 @@
+#!/bin/sh
+set -e
+if [ -n "${BUTTON_BACKEND:-}" ]; then
+  AUTOMATE_BACKEND=$BUTTON_BACKEND
+fi
+: "${AUTOMATE_BACKEND:=http://127.0.0.1:6811}"
+: "${CATALOG_UPSTREAM:=http://catalog:30127}"
+: "${TUSD_UPSTREAM:=http://tusd:8080}"
+AUTOMATE_BACKEND=${AUTOMATE_BACKEND%/}
+CATALOG_UPSTREAM=${CATALOG_UPSTREAM%/}
+TUSD_UPSTREAM=${TUSD_UPSTREAM%/}
+export AUTOMATE_BACKEND CATALOG_UPSTREAM TUSD_UPSTREAM
+envsubst '${AUTOMATE_BACKEND} ${CATALOG_UPSTREAM} ${TUSD_UPSTREAM}' < /etc/nginx/nginx-default.conf.template > /etc/nginx/conf.d/default.conf
