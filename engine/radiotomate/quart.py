@@ -11,7 +11,7 @@ from typing import Callable
 from hypercorn import Config
 from hypercorn.asyncio import serve
 from hypercorn.utils import ShutdownError
-from quart import Quart
+from quart import Quart, current_app, has_app_context
 
 _log = logging.getLogger(__name__)
 
@@ -69,22 +69,38 @@ class ShutdownManager:
                     signal.signal(getattr(signal, signal_name), self.trigger_shutdown)
 
 
+def _app_shutdown_event() -> asyncio.Event | None:
+    """
+    Quart sets ``app.shutdown_event`` when its lifespan shutdown starts, then waits
+    up to ``BACKGROUND_TASK_SHUTDOWN_TIMEOUT`` for background tasks before cancelling
+    them. Watching it lets our loops leave promptly even when no signal reached
+    ``ShutdownManager`` (e.g. ``app.test_app()`` in tests).
+    """
+    if has_app_context():
+        return getattr(current_app, "shutdown_event", None)
+    return None
+
+
 async def or_shutdown(coro: Coroutine):
     """
     Awaits for ``coro`` and return its result, or raises ``ShutdownError`` if a
-    shutdown signal was received.
+    shutdown signal was received or the current Quart app is shutting down.
     """
     coro_task = asyncio.create_task(coro)
+    waiters = {coro_task, ShutdownManager().task}
+    app_waiter = None
+    if (app_event := _app_shutdown_event()) is not None:
+        app_waiter = asyncio.create_task(app_event.wait())
+        waiters.add(app_waiter)
     try:
-        await asyncio.wait(
-            (coro_task, ShutdownManager().task),
-            return_when=asyncio.FIRST_COMPLETED,
-        )
+        await asyncio.wait(waiters, return_when=asyncio.FIRST_COMPLETED)
         if coro_task.done():
             if exn := coro_task.exception():
                 raise exn
             return coro_task.result()
     finally:
+        if app_waiter is not None:
+            app_waiter.cancel()
         if not coro_task.done():
             coro_task.cancel()
             raise ShutdownError()
