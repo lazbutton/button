@@ -8,12 +8,16 @@ on:
     branches: [main]
     paths:
       - "services/**"
-      - "deploy/scripts/setup-media-tree.sh"
+      - "deploy/scripts/**"
+      - "deploy/share/**"
+      - "deploy/compose.yml"
       - ".github/workflows/services.yml"
   pull_request:
     paths:
       - "services/**"
-      - "deploy/scripts/setup-media-tree.sh"
+      - "deploy/scripts/**"
+      - "deploy/share/**"
+      - "deploy/compose.yml"
       - ".github/workflows/services.yml"
   workflow_dispatch:
 
@@ -35,6 +39,10 @@ jobs:
           python-version: "3.13"
       - run: pip install -r requirements.txt
       - run: python test_inbox_api.py
+      - run: python test_refresh_volume.py
+      - run: python test_promote_inplace.py
+      - run: python test_share.py
+      - run: python test_volume_api.py
 
   docker:
     name: build & push images

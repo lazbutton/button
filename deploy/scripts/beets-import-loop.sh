@@ -4,6 +4,9 @@ set -eu
 MEDIA="${MEDIA_ROOT:-/media}"
 INTERVAL="${BEETS_IMPORT_INTERVAL:-45}"
 while true; do
+  if [ -f /refresh_volume.py ]; then
+    python3 /refresh_volume.py || true
+  fi
   if [ -f /promote-inbox.sh ]; then
     sh /promote-inbox.sh || true
   fi
@@ -20,5 +23,8 @@ while true; do
     beet import -A -q "$dir" || true
     beet modify -y grouping="$ed" genre=Archive "path:$dir" || true
   done
+  if [ -f /export_share_roles.py ]; then
+    python3 /export_share_roles.py || true
+  fi
   sleep "$INTERVAL"
 done

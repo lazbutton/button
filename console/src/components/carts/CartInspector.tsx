@@ -5,8 +5,8 @@ import { Link } from "react-router-dom";
 import { titleTaken } from "../../api/cartErrors";
 import { MODE_HELP, relayUrlOk } from "../../api/cartMeta";
 import { fetchBankFolders } from "../../api/cartSounds";
+import { fetchVolume, stationSmbUrl } from "../../api/volume";
 import type { Cart, CartMode } from "../../api/types";
-import { useBrand } from "../../lib/BrandContext";
 import { ConfirmDialog } from "../../ui/ConfirmDialog";
 import { FormField, SelectField } from "../../ui/FormField";
 import type { BacUsage } from "./BacHeader";
@@ -51,21 +51,7 @@ function finderRel(cartId: number, title: string): string {
       .trim()
       .replace(/[^A-Za-z0-9._-]+/g, "-")
       .replace(/^[-._]+|[-._]+$/g, "") || "cart";
-  return `Carts/${cartId}-${slug}`;
-}
-
-function hostFromBase(base?: string): string {
-  if (!base) return "";
-  try {
-    return new URL(base.includes("://") ? base : `http://${base}`).hostname;
-  } catch {
-    return "";
-  }
-}
-
-function smbUrl(host: string, share: string, rel: string): string {
-  const parts = [share, ...rel.split("/").filter(Boolean)].map(encodeURIComponent);
-  return `smb://${host}/${parts.join("/")}`;
+  return `Bacs/${cartId}-${slug}`;
 }
 
 export function CartInspector({
@@ -86,12 +72,12 @@ export function CartInspector({
   onSave: (payload: Record<string, unknown>) => Promise<void>;
   onDelete: () => Promise<void>;
 }) {
-  const brand = useBrand();
   const [draft, setDraft] = useState(() => draftFromCart(cart));
   const baseline = useRef(draftFromCart(cart));
   const baselineId = useRef(cart.id);
   const [bankPaths, setBankPaths] = useState<string[]>(HABILLAGE_FOLDERS);
   const [copied, setCopied] = useState(false);
+  const [volume, setVolume] = useState<{ name: string; host: string } | null>(null);
 
   // A new bac resets the form. The same bac reloaded keeps the fields being edited.
   useEffect(() => {
@@ -124,6 +110,16 @@ export function CartInspector({
     };
   }, []);
 
+  useEffect(() => {
+    let cancel = false;
+    void fetchVolume().then((value) => {
+      if (!cancel) setVolume(value);
+    });
+    return () => {
+      cancel = true;
+    };
+  }, []);
+
   const set = <K extends keyof CartDraft>(key: K, value: CartDraft[K]) => {
     setDraft((prev) => ({ ...prev, [key]: value }));
   };
@@ -144,13 +140,9 @@ export function CartInspector({
     ];
   }, [bankPaths, draft.bankFolder]);
 
-  const lanHost = brand.infra.smbHost || "";
-  const remoteHost = hostFromBase(brand.tailscaleBase);
-  const share = brand.infra.smbShare || "";
   const finderPath = finderRel(cart.id, draft.title.trim() || cart.title);
-  const networkHost = remoteHost || lanHost;
-  const networkUrl = networkHost && share ? smbUrl(networkHost, share, finderPath) : "";
-  const lanUrl = lanHost && share ? smbUrl(lanHost, share, finderPath) : "";
+  const networkUrl =
+    volume?.host && volume.name ? stationSmbUrl(volume.host, volume.name, finderPath) : "";
 
   const save = () =>
     onSave({
@@ -298,7 +290,6 @@ export function CartInspector({
               <div className="bacs-network">
                 <span className="ui-field-label">Dossier réseau</span>
                 <code>{networkUrl}</code>
-                {lanUrl && lanUrl !== networkUrl ? <code className="is-alt">{lanUrl}</code> : null}
                 <span className="bacs-network-actions">
                   <Button size="1" variant="soft" color="gray" asChild>
                     <a href={networkUrl}>

@@ -96,5 +96,9 @@ Créer un relais : `POST /carts.json` avec `mode:"relay"`, une URL HTTP complèt
 
 `destinations` : `[{id, label, group, folder}]`. D'abord `rotation`, puis une banque par dossier de `20-archives` (sauf ceux qui commencent par `.` ou `_`). `id` est le nom du dossier, et la métadonnée `destination` de l'envoi tus. `label` vient du fichier `.banque.json` du dossier (`{"nom": "…"}`), sinon du nom du dossier.
 
-`POST /banks.json` (via `/library/banks.json`), corps JSON `{label, folder}` : crée `20-archives/<folder>` et `00-inbox/archives/<folder>`. `folder` : minuscules, chiffres et tirets, 40 caractères au plus. Même droit que le dépôt (admin, bacs ou auto-DJ). Réponse `201 {destination}`, `400` ou `409 {error}` en français.
+`POST /banks.json` (via `/library/banks.json`), corps JSON `{label, folder}` : crée `20-archives/<folder>` et `00-inbox/archives/<folder>`. `folder` : minuscules, chiffres et tirets, 40 caractères au plus. Réservé à un admin. Le dépôt de fichiers reste ouvert à un admin, ou à un droit sur les bacs ou l'auto-DJ. Réponse `201 {destination}`, `400` ou `409 {error}` en français. Un programmateur reçoit `403`.
+
+`GET /volume.json` (via `/library/volume.json`) : `{name, host}`. `name` est le nom du volume Finder. `host` est vide quand le partage n'est pas publié. Droit de dépôt (admin, bacs ou auto-DJ).
+
+`POST /volume-password.json` (via `/library/volume-password.json`), admin seulement, corps `{username, password}` ou `{username, clear: true}`. Pose ou retire le mot de passe du dossier d'un programmateur ou d'un admin. Le mot de passe n'est pas renvoyé. `503` si le partage n'est pas publié, `400` si le compte est un animateur.
 

@@ -87,6 +87,7 @@ Une migration défaite perd les données qu'elle avait ajoutées. Sauvegarder av
 |---|---|
 | [`passer-en-direct.md`](exploitation/passer-en-direct.md) | brancher un encodeur, les créneaux des animateurs |
 | [`deposer-un-programme.md`](exploitation/deposer-un-programme.md) | envoyer de la musique et des émissions |
+| [`dossier-reseau.md`](exploitation/dossier-reseau.md) | ouvrir la médiathèque dans le Finder |
 | [`decrochage.md`](exploitation/decrochage.md) | partager l'antenne avec une autre radio |
 | [`le-flux-est-tombe.md`](exploitation/le-flux-est-tombe.md) | diagnostiquer une coupure |
 | [`sauvegarde.md`](exploitation/sauvegarde.md) | sauvegarder et restaurer |

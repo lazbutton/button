@@ -15,6 +15,7 @@ import urllib.error
 import urllib.request
 
 import inbox_api
+import volume_api
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
@@ -622,6 +623,20 @@ class CatalogHandler(BaseHTTPRequestHandler):
                 },
             )
             return
+        if path == "/volume.json":
+            allowed, why = cookie_allowed(self.headers.get("Cookie") or "")
+            if not allowed:
+                status = 401 if "session" in why else 403
+                json_response(self, {"error": why}, status)
+                return
+            json_response(
+                self,
+                {
+                    "name": volume_api.share_name(os.environ.get("STATION_NAME", "BUTTON")),
+                    "host": os.environ.get("SMB_HOST", "").strip(),
+                },
+            )
+            return
         if path == "/inbox.json":
             json_response(self, inbox_api.inbox_status(MEDIA_ROOT, TUSD_DIR))
             return
@@ -634,6 +649,64 @@ class CatalogHandler(BaseHTTPRequestHandler):
             send_file(self, media)
             return
         json_response(self, {"error": "not_found"}, 404)
+
+    def _volume_password(self, raw: bytes) -> None:
+        if (self.headers.get("Content-Type") or "").split(";")[0].strip() != "application/json":
+            json_response(self, {"error": "JSON attendu"}, 415)
+            return
+        if (self.headers.get("Sec-Fetch-Site") or "same-origin") not in {"same-origin", "none"}:
+            json_response(self, {"error": "requête d'un autre site"}, 403)
+            return
+        cookie = self.headers.get("Cookie") or ""
+        allowed, why = session_admin(cookie)
+        if not allowed:
+            status = 401 if "session" in why else 403
+            json_response(self, {"error": why}, status)
+            return
+        try:
+            body = json.loads(raw.decode() or "{}")
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            body = None
+        if not isinstance(body, dict):
+            json_response(self, {"error": "json illisible"}, 400)
+            return
+        username = str(body.get("username") or "").strip()
+        if not volume_api.username_ok(username):
+            json_response(self, {"error": "Identifiant refusé pour le dossier."}, 400)
+            return
+        host = os.environ.get("SMB_HOST", "").strip()
+        root = Path(os.environ.get("SHARE_PRIVATE", "/share-private"))
+        if not volume_api.published(host, root):
+            json_response(self, {"error": "Le dossier réseau n'est pas publié sur cette station."}, 503)
+            return
+        users, why = fetch_users(cookie)
+        if users is None:
+            status = 401 if "session" in why else 502
+            json_response(self, {"error": why}, status)
+            return
+        target = next((user for user in users if isinstance(user, dict) and user.get("username") == username), None)
+        if target is None:
+            json_response(self, {"error": "Compte introuvable."}, 404)
+            return
+        role = volume_api.finder_role(target.get("permissions") if isinstance(target.get("permissions"), dict) else {})
+        clear = body.get("clear") is True or body.get("password") == ""
+        if role == "animateur":
+            json_response(self, {"error": "Ce compte n'a pas le dossier."}, 400)
+            return
+        if clear:
+            volume_api.queue_password(root, username, None)
+            json_response(self, {"ok": True})
+            return
+        password = body.get("password")
+        if not isinstance(password, str):
+            json_response(self, {"error": "Mot de passe manquant."}, 400)
+            return
+        problem = volume_api.password_problem(password)
+        if problem:
+            json_response(self, {"error": problem}, 400)
+            return
+        volume_api.queue_password(root, username, password)
+        json_response(self, {"ok": True})
 
     def do_POST(self) -> None:  # noqa: N802
         path = unquote(urlparse(self.path).path)
@@ -655,6 +728,9 @@ class CatalogHandler(BaseHTTPRequestHandler):
                 return
             json_response(self, payload)
             return
+        if path == "/volume-password.json":
+            self._volume_password(raw)
+            return
         if path == "/banks.json":
             if (self.headers.get("Content-Type") or "").split(";")[0].strip() != "application/json":
                 json_response(self, {"error": "JSON attendu"}, 415)
@@ -662,7 +738,7 @@ class CatalogHandler(BaseHTTPRequestHandler):
             if (self.headers.get("Sec-Fetch-Site") or "same-origin") not in {"same-origin", "none"}:
                 json_response(self, {"error": "requête d'un autre site"}, 403)
                 return
-            allowed, why = cookie_allowed(self.headers.get("Cookie") or "")
+            allowed, why = session_admin(self.headers.get("Cookie") or "")
             if not allowed:
                 status = 401 if "session" in why else 403
                 json_response(self, {"error": why}, status)
@@ -725,7 +801,7 @@ def deposit_allowed(event: dict) -> tuple[bool, str]:
 
 
 def cookie_allowed(cookie: str) -> tuple[bool, str]:
-    """Depositing and creating a bank: admin, or a right on bacs or the auto-DJ."""
+    """Dépôt de fichiers : admin, ou un droit sur les bacs ou l'auto-DJ."""
     if not AUTOMATE_URL:
         return False, "dépôt non relié à l'automate"
     req = urllib.request.Request(
@@ -747,6 +823,28 @@ def cookie_allowed(cookie: str) -> tuple[bool, str]:
     if perms.get("admin") or perms.get("carts") or perms.get("autodj"):
         return True, ""
     return False, "droit insuffisant"
+
+
+def fetch_users(cookie: str) -> tuple[list | None, str]:
+    if not AUTOMATE_URL:
+        return None, "catalogue non relié à l'automate"
+    req = urllib.request.Request(
+        f"{AUTOMATE_URL}/users.json",
+        headers={"Cookie": cookie},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=4) as resp:
+            payload = json.loads(resp.read().decode() or "{}")
+    except urllib.error.HTTPError as exc:
+        if exc.code in {401, 403}:
+            return None, "session expirée"
+        return None, "automate injoignable"
+    except (OSError, json.JSONDecodeError):
+        return None, "automate injoignable"
+    users = payload.get("users") if isinstance(payload, dict) else None
+    if not isinstance(users, list):
+        return None, "automate injoignable"
+    return users, ""
 
 
 def session_admin(cookie: str) -> tuple[bool, str]:

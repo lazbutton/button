@@ -6,6 +6,9 @@
 #
 # - 00-inbox/rotation        -> 10-rotation
 # - 00-inbox/archives/<banque> -> 20-archives/<banque>, pour chaque dossier de 20-archives
+# - 10-rotation et 20-archives : un fichier déjà là est tagué sur place.
+#   wav / aiff deviennent du flac dans le même dossier. Un mp3 ou un flac
+#   déjà tagué n'est pas réécrit.
 # - Sans BROADCAST_CODEC : MP3 / FLAC / OGG / M4A déplacés tels quels ;
 #   WAV / AIFF convertis en FLAC ; l'original part dans 00-inbox/_sources.
 # - BROADCAST_CODEC=mp3 ou opus (petit disque) : tout fichier accepté est réencodé
@@ -110,6 +113,67 @@ promote_dir() {
   done
 }
 
+# Fichier déjà dans la banque : on le laisse dans son dossier.
+# wav / aiff -> flac à côté, puis l'original est retiré.
+# Les autres formats reçoivent artiste et titre s'il en manque un.
+tag_in_place() {
+  dest=$1
+  [ -d "$dest" ] || return 0
+  for src in "$dest"/*; do
+    [ -f "$src" ] || continue
+    name=$(basename "$src")
+    case "$name" in .*) continue ;; esac
+    stem=${name%.*}
+    ext=$(printf '%s' "${name##*.}" | tr 'A-Z' 'a-z')
+    case "$stem" in
+      *" - "*) artist=${stem%% - *}; title=${stem#* - } ;;
+      *)       artist=""; title=$stem ;;
+    esac
+    case "$ext" in
+      wav|aif|aiff)
+        target="$dest/$stem.flac"
+        if [ -e "$target" ]; then echo "déjà là : $name"; skipped=$((skipped+1)); continue; fi
+        partial="$dest/.$stem.partial.flac"
+        if [ "$DRY" = 1 ]; then
+          echo "+ ffmpeg -v error -y -i $src -map 0:a -c:a flac -compression_level 5 -metadata artist=$artist -metadata title=$title $partial"
+        elif ! ffmpeg -v error -y -i "$src" -map 0:a -c:a flac -compression_level 5 \
+          -metadata artist="$artist" -metadata title="$title" "$partial"; then
+          rm -f "$partial"
+          exit 1
+        else
+          mv "$partial" "$target"
+          rm -f "$src"
+        fi
+        echo "sur place : $name -> $dest/$(basename "$target")"
+        promoted=$((promoted+1))
+        ;;
+      mp3|flac|ogg|opus|m4a)
+        have_artist=$(tag_of "$src" artist)
+        have_title=$(tag_of "$src" title)
+        if [ -n "$have_artist" ] && [ -n "$have_title" ]; then
+          continue
+        fi
+        partial="$dest/.$stem.retag.$ext"
+        meta_artist=${have_artist:-$artist}
+        meta_title=${have_title:-$title}
+        if [ "$DRY" = 1 ]; then
+          echo "+ ffmpeg -v error -y -i $src -map 0:a -c copy -metadata artist=$meta_artist -metadata title=$meta_title $partial"
+        elif ! ffmpeg -v error -y -i "$src" -map 0:a -c copy \
+          -metadata artist="$meta_artist" -metadata title="$meta_title" "$partial"; then
+          rm -f "$partial"
+          exit 1
+        else
+          mv "$partial" "$src"
+        fi
+        echo "sur place : $name"
+        promoted=$((promoted+1))
+        ;;
+      *)
+        ;;
+    esac
+  done
+}
+
 promote_dir "$MEDIA/00-inbox/rotation" "$MEDIA/10-rotation"
 # Une banque d'archives = un dossier de 20-archives (sauf ceux en . ou _).
 for bank in "$MEDIA"/20-archives/*/; do
@@ -117,5 +181,7 @@ for bank in "$MEDIA"/20-archives/*/; do
   ed=$(basename "$bank")
   case "$ed" in .*|_*) continue ;; esac
   promote_dir "$MEDIA/00-inbox/archives/$ed" "$MEDIA/20-archives/$ed"
+  tag_in_place "$MEDIA/20-archives/$ed"
 done
+tag_in_place "$MEDIA/10-rotation"
 echo "promotion : $promoted promu(s), $skipped ignoré(s). Index Beets au prochain tour (${BEETS_IMPORT_INTERVAL:-45} s)."

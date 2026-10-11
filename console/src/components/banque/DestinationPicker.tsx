@@ -16,8 +16,8 @@ export function DestinationPicker({
   destinations: BankDestination[];
   value: BankDestination;
   onChange: (id: string) => void;
-  /** Opens the creation dialog, prefilled with what was typed. */
-  onCreate: (label: string) => void;
+  /** Opens the creation dialog, prefilled with what was typed. Admin only. */
+  onCreate?: (label: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -63,7 +63,7 @@ export function DestinationPicker({
     } else if (event.key === "Enter") {
       event.preventDefault();
       if (flat[active]) pick(flat[active]);
-      else if (query.trim()) {
+      else if (onCreate && query.trim()) {
         setOpen(false);
         onCreate(query.trim());
       }
@@ -148,20 +148,22 @@ export function DestinationPicker({
           ))}
           {flat.length === 0 ? <p className="banque-dest-empty">Aucune banque pour « {query.trim()} ».</p> : null}
         </div>
-        <div className="banque-dest-foot">
-          <Button
-            size="2"
-            variant="ghost"
-            color="gray"
-            onClick={() => {
-              setOpen(false);
-              onCreate(flat.length ? "" : query.trim());
-            }}
-          >
-            <FolderPlus className="ui-button-icon" />
-            {flat.length === 0 && query.trim() ? `Créer « ${query.trim()} »` : "Nouvelle banque d'archives"}
-          </Button>
-        </div>
+        {onCreate ? (
+          <div className="banque-dest-foot">
+            <Button
+              size="2"
+              variant="ghost"
+              color="gray"
+              onClick={() => {
+                setOpen(false);
+                onCreate(flat.length ? "" : query.trim());
+              }}
+            >
+              <FolderPlus className="ui-button-icon" />
+              {flat.length === 0 && query.trim() ? `Créer « ${query.trim()} »` : "Nouvelle banque d'archives"}
+            </Button>
+          </div>
+        ) : null}
       </Popover.Content>
     </Popover.Root>
   );

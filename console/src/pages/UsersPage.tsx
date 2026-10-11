@@ -17,6 +17,7 @@ import { ProtoToast, useProtoToast } from "../components/ProtoToast";
 import { apiDelete, apiPostJson, apiPut, ApiRequestError } from "../api/client";
 import { emissionWindowLabel } from "../api/emissionMeta";
 import { slotsForHost } from "../api/hostSlots";
+import { setVolumePassword } from "../api/volume";
 import {
   canBroadcast,
   permissionsFromRole,
@@ -364,8 +365,11 @@ function UserFiche({
 }) {
   const [notes, setNotes] = useState(user.notes);
   const [password, setPassword] = useState("");
+  const [folderPassword, setFolderPassword] = useState("");
+  const [folderError, setFolderError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const slots = slotsForHost(emissions, user.username);
+  const role = roleFromPermissions(user.permissions);
 
   const saveNotes = async () => {
     setBusy(true);
@@ -394,6 +398,22 @@ function UserFiche({
     }
   };
 
+  const saveFolder = async (clear: boolean) => {
+    setBusy(true);
+    setFolderError(null);
+    try {
+      await setVolumePassword(user.username, clear ? "" : folderPassword);
+      setFolderPassword("");
+      onFeedback(clear ? "Accès au dossier retiré" : "Mot de passe du dossier enregistré");
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : "Enregistrement impossible.";
+      setFolderError(message);
+      onError(message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <Dialog.Root
       open={open}
@@ -403,6 +423,8 @@ function UserFiche({
         if (next) {
           setNotes(user.notes);
           setPassword("");
+          setFolderPassword("");
+          setFolderError(null);
         }
       }}
     >
@@ -448,6 +470,37 @@ function UserFiche({
           <Button type="button" disabled={busy || !password.trim()} onClick={() => void savePassword()}>
             Réinitialiser le mot de passe
           </Button>
+          {role === "animateur" ? (
+            <p>Ce compte n’a pas le dossier de la station.</p>
+          ) : (
+            <>
+              <FormField
+                label="Mot de passe du dossier"
+                hint="Distinct du mot de passe de la console. Huit caractères au moins. Il ouvre le volume dans le Finder."
+              >
+                <TextField.Root
+                  className="ui-field-control"
+                  type="password"
+                  value={folderPassword}
+                  autoComplete="new-password"
+                  onChange={(event) => setFolderPassword(event.target.value)}
+                />
+              </FormField>
+              {folderError ? (
+                <Text size="2" color="red" role="alert">
+                  {folderError}
+                </Text>
+              ) : null}
+              <Flex gap="2" wrap="wrap">
+                <Button type="button" disabled={busy || folderPassword.length < 8} onClick={() => void saveFolder(false)}>
+                  Enregistrer le mot de passe du dossier
+                </Button>
+                <Button type="button" variant="soft" color="gray" disabled={busy} onClick={() => void saveFolder(true)}>
+                  Retirer l’accès
+                </Button>
+              </Flex>
+            </>
+          )}
         </div>
         <Flex gap="2" mt="4" justify="end">
           <Dialog.Close>

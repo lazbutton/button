@@ -174,10 +174,13 @@ services:
     volumes:
       - ${RT_DATA:-./data/radiotomate}:/data
       - ${BUTTON_MEDIA:-./media}:/media
+      - share-private:/share-private
       - ./scripts/beets-import-loop.sh:/beets-import-loop.sh:ro
       # La boucle Beets appelle ce script à chaque tour. À la main :
       # docker exec button-radiotomate-dropbox-1 sh /promote-inbox.sh
       - ./scripts/promote-inbox.sh:/promote-inbox.sh:ro
+      - ./scripts/refresh_volume.py:/refresh_volume.py:ro
+      - ./scripts/export_share_roles.py:/export_share_roles.py:ro
     command: ["/bin/sh", "/beets-import-loop.sh"]
     depends_on:
       radiotomate-init:
@@ -210,9 +213,13 @@ services:
       MEILI_URL: http://meilisearch:7700
       MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:?MEILI_MASTER_KEY manquant dans .env}
       CATALOG_PORT: "30127"
+      STATION_NAME: ${STATION_NAME:-BUTTON}
+      SMB_HOST: ${SMB_HOST:-}
+      SHARE_PRIVATE: /share-private
     volumes:
       - ${BUTTON_MEDIA:-./media}:/media
       - tusd-data:/tusd
+      - share-private:/share-private
     ports:
       - "${CATALOG_PORT:-30127}:30127"
     depends_on:
@@ -235,5 +242,28 @@ services:
     depends_on:
       - catalog
 
+  # Dossier Finder. Absent de `docker compose up` : `--profile share`.
+  # SMB_BIND est l'adresse Tailscale. 0.0.0.0 est refusé au démarrage.
+  share:
+    profiles: ["share"]
+    image: ${BUTTON_IMAGES:-ghcr.io/lazbutton}/button-share:main
+    platform: linux/amd64
+    build:
+      context: ..
+      dockerfile: deploy/share/Dockerfile
+    restart: unless-stopped
+    environment:
+      STATION_NAME: ${STATION_NAME:-BUTTON}
+      SMB_BIND: ${SMB_BIND:-}
+      SMB_ALLOW_PUBLIC: ${SMB_ALLOW_PUBLIC:-}
+      MEDIA_ROOT: /media
+      SHARE_PRIVATE: /share-private
+    volumes:
+      - ${BUTTON_MEDIA:-./media}:/media
+      - share-private:/share-private
+    ports:
+      - "${SMB_BIND:-127.0.0.1}:445:445"
+
 volumes:
   tusd-data:
+  share-private:

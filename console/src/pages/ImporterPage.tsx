@@ -31,8 +31,10 @@ import {
   type BankDestination,
 } from "../api/soundsView";
 import { createBank } from "../api/banks";
+import { useAccount } from "../api/AccountContext";
 import { CreateBankDialog } from "../components/banque/CreateBankDialog";
 import { DestinationPicker } from "../components/banque/DestinationPicker";
+import { StationFolder } from "../components/banque/StationFolder";
 import { ProtoToast, useProtoToast } from "../components/ProtoToast";
 import "../styles/pages/sons.css";
 
@@ -144,6 +146,7 @@ function useInbox() {
 
 export function ImporterPage() {
   const uppy = bankUppy();
+  const { isAdmin } = useAccount();
   const files = useUppyState(uppy, (state) => state.files);
   const totalProgress = useUppyState(uppy, (state) => state.totalProgress);
   const { status, problem, loadedAt, loading, load } = useInbox();
@@ -276,6 +279,7 @@ export function ImporterPage() {
         </div>
         <QuotaMeter used={quotaUsed} limit={quotaLimit} pending={readyBytes} known={status != null} />
       </header>
+      <StationFolder />
 
       {problem ? (
         <div className="banque-alert" role="alert">
@@ -322,7 +326,7 @@ export function ImporterPage() {
               destinations={destinations}
               value={destinationInfo}
               onChange={setDestination}
-              onCreate={(label) => setCreating(label)}
+              onCreate={isAdmin ? (label) => setCreating(label) : undefined}
             />
           </div>
 
