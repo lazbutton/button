@@ -223,7 +223,10 @@ export async function apiArrayBuffer(path: string): Promise<ArrayBuffer> {
 
 export async function apiLogin(username: string, password: string): Promise<void> {
   try {
-    await apiPostJson("/login.json", { username, password });
+    await apiPostJson<{ ok?: boolean; username?: string; permissions?: Record<string, boolean> }>(
+      "/login.json",
+      { username, password },
+    );
     csrfToken = null;
     csrfPromise = null;
     apiCacheClear();

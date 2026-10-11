@@ -5,6 +5,7 @@ import { ErrorState, LoadingState } from "../ui/DataState";
 import { FormField } from "../ui/FormField";
 import { AccountProvider } from "./AccountContext";
 import { ApiAuthError, ApiUnavailableError, apiLogin, apiLogout, apiProbeSession } from "./client";
+import { forgetUsername, rememberUsername } from "./sessionUser";
 import type { ApiLoadError } from "./useApiJson";
 import { label } from "../lib/brand";
 import { useBrand } from "../lib/BrandContext";
@@ -77,6 +78,7 @@ export function ApiSession({ children }: { children: ReactNode }) {
 
   const logout = useCallback(() => {
     void apiLogout().finally(() => {
+      forgetUsername();
       readyRef.current = false;
       setError("auth");
       setLoading(false);
@@ -111,6 +113,7 @@ function StudioLogin({ onLoggedIn }: { onLoggedIn: () => void }) {
     setFail(null);
     try {
       await apiLogin(username, password);
+      rememberUsername(username);
       onLoggedIn();
     } catch (caught) {
       if (caught instanceof ApiUnavailableError) {

@@ -16,7 +16,7 @@ export function SectionTabs({
   description,
   tabs,
 }: {
-  title: string;
+  title?: string;
   description?: string;
   tabs: SectionTab[];
 }) {
@@ -28,7 +28,7 @@ export function SectionTabs({
 
   return (
     <div className="ui-page section-page">
-      <PageHeader title={title} description={description} />
+      {title || description ? <PageHeader title={title} description={description} /> : null}
       <Tabs.Root
         value={current}
         onValueChange={(value) => {
