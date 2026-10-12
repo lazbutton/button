@@ -2,12 +2,6 @@
  * Barre du haut : état d'antenne, titre en cours, casque, auditeurs, heure, compte.
  * La barre est un conteneur : elle se resserre selon sa propre largeur, pas celle de l'écran.
  */
-:root {
-  --tb-ok-ink: color-mix(in srgb, var(--app-ok) 62%, var(--app-text));
-  --tb-live-ink: color-mix(in srgb, var(--app-live) 74%, var(--app-text));
-  --tb-warn-ink: color-mix(in srgb, var(--app-vu-hot) 74%, var(--app-text));
-}
-
 .app-topbar {
   container: topbar / inline-size;
   position: relative;
@@ -140,7 +134,7 @@
 }
 
 .tb-air[data-tone="direct"] .tb-air-label {
-  color: var(--tb-live-ink);
+  color: var(--app-live-ink);
 }
 
 .tb-air[data-tone="direct"] .tb-air-dot,
@@ -155,7 +149,7 @@
 }
 
 .tb-air[data-tone="warn"] .tb-air-label {
-  color: var(--tb-warn-ink);
+  color: var(--app-warn-ink);
 }
 
 .tb-air[data-tone="warn"] .tb-air-dot {
@@ -169,7 +163,7 @@
 }
 
 .tb-air[data-tone="alert"] .tb-air-label {
-  color: var(--tb-live-ink);
+  color: var(--app-live-ink);
 }
 
 .tb-air[data-tone="off"] .tb-air-dot {
@@ -418,7 +412,7 @@
 }
 
 .tb-now[data-ending="true"] .tb-now-time {
-  color: var(--tb-warn-ink);
+  color: var(--app-warn-ink);
   font-weight: 650;
 }
 
@@ -478,7 +472,7 @@
 }
 
 .tb-listen[data-on="true"] .tb-listen-toggle svg {
-  color: var(--tb-ok-ink);
+  color: var(--app-ok-ink);
 }
 
 .tb-listen[data-error="true"] {
@@ -486,7 +480,7 @@
 }
 
 .tb-listen[data-error="true"] .tb-listen-toggle svg {
-  color: var(--tb-warn-ink);
+  color: var(--app-warn-ink);
 }
 
 .tb-listen .app-vu {

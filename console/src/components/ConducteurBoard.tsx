@@ -292,7 +292,8 @@ export function ConducteurBoard({
         ) : null}
         {past.map((item, index) => (
           <RundownRow
-            key={item.id ?? `past-${item.at}-${index}`}
+            // Un titre passé puis relancé figure deux fois dans l'historique, avec le même id.
+            key={`past-${item.id ?? ""}-${item.at}-${index}`}
             item={item}
             index={index}
             role="past"

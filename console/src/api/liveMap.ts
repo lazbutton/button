@@ -1,98 +1,8 @@
-import { identCart } from "./cartFlags";
 import { displayNow } from "../lib/nowPlaying";
 import type { CatalogItem, Kind } from "../mock/catalog";
 import { harborIsLive } from "./emissionMeta";
 import { itemNamedLikeLive, liveQueue, rundownCopy } from "./rundownLive";
-import type { Cart, Cue, LiveSnapshot, RundownItem } from "./types";
-
-export type EnginePad = {
-  id: string;
-  kind: "son" | "jingle" | "pub";
-  title: string;
-  durationSec: number;
-  cartId: number;
-  soundId: number;
-  rank?: number;
-  path?: string;
-};
-
-export const PAD_N = 6;
-export const PAD_DRAG_MIME = "application/x-button-pad";
-
-export type PadSlot = {
-  slot: number;
-  kind: "jingle" | "pub";
-  cartId: number | null;
-  pad: EnginePad | null;
-};
-
-function padFromSound(cart: Cart, sound: Cart["sounds"][number], kind: EnginePad["kind"]): EnginePad {
-  return {
-    id: `c${cart.id}-s${sound.id}`,
-    kind,
-    title: sound.title,
-    durationSec: sound.duration,
-    cartId: cart.id,
-    soundId: sound.id,
-    rank: sound.rank,
-    path: sound.path,
-  };
-}
-
-function soundsToPads(cart: Cart, kind: EnginePad["kind"]): EnginePad[] {
-  return cart.sounds.slice(0, PAD_N).map((sound) => padFromSound(cart, sound, kind));
-}
-
-function slotsForCart(cart: Cart | undefined, kind: "jingle" | "pub"): PadSlot[] {
-  const sounds = [...(cart?.sounds ?? [])].sort((left, right) => left.rank - right.rank);
-  return Array.from({ length: PAD_N }, (_, index) => {
-    const sound = sounds[index];
-    return {
-      slot: index + 1,
-      kind,
-      cartId: cart?.id ?? null,
-      pad: sound && cart ? padFromSound(cart, sound, kind) : null,
-    };
-  });
-}
-
-export function padSlotsFromCarts(carts: Cart[]): { jingle: PadSlot[]; pub: PadSlot[] } {
-  const jingles = identCart(carts);
-  const pubs = carts.find((cart) => cart.title === "Pubs");
-  return {
-    jingle: slotsForCart(jingles, "jingle"),
-    pub: slotsForCart(pubs, "pub"),
-  };
-}
-
-export function padBanksFromCarts(carts: Cart[]): {
-  son: EnginePad[];
-  jingle: EnginePad[];
-  pub: EnginePad[];
-} {
-  const jingles = identCart(carts);
-  const pubs = carts.find((cart) => cart.title === "Pubs");
-  const others = carts.filter((cart) => cart.id !== jingles?.id && cart.id !== pubs?.id);
-  const son: EnginePad[] = [];
-  for (const cart of others) {
-    for (const sound of cart.sounds) {
-      if (son.length >= PAD_N) break;
-      son.push({
-        id: `c${cart.id}-s${sound.id}`,
-        kind: "son",
-        title: sound.title,
-        durationSec: sound.duration,
-        cartId: cart.id,
-        soundId: sound.id,
-      });
-    }
-  }
-  return {
-    son,
-    jingle: jingles ? soundsToPads(jingles, "jingle") : [],
-    pub: pubs ? soundsToPads(pubs, "pub") : [],
-  };
-}
+import type { Cue, LiveSnapshot, RundownItem } from "./types";
 
 export function kindFromSource(source: string | undefined, kind?: string): Kind {
   if (kind === "musique" || kind === "jingle" || kind === "son" || kind === "pub") {
@@ -160,19 +70,6 @@ export function liveToItem(live: LiveSnapshot | null): CatalogItem | undefined {
   };
 }
 
-export function onAirPadId(
-  live: LiveSnapshot | null,
-  banks: { son: EnginePad[]; jingle: EnginePad[]; pub: EnginePad[] },
-): string | undefined {
-  const title = live?.title?.trim();
-  if (!title) return undefined;
-  for (const bank of [banks.jingle, banks.son, banks.pub]) {
-    const hit = bank.find((pad) => pad.title === title);
-    if (hit) return hit.id;
-  }
-  return undefined;
-}
-
 export function cueLabel(cue: Cue | null | undefined): string {
   const labels = cueLabels(cue);
   if (!labels.title && !labels.artist) return "—";
@@ -184,14 +81,6 @@ export function cueLabels(cue: Cue | null | undefined): { title: string; artist:
   if (!cue) return { title: "", artist: "" };
   const parsed = displayNow({ title: cue.title, artist: cue.artist });
   return { title: parsed.title.trim(), artist: parsed.artist.trim() };
-}
-
-export function padCaption(raw: string): { title: string; artist: string } {
-  const parsed = displayNow({ title: raw, artist: "" });
-  return {
-    title: parsed.title.trim() || raw.trim() || "—",
-    artist: parsed.artist.trim(),
-  };
 }
 
 export function glanceNowItem(

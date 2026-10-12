@@ -37,7 +37,8 @@ export function liveSourceLabel(live: LiveSnapshot | null): { label: string; col
   return { label: "Auto-DJ", color: "green" };
 }
 
-function onAirDetail(live: LiveSnapshot): string {
+/** Ce qui tient l'antenne, dit pareil dans la barre et sur le pupitre. */
+export function airSourceLabel(live: LiveSnapshot): string {
   const show = live.emission;
   if (show && show.scope === "dated" && show.kind === "set" && show.state === "on_air") {
     return "Émission datée";
@@ -76,7 +77,7 @@ export function topAir(input: {
   if (banner.tone === "problem") {
     return { tone: "alert", label: banner.cause || "Problème", detail: "" };
   }
-  return { tone: "on", label: "En onde", detail: live ? onAirDetail(live) : "" };
+  return { tone: "on", label: "En onde", detail: live ? airSourceLabel(live) : "" };
 }
 
 /** Auditeurs du flux public : mounts hors studio, sinon mounts locaux. Le casque .wav ne compte pas. */

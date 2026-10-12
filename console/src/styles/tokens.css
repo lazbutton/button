@@ -30,6 +30,10 @@
   --app-vu-hot: #ff7a45;
   --app-vu-clip: #ff4d4d;
   --app-focus: color-mix(in srgb, var(--app-accent) 55%, var(--app-bg));
+  /* Encres lisibles des couleurs d'état, sur fond clair comme sombre. */
+  --app-ok-ink: color-mix(in srgb, var(--app-ok) 62%, var(--app-text));
+  --app-live-ink: color-mix(in srgb, var(--app-live) 74%, var(--app-text));
+  --app-warn-ink: color-mix(in srgb, var(--app-vu-hot) 74%, var(--app-text));
   --kind-musique: #0a0a0a;
   --kind-jingle: #404040;
   --kind-son: #737373;

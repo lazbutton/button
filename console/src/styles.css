@@ -16,18 +16,6 @@ body,
   background: var(--app-bg, #f5f5f7);
 }
 
-.app-page--desk {
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  padding: 0.55rem 0 0.55rem 0.85rem;
-}
-
-.app-page--desk > .desk {
-  flex: 1;
-  min-height: 0;
-}
-
 .app-drag {
   display: flex;
   align-items: center;

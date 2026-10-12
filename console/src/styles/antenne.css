@@ -177,51 +177,6 @@
   }
 }
 
-/* Glance : heure de fin et badge source. */
-
-.desk-glance-end {
-  color: var(--app-text-muted);
-  font-size: 0.8rem;
-  white-space: nowrap;
-}
-
-.desk-glance-source {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  padding: 0.15rem 0.5rem;
-  border-radius: 999px;
-  font-size: 0.75rem;
-  font-weight: 600;
-  background: var(--app-surface-3);
-  color: var(--app-text-muted);
-}
-
-.desk-glance-source.is-stream,
-.desk-glance-source.is-relay {
-  background: var(--app-live-soft);
-  color: var(--app-live);
-}
-
-.desk-glance-source.is-offline {
-  border: 1px dashed var(--app-border-strong);
-  background: transparent;
-}
-
-.desk-glance-meta {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  margin-top: 0.15rem;
-}
-
-.desk-glance-toolbar {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 0.4rem;
-}
-
 .ui-button-icon.is-spinning {
   animation: health-spin 1s linear infinite;
 }

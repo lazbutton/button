@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
-import { DeskFile } from "../components/DeskFile";
-import { LiveConnectPanel } from "../components/LiveConnectPanel";
-import { DeskGlance } from "../components/DeskGlance";
-import { DeskLibrary } from "../components/DeskLibrary";
+import { TriangleAlert } from "lucide-react";
+import { Link } from "react-router-dom";
+import { DirectDialog } from "../components/antenne/DirectDialog";
+import { LibraryPanel } from "../components/antenne/LibraryPanel";
+import { OnAirCard, type AirState } from "../components/antenne/OnAirCard";
+import { QueuePanel } from "../components/antenne/QueuePanel";
 import { ProtoToast, useProtoToast } from "../components/ProtoToast";
-import { parisParts } from "../lib/parisClock";
 import { useAntennaClock } from "../lib/liveClock";
+import { anchorHint, deskAlert, ownsSpace, SKIP_GUARD_MS, spaceSkips } from "../api/antenneDesk";
 import { airBanner, ANTENNE_STATE_JSON } from "../api/antenneState";
 import {
   ApiAuthError,
@@ -23,12 +25,13 @@ import { harborIsLive } from "../api/emissionMeta";
 import { stopDiffusion } from "../api/agenda";
 import { timeLabel } from "../api/agendaView";
 import { glanceNowItem } from "../api/liveMap";
-import { liveSourceLabel } from "../api/topbar";
+import { airSourceLabel } from "../api/topbar";
 import { SessionGate } from "../api/SessionGate";
 import {
   CONDUCTEUR_JSON,
   isDeskPin,
   itemNamedLikeLive,
+  nextAnchoredItem,
   partitionRundown,
   rundownCopy,
 } from "../api/rundownLive";
@@ -40,6 +43,7 @@ import type {
   RundownItem,
 } from "../api/types";
 import { useApiJson } from "../api/useApiJson";
+import "../styles/pages/antenne.css";
 
 type DeskMutation = Rundown & { desk_item?: RundownItem };
 
@@ -102,12 +106,9 @@ function itemToHit(item: RundownItem): LibraryHit | null {
   };
 }
 
-function typingTarget(target: EventTarget | null): boolean {
-  return (
-    target instanceof HTMLInputElement ||
-    target instanceof HTMLTextAreaElement ||
-    (target instanceof HTMLElement && target.isContentEditable)
-  );
+function keyTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement) || target === document.body) return null;
+  return { tag: target.tagName, role: target.getAttribute("role"), editable: target.isContentEditable };
 }
 
 function AntenneDesk({
@@ -131,21 +132,26 @@ function AntenneDesk({
   const wall = clock.wall;
   const parts = rundown ? partitionRundown(rundown.items, wall, live) : null;
   const liveMatches = Boolean(parts?.onAir && itemNamedLikeLive(parts.onAir, snapshot));
-  const now = glanceNowItem(liveMatches ? parts?.onAir ?? null : null, snapshot);
+  const glance = glanceNowItem(liveMatches ? parts?.onAir ?? null : null, snapshot);
   const harbor = harborIsLive(snapshot);
   const elapsedSec = clock.elapsedSec;
   const durationSec = clock.durationSec;
   const remainingSec = clock.remainingSec;
   const offline = snapshot.status === "offline";
   const currentShow = snapshot.emission ?? emissions?.current ?? null;
-  const source = liveSourceLabel(snapshot);
+  // Sans métadonnées, l'encodeur du direct ne dit que « Direct » : le nom de l'émission parle mieux.
+  const now =
+    harbor && glance && glance.title === "Direct" && currentShow?.title
+      ? { ...glance, title: currentShow.title }
+      : glance;
+  const source = airSourceLabel(snapshot);
   const [showTitle, setShowTitle] = useState("");
   const [showArtist, setShowArtist] = useState("");
   const [naming, setNaming] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [directOpen, setDirectOpen] = useState(false);
-  const directToggleRef = useRef<HTMLButtonElement>(null);
-  const directWasOpen = useRef(false);
+  const lastSkipRef = useRef(0);
+  const directButtonRef = useRef<HTMLButtonElement>(null);
   const renameTitleRef = useRef<HTMLInputElement>(null);
   const undoRef = useRef<(() => Promise<void>) | null>(null);
 
@@ -164,7 +170,7 @@ function AntenneDesk({
     currentShow && currentShow.scope === "dated" && currentShow.kind === "set" && currentShow.state === "on_air"
       ? currentShow
       : null;
-  const { account } = useAccount();
+  const { account, isAdmin } = useAccount();
   const canStopDated = Boolean(account?.permissions.live || account?.permissions.admin);
   const [stopArmed, setStopArmed] = useState(false);
   const [stopping, setStopping] = useState(false);
@@ -193,6 +199,10 @@ function AntenneDesk({
 
   const skipEngine = useCallback(async () => {
     if (harbor) return;
+    // Un double-clic ou deux Espace rapprochés ne passent qu'un titre.
+    const at = Date.now();
+    if (at - lastSkipRef.current < SKIP_GUARD_MS) return;
+    lastSkipRef.current = at;
     try {
       await apiDelete("/live.json");
       onLiveReload();
@@ -339,38 +349,24 @@ function AntenneDesk({
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.metaKey || event.ctrlKey || event.altKey) return;
-      if (typingTarget(event.target)) return;
-      if (event.key === "Escape" && directOpen) {
-        setDirectOpen(false);
-        return;
-      }
-      if (event.code === "Space") {
-        event.preventDefault();
-        if (!offline && !harbor) void skipEngine();
-      }
+      if (event.code !== "Space" || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+      if (directOpen || offline || harbor) return;
+      const target = keyTarget(event.target);
+      if (ownsSpace(target)) return;
+      // Hors des contrôles, Espace ne fait jamais défiler la page : il passe un titre, ou rien.
+      event.preventDefault();
+      if (!spaceSkips({ target, repeat: event.repeat, lastSkipAt: lastSkipRef.current, now: Date.now() })) return;
+      void skipEngine();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [directOpen, harbor, offline, skipEngine]);
-
-  useEffect(() => {
-    if (directOpen) {
-      directWasOpen.current = true;
-      return;
-    }
-    if (directWasOpen.current) directToggleRef.current?.focus();
-  }, [directOpen]);
 
   const endsAt = useMemo(() => {
     if (offline || harbor || remainingSec <= 0) return null;
     const end = new Date(wall.getTime() + remainingSec * 1000);
     return `${String(end.getHours()).padStart(2, "0")}:${String(end.getMinutes()).padStart(2, "0")}`;
   }, [harbor, offline, remainingSec, wall]);
-  const glanceSource = {
-    label: offline ? "Arrêt" : harbor ? "Direct" : source.label,
-    id: offline ? "offline" : harbor ? "stream" : (snapshot.source || "autodj").toLowerCase(),
-  };
   const status = airBanner({
     harbor,
     directTitle: currentShow?.title || "",
@@ -379,69 +375,53 @@ function AntenneDesk({
     playoutReachable: antenne ? antenne.playout.reachable : !offline,
     incidentKinds: (antenne?.incidents ?? []).map((incident) => incident.kind),
   });
-  const clockLabel = parisParts(wall).clock;
-  const airState = offline ? "off" : status.tone;
-  const ending = !offline && !harbor && remainingSec > 0 && remainingSec <= 15;
+  const airState: AirState = offline ? "off" : status.tone;
+  const alert = deskAlert(status);
+  const anchor = harbor || offline ? null : anchorHint(rundown ? nextAnchoredItem(rundown.items, wall) : null, wall);
   const namingOpen = Boolean(harbor && (renameOpen || !currentShow));
 
   return (
-    <div
-      className="desk desk--pupitre"
-      data-state={airState}
-      data-hot={status.hot ? "true" : "false"}
-      data-ending={ending ? "true" : "false"}
-    >
-      <div className="banner" role="status" aria-live="polite">
-        <span className="banner-dot" aria-hidden="true" />
-        <div className="banner-copy">
-          <span className="banner-label">{status.label}</span>
-          <span className="banner-cause">{status.cause}</span>
+    <div className="ant" data-state={airState}>
+      {alert ? (
+        <div className="ant-alert" data-tone={alert.tone}>
+          <TriangleAlert size={18} aria-hidden="true" />
+          <p role="alert">
+            <strong>{alert.title}</strong> {alert.help}
+          </p>
+          {alert.live ? <span className="ant-alert-live" aria-hidden="true">{alert.live}</span> : null}
+          {isAdmin ? (
+            <Link to="/reglages?onglet=automate" className="ant-link">
+              Diagnostic
+            </Link>
+          ) : null}
         </div>
-        <button
-          ref={directToggleRef}
-          type="button"
-          className="banner-direct"
-          aria-expanded={directOpen}
-          aria-controls="direct-sheet"
-          onClick={() => setDirectOpen((open) => !open)}
-        >
-          Passer en direct ?
-        </button>
-        <time className="banner-clock" dateTime={clockLabel}>
-          {clockLabel}
-        </time>
-      </div>
-      {directOpen ? (
-        <LiveConnectPanel
-          live={live}
-          antenne={antenne}
-          emissions={emissions}
-          offline={offline}
-          onClose={() => setDirectOpen(false)}
-        />
       ) : null}
-      <DeskGlance
+
+      <OnAirCard
+        state={airState}
         item={now}
         elapsedSec={elapsedSec}
         durationSec={durationSec}
         remainingSec={remainingSec}
+        source={source}
+        endsAt={endsAt}
+        anchor={anchor}
         onSkip={() => void skipEngine()}
         skipDisabled={offline || harbor}
-        keysHint="Espace suivant · / chercher · Entrée à la suite"
-        source={glanceSource}
-        endsAt={endsAt}
+        onDirect={() => setDirectOpen(true)}
+        directRef={directButtonRef}
       >
         {harbor ? (
           namingOpen ? (
             <form
-              className="rename is-open"
+              className="ant-rename"
               onSubmit={(event) => {
                 event.preventDefault();
                 void nameLive();
               }}
             >
               <label>
-                Nom de l’émission
+                <span>Nom de l’émission</span>
                 <input
                   ref={renameTitleRef}
                   value={showTitle}
@@ -451,7 +431,7 @@ function AntenneDesk({
                 />
               </label>
               <label>
-                Phrase artiste
+                <span>Phrase artiste</span>
                 <input
                   value={showArtist}
                   onChange={(event) => setShowArtist(event.target.value)}
@@ -459,61 +439,82 @@ function AntenneDesk({
                   disabled={naming}
                 />
               </label>
-              <button type="submit" disabled={naming || !showTitle.trim() || !showArtist.trim()}>
-                {currentShow ? "Renommer" : "Enregistrer"}
-              </button>
-              {currentShow ? (
-                <button type="button" onClick={() => setRenameOpen(false)} disabled={naming}>
-                  Annuler
+              <div className="ant-rename-actions">
+                <button
+                  type="submit"
+                  className="ant-btn ant-btn--small ant-btn--primary"
+                  disabled={naming || !showTitle.trim() || !showArtist.trim()}
+                >
+                  {currentShow ? "Renommer" : "Enregistrer"}
                 </button>
-              ) : null}
+                {currentShow ? (
+                  <button type="button" className="ant-btn ant-btn--small" onClick={() => setRenameOpen(false)} disabled={naming}>
+                    Annuler
+                  </button>
+                ) : null}
+              </div>
             </form>
           ) : (
-            <button
-              type="button"
-              onClick={() => {
-                setShowTitle(currentShow?.title || "");
-                setShowArtist(currentShow?.artist || "");
-                setRenameOpen(true);
-                window.setTimeout(() => renameTitleRef.current?.focus(), 0);
-              }}
-            >
-              Renommer
-            </button>
+            <div className="ant-air-extra">
+              <span>Le direct tient l’antenne, l’horloge est en pause.</span>
+              <button
+                type="button"
+                className="ant-btn ant-btn--small"
+                onClick={() => {
+                  setShowTitle(currentShow?.title || "");
+                  setShowArtist(currentShow?.artist || "");
+                  setRenameOpen(true);
+                  window.setTimeout(() => renameTitleRef.current?.focus(), 0);
+                }}
+              >
+                Renommer
+              </button>
+            </div>
           )
         ) : datedSet ? (
-          <div className="rename">
-            <span>
-              Émission datée · <strong>{datedSet.title}</strong>
-              {datedSet.until ? ` · prévue jusqu'à ${timeLabel(datedSet.until)}` : ""}
-            </span>
+          <div className="ant-air-extra">
+            <span>{datedSet.until ? `Set prévu jusqu’à ${timeLabel(datedSet.until)}.` : "Set de l’agenda."}</span>
             {canStopDated ? (
-              <button type="button" onClick={() => void stopDated()} disabled={stopping}>
-                {stopping ? "Arrêt…" : stopArmed ? "Confirmer : reprendre la grille" : "Arrêter et reprendre la grille"}
+              <button
+                type="button"
+                className={`ant-btn ant-btn--small${stopArmed ? " ant-btn--danger" : ""}`}
+                onClick={() => void stopDated()}
+                onBlur={() => setStopArmed(false)}
+                disabled={stopping}
+              >
+                {stopping ? "Arrêt…" : stopArmed ? "Confirmer : reprendre la grille" : "Arrêter le set"}
               </button>
             ) : null}
           </div>
         ) : null}
-      </DeskGlance>
+      </OnAirCard>
 
-      <div className="stage">
-        <DeskFile
+      <div className="ant-stage">
+        <QueuePanel
           rundown={rundown}
           live={live}
           wall={wall}
-          selectedId={null}
-          onSelect={() => undefined}
           onRemove={(item) => void removeItem(item)}
           onReorder={(ids) => void reorder(ids)}
           onInsertHit={(hit, beforeId) => void insertHit(hit, beforeId)}
         />
-        <DeskLibrary
+        <LibraryPanel
           fireDisabled={harbor}
           onInsertNext={(hit) => void insertHit(hit)}
           onFireNow={(hit) => void fireNow(hit)}
+          onNotice={(text) => show(text)}
         />
       </div>
 
+      <DirectDialog
+        open={directOpen}
+        onOpenChange={setDirectOpen}
+        live={live}
+        antenne={antenne}
+        emissions={emissions}
+        offline={offline}
+        returnFocus={directButtonRef}
+      />
       <ProtoToast message={message} onDismiss={dismiss} />
     </div>
   );
