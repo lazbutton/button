@@ -17,7 +17,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from sqlalchemy import select, update
+from sqlalchemy import select
+from sqlalchemy import update as sql_update
 
 from radiotomate.domain.agenda import (
     AIR_MISSED,
@@ -853,7 +854,7 @@ async def public_payload(
         # One statement, no version check: two tabs opening the link at once
         # must not fail on each other.
         await session.execute(
-            update(AgendaGuest)
+            sql_update(AgendaGuest)
             .where(AgendaGuest.id == guest.id, AgendaGuest.opened_at.is_(None))
             .values(opened_at=utc_naive(now))
             .execution_options(synchronize_session=False)
