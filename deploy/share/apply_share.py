@@ -260,17 +260,33 @@ def _open_dir(path: Path) -> None:
     os.chmod(path, 0o2775)
 
 
+def _traverse(path: Path) -> None:
+    """Le partage doit pouvoir entrer dans ce dossier (sans le rendre déposable)."""
+    if not path.is_dir() or path.is_symlink():
+        return
+    try:
+        os.chmod(path, path.stat().st_mode | 0o0111)
+    except OSError:
+        pass
+
+
 def _open_media(media: Path) -> None:
+    # /media est souvent 770 pour le moteur (uid 1000) : sans x pour les autres,
+    # sharewrite n'atteint jamais .volume. On ouvre seulement la traversée.
+    _traverse(media)
     _open_dir(media / "10-rotation")
     archives = media / "20-archives"
+    _traverse(archives)
     if archives.is_dir():
-        os.chmod(archives, 0o755)
         for bank in archives.iterdir():
             if bank.is_dir() and not bank.name.startswith((".", "_")):
                 _open_dir(bank)
+    habillage = media / "30-habillage"
+    _traverse(habillage)
     for slug in HABILLAGE_SLUGS:
-        _open_dir(media / "30-habillage" / slug)
+        _open_dir(habillage / slug)
     emissions = media / "40-emissions"
+    _traverse(emissions)
     if emissions.is_dir():
         for show in emissions.iterdir():
             if not show.is_dir() or show.name.startswith((".", "_")):
@@ -279,11 +295,13 @@ def _open_media(media: Path) -> None:
             for slot in EMISSION_KEEP:
                 _open_dir(show / slot)
     carts = media / "50-carts"
+    _traverse(carts)
     if carts.is_dir():
-        os.chmod(carts, 0o755)
         for cart in carts.iterdir():
             if cart.is_dir() and not cart.name.startswith((".", "_")):
                 _open_dir(cart)
+    # Vue Finder des bacs : liens vers 50-carts.
+    _open_dir(media / "Carts")
 
 
 def _read_json(path: Path) -> dict | None:

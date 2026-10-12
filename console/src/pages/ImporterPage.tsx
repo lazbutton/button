@@ -277,9 +277,11 @@ export function ImporterPage() {
             par <span className="bacs-nowrap">« Ajouter »</span> dans le bac.
           </p>
         </div>
-        <QuotaMeter used={quotaUsed} limit={quotaLimit} pending={readyBytes} known={status != null} />
+        <div className="banque-head-tools">
+          <StationFolder />
+          <QuotaMeter used={quotaUsed} limit={quotaLimit} pending={readyBytes} known={status != null} />
+        </div>
       </header>
-      <StationFolder />
 
       {problem ? (
         <div className="banque-alert" role="alert">
