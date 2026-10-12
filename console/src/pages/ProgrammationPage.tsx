@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
+import { AgendaPage } from "./AgendaPage";
 import { CategoriesPage } from "./CategoriesPage";
 import { HorlogesPage } from "./HorlogesPage";
 import { SemainePage } from "./SemainePage";
@@ -19,6 +20,7 @@ export function ProgrammationPage() {
       tabs={[
         { id: "horloges", label: "Heures types", panel: <HorlogesPage /> },
         { id: "semaine", label: "Semaine", panel: <SemainePage /> },
+        { id: "agenda", label: "Agenda", panel: <AgendaPage /> },
         {
           id: "categories",
           label: "Sélections de titres",

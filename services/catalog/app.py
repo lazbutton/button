@@ -14,6 +14,7 @@ import time
 import urllib.error
 import urllib.request
 
+import agenda_api
 import inbox_api
 import volume_api
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -764,7 +765,23 @@ class CatalogHandler(BaseHTTPRequestHandler):
         if not isinstance(event, dict):
             json_response(self, {"error": "json illisible"}, 400)
             return
-        hook = self.headers.get("Hook-Name") or ""
+        hook, event = agenda_api.hook_event(event, self.headers)
+        token = agenda_api.invite_token(event) or (
+            self.headers.get(agenda_api.TOKEN_HEADER) or ""
+        ).strip()
+        if token:
+            # A guest's set (Agenda): the engine decides, the folder is the date's.
+            engine = agenda_api.engine_call(AUTOMATE_URL, agenda_api.playout_token())
+            if hook == "pre-create":
+                json_response(self, agenda_api.pre_create(event, token, MEDIA_ROOT, engine))
+                return
+            if hook == "post-finish":
+                json_response(
+                    self, agenda_api.finish(event, token, MEDIA_ROOT, TUSD_DIR, engine)
+                )
+                return
+            json_response(self, {})
+            return
         if hook == "pre-create":
             allowed, why = deposit_allowed(event)
             if not allowed:

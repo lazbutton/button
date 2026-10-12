@@ -33,6 +33,10 @@ async def protect_csrf() -> None:
         return
     if request.endpoint in EXEMPT_ENDPOINTS:
         return
+    # A guest's link (or the catalog's token) is the only key there: no cookie
+    # is trusted, so a console session open in the same browser is ignored.
+    if request.blueprint == "public":
+        return
     if not await current_user.is_authenticated:
         return
     supplied = request.headers.get(HEADER_NAME, "")

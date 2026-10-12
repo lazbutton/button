@@ -39,6 +39,7 @@ jobs:
           python-version: "3.13"
       - run: pip install -r requirements.txt
       - run: python test_inbox_api.py
+      - run: python test_agenda_api.py
       - run: python test_refresh_volume.py
       - run: python test_promote_inplace.py
       - run: python test_share.py

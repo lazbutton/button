@@ -1,4 +1,4 @@
-import { Route, Routes, useNavigate } from "react-router-dom";
+import { Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { ShieldOff } from "lucide-react";
 import type { ReactNode } from "react";
 import { Shell } from "./layout/Shell";
@@ -7,6 +7,7 @@ import { roleAtLeast, type Role } from "./api/roles";
 import { ApiSession } from "./api/SessionGate";
 import { AntennePage } from "./pages/AntennePage";
 import { ConducteurPage } from "./pages/ConducteurPage";
+import { InvitationPage } from "./pages/InvitationPage";
 import { ProgrammationPage } from "./pages/ProgrammationPage";
 import { ReglagesPage } from "./pages/ReglagesPage";
 import { SonsPage } from "./pages/SonsPage";
@@ -51,6 +52,9 @@ function ReservedAccess() {
 }
 
 export function App() {
+  const location = useLocation();
+  // A guest's page: no console session, no shell, only their link.
+  if (location.pathname === "/invitation") return <InvitationPage />;
   return (
     <ApiSession>
       <Routes>

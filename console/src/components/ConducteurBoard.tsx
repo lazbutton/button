@@ -131,7 +131,7 @@ function RundownRow({
 
       <span className="engine-rundown-kind">
         <Badge color={kindColor(item.kind)} variant="soft">
-          {KIND_LABELS[item.kind as PositionKind] ?? item.kind}
+          {item.kind === "emission" ? "Émission" : (KIND_LABELS[item.kind as PositionKind] ?? item.kind)}
         </Badge>
       </span>
 

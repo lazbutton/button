@@ -40,23 +40,36 @@ def set_on_air_cache(payload: dict | None) -> None:
 async def harbor_allowed(
     session: ormSession, user, now: datetime | None = None
 ) -> bool:
-    """Stream login is open until a weekly show names a host.
+    """Stream login is open until a show names a host.
 
     An admin can always connect. A stream user can connect at any time while
-    no weekly emission has a host. Once at least one show names a host, that
-    user can connect only during their own slot.
+    no weekly emission and no dated live (Agenda) has a host. Once a show
+    names a host, that user can connect only during their own slot: a weekly
+    one, unless it is cancelled or covered by a dated broadcast that day, or
+    a dated live, from 15 minutes before its start.
     """
+    from radiotomate.services import agenda
+
     if not user.can_stream():
         return False
     if user.can_admin():
         return True
     moment = now_paris(now)
+    name = (user.username or "").strip().lower()
+    dated_hosts = False
+    blocked: set[int] = set()
+    if await agenda.agenda_enabled(session):
+        if await agenda.host_has_live_window(session, name, moment):
+            return True
+        dated_hosts = await agenda.any_named_live(session, moment)
+        blocked = await agenda.blocked_weekly_ids(session, moment)
     weeklies = await Emission.all_weekly(session)
     hosted = [row for row in weeklies if (row.host_username or "").strip()]
-    if not hosted:
+    if not hosted and not dated_hosts:
         return True
-    name = (user.username or "").strip().lower()
     for row in hosted:
+        if row.id in blocked:
+            continue
         if (
             row.day_of_week is None
             or row.start_minute is None
@@ -103,6 +116,8 @@ def live_emission_payload(current: dict) -> dict:
         "until": current.get("until"),
         "scope": current.get("scope"),
     }
+    if current.get("kind"):
+        payload["kind"] = current["kind"]
     if current.get("start_minute") is not None:
         payload["start_minute"] = current["start_minute"]
     if current.get("day_of_week") is not None:
@@ -202,14 +217,24 @@ async def resolve_emissions(
     source: object,
     now: datetime | None = None,
 ) -> tuple[dict | None, dict | None]:
+    """What names the antenna: the live session, a dated broadcast, a weekly show."""
+    from radiotomate.services import agenda
+
     local = now_paris(now)
     weeklies = await Emission.all_weekly(session)
     sessions = await Emission.all_sessions(session)
     current = None
     if sessions:
         current = _session_current(sessions[0], source)
+    blocked: set[int] = set()
+    if await agenda.agenda_enabled(session):
+        if current is None:
+            current = await agenda.current_dated(session, local, source)
+        blocked = await agenda.blocked_weekly_ids(session, local)
     if current is None:
         for row in weeklies:
+            if row.id in blocked:
+                continue
             found = _weekly_current(row, local, source)
             if found is not None:
                 current = found

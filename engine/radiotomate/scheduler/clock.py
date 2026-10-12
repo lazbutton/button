@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from time import perf_counter
 from typing import TYPE_CHECKING
 
@@ -260,7 +260,7 @@ async def load_sequencer_cursor(session: ormSession) -> tuple[int, int | None]:
     return cursor, clock_id
 
 
-async def tick(  # noqa: PLR0915
+async def tick(
     session: ormSession,
     live_data: dict,
     playout_client: AsyncClient,
@@ -269,13 +269,69 @@ async def tick(  # noqa: PLR0915
 ) -> list[str]:
     """
     One scheduler heartbeat. Returns action labels for tests.
+
+    The Agenda speaks first (a dated set may hold the antenna), then the clock.
     """
+    injected = now is not None
     now = now_from_live(live_data, now)
     actions: list[str] = []
     started = perf_counter()
     await restore_sequencer_state(session)
     gateway = gateway_for(playout_client)
     harbor = is_harbor_source(live_data.get("source"))
+    agenda_now = now if injected else datetime.now(timezone.utc)
+    agenda = await _agenda_step(session, live_data, gateway, agenda_now, harbor=harbor)
+    actions.extend(agenda.actions)
+    # A set about to be cut ends now: the clock fills as if nothing were left.
+    clock_live = {**live_data, "remaining": "0"} if agenda.stops else live_data
+    await _clock_step(
+        session, clock_live, gateway, beets, now, actions, harbor=harbor, agenda=agenda
+    )
+    if agenda.stops:
+        from radiotomate.scheduler import agenda as agenda_mod
+
+        before = len(agenda.actions)
+        try:
+            await agenda_mod.finish_stops(
+                session, gateway, live_data, agenda, agenda_now
+            )
+        except Exception:
+            _log.exception("Agenda stop failed")
+            await session.rollback()
+        actions.extend(agenda.actions[before:])
+    return _finish_tick(started, actions)
+
+
+async def _agenda_step(
+    session: ormSession,
+    live_data: dict,
+    gateway: PlayoutGateway,
+    now: datetime,
+    *,
+    harbor: bool,
+):
+    """Never lets a fault in the Agenda stop the clock."""
+    from radiotomate.scheduler import agenda as agenda_mod
+
+    try:
+        return await agenda_mod.step(session, live_data, gateway, now, harbor=harbor)
+    except Exception:
+        _log.exception("Agenda step failed; the clock runs without it")
+        await session.rollback()
+        return agenda_mod.AgendaTick()
+
+
+async def _clock_step(  # noqa: PLR0912, PLR0913, PLR0915
+    session: ormSession,
+    live_data: dict,
+    gateway: PlayoutGateway,
+    beets: BeetsIntegration,
+    now: datetime,
+    actions: list[str],
+    *,
+    harbor: bool,
+    agenda,
+) -> None:
     if harbor:
         _state.pending_autodj_skip = False
         _state.pending_autodj_skip_minute = None
@@ -296,7 +352,7 @@ async def tick(  # noqa: PLR0915
         if harbor:
             actions.append("live_hold")
         await persist_sequencer_cursor(session)
-        return _finish_tick(started, actions)
+        return
 
     clock = await Clock.from_id(session, slot.clock_id)
     if clock is None:
@@ -304,7 +360,7 @@ async def tick(  # noqa: PLR0915
         if harbor:
             actions.append("live_hold")
         await persist_sequencer_cursor(session)
-        return _finish_tick(started, actions)
+        return
 
     if harbor:
         actions.append("live_hold")
@@ -314,7 +370,19 @@ async def tick(  # noqa: PLR0915
         slot_end = slot.daypart_end_minute(nxt)
         _hold_due_anchors(clock, slot.minute, slot_end, now, actions)
         await persist_sequencer_cursor(session)
-        return _finish_tick(started, actions)
+        return
+
+    if agenda.hold:
+        # A dated set is on air: its anchors are dropped, never stacked behind it.
+        actions.append("agenda_hold")
+        today = now.date().isoformat()
+        _state.fired_anchors = {k for k in _state.fired_anchors if k[0] == today}
+        nxt = await AutoDJSlot.next_after(session, slot)
+        slot_end = slot.daypart_end_minute(nxt)
+        _hold_due_anchors(clock, slot.minute, slot_end, now, actions)
+        if not agenda.fill:
+            await persist_sequencer_cursor(session)
+            return
 
     from radiotomate.scheduler.execution import ensure_forecast
 
@@ -325,7 +393,7 @@ async def tick(  # noqa: PLR0915
     clock = await Clock.from_id(session, clock_id)
     if slot is None or clock is None:
         await persist_sequencer_cursor(session)
-        return _finish_tick(started, actions)
+        return
 
     if _state.clock_id != clock.id:
         _state.clock_id = clock.id
@@ -337,31 +405,32 @@ async def tick(  # noqa: PLR0915
     nxt = await AutoDJSlot.next_after(session, slot)
     slot_end = slot.daypart_end_minute(nxt)
 
-    await _fire_due_anchors(
-        session,
-        live_data,
-        gateway,
-        clock,
-        slot.minute,
-        slot_end,
-        now,
-        actions,
-    )
-    await _fire_due_soft_anchors(
-        session,
-        live_data,
-        gateway,
-        clock,
-        slot.minute,
-        slot_end,
-        now,
-        actions,
-    )
+    if not agenda.hold:
+        await _fire_due_anchors(
+            session,
+            live_data,
+            gateway,
+            clock,
+            slot.minute,
+            slot_end,
+            now,
+            actions,
+        )
+        await _fire_due_soft_anchors(
+            session,
+            live_data,
+            gateway,
+            clock,
+            slot.minute,
+            slot_end,
+            now,
+            actions,
+        )
 
     sequential = clock.sequential_positions()
     if not sequential:
         await persist_sequencer_cursor(session)
-        return _finish_tick(started, actions)
+        return
 
     anchored = clock.anchored_positions()
     next_anchor = next_hard_anchor_minute(now, slot.minute, slot_end, anchored)
@@ -384,7 +453,6 @@ async def tick(  # noqa: PLR0915
         autodj_target=autodj_target,
     )
     await persist_sequencer_cursor(session)
-    return _finish_tick(started, actions)
 
 
 def _meta_from_item(item: RundownItem) -> tuple[str, str]:

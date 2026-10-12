@@ -220,6 +220,8 @@ services:
       - ${BUTTON_MEDIA:-./media}:/media
       - tusd-data:/tusd
       - share-private:/share-private
+      # Read-only: the engine's token for the Agenda deposit routes.
+      - ${RT_DATA:-./data/radiotomate}/radiotomate.yaml:/config/radiotomate.yaml:ro
     ports:
       - "${CATALOG_PORT:-30127}:30127"
     depends_on:
@@ -235,7 +237,7 @@ services:
       - "-base-path=/tus/"
       - "-upload-dir=/tusd"
       - "-hooks-http=http://catalog:30127/tus-hook"
-      - "-hooks-http-forward-headers=Cookie"
+      - "-hooks-http-forward-headers=Cookie,X-Invite-Token"
       - "-hooks-enabled-events=pre-create,post-finish"
     volumes:
       - tusd-data:/tusd

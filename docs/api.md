@@ -68,6 +68,25 @@ Hebdo : `{id, version, scope:"weekly", title, artist, day_of_week, start_minute,
 
 `POST` session `{scope:"session", title, artist}` exige le harbor déjà branché et le droit `live`. Il remplace la session en cours. `POST` hebdo `{title, artist, day_of_week, start_minute, end_minute, host_username}` exige `autodj`. Chevauchement refusé.
 
+### Agenda
+
+Émissions à une date : un set enregistré (`kind:"set"`, un fichier) ou un direct (`kind:"live"`, un compte qui peut se brancher). Les instants sont rendus en heure de Paris avec leur décalage (`2026-11-07T22:00+01:00`). En écriture, `start` / `end` sans décalage sont lus comme une heure de Paris : le moteur gère les changements d'heure et refuse l'heure sautée en mars.
+
+`GET /agenda.json?from=AAAA-MM-JJ&to=AAAA-MM-JJ` (session, deux mois au plus) → `{enabled, now, from, to, diffusions, weekly, todo}`. Une diffusion : `{id, version, kind, title, starts_at, ends_at, duration_min, guest, host_username, set_title, tracklist, rights, deadline_at, deposit_closes_at, deposit_open, series_id, air_status, air_reason, aired_start, aired_end, prep, prep_reason, file, overrun_seconds}`. `air_status` : `upcoming`, `on_air`, `aired`, `missed`. `prep` : `attendu`, `analyse`, `a_revoir`, `pret`. `weekly` donne les occurrences des émissions hebdo de la période, avec `cancelled` et `replaced_by`.
+
+Écritures, droit `autodj` :
+
+- `POST /agenda/diffusions/preview.json` : les dates d'une répétition, avec leurs conflits.
+- `POST /agenda/diffusions.json` `{kind, title, start, end, guest_id | guest_name, host_username, repeat?:{rule, count | until, nth}, only?}` : tout ou rien, chevauchement refusé (409).
+- `PUT` / `DELETE /agenda/diffusions/{id}.json` (`?suivantes=1` pour la suite d'une série).
+- `PUT` / `DELETE /agenda/diffusions/{id}/file.json` `{path, duration}` : un fichier de la banque.
+- `POST` / `DELETE /agenda/exceptions.json` `{emission_id, date}` : annuler une émission hebdo un jour.
+- `GET` / `POST` / `PUT` / `DELETE /agenda/guests[/{id}].json`, `POST /agenda/guests/{id}/token.json` (nouveau lien).
+
+`POST /agenda/diffusions/{id}/stop.json` (droit `live`) arrête un set à l'antenne. `PUT /agenda/settings.json` `{enabled}` (admin) coupe ou rallume l'agenda. `GET /agenda/files/{id}/audio` sert le fichier d'un set.
+
+Sans session : `GET /public/guest/{jeton}.json` et `PUT /public/guest/{jeton}/diffusions/{id}.json` `{set_title, tracklist, rights}` (page de l'invité, `/invitation#jeton`). Le dépôt passe par tus avec l'en-tête `X-Invite-Token` ; `GET /agenda/deposit-auth` répond à l'`auth_request` de nginx. Le catalogue appelle `POST /internal/agenda/deposit-check.json` et `POST /internal/agenda/files.json` avec `X-Auth-Token`.
+
 ### Antenne
 
 `GET /antenne/state.json` → `{at, playout, engine, incidents, listeners, asrun, next_live_slot}`. `playout` porte `reachable, source, silence_s, rms_db, harbor_s`. Un incident : `{kind, detail, since_s, notified}`. `POST /antenne/flush.json` → `{ok:true}`, droit `live`.

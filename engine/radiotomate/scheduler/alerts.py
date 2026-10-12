@@ -120,14 +120,21 @@ class Incident:
 
 @dataclass(frozen=True)
 class LiveSlot:
-    """A weekly live window, as stored on ``Emission`` (scope ``weekly``)."""
+    """A weekly live window, as stored on ``Emission`` (scope ``weekly``).
+
+    ``skip_dates``: Paris days it does not happen (cancelled in the Agenda,
+    or covered by a dated broadcast).
+    """
 
     title: str
     day_of_week: int
     start_minute: int
     end_minute: int
+    skip_dates: frozenset = frozenset()
 
     def active(self, now: datetime) -> bool:
+        if now_paris(now).date() in self.skip_dates:
+            return False
         return weekly_contains(
             now, self.day_of_week, self.start_minute, self.end_minute
         )
@@ -144,6 +151,28 @@ class LiveSlot:
             f"{self.start_minute // 60:02d}:{self.start_minute % 60:02d}"
             f"-{self.end_minute // 60:02d}:{self.end_minute % 60:02d}"
         )
+
+
+@dataclass(frozen=True)
+class DatedLiveSlot:
+    """A dated live of the Agenda (aware start and end)."""
+
+    title: str
+    start: datetime
+    end: datetime
+
+    def active(self, now: datetime) -> bool:
+        moment = now_paris(now)
+        return self.start <= moment < self.end
+
+    def elapsed_seconds(self, now: datetime) -> float:
+        return (now_paris(now) - self.start).total_seconds()
+
+    @property
+    def label(self) -> str:
+        start = now_paris(self.start)
+        end = now_paris(self.end)
+        return f"{self.title or 'direct'} {start:%d/%m %H:%M}-{end:%H:%M}"
 
 
 def live_slot_without_encoder(
@@ -181,7 +210,9 @@ class AlertMonitor:
         self.open: dict[str, Incident] = {}
         self.playout_failures = 0
         self.host = socket.gethostname()
-        self.live_slots: list[LiveSlot] = []
+        self.live_slots: list[LiveSlot | DatedLiveSlot] = []
+        # Agenda: sets due soon that cannot play, recent misses.
+        self.agenda_issues: list[str] = []
         # Open incidents (and their Vikunja tasks) survive a scheduler restart
         # so the recovery closes the right task instead of leaving it open.
         self.state_path = state_path
@@ -254,6 +285,8 @@ class AlertMonitor:
         )
         if live_absent:
             active["live_absent"] = live_absent
+        if self.agenda_issues:
+            active["agenda"] = " · ".join(self.agenda_issues[:3])
         if health is None:
             self.playout_failures += 1
             if self.playout_failures >= PLAYOUT_DOWN_AFTER:
@@ -458,16 +491,24 @@ async def _poll_health(app) -> dict | None:
     return result.payload
 
 
-async def load_live_slots(app) -> list[LiveSlot]:
-    """Weekly live windows from the DB (cheap: a handful of rows)."""
+async def load_live_slots(app) -> list[LiveSlot | DatedLiveSlot]:
+    """Weekly live windows and the Agenda's dated lives (a handful of rows)."""
     from radiotomate.models.emission import Emission
+    from radiotomate.services import agenda
 
     db = app.extensions.get("sqlalchemy")
     if db is None:
         return []
+    now = now_paris()
+    today = now.date()
     async with db.session() as session:
         rows = await Emission.all_weekly(session)
-    slots = []
+        blocked: set[int] = set()
+        dated = []
+        if await agenda.agenda_enabled(session):
+            blocked = await agenda.blocked_weekly_ids(session, now)
+            dated = await agenda.dated_live_windows(session, now, days=7)
+    slots: list[LiveSlot | DatedLiveSlot] = []
     for row in rows:
         if (
             row.day_of_week is None
@@ -481,9 +522,30 @@ async def load_live_slots(app) -> list[LiveSlot]:
                 day_of_week=int(row.day_of_week),
                 start_minute=int(row.start_minute),
                 end_minute=int(row.end_minute),
+                skip_dates=frozenset({today}) if row.id in blocked else frozenset(),
+            )
+        )
+    for row in dated:
+        slots.append(
+            DatedLiveSlot(
+                title=row.title,
+                start=agenda.paris(row.starts_at),
+                end=agenda.paris(row.ends_at),
             )
         )
     return slots
+
+
+async def load_agenda_issues(app) -> list[str]:
+    from radiotomate.services import agenda
+
+    db = app.extensions.get("sqlalchemy")
+    if db is None:
+        return []
+    async with db.session() as session:
+        if not await agenda.agenda_enabled(session):
+            return []
+        return await agenda.agenda_issues(session, now_paris())
 
 
 async def loop(app) -> None:
@@ -508,6 +570,10 @@ async def loop(app) -> None:
                 monitor.live_slots = await load_live_slots(app)
             except Exception:
                 _log.exception("alerts: cannot load live slots")
+            try:
+                monitor.agenda_issues = await load_agenda_issues(app)
+            except Exception:
+                _log.exception("alerts: cannot load agenda issues")
             health = await _poll_health(app)
             await monitor.step(health, runtime_metrics.heartbeat_age())
         except (ShutdownError, asyncio.CancelledError):

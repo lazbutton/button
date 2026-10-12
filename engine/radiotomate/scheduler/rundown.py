@@ -20,6 +20,7 @@ from radiotomate.scheduler.clock import (
     now_paris,
     track_would_overflow_anchor,
 )
+from radiotomate.services.agenda import forecast_windows
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session as ormSession
@@ -474,6 +475,30 @@ async def _prepare_sequential(  # noqa: PLR0913
     return None
 
 
+def _agenda_block(window: dict, clock_name: str | None, daypart: str | None) -> dict:
+    """One rundown row for a dated broadcast: the whole set, or the live slot."""
+    start = now_paris(window["start"])
+    duration = (window["end"] - window["start"]).total_seconds()
+    title = str(window["title"])
+    artist = str(window["artist"])
+    payload = _item_payload(
+        at=start,
+        kind="emission",
+        when="anchored",
+        resource=f"{artist} — {title}" if artist and artist != title else title,
+        queue="stream" if window["kind"] == "live" else "carts",
+        status=STATUS_PLANNED,
+        clock_name=clock_name or "Agenda",
+        daypart=daypart or "",
+        duration=duration,
+    )
+    payload["origin"] = "agenda"
+    payload["diffusion_id"] = window["id"]
+    payload["title"] = title
+    payload["artist"] = artist
+    return payload
+
+
 async def build_rundown(  # noqa: PLR0912, PLR0915
     session: ormSession,
     beets: BeetsIntegration,
@@ -526,6 +551,14 @@ async def build_rundown(  # noqa: PLR0912, PLR0915
         clock_for=clock_for,
     )
     saved_cursor, saved_clock_id = await load_sequencer_cursor(session)
+    windows = await forecast_windows(session, now, hard_cap)
+    emitted_windows: set[int] = set()
+
+    def window_at(moment: datetime) -> dict | None:
+        for window in windows:
+            if window["start"] <= moment < window["end"]:
+                return window
+        return None
 
     items: list[dict] = []
     t = now
@@ -541,6 +574,14 @@ async def build_rundown(  # noqa: PLR0912, PLR0915
         last_at = datetime.fromisoformat(items[-1]["at"]) if items else None
         if last_at is not None and last_at >= deadline:
             break
+
+        window = window_at(t)
+        if window is not None:
+            if window["id"] not in emitted_windows:
+                emitted_windows.add(window["id"])
+                items.append(_agenda_block(window, header_clock, header_daypart))
+            t = window["end"].astimezone(t.tzinfo)
+            continue
 
         minute_of_day = t.hour * 60 + t.minute
         slot = slot_at(t.weekday(), minute_of_day)
@@ -572,6 +613,11 @@ async def build_rundown(  # noqa: PLR0912, PLR0915
         anchored = clock.anchored_positions()
         upcoming = next_hard_anchor(t, slot.minute, slot_end, anchored)
         upcoming_soft = next_soft_anchor(t, slot.minute, slot_end, anchored)
+        # Anchors inside a dated broadcast are held, not played.
+        if upcoming is not None and window_at(upcoming[0]) is not None:
+            upcoming = None
+        if upcoming_soft is not None and window_at(upcoming_soft[0]) is not None:
+            upcoming_soft = None
 
         prepared = None
         if sequential:

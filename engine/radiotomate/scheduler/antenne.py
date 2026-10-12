@@ -25,7 +25,7 @@ from radiotomate.auth import token_required
 from radiotomate.domain.emission import now_paris
 from radiotomate.health import database_is_ready
 from radiotomate.models import MetadataLog
-from radiotomate.scheduler.alerts import LiveSlot, load_live_slots
+from radiotomate.scheduler.alerts import DatedLiveSlot, LiveSlot, load_live_slots
 from radiotomate.scheduler.health import _heartbeat_max_age, _playout_connected
 from radiotomate.scheduler.metrics import runtime_metrics
 from radiotomate.scheduler.playout import gateway_for
@@ -213,6 +213,11 @@ def next_live_slot(slots: list[LiveSlot], now: datetime) -> dict | None:
                 "starts_in_s": 0,
                 "active": True,
             }
+        if isinstance(slot, DatedLiveSlot):
+            delta = (slot.start - local).total_seconds()
+            if delta > 0 and (best is None or delta < best[0]):
+                best = (delta, slot)
+            continue
         for days in range(8):
             day = local + timedelta(days=days)
             if day.weekday() != slot.day_of_week:

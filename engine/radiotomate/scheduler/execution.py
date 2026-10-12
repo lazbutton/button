@@ -181,6 +181,8 @@ def item_to_payload(item: RundownItem) -> dict:
         payload["hides_at"] = details["hides_at"]
     if details.get("suppress_at"):
         payload["suppress_at"] = details["suppress_at"]
+    if details.get("diffusion_id") is not None:
+        payload["diffusion_id"] = details["diffusion_id"]
     return payload
 
 
@@ -215,6 +217,8 @@ def item_from_forecast(
         details["title"] = payload["title"]
     if payload.get("rg_track_gain") is not None:
         details["rg_track_gain"] = payload["rg_track_gain"]
+    if payload.get("diffusion_id") is not None:
+        details["diffusion_id"] = payload["diffusion_id"]
     return RundownItem(
         id=str(payload.get("id") or uuid4()),
         programming_version_id=version.id,
@@ -232,7 +236,7 @@ def item_from_forecast(
         details=details,
         status=_status_from_forecast(payload),
         reason=payload.get("reason"),
-        origin="clock",
+        origin=str(payload.get("origin") or "clock"),
         clock_id=payload.get("clock_id"),
         clock_position_id=payload.get("position_id"),
         cart_id=payload.get("cart_id"),

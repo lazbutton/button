@@ -19,6 +19,7 @@ from radiotomate.db import PathLike, QuartAlchemy
 from radiotomate.domain import DomainError
 from radiotomate.interface import (
     account,
+    agenda,
     autodj,
     carts,
     csrf,
@@ -28,6 +29,7 @@ from radiotomate.interface import (
     library,
     live,
     login,
+    public,
     spa,
     system,
     users,
@@ -119,6 +121,8 @@ def app_factory(config: dict, reload: bool, beets: BeetsIntegration):
     app.register_blueprint(live.blueprint)
     app.register_blueprint(autodj.blueprint)
     app.register_blueprint(emissions.blueprint)
+    app.register_blueprint(agenda.blueprint)
+    app.register_blueprint(public.blueprint)
     app.register_blueprint(library.blueprint)
     app.register_blueprint(csrf.blueprint)
     spa.register(app)
@@ -145,6 +149,14 @@ def app_factory(config: dict, reload: bool, beets: BeetsIntegration):
 
         # start the live data watch
         app.add_background_task(live.watch_livedata_task)
+
+        # Agenda files whose analysis a restart interrupted
+        from radiotomate.services.agenda import pending_analyses, run_analysis
+
+        async with db.session() as session:
+            pending = await pending_analyses(session)
+        for file_id in pending:
+            app.add_background_task(run_analysis, db, file_id)
 
     auth_manager = QuartAuth()
     auth_manager.user_class = RadiotomateAuth

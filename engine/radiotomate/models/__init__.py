@@ -6,6 +6,12 @@ Python objects. They can implement methods, but should not ``commit`` (at most,
 ``flush``).
 """
 
+from radiotomate.models.agenda import (
+    AgendaDiffusion,
+    AgendaException,
+    AgendaFile,
+    AgendaGuest,
+)
 from radiotomate.models.autodj_slot import AutoDJSlot
 from radiotomate.models.cart import Cart
 from radiotomate.models.clock import Clock, ClockPosition
@@ -23,6 +29,10 @@ from radiotomate.models.sound import Sound
 from radiotomate.models.user import LoggedOutUser, User
 
 __all__ = [
+    "AgendaDiffusion",
+    "AgendaException",
+    "AgendaFile",
+    "AgendaGuest",
     "AutoDJSlot",
     "Cart",
     "Clock",

@@ -18,7 +18,10 @@ import {
   apiPut,
 } from "../api/client";
 import { deskKindFromHit, labelsFromHit, type LibraryHit } from "../api/library";
+import { useAccount } from "../api/AccountContext";
 import { harborIsLive } from "../api/emissionMeta";
+import { stopDiffusion } from "../api/agenda";
+import { timeLabel } from "../api/agendaView";
 import { glanceNowItem, liveSourceLabel } from "../api/liveMap";
 import { SessionGate } from "../api/SessionGate";
 import {
@@ -156,6 +159,33 @@ function AntenneDesk({
     [show],
   );
 
+  const datedSet =
+    currentShow && currentShow.scope === "dated" && currentShow.kind === "set" && currentShow.state === "on_air"
+      ? currentShow
+      : null;
+  const { account } = useAccount();
+  const canStopDated = Boolean(account?.permissions.live || account?.permissions.admin);
+  const [stopArmed, setStopArmed] = useState(false);
+  const [stopping, setStopping] = useState(false);
+
+  const stopDated = async () => {
+    if (!datedSet) return;
+    if (!stopArmed) {
+      setStopArmed(true);
+      return;
+    }
+    setStopping(true);
+    try {
+      await stopDiffusion(datedSet.id);
+      show("Arrêt demandé : la grille reprend dans quelques secondes.");
+      onLiveReload();
+    } catch (caught) {
+      fail(caught, "Arrêt impossible. Réessaie.");
+    } finally {
+      setStopping(false);
+      setStopArmed(false);
+    }
+  };
   const applyRundown = (payload: Rundown) => {
     setRundown(payload);
   };
@@ -450,6 +480,18 @@ function AntenneDesk({
               Renommer
             </button>
           )
+        ) : datedSet ? (
+          <div className="rename">
+            <span>
+              Émission datée · <strong>{datedSet.title}</strong>
+              {datedSet.until ? ` · prévue jusqu'à ${timeLabel(datedSet.until)}` : ""}
+            </span>
+            {canStopDated ? (
+              <button type="button" onClick={() => void stopDated()} disabled={stopping}>
+                {stopping ? "Arrêt…" : stopArmed ? "Confirmer : reprendre la grille" : "Arrêter et reprendre la grille"}
+              </button>
+            ) : null}
+          </div>
         ) : null}
       </DeskGlance>
 

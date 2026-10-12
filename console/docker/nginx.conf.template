@@ -1,8 +1,19 @@
+# A guest's token never reaches the logs, and public pages are throttled.
+map $request_uri $button_loggable_uri {
+    ~^(?<button_head>/public/guest/)[^/?.]+(?<button_tail>.*)$ "${button_head}…${button_tail}";
+    default $request_uri;
+}
+log_format button_masked '$remote_addr - $remote_user [$time_local] '
+                         '"$request_method $button_loggable_uri $server_protocol" '
+                         '$status $body_bytes_sent "-" "$http_user_agent"';
+limit_req_zone $binary_remote_addr zone=button_public:10m rate=10r/s;
+
 server {
     listen 80;
     server_name _;
     root /usr/share/nginx/html;
     client_max_body_size 512m;
+    access_log /var/log/nginx/access.log button_masked;
 
     location /assets/ {
         try_files $uri =404;
@@ -24,6 +35,19 @@ server {
         proxy_set_header Host $http_host;
     }
 
+    # tus: a team session (carts or Auto-DJ), or a guest's link (X-Invite-Token).
+    location = /_deposit {
+        internal;
+        resolver 127.0.0.11 ipv6=off valid=10s;
+        set $rt_backend ${AUTOMATE_BACKEND};
+        proxy_pass $rt_backend/agenda/deposit-auth;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_set_header Cookie $http_cookie;
+        proxy_set_header X-Invite-Token $http_x_invite_token;
+        proxy_set_header Host $http_host;
+    }
+
     location = /library/inbox.json {
         auth_request /_session;
         proxy_pass ${CATALOG_UPSTREAM}/inbox.json;
@@ -34,7 +58,7 @@ server {
     }
 
     location /tus/ {
-        auth_request /_session;
+        auth_request /_deposit;
         client_max_body_size 0;
         proxy_request_buffering off;
         proxy_buffering off;
@@ -59,7 +83,30 @@ server {
         proxy_send_timeout 30s;
     }
 
-    location ~ ^/(csrf\.json|login\.json|login|logout|live\.json|account\.json|users\.json|users/|carts\.json|carts/|autodj/|antenne/|health/|system/) {
+    # A guest's page (Agenda): /invitation#<token>. The token stays after the
+    # "#", so it never reaches a server; its API is throttled, never indexed.
+    location = /invitation {
+        limit_req zone=button_public burst=20 nodelay;
+        add_header Referrer-Policy "no-referrer" always;
+        add_header X-Robots-Tag "noindex, nofollow" always;
+        try_files /index.html =404;
+    }
+
+    location ^~ /public/ {
+        limit_req zone=button_public burst=20 nodelay;
+        resolver 127.0.0.11 ipv6=off valid=10s;
+        set $rt_backend ${AUTOMATE_BACKEND};
+        proxy_pass $rt_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Cookie "";
+        proxy_read_timeout 30s;
+        proxy_send_timeout 30s;
+    }
+
+    location ~ ^/(csrf\.json|login\.json|login|logout|live\.json|account\.json|users\.json|users/|carts\.json|carts/|autodj/|antenne/|agenda\.json|agenda/|health/|system/) {
         resolver 127.0.0.11 ipv6=off valid=10s;
         set $rt_backend ${AUTOMATE_BACKEND};
         proxy_pass $rt_backend;

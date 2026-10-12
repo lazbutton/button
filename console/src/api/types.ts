@@ -214,7 +214,10 @@ export type LiveEmission = {
   artist: string;
   state: EmissionState;
   until?: string | null;
+  /** "weekly", "session", or "dated" for a broadcast of the Agenda. */
   scope?: string;
+  /** Agenda only: "set" or "live". */
+  kind?: string;
   start_minute?: number | null;
   day_of_week?: number | null;
 };

@@ -1,3 +1,5 @@
+import { agendaPath, type AgendaResponse } from "../api/agenda";
+import { addDays, parisWall, rangeLabel } from "../api/agendaView";
 import { Button, Text, TextField } from "@radix-ui/themes";
 import { useState, type FormEvent } from "react";
 import { apiPut, ApiRequestError } from "../api/client";
@@ -34,6 +36,14 @@ export function MonComptePage() {
   const [done, setDone] = useState("");
   const username = account?.username ?? "";
   const slots = slotsForHost(emissions.data?.emissions, username);
+  const today = parisWall(new Date()).day;
+  const agenda = useApiJson<AgendaResponse>(agendaPath(today, addDays(today, 27)));
+  const datedLives = (agenda.data?.diffusions ?? []).filter(
+    (row) =>
+      row.kind === "live" &&
+      row.air_status === "upcoming" &&
+      row.host_username.trim().toLowerCase() === username.trim().toLowerCase(),
+  );
   const direct = broadcastOf(account?.permissions);
 
   const submit = async (event: FormEvent) => {
@@ -90,6 +100,19 @@ export function MonComptePage() {
             ))}
           </ul>
         )}
+        {datedLives.length ? (
+          <>
+            <h3 className="admin-account-title">Directs datés</h3>
+            <ul className="admin-slots">
+              {datedLives.map((row) => (
+                <li key={row.id}>
+                  {rangeLabel(row.starts_at, row.ends_at)} · {row.title}
+                </li>
+              ))}
+            </ul>
+            <p className="admin-account-line">Ton compte peut se brancher 15 min avant le début de chacun.</p>
+          </>
+        ) : null}
         <h3 className="admin-account-title">Apparence</h3>
         <div className="admin-appearance" role="group" aria-label="Apparence">
           {APPEARANCE_OPTIONS.map((option) => (
