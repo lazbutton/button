@@ -14,7 +14,7 @@ import "./styles/shell.css";
 import "./styles/desk.css";
 import "./styles/antenne.css";
 import "./styles/pupitre.css";
-import "./styles/player.css";
+import "./styles/topbar.css";
 
 applyTheme(paletteFor(readAppearance()));
 

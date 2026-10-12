@@ -5,7 +5,6 @@ type Props = {
   analyserL: AnalyserNode | null;
   analyserR: AnalyserNode | null;
   live: boolean;
-  size?: "compact" | "desk";
 };
 
 const MIN_DB = -48;
@@ -13,10 +12,13 @@ const YELLOW_DB = -12;
 const RED_DB = -6;
 const CLIP_DB = -0.3;
 const HOLD_MS = 1200;
-const CLIP_HOLD_MS = 1600;
 const VU_ATTACK_MS = 90;
 const VU_RELEASE_MS = 280;
-const TICKS = [0, -6, -12, -24] as const;
+/** Une diode : 2 px de large, 1 px d'écart. */
+const LED = 2;
+const STEP = 3;
+const LANE = 5;
+const GAP = 2;
 
 function dbFromAmp(amp: number): number {
   if (amp < 1e-6) return MIN_DB;
@@ -49,26 +51,9 @@ function follow(prev: number, next: number, dt: number, attack: number, release:
   return prev + (next - prev) * a;
 }
 
-function meterGradient(
-  g: CanvasRenderingContext2D,
-  el: Element,
-  x0: number,
-  y0: number,
-  x1: number,
-  y1: number,
-) {
-  const grd = g.createLinearGradient(x0, y0, x1, y1);
-  grd.addColorStop(0, cssVar(el, "--app-ok", "#2ea56a"));
-  grd.addColorStop(unit(YELLOW_DB), cssVar(el, "--app-vu-ok", "#3ecf8e"));
-  grd.addColorStop(unit(RED_DB), cssVar(el, "--app-vu-warn", "#f0e24a"));
-  grd.addColorStop(0.94, cssVar(el, "--app-vu-hot", "#ff7a45"));
-  grd.addColorStop(1, cssVar(el, "--app-vu-clip", "#ff4d4d"));
-  return grd;
-}
-
-export function VuMeter({ analyserL, analyserR, live, size = "compact" }: Props) {
+/** Vumètre du casque, deux rangées de diodes (L en haut, R en bas). Rouge seulement au-delà de −6 dBFS. */
+export function VuMeter({ analyserL, analyserR, live }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const desk = size === "desk";
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -88,7 +73,6 @@ export function VuMeter({ analyserL, analyserR, live, size = "compact" }: Props)
     let holdR = MIN_DB;
     let holdLAt = 0;
     let holdRAt = 0;
-    let clipUntil = 0;
     let lastT = 0;
 
     function resize() {
@@ -100,147 +84,34 @@ export function VuMeter({ analyserL, analyserR, live, size = "compact" }: Props)
       g.setTransform(dpr, 0, 0, dpr, 0, 0);
     }
 
-    function palette() {
+    function paint(left: number, right: number, peakL: number, peakR: number) {
       const ink = cssVar(surface, "--app-text", "#0a0a0a");
-      const clipCol = cssVar(surface, "--app-vu-clip", "#ff4d4d");
+      const ok = cssVar(surface, "--app-vu-ok", "#3ecf8e");
+      const warn = cssVar(surface, "--app-vu-warn", "#f0e24a");
       const hot = cssVar(surface, "--app-vu-hot", "#ff7a45");
-      return { ink, clipCol, hot };
-    }
-
-    function laneH(
-      x: number,
-      y: number,
-      w: number,
-      h: number,
-      vu: number,
-      peak: number,
-      name: string,
-    ) {
-      const { ink, clipCol } = palette();
-      g.fillStyle = withAlpha(ink, 0.05);
-      g.fillRect(x, y, w, h);
-      const grd = meterGradient(g, surface, x, y, x + w, y);
-      g.globalAlpha = 0.38;
-      g.fillStyle = grd;
-      g.fillRect(x, y, w, h);
-      g.globalAlpha = 1;
-      const fillW = unit(vu) * w;
-      if (fillW > 0) {
-        g.save();
-        g.beginPath();
-        g.rect(x, y, fillW, h);
-        g.clip();
-        g.fillStyle = grd;
-        g.fillRect(x, y, w, h);
-        g.restore();
-      }
-      for (const tick of TICKS) {
-        const tx = x + unit(tick) * w;
-        g.fillStyle = tick === 0 ? withAlpha(clipCol, 0.7) : withAlpha(ink, 0.18);
-        g.fillRect(tx, y, 1, h);
-      }
-      const px = Math.min(x + w - 1, x + unit(peak) * w);
-      g.fillStyle = peak >= CLIP_DB ? clipCol : ink;
-      g.fillRect(px - 1, y, 2, h);
-      g.fillStyle = withAlpha(ink, 0.62);
-      g.font = "700 9px ui-sans-serif, system-ui, sans-serif";
-      g.textAlign = "left";
-      g.textBaseline = "middle";
-      g.fillText(name, 2, y + h / 2);
-    }
-
-    function laneV(
-      x: number,
-      top: number,
-      w: number,
-      height: number,
-      vu: number,
-      peak: number,
-    ) {
-      const { ink, clipCol } = palette();
-      const bottom = top + height;
-      g.fillStyle = withAlpha(ink, 0.06);
-      g.fillRect(x, top, w, height);
-      const fillH = unit(vu) * height;
-      if (fillH > 0) {
-        g.save();
-        g.beginPath();
-        g.rect(x, bottom - fillH, w, fillH);
-        g.clip();
-        g.fillStyle = meterGradient(g, surface, x, bottom, x, top);
-        g.fillRect(x, top, w, height);
-        g.restore();
-      }
-      for (const tick of TICKS) {
-        const ty = bottom - unit(tick) * height;
-        g.fillStyle = tick === 0 ? withAlpha(clipCol, 0.55) : withAlpha(ink, 0.12);
-        g.fillRect(x, ty, w, 1);
-      }
-      const py = bottom - unit(peak) * height;
-      g.fillStyle = peak >= CLIP_DB ? clipCol : ink;
-      g.fillRect(x, py - 1, w, 2);
-    }
-
-    function paint(left: number, right: number, peakL: number, peakR: number, clip: boolean) {
-      const { ink, clipCol, hot } = palette();
+      const clip = cssVar(surface, "--app-vu-clip", "#ff4d4d");
+      const off = withAlpha(ink, 0.12);
+      const count = Math.max(4, Math.floor((cssW + STEP - LED) / STEP));
+      const top = Math.max(0, Math.round((cssH - LANE * 2 - GAP) / 2));
       g.clearRect(0, 0, cssW, cssH);
-      g.textBaseline = "alphabetic";
-      if (!desk) {
-        const labelW = 12;
-        const readW = 48;
-        const scaleH = 12;
-        const gap = 3;
-        const x = labelW;
-        const w = Math.max(8, cssW - labelW - readW);
-        const h = Math.max(7, (cssH - scaleH - gap * 2 - 1) / 2);
-        g.font = "600 9px ui-sans-serif, system-ui, sans-serif";
-        g.textAlign = "center";
-        g.textBaseline = "alphabetic";
-        for (const tick of TICKS) {
-          const tx = x + unit(tick) * w;
-          g.fillStyle = tick >= RED_DB ? withAlpha(hot, 0.95) : withAlpha(ink, 0.72);
-          g.fillText(tick === 0 ? "0" : `${tick}`, tx, scaleH - 2);
-        }
-        laneH(x, scaleH, w, h, left, peakL, "L");
-        laneH(x, scaleH + h + gap, w, h, right, peakR, "R");
-        g.textAlign = "right";
-        g.textBaseline = "middle";
-        const shown = Math.max(peakL, peakR);
-        g.fillStyle = clip ? clipCol : withAlpha(ink, 0.88);
-        g.font = "700 12px ui-sans-serif, system-ui, sans-serif";
-        g.fillText(clip ? "CLIP" : `${Math.round(shown)}`, cssW - 3, cssH / 2 - 6);
-        g.font = "600 8px ui-sans-serif, system-ui, sans-serif";
-        g.fillStyle = clip ? clipCol : withAlpha(ink, 0.55);
-        g.fillText("dBFS", cssW - 3, cssH / 2 + 8);
-        return;
-      }
 
-      const gutter = 10;
-      const label = 18;
-      const top = 18;
-      const bottom = cssH - 22;
-      const height = Math.max(8, bottom - top);
-      const barW = Math.max(10, (cssW - gutter - label) / 2 - 4);
-      const xL = label;
-      const xR = label + barW + gutter;
-      laneV(xL, top, barW, height, left, peakL);
-      laneV(xR, top, barW, height, right, peakR);
-      g.fillStyle = withAlpha(ink, 0.45);
-      g.font = "600 9px ui-sans-serif, system-ui, sans-serif";
-      g.textAlign = "right";
-      for (const tick of TICKS) {
-        const y = bottom - unit(tick) * height;
-        g.fillText(`${tick}`, label - 3, y + 3);
-      }
-      g.textAlign = "center";
-      g.fillStyle = withAlpha(ink, 0.55);
-      g.fillText("L", xL + barW / 2, cssH - 6);
-      g.fillText("R", xR + barW / 2, cssH - 6);
-      g.textAlign = "left";
-      g.font = "700 10px ui-sans-serif, system-ui, sans-serif";
-      const shown = Math.max(peakL, peakR);
-      g.fillStyle = clip ? clipCol : withAlpha(ink, 0.78);
-      g.fillText(clip ? "CLIP" : `${Math.round(shown)} dB`, 0, 12);
+      const colorAt = (index: number) => {
+        const db = MIN_DB + ((index + 1) / count) * -MIN_DB;
+        if (db > CLIP_DB) return clip;
+        if (db > RED_DB) return hot;
+        if (db > YELLOW_DB) return warn;
+        return ok;
+      };
+      const lane = (y: number, vu: number, peak: number) => {
+        const lit = unit(vu) * count;
+        const peakAt = peak > MIN_DB + 1 ? Math.min(count - 1, Math.floor(unit(peak) * count)) : -1;
+        for (let index = 0; index < count; index++) {
+          g.fillStyle = index < lit || index === peakAt ? colorAt(index) : off;
+          g.fillRect(index * STEP, y, LED, LANE);
+        }
+      };
+      lane(top, left, peakL);
+      lane(top + LANE + GAP, right, peakR);
     }
 
     function tick(now: number) {
@@ -252,7 +123,9 @@ export function VuMeter({ analyserL, analyserR, live, size = "compact" }: Props)
       if (!live || !leftNode || !rightNode) {
         vuL = follow(vuL, MIN_DB, dt, VU_ATTACK_MS, VU_RELEASE_MS);
         vuR = follow(vuR, MIN_DB, dt, VU_ATTACK_MS, VU_RELEASE_MS);
-        paint(vuL, vuR, holdL, holdR, false);
+        holdL = MIN_DB;
+        holdR = MIN_DB;
+        paint(vuL, vuR, holdL, holdR);
         raf = requestAnimationFrame(tick);
         return;
       }
@@ -264,11 +137,9 @@ export function VuMeter({ analyserL, analyserR, live, size = "compact" }: Props)
       }
       const left = readChannel(leftNode, bufL);
       const rightRaw = readChannel(rightNode, bufR);
-      const right =
-        rightRaw.peak < MIN_DB + 1 && left.peak > MIN_DB + 6 ? left : rightRaw;
+      const right = rightRaw.peak < MIN_DB + 1 && left.peak > MIN_DB + 6 ? left : rightRaw;
       vuL = reduce.matches ? left.rms : follow(vuL, left.rms, dt, VU_ATTACK_MS, VU_RELEASE_MS);
       vuR = reduce.matches ? right.rms : follow(vuR, right.rms, dt, VU_ATTACK_MS, VU_RELEASE_MS);
-      if (left.peak >= CLIP_DB || right.peak >= CLIP_DB) clipUntil = now + CLIP_HOLD_MS;
       if (left.peak >= holdL || now - holdLAt > HOLD_MS) {
         holdL = left.peak;
         holdLAt = now;
@@ -277,16 +148,12 @@ export function VuMeter({ analyserL, analyserR, live, size = "compact" }: Props)
         holdR = right.peak;
         holdRAt = now;
       }
-      if (!reduce.matches) {
-        holdL = Math.max(left.peak, holdL - 0.08);
-        holdR = Math.max(right.peak, holdR - 0.08);
-      }
-      paint(vuL, vuR, holdL, holdR, now < clipUntil);
+      paint(vuL, vuR, holdL, holdR);
       raf = requestAnimationFrame(tick);
     }
 
     resize();
-    paint(MIN_DB, MIN_DB, MIN_DB, MIN_DB, false);
+    paint(MIN_DB, MIN_DB, MIN_DB, MIN_DB);
     const ro = new ResizeObserver(resize);
     ro.observe(surface);
     raf = requestAnimationFrame(tick);
@@ -294,25 +161,11 @@ export function VuMeter({ analyserL, analyserR, live, size = "compact" }: Props)
       ro.disconnect();
       if (raf) cancelAnimationFrame(raf);
     };
-  }, [analyserL, analyserR, live, desk]);
+  }, [analyserL, analyserR, live]);
 
   return (
-    <div
-      className={`app-vu app-vu--${size}`}
-      title="Vumètre du flux Icecast. Barre = VU (RMS). Trait = crête. Rouge seulement au-delà de −6 dBFS."
-    >
-      <canvas
-        ref={canvasRef}
-        className="app-vu-canvas"
-        width={desk ? 88 : 240}
-        height={desk ? 168 : 52}
-        aria-hidden="true"
-      />
-      {desk ? (
-        <p className="app-vu-caption">Antenne · Icecast</p>
-      ) : (
-        <span className="ui-visually-hidden">Vumètre d’antenne, échelle en dBFS</span>
-      )}
-    </div>
+    <span className="app-vu" title="Niveau du casque, gauche et droite. Rouge au-delà de −6 dBFS.">
+      <canvas ref={canvasRef} className="app-vu-canvas" width={56} height={14} aria-hidden="true" />
+    </span>
   );
 }

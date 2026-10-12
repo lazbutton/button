@@ -11,6 +11,13 @@ import {
   type BrandTheme,
 } from "./brand";
 
+/** Mêmes libellés dans Mon compte et dans le menu du compte. */
+export const APPEARANCE_OPTIONS: { id: AppearanceChoice; label: string }[] = [
+  { id: "system", label: "Machine" },
+  { id: "light", label: "Clair" },
+  { id: "dark", label: "Sombre" },
+];
+
 type AppearanceValue = {
   appearance: Appearance;
   choice: AppearanceChoice;

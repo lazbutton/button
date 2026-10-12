@@ -194,16 +194,6 @@ export function padCaption(raw: string): { title: string; artist: string } {
   };
 }
 
-export function liveSourceLabel(live: LiveSnapshot | null): { label: string; color: "gray" | "green" | "red" } {
-  if (!live || live.status === "offline") return { label: "Arrêt", color: "gray" };
-  const raw = (live.source || "").trim().toLowerCase();
-  if (/live|harbor|stream/.test(raw)) return { label: "Direct", color: "red" };
-  if (raw.includes("jingle")) return { label: "Jingles", color: "green" };
-  if (raw.includes("cart")) return { label: "Carts", color: "green" };
-  if (raw.includes("relay") || raw.includes("relais")) return { label: "Relais", color: "green" };
-  return { label: "Auto-DJ", color: "green" };
-}
-
 export function glanceNowItem(
   onAir: RundownItem | null,
   live: LiveSnapshot | null,

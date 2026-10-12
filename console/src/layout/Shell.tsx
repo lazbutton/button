@@ -1,11 +1,10 @@
-import { Badge, Dialog, Flex, IconButton, Tooltip } from "@radix-ui/themes";
+import { Dialog, IconButton, Tooltip } from "@radix-ui/themes";
 import {
   ChevronsLeft,
   ChevronsRight,
   Layers3,
   Library,
   ListMusic,
-  LogOut,
   Menu,
   Radio,
   Settings,
@@ -14,16 +13,11 @@ import {
 import { useCallback, useState, type MouseEventHandler } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import { DiskMeter } from "../components/DiskMeter";
-import { MonitorSourceDialog } from "../components/MonitorSourceDialog";
-import { MonitorWave } from "../components/MonitorWave";
+import { Topbar } from "../components/topbar/Topbar";
 import { MonitorProvider } from "../lib/MonitorContext";
 import { useAccount } from "../api/AccountContext";
-import { useLogout } from "../api/SessionGate";
 import { roleAtLeast, type Role } from "../api/roles";
 import { useBrand } from "../lib/BrandContext";
-import { liveSourceLabel } from "../api/liveMap";
-import type { LiveSnapshot } from "../api/types";
-import { useApiJson } from "../api/useApiJson";
 
 const NAV = [
   { to: "/antenne", label: "Antenne", icon: Radio, min: "animateur" },
@@ -101,46 +95,29 @@ function Navigation({
   );
 }
 
-function AutoBadge() {
-  const live = useApiJson<LiveSnapshot>("/live.json", 2000);
-  const badge = liveSourceLabel(live.data);
+function MobileNav({ role }: { role: Role }) {
+  const [open, setOpen] = useState(false);
   return (
-    <Flex align="center" gap="2" className="app-topbar-auto">
-      <span
-        className={`app-auto-dot${badge.color === "gray" ? " is-off" : badge.color === "red" ? " is-live" : ""}`}
-        aria-hidden="true"
-      />
-      <Badge color={badge.color} variant="soft">
-        {badge.label}
-      </Badge>
-    </Flex>
-  );
-}
-
-function SessionTools({ onDone }: { onDone?: () => void }) {
-  const logout = useLogout();
-  return (
-    <>
-      <button
-        type="button"
-        className="app-logout"
-        onClick={() => {
-          onDone?.();
-          logout();
-        }}
-      >
-        <LogOut size={16} aria-hidden="true" />
-        Déconnexion
-      </button>
-    </>
-  );
-}
-
-function TopbarTools() {
-  return (
-    <div className="app-topbar-tools">
-      <SessionTools />
-    </div>
+    <Dialog.Root open={open} onOpenChange={setOpen}>
+      <Dialog.Trigger>
+        <IconButton className="app-mobile-nav-trigger" aria-label="Ouvrir la navigation" variant="ghost" color="gray">
+          <Menu size={18} strokeWidth={1.75} />
+        </IconButton>
+      </Dialog.Trigger>
+      <Dialog.Content className="app-mobile-nav" maxWidth="16rem">
+        <Dialog.Title className="ui-visually-hidden">Navigation</Dialog.Title>
+        <div className="app-mobile-nav-head">
+          <Brand onNavigate={() => setOpen(false)} />
+          <Dialog.Close>
+            <IconButton variant="ghost" color="gray" aria-label="Fermer la navigation">
+              <X size={18} strokeWidth={1.75} />
+            </IconButton>
+          </Dialog.Close>
+        </div>
+        <Navigation role={role} onNavigate={() => setOpen(false)} />
+        {roleAtLeast(role, "programmateur") ? <DiskMeter /> : null}
+      </Dialog.Content>
+    </Dialog.Root>
   );
 }
 
@@ -151,7 +128,6 @@ export function Shell() {
   const programmation = pathname === "/programmation";
   const desk = pathname === "/antenne" || pathname === "/";
   const [collapsed, setCollapsed] = useState(() => readCollapsed(false));
-  const [mobileOpen, setMobileOpen] = useState(false);
 
   const toggleNav = useCallback(() => {
     setCollapsed((prev) => {
@@ -191,42 +167,8 @@ export function Shell() {
         {roleAtLeast(role, "programmateur") ? <DiskMeter /> : null}
       </aside>
 
-      <Dialog.Root open={mobileOpen} onOpenChange={setMobileOpen}>
-        <Dialog.Trigger>
-          <IconButton
-            className="app-mobile-nav-trigger"
-            aria-label="Ouvrir la navigation"
-            variant="surface"
-            color="gray"
-          >
-            <Menu size={18} strokeWidth={1.75} />
-          </IconButton>
-        </Dialog.Trigger>
-        <Dialog.Content className="app-mobile-nav" maxWidth="16rem">
-          <Dialog.Title className="ui-visually-hidden">Navigation</Dialog.Title>
-          <div className="app-mobile-nav-head">
-            <Brand onNavigate={() => setMobileOpen(false)} />
-            <Dialog.Close>
-              <IconButton variant="ghost" color="gray" aria-label="Fermer la navigation">
-                <X size={18} strokeWidth={1.75} />
-              </IconButton>
-            </Dialog.Close>
-          </div>
-          <Navigation role={role} onNavigate={() => setMobileOpen(false)} />
-          {roleAtLeast(role, "programmateur") ? <DiskMeter /> : null}
-          <div className="app-mobile-nav-tools">
-            <SessionTools onDone={() => setMobileOpen(false)} />
-          </div>
-        </Dialog.Content>
-      </Dialog.Root>
-
       <div className="app-main">
-        <header className="app-topbar">
-          <AutoBadge />
-          <MonitorWave />
-          <MonitorSourceDialog />
-          <TopbarTools />
-        </header>
+        <Topbar leading={<MobileNav role={role} />} />
         <div
           className={`app-page${sons ? " app-page--carts" : ""}${programmation ? " app-page--horloges app-page--autodj" : ""}${desk ? " app-page--desk" : ""}`}
         >

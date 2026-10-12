@@ -10,17 +10,10 @@ import { useAccount } from "../api/AccountContext";
 import { useLogout } from "../api/SessionGate";
 import type { EmissionsResponse } from "../api/types";
 import { useApiJson } from "../api/useApiJson";
-import { useAppearance } from "../lib/Appearance";
-import type { AppearanceChoice } from "../lib/brand";
+import { APPEARANCE_OPTIONS, useAppearance } from "../lib/Appearance";
 import { FormField } from "../ui/FormField";
 import { Panel, SectionHeader } from "../ui/Panel";
 import "../styles/pages/admin.css";
-
-const APPEARANCE_OPTIONS: { id: AppearanceChoice; label: string }[] = [
-  { id: "system", label: "Machine" },
-  { id: "light", label: "Clair" },
-  { id: "dark", label: "Sombre" },
-];
 
 const DAYS = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"];
 

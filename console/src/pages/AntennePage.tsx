@@ -22,7 +22,8 @@ import { useAccount } from "../api/AccountContext";
 import { harborIsLive } from "../api/emissionMeta";
 import { stopDiffusion } from "../api/agenda";
 import { timeLabel } from "../api/agendaView";
-import { glanceNowItem, liveSourceLabel } from "../api/liveMap";
+import { glanceNowItem } from "../api/liveMap";
+import { liveSourceLabel } from "../api/topbar";
 import { SessionGate } from "../api/SessionGate";
 import {
   CONDUCTEUR_JSON,

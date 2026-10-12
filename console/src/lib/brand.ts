@@ -32,7 +32,8 @@ export type BrandTheme = {
 };
 
 export type Brand = {
-  suite: { id: string; name: string; short: string; tagline?: string };
+  /** `sourceUrl` : dépôt du code (AGPL, lien « Code source » de la console). */
+  suite: { id: string; name: string; short: string; tagline?: string; sourceUrl?: string };
   labels: Record<string, Record<string, string>>;
   infra: {
     smbShare: string;
@@ -47,6 +48,8 @@ export type Brand = {
   tailscaleBase?: string;
   theme?: BrandTheme;
 };
+
+export const DEFAULT_SOURCE_URL = "https://github.com/lazbutton/button";
 
 export type Appearance = "light" | "dark";
 export type AppearanceChoice = "system" | Appearance;

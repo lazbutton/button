@@ -35,6 +35,10 @@ export type MonitorContextValue = MonitorState & {
   listenKind: ListenKind;
   fileMissing: boolean;
   fileLoading: boolean;
+  /** Dernier `/live.json`, partagé avec la barre du haut (un seul sondage). */
+  snapshot: LiveSnapshot | null;
+  snapshotLoading: boolean;
+  snapshotUnreachable: boolean;
 };
 
 const MonitorContext = createContext<MonitorContextValue | null>(null);
@@ -143,11 +147,17 @@ export function MonitorProvider({
       listenKind,
       fileMissing: filesOn && rundown.missing,
       fileLoading: filesOn && rundown.loading,
+      snapshot: live.data,
+      snapshotLoading: live.loading,
+      snapshotUnreachable: live.error === "down",
     }),
     [
       filesOn,
       icecast,
       listenKind,
+      live.data,
+      live.error,
+      live.loading,
       rundown.lagMs,
       rundown.live,
       rundown.loading,
