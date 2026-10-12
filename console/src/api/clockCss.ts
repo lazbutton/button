@@ -1,9 +1,3 @@
-export function weekSlotClass(clockName: string | null): string {
-  if (clockName?.includes("Journée")) return "is-journee";
-  if (clockName?.includes("24/24")) return "is-rotation24";
-  return "is-other";
-}
-
 export type DaypartRange<T extends { day_of_week: number; minute: number }> = {
   slot: T;
   day: number;
@@ -11,9 +5,7 @@ export type DaypartRange<T extends { day_of_week: number; minute: number }> = {
   end: number;
 };
 
-export function daypartRanges<T extends { day_of_week: number; minute: number }>(
-  slots: T[],
-): DaypartRange<T>[] {
+export function daypartRanges<T extends { day_of_week: number; minute: number }>(slots: T[]): DaypartRange<T>[] {
   const ranges: DaypartRange<T>[] = [];
   for (let day = 0; day < 7; day++) {
     const daySlots = slots
@@ -47,13 +39,4 @@ export function formatDayMinute(minute: number): string {
   const hour = Math.floor(Math.max(0, minute) / 60);
   const min = Math.max(0, minute) % 60;
   return `${String(hour).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
-}
-
-export function splitHoursInRange(start: number, end: number): number[] {
-  const hours: number[] = [];
-  for (let hour = 0; hour < 24; hour++) {
-    const minute = hour * 60;
-    if (minute > start && minute < end) hours.push(hour);
-  }
-  return hours;
 }

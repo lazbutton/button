@@ -1,447 +1,284 @@
-import { Badge, TextField } from "@radix-ui/themes";
-import { Check, Clock3 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { Button } from "@radix-ui/themes";
+import { Clock3, Plus } from "lucide-react";
+import { useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { ClockList } from "../components/ClockList";
-import { ClockCartsPanel } from "../components/ClockCartsPanel";
-import { HourStrip, type StudioSelection } from "../components/HourStrip";
-import { Inspector } from "../components/Inspector";
-import { MotifStack } from "../components/MotifStack";
-import { PubMinutes } from "../components/PubMinutes";
+import { ClockEditor } from "../components/programmation/ClockEditor";
+import { ClockSidebar } from "../components/programmation/ClockSidebar";
+import { CreateClockDialog } from "../components/programmation/CreateClockDialog";
 import { ProtoToast, useProtoToast } from "../components/ProtoToast";
-import { PutCartInClockDialog } from "../components/PutCartInClockDialog";
 import { RepairClockCartDialog } from "../components/RepairClockCartDialog";
-import { defaultMotif, pickCart, pickProgCart, pickPubCart, slotUsages } from "../api/clockMeta";
-import { cartRef, emptyAnchor, emptyMotifStep, mergeClockPosition, saveClock } from "../api/clockWrite";
-import { apiDelete, apiPostJson, ApiRequestError } from "../api/client";
+import { apiDelete, apiGet, apiPostJson, ApiRequestError } from "../api/client";
 import { apiCacheDrop } from "../api/jsonCache";
+import { errorText } from "../api/programmationErrors";
+import { clockTints, clockWeekUsage, copySteps, starterMotif, stepsSummary } from "../api/programmationView";
 import { SessionGate } from "../api/SessionGate";
-import type {
-  CartsResponse,
-  CategoriesResponse,
-  Clock,
-  ClockPosition,
-  ClocksResponse,
-  Rundown,
-  SlotsResponse,
-} from "../api/types";
+import type { CartsResponse, CategoriesResponse, Clock, ClocksResponse, Rundown, SlotsResponse } from "../api/types";
 import { useApiJson } from "../api/useApiJson";
-import "../styles/pages/horloges.css";
-import { EmptyState } from "../ui/EmptyState";
-import { SelectField } from "../ui/FormField";
-import { PageHeader } from "../ui/PageHeader";
-import { Panel } from "../ui/Panel";
+import { useClockSaver } from "../api/useClockSaver";
+import { ConfirmDialog } from "../ui/ConfirmDialog";
+import "../styles/pages/programmation.css";
 
-const NONE = "__none__";
-
-export function HorlogesPage({ embedded = false }: { embedded?: boolean }) {
+export function HorlogesPage() {
   const clocksRes = useApiJson<ClocksResponse>("/autodj/clocks.json");
   const cartsRes = useApiJson<CartsResponse>("/carts.json");
   const catsRes = useApiJson<CategoriesResponse>("/autodj/categories.json");
-  const slotsRes = useApiJson<SlotsResponse>("/autodj/slots.json");
-  const rundownRes = useApiJson<Rundown>("/autodj/conducteur.json", 15000);
-  const [params] = useSearchParams();
+  const slotsRes = useApiJson<SlotsResponse>("/autodj/slots.json", 30_000);
+  const rundownRes = useApiJson<Rundown>("/autodj/conducteur.json", 15_000);
+  const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
-  const [selection, setSelection] = useState<StudioSelection>({ kind: "idle" });
-  const [lastMotif, setLastMotif] = useState(0);
-  const [clockId, setClockId] = useState<number | null>(null);
-  const [busyLabel, setBusyLabel] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
-  const [name, setName] = useState("");
+  const { message, show, dismiss } = useProtoToast();
+  const [view, setView] = useState<"list" | "detail">(() => (params.get("clock") ? "detail" : "list"));
+  const [creating, setCreating] = useState<{ copyOf: Clock | null } | null>(null);
+  const [deleting, setDeleting] = useState<Clock | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
   const [repairIndex, setRepairIndex] = useState<number | null>(null);
-  const [addCartOpen, setAddCartOpen] = useState(false);
-  const { message, show } = useProtoToast();
-  const clocks = clocksRes.data?.clocks ?? [];
+
   const carts = cartsRes.data?.carts ?? [];
   const categories = catsRes.data?.categories ?? [];
-  const slots = slotsRes.data?.slots ?? [];
-  const clock = clocks.find((c) => c.id === clockId) ?? clocks[0];
-  const motifIndex = selection.kind === "motif" ? selection.index : null;
-  const repairing = repairIndex != null ? clock?.motif[repairIndex] : null;
-  const clockQuery = params.get("clock");
-  const appliedClockQuery = useRef<string | null>(null);
+  const slots = useMemo(() => slotsRes.data?.slots ?? [], [slotsRes.data]);
+  const clocks = useMemo(
+    () => [...(clocksRes.data?.clocks ?? [])].sort((a, b) => a.name.localeCompare(b.name, "fr")),
+    [clocksRes.data],
+  );
+  const latest = useRef(clocks);
+  latest.current = clocks;
+  const requestedId = Number(params.get("clock"));
+  const clock = clocks.find((row) => row.id === requestedId) ?? clocks[0] ?? null;
+  const onAirName = rundownRes.data?.clock?.trim() || "";
+  const tints = useMemo(() => clockTints(clocks), [clocks]);
+  const usage = useMemo(() => {
+    const map = new Map<number, string[]>();
+    for (const row of clocks) map.set(row.id, clockWeekUsage(slots, row.id));
+    return map;
+  }, [clocks, slots]);
 
-  const reloadAll = () => {
-    void clocksRes.reload();
-    void cartsRes.reload();
-    void catsRes.reload();
-    void slotsRes.reload();
-    void rundownRes.reload();
+  const putLocal = (next: Clock) => {
+    latest.current = latest.current.map((row) => (row.id === next.id ? next : row));
+    clocksRes.setData({ clocks: latest.current });
   };
 
-  const choose = (next: StudioSelection) => {
-    if (next.kind === "motif") setLastMotif(next.index);
-    setSelection(next);
-  };
-
-  useEffect(() => {
-    if (clock && (clockId == null || !clocks.some((c) => c.id === clockId))) {
-      setClockId(clock.id);
-    }
-  }, [clock, clockId, clocks]);
-
-  useEffect(() => {
-    if (!clockQuery || appliedClockQuery.current === clockQuery || !clocks.length) return;
-    const id = Number(clockQuery);
-    if (Number.isFinite(id) && clocks.some((row) => row.id === id)) {
-      setClockId(id);
-      appliedClockQuery.current = clockQuery;
-    }
-  }, [clockQuery, clocks]);
-
-  const clockRef = useRef(clock);
-  clockRef.current = clock;
-
-  useEffect(() => {
-    setSelection({ kind: "idle" });
-    setLastMotif(0);
-    setSaved(false);
-  }, [clockId]);
-
-  useEffect(() => {
-    setName(clock?.name ?? "");
-  }, [clock?.id, clock?.name]);
-
-  const persist = async (
-    next: Clock,
-    _ok = "Heure type enregistrée",
-    pending = "Enregistrement…",
-  ): Promise<boolean> => {
-    setBusyLabel(pending);
-    setSaved(false);
+  // The PUT answer lists the steps in their order from before the write: keep what was sent, with the
+  // new version, then read the engine's copy back once nothing else moved.
+  const refresh = async (id: number, version: number | undefined) => {
     try {
-      const savedClock = await saveClock(next);
-      clocksRes.setData((prev) => {
-        const rows = prev?.clocks ?? [];
-        const nextClocks = rows.some((row) => row.id === savedClock.id)
-          ? rows.map((row) => (row.id === savedClock.id ? savedClock : row))
-          : [...rows, savedClock];
-        return { clocks: nextClocks };
+      const payload = await apiGet<ClocksResponse>("/autodj/clocks.json");
+      const fresh = payload.clocks.find((row) => row.id === id);
+      const current = latest.current.find((row) => row.id === id);
+      if (saverRef.current?.busy(id)) return;
+      if (fresh && current && fresh.version === version && current.version === version) putLocal(fresh);
+    } catch {
+      // The local copy stays right; the next gesture writes it again.
+    }
+  };
+
+  const saverRef = useRef<{ busy: (id: number) => boolean } | null>(null);
+  const saver = useClockSaver({
+    onSaved: (saved, sent) => {
+      putLocal({ ...sent, version: saved.version });
+      void refresh(saved.id, saved.version);
+    },
+    onFailed: (caught, id) => {
+      const text = errorText(caught, "Enregistrement impossible.");
+      // Changed elsewhere: the engine's copy wins. Refused as it is: the changes stay on screen, to be fixed.
+      if (caught instanceof ApiRequestError && caught.status === 409 && /version/i.test(caught.message)) {
+        setSaveError(null);
+        show(text, "error");
+        revert(id);
+        return;
+      }
+      setSaveError(text);
+      show(`${text} Les changements restent à l'écran : corrige, ils repartiront au geste suivant.`, "error", {
+        duration: 9000,
+        action: { label: "Revenir à la version enregistrée", onClick: () => revert(id) },
       });
-      setClockId(savedClock.id);
+    },
+  });
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  const revert = (id: number) => {
+    setSaveError(null);
+    apiCacheDrop("/autodj/clocks.json");
+    void clocksRes.reload().then(() => saver.forget(id));
+  };
+
+  saverRef.current = saver;
+
+  /** Every gesture: shown at once, written right after. */
+  const change = (next: Clock) => {
+    setSaveError(null);
+    putLocal(next);
+    saver.save(next);
+  };
+
+  const removed = (text: string, undo: (latest: Clock) => Clock) => {
+    if (!clock) return;
+    const id = clock.id;
+    show(text, "info", {
+      duration: 6000,
+      action: {
+        label: "Annuler",
+        onClick: () => {
+          const current = latest.current.find((row) => row.id === id);
+          if (current) change(undo(current));
+        },
+      },
+    });
+  };
+
+  const select = (id: number) => {
+    setView("detail");
+    if (params.get("clock") === String(id)) return;
+    setParams(
+      (current) => {
+        const next = new URLSearchParams(current);
+        next.set("clock", String(id));
+        return next;
+      },
+      { replace: true },
+    );
+  };
+
+  const create = async (name: string, from: Clock | null) => {
+    const motif = from ? copySteps(from.motif) : starterMotif(carts, categories);
+    if (!motif.length)
+      throw new Error(
+        "Crée d'abord un bac dans Sons, ou une sélection de titres : une heure type joue au moins une étape.",
+      );
+    try {
+      const payload = await apiPostJson<{ clock: Clock }>("/autodj/clocks.json", {
+        name,
+        fallback_cart: from?.fallback_cart ?? "",
+        fallback_cart_id: from?.fallback_cart_id ?? null,
+        motif,
+        anchors: from ? copySteps(from.anchors) : [],
+      });
       apiCacheDrop("/autodj/clocks.json");
       await clocksRes.reload();
-      setSaved(true);
-      return true;
+      select(payload.clock.id);
+      show(from ? `« ${name} » créée, copie de « ${from.name} »` : `« ${name} » créée`, "success");
     } catch (caught) {
-      show(caught instanceof ApiRequestError ? caught.message : "Enregistrement impossible.");
-      return false;
-    } finally {
-      setBusyLabel(null);
+      throw new Error(errorText(caught, "Création impossible."));
     }
   };
 
-  useEffect(() => {
-    const current = clockRef.current;
-    if (!current) return;
-    const trimmed = name.trim();
-    if (!trimmed || trimmed === current.name) return;
-    const timer = window.setTimeout(() => {
-      const latest = clockRef.current;
-      if (!latest || trimmed === latest.name) return;
-      void persist({ ...latest, name: trimmed });
-    }, 500);
-    return () => window.clearTimeout(timer);
-  }, [name]);
-
-  const savePosition = async (position: ClockPosition, index?: number): Promise<boolean> => {
-    if (!clock) return false;
-    if (position.when === "anchored" && position.minute != null) {
-      const current = clock.anchors.find((row) => row.minute === position.minute);
-      const anchors = clock.anchors.filter((row) => row.minute !== position.minute);
-      anchors.push(mergeClockPosition(current, position));
-      anchors.sort((a, b) => (a.minute ?? 0) - (b.minute ?? 0));
-      const saved = await persist({ ...clock, anchors }, "Coupure enregistrée");
-      if (saved) setSelection({ kind: "anchor", minute: position.minute });
-      return saved;
-    }
-    const motif = clock.motif.slice();
-    const at = index ?? 0;
-    motif[at] = mergeClockPosition(motif[at], position);
-    return persist({ ...clock, motif });
-  };
-
-  const createClock = async (name: string, fallback: string) => {
-    setBusyLabel("Création de l’heure type…");
+  const remove = async () => {
+    if (!deleting) return;
+    setDeleteBusy(true);
     try {
-      const created = await apiPostJson<{ clock: Clock }>("/autodj/clocks.json", {
-        name,
-        fallback_cart: fallback,
-        motif: defaultMotif(carts, categories, fallback || null),
-        anchors: [],
-      });
-      setClockId(created.clock.id);
+      await apiDelete(`/autodj/clocks/${deleting.id}.json`);
+      apiCacheDrop("/autodj/clocks.json");
+      setParams(
+        (current) => {
+          const next = new URLSearchParams(current);
+          next.delete("clock");
+          return next;
+        },
+        { replace: true },
+      );
+      setView("list");
       await clocksRes.reload();
-      show("Heure type créée");
+      show(`« ${deleting.name} » supprimée`, "success");
+      setDeleting(null);
     } catch (caught) {
-      show(caught instanceof ApiRequestError ? caught.message : "Création impossible.");
+      show(errorText(caught, "Suppression impossible."), "error");
+      setDeleting(null);
     } finally {
-      setBusyLabel(null);
+      setDeleteBusy(false);
     }
   };
 
-  const listProps = {
-    clocks,
-    carts,
-    usage: clock ? slotUsages(slots, clock.id, clock.name) : [],
-    usageReady: slotsRes.data != null,
-    onAirName: rundownRes.data?.clock?.trim() || "",
-    onSelect: setClockId,
-    onCreate: createClock,
-  };
-
-  const onAir = Boolean(clock && rundownRes.data?.clock === clock.name);
-
-  const createCut = async (minute: number) => {
-    if (!clock) return;
-    const guessed = pickPubCart(carts);
-    const anchor = emptyAnchor(minute, {
-      cart: guessed?.title ?? null,
-      fallback: clock.fallback_cart,
-    });
-    if (guessed) anchor.cart_id = guessed.id;
-    const anchors = clock.anchors.filter((row) => row.minute !== minute);
-    anchors.push(anchor);
-    anchors.sort((a, b) => (a.minute ?? 0) - (b.minute ?? 0));
-    const didSave = await persist({ ...clock, anchors });
-    if (didSave) setSelection({ kind: "anchor", minute });
-  };
-
-  const onStrip = (next: StudioSelection) => {
-    if (next.kind === "new-anchor") {
-      void createCut(next.minute);
-      return;
-    }
-    choose(next);
-  };
-
-  const saveFallback = (value: string) => {
-    if (!clock) return;
-    const chosen = value === NONE ? "" : value;
-    const ref = cartRef(carts, chosen);
-    void persist({
-      ...clock,
-      fallback_cart: ref.cart ?? "",
-      fallback_cart_id: ref.cart_id,
-    });
-  };
-
-  const inspector = clock ? (
-    <Inspector
-      selection={selection}
-      clock={clock}
-      carts={carts}
-      categories={categories}
-      busy={Boolean(busyLabel)}
-      autoSave
-      onSaveClock={(patch) => persist({ ...clock, ...patch }, "Heure type enregistrée")}
-      onSavePosition={savePosition}
-      onRemoveAnchor={async (minute) => {
-        const saved = await persist(
-          {
-            ...clock,
-            anchors: clock.anchors.filter((row) => row.minute !== minute),
-          },
-          "Coupure retirée",
-          "Retrait de la coupure…",
-        );
-        if (saved) setSelection({ kind: "idle" });
-      }}
-    />
-  ) : null;
+  const starter = stepsSummary({ motif: starterMotif(carts, categories) }) || "Une étape à choisir";
+  const repairing = clock && repairIndex != null ? clock.motif[repairIndex] : null;
 
   return (
-    <>
-      <div className={`ui-page ui-page--fill horloges-page${embedded ? " horloges-page--tab" : ""}`}>
-        <PageHeader
-          title="Heures types"
-          description="Ce qui passe, dans l’ordre, puis les coupures pub. Le reste est dans Avancé."
-        />
-
-        <SessionGate
-          loading={clocksRes.loading}
-          error={clocksRes.error}
-          ready={clocksRes.data != null}
-          onRetry={reloadAll}
-        >
-          {clock ? (
-            <div className="horloges-editor">
-              <ClockList
-                {...listProps}
-                selectedId={clock.id}
-                busy={Boolean(busyLabel)}
-                onDelete={async (id) => {
-                  setBusyLabel("Suppression de l’heure type…");
-                  try {
-                    await apiDelete(`/autodj/clocks/${id}.json`);
-                    setClockId(null);
-                    await clocksRes.reload();
-                    show("Heure type supprimée");
-                  } catch (caught) {
-                    show(
-                      caught instanceof ApiRequestError
-                        ? caught.message
-                        : "Suppression impossible.",
-                    );
-                  } finally {
-                    setBusyLabel(null);
-                  }
-                }}
-              />
-
-              <main className="horloges-editor-main" aria-label={`Heure type ${clock.name}`}>
-                <div className="horloges-editor-head">
-                  <TextField.Root
-                    className="horloges-editor-name"
-                    aria-label="Nom de l’heure type"
-                    value={name}
-                    onChange={(event) => setName(event.target.value)}
-                  />
-                  {onAir ? (
-                    <Badge color="green" variant="soft">
-                      À l’antenne
-                    </Badge>
-                  ) : null}
-                  <span className={`horloges-saved${saved ? " is-on" : ""}`}>
-                    {saved ? <Check size={14} aria-hidden="true" /> : null}
-                    {busyLabel ? "Enregistrement…" : saved ? "Enregistré" : ""}
-                  </span>
-                </div>
-
-                <MotifStack
-                  clock={clock}
-                  carts={carts}
-                  busy={Boolean(busyLabel)}
-                  onRepair={(index) => setRepairIndex(index)}
-                  onChangeCart={async (index, cart) => {
-                    const ref = cartRef(carts, cart.title);
-                    const motif = clock.motif.slice();
-                    motif[index] = mergeClockPosition(motif[index], {
-                      ...motif[index],
-                      cart: ref.cart,
-                      cart_id: ref.cart_id,
-                      category: null,
-                    });
-                    await persist({ ...clock, motif });
-                  }}
-                  onRemove={async (index) => {
-                    const didSave = await persist({
-                      ...clock,
-                      motif: clock.motif.filter((_, i) => i !== index),
-                    });
-                    if (didSave) setSelection({ kind: "idle" });
-                  }}
-                  onReorder={async (from, to) => {
-                    if (from === to) return;
-                    const motif = clock.motif.slice();
-                    const [row] = motif.splice(from, 1);
-                    motif.splice(to, 0, row);
-                    const didSave = await persist({ ...clock, motif });
-                    if (didSave) choose({ kind: "motif", index: to });
-                  }}
-                  onAddKind={async (kind) => {
-                    const guessed =
-                      kind === "jingle"
-                        ? pickCart(carts, /jingle/i)
-                        : kind === "pub"
-                          ? pickPubCart(carts)
-                          : pickProgCart(carts);
-                    const step = emptyMotifStep({
-                      kind,
-                      cart: guessed?.title ?? null,
-                      fallback: clock.fallback_cart,
-                    });
-                    if (guessed) step.cart_id = guessed.id;
-                    await persist({ ...clock, motif: [...clock.motif, step] });
-                  }}
-                  onSeedDefault={async () => {
-                    const motif = defaultMotif(carts, categories, clock.fallback_cart);
-                    if (!motif.length) {
-                      show("Crée d’abord Jingles et Prog dans Sons.");
-                      return;
-                    }
-                    await persist({ ...clock, motif });
-                  }}
-                />
-
-                <PubMinutes clock={clock} carts={carts} busy={Boolean(busyLabel)} onSave={persist} />
-
-                <Panel className="horloges-fallback">
-                  <h2 className="autodj-pubs-title">Si un bac est vide</h2>
-                  <p className="autodj-pubs-copy">Jouer ce cart quand une étape n’a plus de titre.</p>
-                  <SelectField
-                    label="Jouer"
-                    value={clock.fallback_cart || NONE}
-                    disabled={Boolean(busyLabel)}
-                    options={[
-                      { value: NONE, label: "Aucun" },
-                      ...(clock.fallback_cart && !carts.some((row) => row.title === clock.fallback_cart)
-                        ? [{ value: clock.fallback_cart, label: clock.fallback_cart }]
-                        : []),
-                      ...carts.map((row) => ({ value: row.title, label: row.title })),
-                    ]}
-                    onValueChange={saveFallback}
-                  />
-                </Panel>
-
-                <details className="horloges-advanced">
-                  <summary>Avancé</summary>
-                  <HourStrip
-                    clock={clock}
-                    selection={selection}
-                    fillMotifIndex={motifIndex ?? lastMotif}
-                    onSelect={onStrip}
-                  />
-                  {selection.kind === "anchor" || selection.kind === "new-anchor" ? inspector : null}
-                  <ClockCartsPanel
-                    clock={clock}
-                    carts={carts}
-                    busy={Boolean(busyLabel)}
-                    onAdd={() => setAddCartOpen(true)}
-                  />
-                </details>
-              </main>
-            </div>
-          ) : (
-            <div className="horloges-editor horloges-editor--empty">
-              <ClockList
-                {...listProps}
-                clocks={[]}
-                selectedId={null}
-                usage={[]}
-                onAirName=""
-                busy={Boolean(busyLabel)}
-              />
-              <Panel className="horloges-empty-panel">
-                <EmptyState
-                  icon={Clock3}
-                  title="Aucune heure type"
-                  description="Crée une heure type, pose ce qui passe, puis les coupures à la minute."
-                />
-              </Panel>
-            </div>
-          )}
-        </SessionGate>
-      </div>
-      <ProtoToast message={message} />
-      <PutCartInClockDialog
-        open={addCartOpen}
-        onOpenChange={setAddCartOpen}
-        clocks={clocks}
-        slots={slots}
-        carts={carts}
-        fixedClock={clock}
-        rundownClock={rundownRes.data?.clock}
-        busy={Boolean(busyLabel)}
-        onDone={async (text) => {
-          show(text);
-          await clocksRes.reload();
-          await rundownRes.reload();
+    <div className="prog-page">
+      <SessionGate
+        loading={clocksRes.loading}
+        error={clocksRes.error}
+        ready={clocksRes.data != null}
+        onRetry={() => {
+          void clocksRes.reload();
+          void cartsRes.reload();
+          void catsRes.reload();
+          void slotsRes.reload();
         }}
-        onError={show}
+      >
+        {clock ? (
+          <div className="prog-work" data-view={view}>
+            <ClockSidebar
+              clocks={clocks}
+              selectedId={clock.id}
+              onAirName={onAirName}
+              usage={usage}
+              tints={tints}
+              onSelect={select}
+              onCreate={() => setCreating({ copyOf: null })}
+            />
+            <ClockEditor
+              key={clock.id}
+              clock={clock}
+              carts={carts}
+              categories={categories}
+              otherNames={clocks.filter((row) => row.id !== clock.id).map((row) => row.name)}
+              usage={usage.get(clock.id) ?? []}
+              tint={tints.get(clock.id) ?? "gray"}
+              onAir={Boolean(onAirName) && onAirName === clock.name}
+              saveState={saver.state}
+              saveError={saveError}
+              onRetry={() => {
+                const current = latest.current.find((row) => row.id === clock.id);
+                if (current) change(current);
+              }}
+              onRevert={() => revert(clock.id)}
+              onChange={change}
+              onRemoved={removed}
+              onRepair={setRepairIndex}
+              onDuplicate={() => setCreating({ copyOf: clock })}
+              onDelete={() => setDeleting(clock)}
+              onBack={() => setView("list")}
+            />
+          </div>
+        ) : (
+          <div className="prog-first">
+            <span className="prog-first-icon" aria-hidden="true">
+              <Clock3 size={22} />
+            </span>
+            <h2>Première heure type</h2>
+            <p>
+              Une heure type dit ce qui passe pendant une heure : un jingle, des titres, des coupures pub. Pose-la
+              ensuite dans la semaine.
+            </p>
+            <Button size="2" highContrast onClick={() => setCreating({ copyOf: null })}>
+              <Plus className="ui-button-icon" />
+              Créer une heure type
+            </Button>
+          </div>
+        )}
+      </SessionGate>
+
+      <CreateClockDialog
+        open={creating != null}
+        onOpenChange={(open) => {
+          if (!open) setCreating(null);
+        }}
+        clocks={clocks}
+        copyOf={creating?.copyOf ?? null}
+        starter={starter}
+        onCreate={create}
+      />
+      <ConfirmDialog
+        open={deleting != null}
+        onOpenChange={(open) => {
+          if (!open && !deleteBusy) setDeleting(null);
+        }}
+        title={`Supprimer « ${deleting?.name ?? ""} » ?`}
+        description="L'heure type disparaît, avec ses étapes et ses coupures. Elle n'est posée nulle part dans la semaine."
+        confirmLabel="Supprimer l'heure type"
+        busy={deleteBusy}
+        onConfirm={remove}
       />
       <RepairClockCartDialog
-        open={repairIndex != null && repairing != null}
+        open={repairing != null}
         onOpenChange={(open) => {
           if (!open) setRepairIndex(null);
         }}
@@ -454,13 +291,16 @@ export function HorlogesPage({ embedded = false }: { embedded?: boolean }) {
         motifIndex={repairIndex}
         kind={repairing?.kind}
         onRepaired={async () => {
+          apiCacheDrop("/autodj/clocks.json");
           await clocksRes.reload();
-          await rundownRes.reload();
-          show("Cart réparé");
+          await cartsRes.reload();
+          if (clock) saver.forget(clock.id);
+          show("Étape réparée", "success");
         }}
         onOpenCart={(id) => navigate(`/sons?id=${id}`)}
-        onError={show}
+        onError={(text) => show(text, "error")}
       />
-    </>
+      <ProtoToast message={message} onDismiss={dismiss} />
+    </div>
   );
 }

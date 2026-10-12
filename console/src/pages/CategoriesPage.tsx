@@ -1,432 +1,456 @@
-import {
-  Badge,
-  Button,
-  Code,
-  Dialog,
-  DropdownMenu,
-  Flex,
-  IconButton,
-  Spinner,
-  Table,
-  Text,
-  TextField,
-} from "@radix-ui/themes";
-import { MoreHorizontal, Pencil, Plus, Search, SearchX, Tags, TestTube2, Trash2 } from "lucide-react";
-import { useMemo, useState, type FormEvent } from "react";
+import { Button, Code, Dialog, DropdownMenu, IconButton, Kbd, Spinner, TextField } from "@radix-ui/themes";
+import { FlaskConical, ListMusic, MoreHorizontal, Pencil, Plus, Search, SearchX, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { ProtoToast, useProtoToast } from "../components/ProtoToast";
-import { apiDelete, apiGet, apiPostJson, apiPut, ApiRequestError } from "../api/client";
+import { apiDelete, apiGet, apiPostJson, apiPut } from "../api/client";
+import { errorText } from "../api/programmationErrors";
+import { nameTaken } from "../api/programmationView";
 import { SessionGate } from "../api/SessionGate";
-import type { CategoriesResponse, Category } from "../api/types";
+import type { CategoriesResponse, Category, ClocksResponse } from "../api/types";
 import { useApiJson } from "../api/useApiJson";
-import "../styles/pages/admin.css";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
-import { EmptyState } from "../ui/EmptyState";
-import { FormField, SelectField } from "../ui/FormField";
-import { PageHeader } from "../ui/PageHeader";
-import { Panel, SectionHeader } from "../ui/Panel";
+import { FormField } from "../ui/FormField";
+import "../styles/pages/programmation.css";
 
-type CategoryFilter = "all" | "populated" | "empty";
+type TestResult = { count: number; sample: { artist: string; title: string }[] };
 
-const CATEGORY_FILTERS = [
-  { value: "all", label: "Toutes les sélections" },
-  { value: "populated", label: "Avec des titres" },
-  { value: "empty", label: "Sans titre" },
-];
+function isTyping(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  return target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName);
+}
 
 export function CategoriesPage() {
-  const { data, error, reload } = useApiJson<CategoriesResponse>(
-    "/autodj/categories.json",
+  const { data, error, loading, reload } = useApiJson<CategoriesResponse>("/autodj/categories.json");
+  const clocksRes = useApiJson<ClocksResponse>("/autodj/clocks.json");
+  const { message, show, dismiss } = useProtoToast();
+  const [query, setQuery] = useState("");
+  const [editing, setEditing] = useState<Category | "new" | null>(null);
+  const [deleting, setDeleting] = useState<Category | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const categories = useMemo(
+    () => [...(data?.categories ?? [])].sort((a, b) => a.name.localeCompare(b.name, "fr")),
+    [data],
   );
-  const { message, show } = useProtoToast();
-  const categories = data?.categories ?? [];
-  const [createOpen, setCreateOpen] = useState(false);
-  const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState<CategoryFilter>("all");
-  const filteredCategories = useMemo(() => {
-    const needle = search.trim().toLocaleLowerCase("fr");
-    return categories.filter((category) => {
-      const matchesSearch =
-        !needle ||
-        [category.name, category.query, category.empty_query].some((value) =>
-          value.toLocaleLowerCase("fr").includes(needle),
-        );
-      const matchesFilter =
-        filter === "all" ||
-        (filter === "populated" && category.count > 0) ||
-        (filter === "empty" && category.count === 0);
-      return matchesSearch && matchesFilter;
-    });
-  }, [categories, filter, search]);
-  const resetFilters = () => {
-    setSearch("");
-    setFilter("all");
+  const usage = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const clock of clocksRes.data?.clocks ?? []) {
+      for (const step of [...clock.motif, ...clock.anchors]) {
+        if (step.kind !== "musique" || !step.category) continue;
+        const names = map.get(step.category) ?? [];
+        if (!names.includes(clock.name)) names.push(clock.name);
+        map.set(step.category, names);
+      }
+    }
+    return map;
+  }, [clocksRes.data]);
+  const clockIds = useMemo(
+    () => new Map((clocksRes.data?.clocks ?? []).map((clock) => [clock.name, clock.id])),
+    [clocksRes.data],
+  );
+  const visible = useMemo(() => {
+    const needle = query.trim().toLocaleLowerCase("fr");
+    if (!needle) return categories;
+    return categories.filter((row) =>
+      [row.name, row.query, row.empty_query].some((value) => value.toLocaleLowerCase("fr").includes(needle)),
+    );
+  }, [categories, query]);
+
+  useEffect(() => {
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "/" || event.metaKey || event.ctrlKey || isTyping(event.target)) return;
+      if (!searchRef.current || searchRef.current.offsetParent === null) return;
+      event.preventDefault();
+      searchRef.current.focus();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  const remove = async () => {
+    if (!deleting) return;
+    setDeleteBusy(true);
+    try {
+      await apiDelete(`/autodj/categories/${deleting.id}.json`);
+      await reload();
+      show(`« ${deleting.name} » supprimée`, "success");
+      setDeleting(null);
+    } catch (caught) {
+      show(errorText(caught, "Suppression impossible."), "error");
+      setDeleting(null);
+    } finally {
+      setDeleteBusy(false);
+    }
   };
 
   return (
-    <>
-      <div className="ui-page admin-page">
-        <PageHeader
-          eyebrow="Programmation"
-          title="Sélections de titres"
-          description="Une requête choisit les titres. Le repli sert quand elle ne ramène rien."
-          actions={
-            <Button onClick={() => setCreateOpen(true)}>
-              <Plus className="ui-button-icon" aria-hidden="true" />
-              Nouvelle sélection
-            </Button>
-          }
-        />
-
-        <SessionGate
-          loading={false}
-          error={error}
-          ready={data != null}
-          onRetry={() => void reload()}
-        >
-          <Panel padded={false} className="admin-panel">
-            <div className="admin-panel-heading">
-              <SectionHeader
-                title="Sélections de titres"
-                description="Nom, requête, repli, et le nombre de titres trouvés."
-                count={filteredCategories.length}
-              />
+    <div className="prog-page">
+      <SessionGate loading={loading} error={error} ready={data != null} onRetry={() => void reload()}>
+        <div className="prog-sel">
+          <header className="prog-sel-bar">
+            <div className="prog-sel-copy">
+              <h2>
+                Sélections de titres <span className="prog-count">{categories.length}</span>
+              </h2>
+              <p>
+                Une requête sur la banque choisit les titres d'une étape « Titres ». Le repli sert si elle ne trouve
+                rien.
+              </p>
             </div>
-
-            <div className="admin-toolbar">
-              <FormField label="Rechercher">
-                <TextField.Root
-                  className="ui-field-control admin-search-control"
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Nom ou requête…"
-                  aria-label="Rechercher une sélection"
-                >
-                  <TextField.Slot>
-                    <Search size={15} aria-hidden="true" />
-                  </TextField.Slot>
-                </TextField.Root>
-              </FormField>
-              <SelectField
-                label="Afficher"
-                value={filter}
-                options={CATEGORY_FILTERS}
-                onValueChange={(value) => setFilter(value as CategoryFilter)}
-              />
-              <Text className="admin-result-count" size="1" color="gray">
-                {filteredCategories.length === categories.length
-                  ? `${categories.length} au total`
-                  : `${filteredCategories.length} sur ${categories.length}`}
-              </Text>
+            <div className="prog-sel-tools">
+              <TextField.Root
+                ref={searchRef}
+                size="2"
+                className="prog-sel-search"
+                placeholder="Rechercher"
+                value={query}
+                aria-label="Rechercher une sélection"
+                onChange={(event) => setQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") setQuery("");
+                }}
+              >
+                <TextField.Slot>
+                  <Search size={15} aria-hidden="true" />
+                </TextField.Slot>
+                <TextField.Slot side="right">
+                  <Kbd size="1">/</Kbd>
+                </TextField.Slot>
+              </TextField.Root>
+              <Button size="2" highContrast onClick={() => setEditing("new")}>
+                <Plus className="ui-button-icon" />
+                Nouvelle sélection
+              </Button>
             </div>
+          </header>
 
-            {filteredCategories.length ? (
-              <div className="admin-table-scroll">
-                <Table.Root className="admin-table admin-category-table">
-                  <Table.Header>
-                    <Table.Row>
-                      <Table.ColumnHeaderCell>Nom</Table.ColumnHeaderCell>
-                      <Table.ColumnHeaderCell>Requête</Table.ColumnHeaderCell>
-                      <Table.ColumnHeaderCell>Titres</Table.ColumnHeaderCell>
-                      <Table.ColumnHeaderCell>Repli si vide</Table.ColumnHeaderCell>
-                      <Table.ColumnHeaderCell aria-label="Actions" />
-                    </Table.Row>
-                  </Table.Header>
-                  <Table.Body>
-                    {filteredCategories.map((category) => (
-                      <CategoryRow
-                        key={category.id}
-                        category={category}
-                        onSaved={reload}
-                        onFeedback={show}
-                        onError={show}
-                      />
-                    ))}
-                  </Table.Body>
-                </Table.Root>
-              </div>
+          <div className="prog-sel-frame">
+            {visible.length ? (
+              <table className="prog-sel-table">
+                <thead>
+                  <tr>
+                    <th className="c-name">Nom</th>
+                    <th className="c-query">Requête</th>
+                    <th className="c-count">Titres</th>
+                    <th className="c-uses">Utilisée par</th>
+                    <th className="c-more">
+                      <span className="ui-visually-hidden">Actions</span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visible.map((row) => {
+                    const uses = usage.get(row.name) ?? [];
+                    return (
+                      <tr key={row.id}>
+                        <th className="c-name" scope="row">
+                          <button type="button" className="prog-sel-name" onClick={() => setEditing(row)}>
+                            <span className="prog-sel-icon" aria-hidden="true">
+                              <ListMusic size={14} />
+                            </span>
+                            {row.name}
+                          </button>
+                        </th>
+                        <td className="c-query">
+                          <Code size="1" variant="ghost" className="prog-code">
+                            {row.query}
+                          </Code>
+                          {row.empty_query ? (
+                            <span className="prog-sel-fallback">
+                              sinon{" "}
+                              <Code size="1" variant="ghost" className="prog-code">
+                                {row.empty_query}
+                              </Code>
+                            </span>
+                          ) : null}
+                        </td>
+                        <td className="c-count">
+                          <span className={`prog-sel-count${row.count ? "" : " is-empty"}`}>{row.count}</span>
+                        </td>
+                        <td className="c-uses">
+                          {uses.length ? (
+                            <span className="prog-sel-uses">
+                              {uses.map((name) => (
+                                <Link
+                                  key={name}
+                                  to={`/programmation?clock=${clockIds.get(name) ?? ""}`}
+                                  className="prog-chip"
+                                >
+                                  {name}
+                                </Link>
+                              ))}
+                            </span>
+                          ) : (
+                            <span className="prog-faint">Aucune heure type</span>
+                          )}
+                        </td>
+                        <td className="c-more">
+                          <DropdownMenu.Root>
+                            <DropdownMenu.Trigger>
+                              <IconButton size="2" variant="ghost" color="gray" aria-label={`Actions pour ${row.name}`}>
+                                <MoreHorizontal size={16} />
+                              </IconButton>
+                            </DropdownMenu.Trigger>
+                            <DropdownMenu.Content align="end" className="prog-menu">
+                              <DropdownMenu.Item onSelect={() => setEditing(row)}>
+                                <Pencil size={15} aria-hidden="true" />
+                                Modifier et tester
+                              </DropdownMenu.Item>
+                              <DropdownMenu.Separator />
+                              <DropdownMenu.Item
+                                color="red"
+                                disabled={uses.length > 0}
+                                onSelect={() => setDeleting(row)}
+                              >
+                                <Trash2 size={15} aria-hidden="true" />
+                                <span className="prog-menu-copy">
+                                  Supprimer…
+                                  {uses.length ? (
+                                    <small>Une heure type l'utilise : change d'abord ses étapes</small>
+                                  ) : null}
+                                </span>
+                              </DropdownMenu.Item>
+                            </DropdownMenu.Content>
+                          </DropdownMenu.Root>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             ) : (
-              <div className="admin-empty">
-                <EmptyState
-                  icon={categories.length ? SearchX : Tags}
-                  title={categories.length ? "Aucun résultat" : "Aucune sélection"}
-                  description={
-                    categories.length
-                      ? "Aucune sélection ne correspond à cette recherche ou à ce filtre."
-                      : "Crée une sélection de titres pour choisir les morceaux avec une requête."
-                  }
-                  actionLabel={categories.length ? "Réinitialiser les filtres" : "Créer une sélection"}
-                  onAction={categories.length ? resetFilters : () => setCreateOpen(true)}
-                />
+              <div className="prog-sel-empty">
+                {categories.length ? (
+                  <SearchX size={20} aria-hidden="true" />
+                ) : (
+                  <ListMusic size={20} aria-hidden="true" />
+                )}
+                <p>
+                  {categories.length
+                    ? `Aucune sélection ne correspond à « ${query.trim()} ».`
+                    : "Aucune sélection : crée-en une pour qu'une étape « Titres » puise dans la banque."}
+                </p>
+                {categories.length ? (
+                  <Button size="1" variant="soft" color="gray" onClick={() => setQuery("")}>
+                    Effacer la recherche
+                  </Button>
+                ) : (
+                  <Button size="2" highContrast onClick={() => setEditing("new")}>
+                    <Plus className="ui-button-icon" />
+                    Créer une sélection
+                  </Button>
+                )}
               </div>
             )}
-          </Panel>
-        </SessionGate>
-      </div>
-      <CategoryDialog
-        open={createOpen}
-        onOpenChange={setCreateOpen}
-        onSubmit={async (fields) => {
-          await apiPostJson("/autodj/categories.json", fields);
+          </div>
+        </div>
+      </SessionGate>
+
+      <SelectionDialog
+        target={editing}
+        names={categories.map((row) => row.name)}
+        onClose={() => setEditing(null)}
+        onSaved={async (text) => {
           await reload();
-          show("Sélection créée");
+          void clocksRes.reload();
+          show(text, "success");
         }}
-        onError={(text) => show(text)}
       />
-      <ProtoToast message={message} />
-    </>
+      <ConfirmDialog
+        open={deleting != null}
+        onOpenChange={(open) => {
+          if (!open && !deleteBusy) setDeleting(null);
+        }}
+        title={`Supprimer « ${deleting?.name ?? ""} » ?`}
+        description="La sélection disparaît. Aucune heure type ne l'utilise."
+        confirmLabel="Supprimer la sélection"
+        busy={deleteBusy}
+        onConfirm={remove}
+      />
+      <ProtoToast message={message} onDismiss={dismiss} />
+    </div>
   );
 }
 
-function CategoryRow({
-  category,
+/** Create or edit a sélection, and see what its query finds before saving. */
+function SelectionDialog({
+  target,
+  names,
+  onClose,
   onSaved,
-  onFeedback,
-  onError,
 }: {
-  category: Category;
-  onSaved: () => Promise<unknown> | void;
-  onFeedback: (text: string) => void;
-  onError: (text: string) => void;
+  target: Category | "new" | null;
+  names: string[];
+  onClose: () => void;
+  onSaved: (message: string) => Promise<void>;
 }) {
-  const [editOpen, setEditOpen] = useState(false);
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const [sample, setSample] = useState<string | null>(null);
+  const initial = target && target !== "new" ? target : null;
+  const [name, setName] = useState("");
+  const [query, setQuery] = useState("");
+  const [fallback, setFallback] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState("");
+  const [test, setTest] = useState<{ query: string; result: TestResult | null; error: string } | null>(null);
   const [testing, setTesting] = useState(false);
-  const [deleting, setDeleting] = useState(false);
 
-  const testCategory = async () => {
+  useEffect(() => {
+    if (!target) return;
+    setName(initial?.name ?? "");
+    setQuery(initial?.query ?? "");
+    setFallback(initial?.empty_query ?? "");
+    setFailure("");
+    setBusy(false);
+    setTest(null);
+  }, [target]); // a new target resets the form; the list refreshing does not
+
+  const others = names.filter((row) => row !== initial?.name);
+  const clash = nameTaken(name, others);
+  const ready = Boolean(name.trim()) && Boolean(query.trim()) && !clash;
+
+  const runTest = async (text: string) => {
+    const wanted = text.trim();
+    if (!wanted) return;
     setTesting(true);
     try {
-      const result = await apiGet<{ count: number; sample: { title: string }[] }>(
-        `/autodj/testquery.json?query=${encodeURIComponent(category.query)}`,
-      );
-      setSample(`${result.count} titres`);
+      const result = await apiGet<TestResult>(`/autodj/testquery.json?query=${encodeURIComponent(wanted)}`);
+      setTest({ query: wanted, result, error: "" });
     } catch (caught) {
-      onError(caught instanceof ApiRequestError ? caught.message : "Test impossible.");
+      setTest({ query: wanted, result: null, error: errorText(caught, "Test impossible.") });
     } finally {
       setTesting(false);
     }
   };
 
-  const deleteCategory = async () => {
-    setDeleting(true);
-    try {
-      await apiDelete(`/autodj/categories/${category.id}.json`);
-      await onSaved();
-      onFeedback("Sélection supprimée");
-      setConfirmOpen(false);
-    } catch (caught) {
-      onError(caught instanceof ApiRequestError ? caught.message : "Suppression impossible.");
-    } finally {
-      setDeleting(false);
-    }
-  };
-
-  return (
-    <Table.Row>
-      <Table.RowHeaderCell data-label="Nom">
-        <div className="admin-primary-cell">
-          <span className="admin-primary-title">{category.name}</span>
-          {sample ? (
-            <span className="admin-inline-feedback" role="status" aria-live="polite">
-              {sample}
-            </span>
-          ) : null}
-        </div>
-      </Table.RowHeaderCell>
-      <Table.Cell data-label="Requête">
-        <Code className="ui-code admin-query-code" variant="ghost">
-          {category.query}
-        </Code>
-      </Table.Cell>
-      <Table.Cell data-label="Titres">
-        <Badge color={category.count ? "green" : "gray"} variant="soft">
-          {category.count}
-        </Badge>
-      </Table.Cell>
-      <Table.Cell data-label="Repli si vide">
-        {category.empty_query ? (
-          <Code className="ui-code admin-query-code" variant="ghost">
-            {category.empty_query}
-          </Code>
-        ) : (
-          <span className="admin-muted">Non défini</span>
-        )}
-      </Table.Cell>
-      <Table.Cell className="admin-actions-cell" data-label="Actions">
-        <DropdownMenu.Root>
-          <DropdownMenu.Trigger>
-            <IconButton
-              className="admin-row-menu"
-              size="1"
-              variant="ghost"
-              color="gray"
-              disabled={testing || deleting}
-              aria-label={`Actions pour ${category.name}`}
-            >
-              {testing || deleting ? (
-                <Spinner size="1" />
-              ) : (
-                <MoreHorizontal size={16} aria-hidden="true" />
-              )}
-            </IconButton>
-          </DropdownMenu.Trigger>
-          <DropdownMenu.Content align="end">
-            <DropdownMenu.Item
-              disabled={testing || deleting}
-              onSelect={() => void testCategory()}
-            >
-              <TestTube2 size={14} aria-hidden="true" />
-              Tester la requête
-            </DropdownMenu.Item>
-            <DropdownMenu.Item
-              disabled={testing || deleting}
-              onSelect={() => setEditOpen(true)}
-            >
-              <Pencil size={14} aria-hidden="true" />
-              Modifier
-            </DropdownMenu.Item>
-            <DropdownMenu.Separator />
-            <DropdownMenu.Item
-              color="red"
-              disabled={testing || deleting}
-              onSelect={() => setConfirmOpen(true)}
-            >
-              <Trash2 size={14} aria-hidden="true" />
-              Supprimer
-            </DropdownMenu.Item>
-          </DropdownMenu.Content>
-        </DropdownMenu.Root>
-        <ConfirmDialog
-          open={confirmOpen}
-          onOpenChange={setConfirmOpen}
-          title="Supprimer cette sélection ?"
-          description={
-            <>
-              Tu supprimes <strong>{category.name}</strong> pour de bon.
-            </>
-          }
-          confirmLabel="Supprimer"
-          busy={deleting}
-          onConfirm={deleteCategory}
-        />
-      </Table.Cell>
-      <CategoryDialog
-        open={editOpen}
-        initial={category}
-        onOpenChange={setEditOpen}
-        onSubmit={async (fields) => {
-          await apiPut(`/autodj/categories/${category.id}.json`, fields);
-          await onSaved();
-          setSample(null);
-          onFeedback("Sélection enregistrée");
-        }}
-        onError={onError}
-      />
-    </Table.Row>
-  );
-}
-
-function CategoryDialog({
-  open,
-  initial,
-  onOpenChange,
-  onSubmit,
-  onError,
-}: {
-  open: boolean;
-  initial?: Category;
-  onOpenChange: (open: boolean) => void;
-  onSubmit: (fields: { name: string; query: string; empty_query: string }) => Promise<void>;
-  onError: (text: string) => void;
-}) {
-  const [name, setName] = useState(initial?.name ?? "");
-  const [query, setQuery] = useState(initial?.query ?? "");
-  const [emptyQuery, setEmptyQuery] = useState(initial?.empty_query ?? "");
-  const [busy, setBusy] = useState(false);
-
-  const submit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (busy || !name.trim() || !query.trim()) return;
+  const save = async () => {
+    if (!ready || busy) return;
     setBusy(true);
+    setFailure("");
+    const body = { name: name.trim(), query: query.trim(), empty_query: fallback.trim() };
     try {
-      await onSubmit({
-        name: name.trim(),
-        query: query.trim(),
-        empty_query: emptyQuery.trim(),
-      });
-      onOpenChange(false);
+      if (initial) await apiPut(`/autodj/categories/${initial.id}.json`, body);
+      else await apiPostJson("/autodj/categories.json", body);
+      await onSaved(initial ? `« ${body.name} » enregistrée` : `« ${body.name} » créée`);
+      onClose();
     } catch (caught) {
-      onError(caught instanceof ApiRequestError ? caught.message : "Enregistrement impossible.");
+      setFailure(errorText(caught, "Enregistrement impossible."));
     } finally {
       setBusy(false);
     }
   };
 
+  const stale = test != null && test.query !== query.trim();
+
   return (
     <Dialog.Root
-      open={open}
-      onOpenChange={(next) => {
-        if (busy) return;
-        onOpenChange(next);
-        if (next) {
-          setName(initial?.name ?? "");
-          setQuery(initial?.query ?? "");
-          setEmptyQuery(initial?.empty_query ?? "");
-        }
+      open={target != null}
+      onOpenChange={(open) => {
+        if (!open && !busy) onClose();
       }}
     >
-      <Dialog.Content className="admin-dialog" maxWidth="31rem">
-        <form onSubmit={(event) => void submit(event)}>
-          <Dialog.Title>{initial ? "Modifier la sélection" : "Nouvelle sélection"}</Dialog.Title>
-          <Dialog.Description>
-            Définis la requête principale et, si besoin, une requête de repli.
-          </Dialog.Description>
-          <div className="admin-dialog-fields">
-            <FormField label="Nom">
+      <Dialog.Content maxWidth="34rem">
+        <Dialog.Title>{initial ? "Modifier la sélection" : "Nouvelle sélection de titres"}</Dialog.Title>
+        <Dialog.Description size="2" color="gray" mb="4">
+          La requête interroge la banque indexée par Beets. Teste-la avant d'enregistrer.
+        </Dialog.Description>
+        <form
+          className="prog-dialog-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void save();
+          }}
+        >
+          <FormField label="Nom" error={clash ? "Une sélection porte déjà ce nom." : undefined}>
+            <TextField.Root
+              size="2"
+              className="ui-field-control"
+              value={name}
+              placeholder="Rotation"
+              autoFocus
+              onChange={(event) => setName(event.target.value)}
+            />
+          </FormField>
+          <div className="ui-field">
+            <label className="ui-field-label" htmlFor="selection-query">
+              Requête
+            </label>
+            <div className="prog-query-row">
               <TextField.Root
-                className="ui-field-control"
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                autoFocus
-                required
-              />
-            </FormField>
-            <FormField
-              label="Requête"
-              hint="Rotation 24/24 : path:/media/10-rotation. Thème : grouping:jazz."
-            >
-              <TextField.Root
-                className="ui-field-control admin-code-input"
+                id="selection-query"
+                size="2"
+                className="ui-field-control prog-code-input"
                 value={query}
+                spellCheck={false}
                 onChange={(event) => setQuery(event.target.value)}
-                spellCheck={false}
-                required
               />
-            </FormField>
-            <FormField
-              label="Repli si vide"
-              hint="Facultatif. Elle sert quand la requête principale ne ramène rien."
-            >
-              <TextField.Root
-                className="ui-field-control admin-code-input"
-                value={emptyQuery}
-                onChange={(event) => setEmptyQuery(event.target.value)}
-                spellCheck={false}
-              />
-            </FormField>
+              <Button
+                type="button"
+                size="2"
+                variant="soft"
+                color="gray"
+                disabled={!query.trim() || testing}
+                onClick={() => void runTest(query)}
+              >
+                {testing ? <Spinner size="1" /> : <FlaskConical className="ui-button-icon" />}
+                Tester
+              </Button>
+            </div>
+            <span className="ui-field-hint">Exemples : path:/media/10-rotation · grouping:ntf1 · genre:Jazz</span>
           </div>
-          <Flex gap="2" mt="5" justify="end">
+          {test ? (
+            <div className={`prog-test${stale ? " is-stale" : ""}`} role="status" aria-live="polite">
+              {test.error ? (
+                <p className="prog-warn">{test.error}</p>
+              ) : test.result ? (
+                <>
+                  <p>
+                    <strong>
+                      {test.result.count} titre{test.result.count === 1 ? "" : "s"}
+                    </strong>{" "}
+                    {stale
+                      ? "pour la requête d'avant : reteste."
+                      : test.result.count
+                        ? "trouvés, par exemple :"
+                        : "trouvé : le repli servira."}
+                  </p>
+                  {test.result.sample.length && !stale ? (
+                    <ul>
+                      {test.result.sample.slice(0, 6).map((item, index) => (
+                        <li key={`${item.artist}-${item.title}-${index}`}>
+                          <span>{item.title || "Sans titre"}</span>
+                          {item.artist ? <small>{item.artist}</small> : null}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </>
+              ) : null}
+            </div>
+          ) : null}
+          <FormField label="Si elle ne trouve rien" hint="Facultatif : une autre requête, essayée à la place.">
+            <TextField.Root
+              size="2"
+              className="ui-field-control prog-code-input"
+              value={fallback}
+              spellCheck={false}
+              onChange={(event) => setFallback(event.target.value)}
+            />
+          </FormField>
+          {failure ? (
+            <p className="prog-dialog-error" role="alert">
+              {failure}
+            </p>
+          ) : null}
+          <div className="prog-dialog-actions">
             <Dialog.Close>
-              <Button type="button" variant="soft" color="gray" disabled={busy}>
+              <Button type="button" size="2" variant="soft" color="gray" disabled={busy}>
                 Annuler
               </Button>
             </Dialog.Close>
-            <Button type="submit" disabled={busy || !name.trim() || !query.trim()}>
-              {busy ? <Spinner size="1" /> : null}
+            <Button type="submit" size="2" highContrast disabled={!ready || busy}>
               {busy ? "Enregistrement…" : initial ? "Enregistrer" : "Créer la sélection"}
             </Button>
-          </Flex>
+          </div>
         </form>
       </Dialog.Content>
     </Dialog.Root>

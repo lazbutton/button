@@ -16,10 +16,8 @@ export function ProgrammationPage() {
 
   return (
     <SectionTabs
-      title="Programmation"
-      description="Heures types, semaine et sélections de titres."
       tabs={[
-        { id: "horloges", label: "Heures types", panel: <HorlogesPage embedded /> },
+        { id: "horloges", label: "Heures types", panel: <HorlogesPage /> },
         { id: "semaine", label: "Semaine", panel: <SemainePage /> },
         {
           id: "categories",

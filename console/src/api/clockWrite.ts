@@ -1,16 +1,6 @@
-import type { Clock, ClockPosition, PositionKind } from "./types";
+import type { Clock, ClockPosition } from "./types";
 import { apiPut } from "./client";
-import { clockHasCart, positionUsesCart, withoutLibrarySteps } from "./clockMeta";
-
-export function cartRef(
-  carts: { id: number; title: string }[],
-  title: string | null | undefined,
-): { cart: string | null; cart_id: number | null } {
-  const wanted = (title || "").trim();
-  if (!wanted) return { cart: null, cart_id: null };
-  const hit = carts.find((cart) => cart.title.trim().toLowerCase() === wanted.toLowerCase());
-  return { cart: hit?.title ?? wanted, cart_id: hit?.id ?? null };
-}
+import { positionUsesCart } from "./clockMeta";
 
 export async function saveClock(clock: Clock): Promise<Clock> {
   const payload = await apiPut<{ clock: Clock }>(`/autodj/clocks/${clock.id}.json`, {
@@ -18,70 +8,11 @@ export async function saveClock(clock: Clock): Promise<Clock> {
     version: clock.version,
     fallback_cart: clock.fallback_cart,
     fallback_cart_id: clock.fallback_cart_id ?? null,
-    motif: withoutLibrarySteps(clock.motif),
+    // « Titres » steps (kind musique) stay: the engine plays them from a sélection.
+    motif: clock.motif,
     anchors: clock.anchors,
   });
   return payload.clock;
-}
-
-export function emptyMotifStep(opts?: {
-  category?: string | null;
-  fallback?: string | null;
-  kind?: PositionKind;
-  cart?: string | null;
-}): ClockPosition {
-  const kind = opts?.kind ?? "son";
-  const usesCategory = kind === "musique";
-  return {
-    kind,
-    when: "sequential",
-    cart: usesCategory ? null : (opts?.cart ?? null),
-    category: usesCategory ? (opts?.category ?? null) : null,
-    fallback_cart: opts?.fallback ?? null,
-  };
-}
-
-export function emptyAnchor(
-  minute: number,
-  opts?: { cart?: string | null; fallback?: string | null },
-): ClockPosition {
-  return {
-    kind: "pub",
-    when: "anchored",
-    cart: opts?.cart ?? null,
-    category: null,
-    fallback_cart: opts?.fallback ?? null,
-    minute,
-    sync: "dure",
-  };
-}
-
-export function putCartInClock(
-  clock: Clock,
-  cart: { id: number; title: string },
-  kind: Exclude<PositionKind, "musique">,
-  replaceIndex: number | null = null,
-): { clock: Clock; already: boolean } {
-  if (clockHasCart(clock, cart)) return { clock, already: true };
-  const step = emptyMotifStep({
-    kind,
-    cart: cart.title,
-    fallback: clock.fallback_cart || null,
-  });
-  step.cart_id = cart.id;
-  if (replaceIndex != null && clock.motif[replaceIndex]) {
-    const motif = clock.motif.slice();
-    motif[replaceIndex] = {
-      ...motif[replaceIndex],
-      kind,
-      when: "sequential",
-      cart: cart.title,
-      cart_id: cart.id,
-      category: null,
-    };
-    return { clock: { ...clock, motif }, already: false };
-  }
-  return { clock: { ...clock, motif: [...clock.motif, step] }, already: false };
 }
 
 export function removeCartFromClock(
@@ -136,24 +67,8 @@ export function setClockPositionCart(
   });
   return {
     ...clock,
-    motif: clock.motif.map((pos, index) =>
-      patch(pos, index, "motif") ? apply(pos) : pos,
-    ),
-    anchors: clock.anchors.map((pos, index) =>
-      patch(pos, index, "anchor") ? apply(pos) : pos,
-    ),
-  };
-}
-
-export function mergeClockPosition(
-  current: ClockPosition | undefined,
-  next: ClockPosition,
-): ClockPosition {
-  if (!current) return next;
-  return {
-    ...current,
-    ...next,
-    id: next.id ?? current.id,
+    motif: clock.motif.map((pos, index) => (patch(pos, index, "motif") ? apply(pos) : pos)),
+    anchors: clock.anchors.map((pos, index) => (patch(pos, index, "anchor") ? apply(pos) : pos)),
   };
 }
 

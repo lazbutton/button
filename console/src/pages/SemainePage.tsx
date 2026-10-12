@@ -1,850 +1,439 @@
-import { Badge, Button, Dialog, Flex, Spinner, TextField } from "@radix-ui/themes";
-import {
-  CalendarDays,
-  Pencil,
-  Plus,
-  Radio,
-  Save,
-  Trash2,
-} from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Button, DropdownMenu, IconButton } from "@radix-ui/themes";
+import { CalendarDays, Clock3, MicVocal, Plus } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import { Link } from "react-router-dom";
+import { ChangeDialog, type ChangeTarget } from "../components/programmation/ChangeDialog";
+import { EmissionDialog, type EmissionTarget } from "../components/programmation/EmissionDialog";
 import { ProtoToast, useProtoToast } from "../components/ProtoToast";
-import { parisParts, parisWeekdayMon0, useParisNow } from "../lib/parisClock";
-import { apiDelete, apiPostJson, apiPut, ApiRequestError } from "../api/client";
-import { daypartRanges, formatDayMinute, splitHoursInRange, weekSlotClass, type DaypartRange } from "../api/clockCss";
-import { clockToMinute, emissionWindowLabel, minuteToClock } from "../api/emissionMeta";
-import { listedAsHost } from "../api/roles";
+import { apiDelete } from "../api/client";
+import { errorText } from "../api/programmationErrors";
+import {
+  clockTints,
+  DAY_LONG,
+  DAY_SHORT,
+  hhmm,
+  nextRun,
+  redundantSlotIds,
+  runAt,
+  spanLabel,
+  weekRuns,
+  type Run,
+} from "../api/programmationView";
 import { SessionGate } from "../api/SessionGate";
-import type {
-  Clock,
-  ClocksResponse,
-  Emission,
-  EmissionsResponse,
-  Slot,
-  SlotsResponse,
-  UsersResponse,
-} from "../api/types";
+import type { ClocksResponse, Emission, EmissionsResponse, SlotsResponse } from "../api/types";
 import { useApiJson } from "../api/useApiJson";
-import { ConfirmDialog } from "../ui/ConfirmDialog";
-import { EmptyState } from "../ui/EmptyState";
-import { FormField, SelectField } from "../ui/FormField";
-import { PageHeader } from "../ui/PageHeader";
-import { Panel } from "../ui/Panel";
-import "../styles/pages/semaine.css";
+import { parisParts, parisWeekdayMon0, useParisNow } from "../lib/parisClock";
+import "../styles/pages/programmation.css";
 
-const DAYS = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"] as const;
-const DAY_NAMES = [
-  "Lundi",
-  "Mardi",
-  "Mercredi",
-  "Jeudi",
-  "Vendredi",
-  "Samedi",
-  "Dimanche",
-] as const;
 const POLL_MS = 10_000;
+const HOURS = [0, 3, 6, 9, 12, 15, 18, 21, 24];
 
-type ClockRun = {
-  day: number;
-  start: number;
-  end: number;
-  clockId: number | null;
-  clock: string;
-  ranges: DaypartRange<Slot>[];
-};
-
-function clockName(slot: Slot): string {
-  return slot.clock?.trim() || "";
+function weekDates(now: Date, today: number): string[] {
+  return DAY_SHORT.map((_, index) => parisParts(new Date(now.getTime() + (index - today) * 86_400_000)).day);
 }
 
-function formatDuration(minutes: number): string {
-  const span = Math.max(0, Math.round(minutes));
-  const hours = Math.floor(span / 60);
-  const mins = span % 60;
-  if (hours && mins) return `${hours} h ${mins} min`;
-  if (hours) return `${hours} h`;
-  return `${mins} min`;
+const pct = (minute: number) => `${(Math.max(0, Math.min(1440, minute)) / 1440) * 100}%`;
+
+/** Where in the day a click landed, to the half hour. */
+function minuteAtClick(event: MouseEvent<HTMLElement>, start: number, end: number): number {
+  const rect = event.currentTarget.getBoundingClientRect();
+  const ratio = Math.max(0, Math.min(1, (event.clientY - rect.top) / Math.max(rect.height, 1)));
+  return Math.round((start + ratio * (end - start)) / 30) * 30;
 }
 
-function weekDates(now: Date): string[] {
-  const today = parisWeekdayMon0(now);
-  return DAYS.map((_, index) => {
-    const shifted = new Date(now.getTime() + (index - today) * 86_400_000);
-    return parisParts(shifted).day;
-  });
-}
-
-function mergeRuns(ranges: DaypartRange<Slot>[]): ClockRun[] {
-  const runs: ClockRun[] = [];
-  for (let day = 0; day < 7; day += 1) {
-    const dayRanges = ranges
-      .filter((range) => range.day === day)
-      .sort((a, b) => a.start - b.start);
-    for (const range of dayRanges) {
-      const last = runs.at(-1);
-      const sameClock =
-        last &&
-        last.day === day &&
-        last.end === range.start &&
-        last.clockId === range.slot.clock_id;
-      if (sameClock && last) {
-        last.end = range.end;
-        last.ranges.push(range);
-      } else {
-        runs.push({
-          day,
-          start: range.start,
-          end: range.end,
-          clockId: range.slot.clock_id,
-          clock: clockName(range.slot) || "Sans heure type",
-          ranges: [range],
-        });
-      }
-    }
-  }
-  return runs;
-}
-
-function nextRun(
-  runs: ClockRun[],
-  today: number,
-  minuteOfDay: number,
-): ClockRun | null {
-  const laterToday = runs
-    .filter((run) => run.day === today && run.start > minuteOfDay)
-    .sort((a, b) => a.start - b.start)[0];
-  if (laterToday) return laterToday;
-  for (let offset = 1; offset <= 7; offset += 1) {
-    const day = (today + offset) % 7;
-    const first = runs.filter((run) => run.day === day).sort((a, b) => a.start - b.start)[0];
-    if (first) return first;
-  }
-  return null;
-}
-
-export function SemainePage({ embedded = false }: { embedded?: boolean }) {
+export function SemainePage() {
   const now = useParisNow();
   const slotsRes = useApiJson<SlotsResponse>("/autodj/slots.json", POLL_MS);
-  const clocksRes = useApiJson<ClocksResponse>("/autodj/clocks.json", POLL_MS);
+  const clocksRes = useApiJson<ClocksResponse>("/autodj/clocks.json", 30_000);
   const emissionsRes = useApiJson<EmissionsResponse>("/antenne/emissions.json", POLL_MS);
-  const { message, show } = useProtoToast();
-  const navigate = useNavigate();
-  const slots = slotsRes.data?.slots ?? [];
-  const clocks = clocksRes.data?.clocks ?? [];
-  const loading = slotsRes.loading || clocksRes.loading;
-  const error = slotsRes.error ?? clocksRes.error ?? emissionsRes.error;
-  const emissions = emissionsRes.data?.emissions ?? [];
-  const ranges = useMemo(() => daypartRanges(slots), [slots]);
-  const runs = useMemo(() => mergeRuns(ranges), [ranges]);
+  const { message, show, dismiss } = useProtoToast();
+  const [change, setChange] = useState<ChangeTarget | null>(null);
+  const [emission, setEmission] = useState<EmissionTarget | null>(null);
+  const slots = useMemo(() => slotsRes.data?.slots ?? [], [slotsRes.data]);
+  const clocks = useMemo(
+    () => [...(clocksRes.data?.clocks ?? [])].sort((a, b) => a.name.localeCompare(b.name, "fr")),
+    [clocksRes.data],
+  );
+  const emissions = useMemo(
+    () => (emissionsRes.data?.emissions ?? []).filter((row) => row.scope !== "session" && row.day_of_week != null),
+    [emissionsRes.data],
+  );
+  const runs = useMemo(() => weekRuns(slots), [slots]);
+  const tints = useMemo(() => clockTints(clocks), [clocks]);
   const parts = parisParts(now);
   const today = parisWeekdayMon0(now);
   const minuteOfDay = parts.hour * 60 + parts.minute;
-  const currentRun =
-    runs.find(
-      (run) => run.day === today && run.start <= minuteOfDay && minuteOfDay < run.end,
-    ) ?? null;
+  const [agendaDay, setAgendaDay] = useState(today);
+  const current = runAt(runs, today, minuteOfDay);
   const upcoming = nextRun(runs, today, minuteOfDay);
-  const dates = weekDates(now);
-  const extras = useMemo(() => runs.flatMap((run) => run.ranges.slice(1)), [runs]);
-  const [edit, setEdit] = useState<ClockRun | null>(null);
-  const [createDay, setCreateDay] = useState<number | null>(null);
-  const [emissionDraft, setEmissionDraft] = useState<{ day: number; row?: Emission } | null>(
-    null,
-  );
+  const dates = weekDates(now, today);
+  const nextShow = emissionsRes.data?.next ?? null;
+  const liveShow = emissionsRes.data?.current ?? null;
+  const usedClocks = clocks.filter((clock) => runs.some((run) => run.clockId === clock.id));
   const mergeLock = useRef(false);
+  const redundant = useMemo(() => redundantSlotIds(slots), [slots]);
+  const showRef = useRef(show);
+  showRef.current = show;
+  const reloadSlots = slotsRes.reload;
 
+  // Two changes in a row to the same heure type say nothing more than one: the page merges them.
   useEffect(() => {
-    if (mergeLock.current || edit || createDay != null || !extras.length) return;
+    if (mergeLock.current || change || emission || !redundant.length) return;
     mergeLock.current = true;
-    const redundant = extras;
     void (async () => {
       try {
-        for (const extra of redundant) {
-          await apiDelete(`/autodj/slots/${extra.slot.id}.json`);
-        }
-        await slotsRes.reload();
-        show(
+        for (const id of redundant) await apiDelete(`/autodj/slots/${id}.json`);
+        await reloadSlots();
+        showRef.current(
           redundant.length === 1
-            ? "Une plage identique a été fusionnée."
-            : `${redundant.length} plages identiques ont été fusionnées.`,
+            ? "Un changement en double a été fusionné."
+            : `${redundant.length} changements en double ont été fusionnés.`,
+          "info",
         );
       } catch (caught) {
-        show(caught instanceof ApiRequestError ? caught.message : "Fusion impossible.");
+        showRef.current(errorText(caught, "Fusion impossible."), "error");
       } finally {
         mergeLock.current = false;
       }
     })();
-  }, [extras, edit, createDay, show, slotsRes.reload]);
+  }, [redundant, change, emission, reloadSlots]);
+
+  const reloadAll = () => {
+    void slotsRes.reload();
+    void clocksRes.reload();
+    void emissionsRes.reload();
+  };
+
+  const openRun = (run: Run, event?: MouseEvent<HTMLElement>) => {
+    if (event && (event.metaKey || event.altKey)) {
+      const minute = minuteAtClick(event, run.start, run.end);
+      if (minute > run.start && minute < run.end) {
+        setChange({ mode: "create", day: run.day, minute, clockId: otherClock(run.clockId) });
+        return;
+      }
+    }
+    setChange({ mode: "edit", run });
+  };
+
+  const otherClock = (clockId: number | null) => clocks.find((clock) => clock.id !== clockId)?.id ?? clockId;
+
+  const dayMenu = (day: number) => (
+    <DropdownMenu.Root>
+      <DropdownMenu.Trigger>
+        <IconButton size="1" variant="ghost" color="gray" aria-label={`Ajouter le ${DAY_LONG[day].toLowerCase()}`}>
+          <Plus size={15} />
+        </IconButton>
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Content align="end" className="prog-menu">
+        <DropdownMenu.Item onSelect={() => setChange({ mode: "create", day })}>
+          <Clock3 size={15} aria-hidden="true" />
+          Changement d'horloge…
+        </DropdownMenu.Item>
+        <DropdownMenu.Item onSelect={() => setEmission({ day })}>
+          <MicVocal size={15} aria-hidden="true" />
+          Émission en direct…
+        </DropdownMenu.Item>
+      </DropdownMenu.Content>
+    </DropdownMenu.Root>
+  );
+
+  const dayEmissions = (day: number) =>
+    emissions.filter((row) => row.day_of_week === day).sort((a, b) => (a.start_minute ?? 0) - (b.start_minute ?? 0));
 
   return (
-    <>
-      <div className={`semaine-page${embedded ? " semaine-page--embedded" : " ui-page"}`}>
-        {embedded ? null : (
-        <PageHeader
-          eyebrow="Programmation Auto-DJ"
-          title="Semaine"
-          description="Un changement d’horloge charge une heure type jusqu’au suivant. Les émissions en direct se superposent : l’heure type continue tant que le harbor n’est pas là. Dès que le harbor est connecté, tout le reste cède."
-          actions={
-            <Badge variant="soft" color="gray">
-              <CalendarDays size={13} aria-hidden="true" />
-              7 jours · {runs.filter((run) => run.day === today).length} plages / jour type
-            </Badge>
-          }
-        />
-        )}
+    <div className="prog-page">
+      <SessionGate
+        loading={slotsRes.loading || clocksRes.loading}
+        error={slotsRes.error ?? clocksRes.error}
+        ready={slotsRes.data != null && clocksRes.data != null}
+        onRetry={reloadAll}
+      >
+        <div className="prog-week">
+          <header className="prog-week-bar">
+            <div className="prog-now" aria-live="polite">
+              <span className="prog-now-item">
+                <span className="prog-now-label">
+                  <i aria-hidden="true" />
+                  {parts.clock.slice(0, 5)}
+                </span>
+                {current ? (
+                  <span>
+                    <strong>{current.clockName || "Sans heure type"}</strong> jusqu'à {hhmm(current.end)}
+                    <span className="prog-now-faint"> · encore {spanLabel(current.end - minuteOfDay)}</span>
+                  </span>
+                ) : (
+                  <span>Aucune heure type ne joue</span>
+                )}
+              </span>
+              {upcoming ? (
+                <span className="prog-now-item">
+                  <span className="prog-now-label">Ensuite</span>
+                  <span>
+                    {upcoming.day === today ? "" : `${DAY_SHORT[upcoming.day]} `}
+                    {hhmm(upcoming.start)} <strong>{upcoming.clockName || "Sans heure type"}</strong>
+                  </span>
+                </span>
+              ) : null}
+              {liveShow ? (
+                <span className="prog-now-item is-live">
+                  <span className="prog-now-label">Direct</span>
+                  <span>
+                    <strong>{liveShow.title}</strong>
+                    {liveShow.state === "waiting" ? " · en attente du studio" : " · à l'antenne"}
+                  </span>
+                </span>
+              ) : nextShow ? (
+                <span className="prog-now-item">
+                  <span className="prog-now-label">Prochain direct</span>
+                  <span>
+                    {nextShow.day_of_week != null ? `${DAY_SHORT[nextShow.day_of_week]} ` : ""}
+                    {nextShow.start_minute != null ? `${hhmm(nextShow.start_minute)} ` : ""}
+                    <strong>{nextShow.title}</strong>
+                  </span>
+                </span>
+              ) : null}
+            </div>
+            <div className="prog-week-actions">
+              <Button size="2" variant="soft" color="gray" onClick={() => setEmission({ day: today })}>
+                <MicVocal className="ui-button-icon" />
+                Émission
+              </Button>
+              <Button
+                size="2"
+                highContrast
+                onClick={() => setChange({ mode: "create", day: today })}
+                disabled={!clocks.length}
+              >
+                <Plus className="ui-button-icon" />
+                Changement d'horloge
+              </Button>
+            </div>
+          </header>
 
-        <SessionGate
-          loading={loading}
-          error={error}
-          ready={slotsRes.data != null || clocksRes.data != null}
-          onRetry={() => {
-            void slotsRes.reload();
-            void clocksRes.reload();
-            void emissionsRes.reload();
-          }}
-        >
           {runs.length ? (
             <>
-              {embedded ? null : (
-              <section
-                className="semaine-live"
-                aria-live="polite"
-                aria-label="Heure type à l’antenne"
-              >
-                <span className="semaine-live-icon" aria-hidden="true">
-                  <Radio size={18} />
-                </span>
-                <div className="semaine-live-now">
-                  <p className="semaine-live-kicker">À l’antenne · {parts.clock.slice(0, 5)}</p>
-                  <h2>{currentRun?.clock ?? "Aucune heure type"}</h2>
-                  <p>
-                    {currentRun
-                      ? `${formatDayMinute(currentRun.start)} → ${formatDayMinute(currentRun.end)} · encore ${formatDuration(currentRun.end - minuteOfDay)}`
-                      : "Hors grille"}
-                  </p>
-                </div>
-                {upcoming ? (
-                  <div className="semaine-live-next">
-                    <p className="semaine-live-kicker">Ensuite</p>
-                    <strong>
-                      {DAY_NAMES[upcoming.day]} {formatDayMinute(upcoming.start)}
-                    </strong>
-                    <p>{upcoming.clock}</p>
+              <div className="prog-week-frame">
+                <div className="prog-week-grid" role="grid" aria-label="Semaine">
+                  <div className="prog-week-corner" aria-hidden="true" />
+                  {DAY_LONG.map((name, day) => (
+                    <div key={name} className={`prog-day-head${day === today ? " is-today" : ""}`} role="columnheader">
+                      <span className="prog-day-name">
+                        {DAY_SHORT[day]} <span className="prog-day-date">{dates[day]}</span>
+                      </span>
+                      {dayMenu(day)}
+                    </div>
+                  ))}
+                  <div className="prog-week-gutter" aria-hidden="true">
+                    {HOURS.map((hour) => (
+                      <span key={hour} style={{ top: pct(hour * 60) }}>
+                        {String(hour).padStart(2, "0")}:00
+                      </span>
+                    ))}
                   </div>
-                ) : null}
-                {emissionsRes.data?.next ? (
-                  <div className="semaine-live-next">
-                    <p className="semaine-live-kicker">Émission en direct</p>
-                    <strong>{emissionsRes.data.next.title}</strong>
-                    <p>
-                      {emissionsRes.data.next.day_of_week != null
-                        ? DAY_NAMES[emissionsRes.data.next.day_of_week]
-                        : ""}{" "}
-                      {emissionsRes.data.next.start_minute != null
-                        ? formatDayMinute(emissionsRes.data.next.start_minute)
-                        : ""}
-                    </p>
-                  </div>
-                ) : null}
-              </section>
-              )}
-
-              <div className="semaine-days" role="list">
-                {DAY_NAMES.map((name, dayIndex) => {
-                  const dayRuns = runs.filter((run) => run.day === dayIndex);
-                  return (
-                    <section
+                  {DAY_LONG.map((name, day) => (
+                    <div
                       key={name}
-                      className={`semaine-day${dayIndex === today ? " is-today" : ""}`}
-                      data-day={dayIndex}
+                      className={`prog-day${day === today ? " is-today" : ""}`}
+                      role="gridcell"
                       aria-label={name}
                     >
-                      <header className="semaine-day-head">
-                        <div>
-                          <span className="semaine-day-name">{embedded ? DAYS[dayIndex] : name}</span>
-                          <span className="semaine-day-date">{dates[dayIndex]}</span>
-                          {dayIndex === today ? (
-                            <span className="semaine-day-today">aujourd’hui</span>
-                          ) : null}
-                        </div>
-                        <div className="semaine-day-actions">
-                          <button
-                            type="button"
-                            className="semaine-day-add"
-                            onClick={() => setCreateDay(dayIndex)}
-                          >
-                            + changement d’horloge
-                          </button>
-                          <button
-                            type="button"
-                            className="semaine-day-add is-live"
-                            onClick={() => setEmissionDraft({ day: dayIndex })}
-                          >
-                            + émission en direct
-                          </button>
-                        </div>
-                      </header>
-                      {dayRuns[0] && dayRuns[0].start !== 0 ? (
-                        <p className="semaine-day-gap">Cette journée ne commence pas à minuit.</p>
-                      ) : null}
-                      <div className="semaine-day-runs">
-                        <div className="semaine-day-track">
-                        {dayRuns.map((run) => {
-                          const live =
-                            dayIndex === today &&
-                            run.start <= minuteOfDay &&
-                            minuteOfDay < run.end;
-                          const hours = Math.max((run.end - run.start) / 60, 1);
-                          const progress = live
-                            ? Math.min(
-                                1,
-                                Math.max(0, (minuteOfDay - run.start) / Math.max(run.end - run.start, 1)),
-                              )
-                            : 0;
+                      {runs
+                        .filter((run) => run.day === day)
+                        .map((run) => {
+                          const live = day === today && run.start <= minuteOfDay && minuteOfDay < run.end;
                           return (
                             <button
                               key={`${run.day}-${run.start}`}
                               type="button"
-                              className={`semaine-run ${weekSlotClass(run.clock)}${
-                                live ? " is-live" : ""
-                              }`}
-                              style={{ flexGrow: hours }}
-                              aria-current={live ? "time" : undefined}
-                              aria-label={`${name} ${formatDayMinute(run.start)} à ${formatDayMinute(run.end)}, ${run.clock}`}
-                              onClick={() => setEdit(run)}
+                              className={`prog-run tint-${run.clockId != null ? (tints.get(run.clockId) ?? "gray") : "gray"}${live ? " is-live" : ""}${run.end - run.start < 90 ? " is-short" : ""}`}
+                              style={{ top: pct(run.start), height: pct(run.end - run.start) }}
+                              aria-label={`${name}, ${hhmm(run.start)} à ${hhmm(run.end)} : ${run.clockName || "sans heure type"}`}
+                              title={`${run.clockName || "Sans heure type"} · ${hhmm(run.start)} → ${hhmm(run.end)} (Alt+clic pour couper ici)`}
+                              onClick={(event) => openRun(run, event)}
                             >
-                              {live ? <span className="semaine-run-live">Direct</span> : null}
-                              <span className="semaine-run-time">
-                                {formatDayMinute(run.start)}
-                                <span aria-hidden="true"> → </span>
-                                {formatDayMinute(run.end)}
+                              <span className="prog-run-name">{run.clockName || "Sans heure type"}</span>
+                              <span className="prog-run-time">
+                                {hhmm(run.start)} → {hhmm(run.end)}
                               </span>
-                              <strong className="semaine-run-clock" title={run.clock}>{run.clock}</strong>
-                              <span className="semaine-run-meta">
-                                {formatDuration(run.end - run.start)}
-                              </span>
-                              {live ? (
-                                <span
-                                  className="semaine-run-progress"
-                                  style={{ width: `${progress * 100}%` }}
-                                />
-                              ) : null}
                             </button>
                           );
                         })}
-                        {emissions
-                          .filter(
-                            (row) => row.scope !== "session" && row.day_of_week === dayIndex,
-                          )
-                          .map((row) => {
-                            const start = row.start_minute ?? 0;
-                            const end = row.end_minute ?? start;
-                            const liveShow =
-                              dayIndex === today && start <= minuteOfDay && minuteOfDay < end;
-                            const top = (start / 1440) * 100;
-                            const height = (Math.max(end - start, 30) / 1440) * 100;
-                            return (
-                              <button
-                                key={`emission-${row.id}`}
-                                type="button"
-                                className={`semaine-emission${liveShow ? " is-live" : ""}`}
-                                style={{ top: `${top}%`, height: `${height}%` }}
-                                aria-label={`Émission en direct ${row.title} ${emissionWindowLabel(row)}`}
-                                onClick={() => setEmissionDraft({ day: dayIndex, row })}
-                              >
-                                <span className="semaine-emission-kicker">Émission en direct</span>
-                                <strong>{row.title}</strong>
-                                <span>
-                                  {emissionWindowLabel(row)}
-                                  {row.artist ? ` · ${row.artist}` : ""}
-                                  {row.host_username ? ` · ${row.host_username}` : ""}
-                                </span>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    </section>
-                  );
-                })}
+                      {dayEmissions(day).map((row) => (
+                        <EmissionBlock
+                          key={row.id}
+                          row={row}
+                          live={liveShow?.id === row.id}
+                          onOpen={() => setEmission({ day, row })}
+                        />
+                      ))}
+                      {day === today ? (
+                        <span className="prog-now-line" style={{ top: pct(minuteOfDay) }} aria-hidden="true" />
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
               </div>
+
+              <div className="prog-agenda">
+                <div className="prog-agenda-days" role="tablist" aria-label="Jour">
+                  {DAY_SHORT.map((name, day) => (
+                    <button
+                      key={name}
+                      type="button"
+                      role="tab"
+                      aria-selected={agendaDay === day}
+                      className={`prog-agenda-day${agendaDay === day ? " is-on" : ""}${day === today ? " is-today" : ""}`}
+                      onClick={() => setAgendaDay(day)}
+                    >
+                      <span>{name}</span>
+                      <small>{dates[day]}</small>
+                    </button>
+                  ))}
+                </div>
+                <ol className="prog-agenda-list" aria-label={DAY_LONG[agendaDay]}>
+                  {[
+                    ...runs
+                      .filter((run) => run.day === agendaDay)
+                      .map((run) => ({ at: run.start, run, show: null as Emission | null })),
+                    ...dayEmissions(agendaDay).map((show) => ({
+                      at: show.start_minute ?? 0,
+                      run: null as Run | null,
+                      show,
+                    })),
+                  ]
+                    .sort((a, b) => a.at - b.at || (a.run ? -1 : 1))
+                    .map((item) =>
+                      item.run ? (
+                        <li key={`run-${item.run.start}`}>
+                          <button
+                            type="button"
+                            className={`prog-agenda-row tint-${item.run.clockId != null ? (tints.get(item.run.clockId) ?? "gray") : "gray"}`}
+                            onClick={() => item.run && setChange({ mode: "edit", run: item.run })}
+                          >
+                            <span className="prog-agenda-time">
+                              {hhmm(item.run.start)} → {hhmm(item.run.end)}
+                            </span>
+                            <strong>{item.run.clockName || "Sans heure type"}</strong>
+                            <small>{spanLabel(item.run.end - item.run.start)}</small>
+                          </button>
+                        </li>
+                      ) : item.show ? (
+                        <li key={`show-${item.show.id}`}>
+                          <button
+                            type="button"
+                            className="prog-agenda-row is-show"
+                            onClick={() => item.show && setEmission({ day: agendaDay, row: item.show })}
+                          >
+                            <span className="prog-agenda-time">
+                              {hhmm(item.show.start_minute ?? 0)} → {hhmm(item.show.end_minute ?? 0)}
+                            </span>
+                            <strong>{item.show.title}</strong>
+                            <small>Émission en direct · {item.show.artist}</small>
+                          </button>
+                        </li>
+                      ) : null,
+                    )}
+                </ol>
+                <div className="prog-agenda-actions">
+                  <Button
+                    size="2"
+                    variant="soft"
+                    color="gray"
+                    onClick={() => setChange({ mode: "create", day: agendaDay })}
+                  >
+                    <Clock3 className="ui-button-icon" />
+                    Changement d'horloge
+                  </Button>
+                  <Button size="2" variant="soft" color="gray" onClick={() => setEmission({ day: agendaDay })}>
+                    <MicVocal className="ui-button-icon" />
+                    Émission
+                  </Button>
+                </div>
+              </div>
+
+              <footer className="prog-week-legend">
+                {usedClocks.map((clock) => (
+                  <Link key={clock.id} to={`/programmation?clock=${clock.id}`} className="prog-legend-item">
+                    <i className={`tint-${tints.get(clock.id) ?? "gray"}`} aria-hidden="true" />
+                    {clock.name}
+                  </Link>
+                ))}
+                {emissions.length ? (
+                  <span className="prog-legend-item">
+                    <i className="is-show" aria-hidden="true" />
+                    Émission en direct
+                  </span>
+                ) : null}
+                <span className="prog-legend-hint">Clic : modifier · Alt+clic : couper la plage à cette heure</span>
+              </footer>
             </>
           ) : (
-            <Panel className="semaine-empty-panel">
-              <EmptyState
-                icon={CalendarDays}
-                title="Aucune plage programmée"
-                description="Il faut un changement d’horloge à minuit chaque jour, puis éventuellement 10h et 18h."
-                actionLabel="Ouvrir les heures types"
-                onAction={() => navigate("/programmation")}
-              />
-            </Panel>
+            <div className="prog-first">
+              <span className="prog-first-icon" aria-hidden="true">
+                <CalendarDays size={22} />
+              </span>
+              <h2>La semaine est vide</h2>
+              <p>
+                Chaque journée commence à minuit par une heure type. Pose un premier changement d'horloge à 00:00 pour
+                tous les jours.
+              </p>
+              <Button
+                size="2"
+                highContrast
+                disabled={!clocks.length}
+                onClick={() => setChange({ mode: "create", day: today, minute: 0 })}
+              >
+                <Plus className="ui-button-icon" />
+                Programmer minuit
+              </Button>
+            </div>
           )}
-        </SessionGate>
-      </div>
+        </div>
+      </SessionGate>
 
-      {edit ? (
-        <RunDialog
-          run={edit}
-          clocks={clocks}
-          onClose={() => setEdit(null)}
-          onDone={async (text) => {
-            await slotsRes.reload();
-            setEdit(null);
-            show(text);
-          }}
-          onError={show}
-        />
-      ) : null}
-
-      {createDay != null ? (
-        <CreateDepartureDialog
-          day={createDay}
-          clocks={clocks}
-          takenMinutes={ranges.filter((range) => range.day === createDay).map((range) => range.start)}
-          onClose={() => setCreateDay(null)}
-          onDone={async (text) => {
-            await slotsRes.reload();
-            setCreateDay(null);
-            show(text);
-          }}
-          onError={show}
-        />
-      ) : null}
-      {emissionDraft ? (
+      <ChangeDialog
+        target={change}
+        clocks={clocks}
+        slots={slots}
+        tints={tints}
+        onClose={() => setChange(null)}
+        onSplit={(day, minute, clockId) => setChange({ mode: "create", day, minute, clockId: otherClock(clockId) })}
+        onDone={async (text, failed) => {
+          await slotsRes.reload();
+          show(text, failed ? "error" : "success");
+        }}
+      />
+      {emission ? (
         <EmissionDialog
-          day={emissionDraft.day}
-          row={emissionDraft.row}
-          onClose={() => setEmissionDraft(null)}
+          target={emission}
+          onClose={() => setEmission(null)}
           onDone={async (text) => {
             await emissionsRes.reload();
-            setEmissionDraft(null);
-            show(text);
+            show(text, "success");
           }}
-          onError={show}
         />
       ) : null}
-      <ProtoToast message={message} />
-    </>
+      <ProtoToast message={message} onDismiss={dismiss} />
+    </div>
   );
 }
 
-function RunDialog({
-  run,
-  clocks,
-  onClose,
-  onDone,
-  onError,
-}: {
-  run: ClockRun;
-  clocks: Clock[];
-  onClose: () => void;
-  onDone: (message: string) => Promise<void>;
-  onError: (text: string) => void;
-}) {
-  const slot = run.ranges[0].slot;
-  const midnight = slot.minute === 0;
-  const [clockId, setClockId] = useState(String(slot.clock_id ?? clocks[0]?.id ?? ""));
-  const [splitHour, setSplitHour] = useState("");
-  const [busyAction, setBusyAction] = useState<"save" | "split" | "delete" | null>(null);
-  const hours = useMemo(() => splitHoursInRange(run.start, run.end), [run.end, run.start]);
-  const busy = busyAction !== null;
-
-  const save = async () => {
-    setBusyAction("save");
-    try {
-      const selected = clocks.find((clock) => String(clock.id) === clockId);
-      await apiPut(`/autodj/slots/${slot.id}.json`, {
-        title: selected?.name || slot.title,
-        clock_id: clockId ? Number(clockId) : null,
-        color: slot.color || "#7a9e6a",
-      });
-      await onDone("Heure type de la plage enregistrée");
-    } catch (caught) {
-      onError(caught instanceof ApiRequestError ? caught.message : "Enregistrement impossible.");
-    } finally {
-      setBusyAction(null);
-    }
-  };
-
-  const split = async () => {
-    if (!splitHour) return;
-    setBusyAction("split");
-    try {
-      const selected = clocks.find((clock) => String(clock.id) === clockId);
-      await apiPostJson("/autodj/slots.json", {
-        title: selected?.name || slot.title,
-        day_of_week: run.day,
-        minute: Number(splitHour) * 60,
-        clock_id: clockId ? Number(clockId) : null,
-        color: slot.color || "#7a9e6a",
-      });
-      await onDone(`Nouveau changement d’horloge à ${String(splitHour).padStart(2, "0")}:00`);
-    } catch (caught) {
-      onError(caught instanceof ApiRequestError ? caught.message : "Création impossible.");
-    } finally {
-      setBusyAction(null);
-    }
-  };
-
-  const remove = async () => {
-    if (midnight) return;
-    setBusyAction("delete");
-    try {
-      await apiDelete(`/autodj/slots/${slot.id}.json`);
-      await onDone("Changement d’horloge supprimé");
-    } catch (caught) {
-      onError(caught instanceof ApiRequestError ? caught.message : "Suppression impossible.");
-    } finally {
-      setBusyAction(null);
-    }
-  };
-
+function EmissionBlock({ row, live, onOpen }: { row: Emission; live: boolean; onOpen: () => void }) {
+  const start = row.start_minute ?? 0;
+  const end = Math.max(row.end_minute ?? start, start + 30);
   return (
-    <Dialog.Root open onOpenChange={(open) => !open && !busy && onClose()}>
-      <Dialog.Content maxWidth="32rem" className="semaine-dialog">
-        <Dialog.Title className="semaine-dialog-title">
-          <span className="semaine-dialog-title-icon" aria-hidden="true">
-            <Pencil size={16} />
-          </span>
-          {DAY_NAMES[run.day]} · {formatDayMinute(run.start)} → {formatDayMinute(run.end)}
-        </Dialog.Title>
-        <Dialog.Description size="2" className="semaine-dialog-description">
-          À {formatDayMinute(run.start)}, <strong>{run.clock}</strong> joue jusqu’au changement suivant.
-        </Dialog.Description>
-
-        <div className="semaine-dialog-fields">
-          <SelectField
-            label="Heure type jusqu’au prochain changement"
-            value={clockId}
-            options={clocks.map((clock) => ({
-              value: String(clock.id),
-              label: clock.name,
-            }))}
-            onValueChange={setClockId}
-            hint="Deux plages identiques qui se suivent fusionnent toutes seules."
-            placeholder="Choisir une heure type"
-            disabled={busy}
-          />
-
-          {hours.length ? (
-            <SelectField
-              label="Ajouter un changement d’horloge à"
-              value={splitHour}
-              options={hours.map((hour) => ({
-                value: String(hour),
-                label: `${String(hour).padStart(2, "0")}:00`,
-              }))}
-              onValueChange={setSplitHour}
-              hint="Utile seulement pour changer d’heure type en cours de journée."
-              placeholder="Heure pleine"
-              disabled={busy}
-            />
-          ) : null}
-        </div>
-
-        <div className="semaine-dialog-actions">
-          {!midnight ? (
-            <ConfirmDialog
-              trigger={
-                <Button color="red" variant="soft" disabled={busy}>
-                  <Trash2 className="ui-button-icon" aria-hidden="true" />
-                  Supprimer le changement {formatDayMinute(run.start)}
-                </Button>
-              }
-              title="Supprimer ce changement d’horloge ?"
-              description={
-                <>
-                  La plage précédente se prolongera jusqu’à {formatDayMinute(run.end)}.
-                </>
-              }
-              confirmLabel="Supprimer"
-              busy={busyAction === "delete"}
-              onConfirm={remove}
-            />
-          ) : (
-            <span className="semaine-dialog-locked">Changement de minuit obligatoire</span>
-          )}
-
-          <Flex gap="2" justify="end" wrap="wrap">
-            <Button variant="soft" color="gray" disabled={busy} onClick={onClose}>
-              Fermer
-            </Button>
-            {hours.length ? (
-              <Button variant="soft" disabled={busy || !splitHour} onClick={() => void split()}>
-                {busyAction === "split" ? <Spinner size="1" /> : <Plus className="ui-button-icon" />}
-                {splitHour ? `Changement ${String(splitHour).padStart(2, "0")}:00` : "Ajouter"}
-              </Button>
-            ) : null}
-            <Button disabled={busy} onClick={() => void save()}>
-              {busyAction === "save" ? (
-                <Spinner size="1" />
-              ) : (
-                <Save className="ui-button-icon" aria-hidden="true" />
-              )}
-              Enregistrer l’heure type
-            </Button>
-          </Flex>
-        </div>
-      </Dialog.Content>
-    </Dialog.Root>
-  );
-}
-
-function CreateDepartureDialog({
-  day,
-  clocks,
-  takenMinutes,
-  onClose,
-  onDone,
-  onError,
-}: {
-  day: number;
-  clocks: Clock[];
-  takenMinutes: number[];
-  onClose: () => void;
-  onDone: (message: string) => Promise<void>;
-  onError: (text: string) => void;
-}) {
-  const taken = new Set(takenMinutes);
-  const hours = Array.from({ length: 23 }, (_, index) => index + 1).filter(
-    (hour) => !taken.has(hour * 60),
-  );
-  const defaultClock = clocks[0]?.id;
-  const [hour, setHour] = useState(hours.includes(10) ? "10" : String(hours[0] ?? ""));
-  const [clockId, setClockId] = useState(String(defaultClock ?? ""));
-  const [busy, setBusy] = useState(false);
-
-  const submit = async () => {
-    if (!hour) return;
-    setBusy(true);
-    try {
-      const selected = clocks.find((clock) => String(clock.id) === clockId);
-      await apiPostJson("/autodj/slots.json", {
-        title: selected?.name || DAY_NAMES[day],
-        day_of_week: day,
-        minute: Number(hour) * 60,
-        clock_id: clockId ? Number(clockId) : null,
-        color: "#7a9e6a",
-      });
-      await onDone(`Changement d’horloge ajouté ${DAY_NAMES[day]} ${String(hour).padStart(2, "0")}:00`);
-    } catch (caught) {
-      onError(caught instanceof ApiRequestError ? caught.message : "Création impossible.");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Dialog.Root open onOpenChange={(open) => !open && !busy && onClose()}>
-      <Dialog.Content maxWidth="28rem" className="semaine-dialog">
-        <Dialog.Title>Nouveau changement d’horloge · {DAY_NAMES[day]}</Dialog.Title>
-        <Dialog.Description size="2" className="semaine-dialog-description">
-          L’heure type choisie sera jouée à partir de cette heure jusqu’au changement suivant.
-        </Dialog.Description>
-        <div className="semaine-dialog-fields">
-          <SelectField
-            label="Heure"
-            value={hour}
-            options={hours.map((item) => ({
-              value: String(item),
-              label: `${String(item).padStart(2, "0")}:00`,
-            }))}
-            onValueChange={setHour}
-            disabled={busy || !hours.length}
-            placeholder="Choisir une heure"
-          />
-          <SelectField
-            label="Heure type"
-            value={clockId}
-            options={clocks.map((clock) => ({
-              value: String(clock.id),
-              label: clock.name,
-            }))}
-            onValueChange={setClockId}
-            disabled={busy}
-            placeholder="Choisir une heure type"
-          />
-        </div>
-        <Flex gap="2" justify="end" mt="4">
-          <Button variant="soft" color="gray" disabled={busy} onClick={onClose}>
-            Annuler
-          </Button>
-          <Button disabled={busy || !hour} onClick={() => void submit()}>
-            {busy ? <Spinner size="1" /> : <Plus className="ui-button-icon" />}
-            Ajouter
-          </Button>
-        </Flex>
-      </Dialog.Content>
-    </Dialog.Root>
-  );
-}
-
-function EmissionDialog({
-  day,
-  row,
-  onClose,
-  onDone,
-  onError,
-}: {
-  day: number;
-  row?: Emission;
-  onClose: () => void;
-  onDone: (message: string) => Promise<void>;
-  onError: (text: string) => void;
-}) {
-  const [title, setTitle] = useState(row?.title ?? "");
-  const [artist, setArtist] = useState(row?.artist ?? "");
-  const [host, setHost] = useState(row?.host_username?.trim() || "none");
-  const [start, setStart] = useState(minuteToClock(row?.start_minute ?? 20 * 60));
-  const [end, setEnd] = useState(minuteToClock(row?.end_minute ?? 22 * 60));
-  const [busy, setBusy] = useState<"save" | "delete" | null>(null);
-  const usersRes = useApiJson<UsersResponse>("/users.json");
-  const hostOptions = useMemo(() => {
-    const names = new Set<string>();
-    for (const user of usersRes.data?.users ?? []) {
-      if (listedAsHost(user.permissions)) names.add(user.username);
-    }
-    if (host !== "none") names.add(host);
-    return [
-      { value: "none", label: "Pas encore nominatif" },
-      ...[...names].sort((a, b) => a.localeCompare(b, "fr")).map((name) => ({
-        value: name,
-        label: name,
-      })),
-    ];
-  }, [host, usersRes.data]);
-
-  const save = async () => {
-    const startMinute = clockToMinute(start);
-    const endMinute = clockToMinute(end);
-    if (startMinute == null || endMinute == null) {
-      onError("Heure de début ou de fin invalide.");
-      return;
-    }
-    setBusy("save");
-    try {
-      const body = {
-        scope: "weekly" as const,
-        title: title.trim(),
-        artist: artist.trim(),
-        day_of_week: day,
-        start_minute: startMinute,
-        end_minute: endMinute,
-        host_username: host === "none" ? "" : host,
-        version: row?.version,
-      };
-      if (row) {
-        await apiPut(`/antenne/emissions/${row.id}.json`, body);
-        await onDone("Émission en direct enregistrée");
-      } else {
-        await apiPostJson("/antenne/emissions.json", body);
-        await onDone("Émission en direct ajoutée");
-      }
-    } catch (caught) {
-      onError(caught instanceof ApiRequestError ? caught.message : "Enregistrement impossible.");
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const remove = async () => {
-    if (!row) return;
-    setBusy("delete");
-    try {
-      await apiDelete(`/antenne/emissions/${row.id}.json`);
-      await onDone("Émission en direct retirée");
-    } catch (caught) {
-      onError(caught instanceof ApiRequestError ? caught.message : "Suppression impossible.");
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  return (
-    <Dialog.Root open onOpenChange={(open) => !open && !busy && onClose()}>
-      <Dialog.Content maxWidth="28rem" className="semaine-dialog">
-        <Dialog.Title>{row ? "Émission en direct" : "Nouvelle émission en direct"} · {DAY_NAMES[day]}</Dialog.Title>
-        <Dialog.Description size="2" className="semaine-dialog-description">
-          L’heure type continue tant que personne n’est connecté. Dès que le harbor est là,
-          le titre devient le nom de l’émission et l’artiste la phrase.
-        </Dialog.Description>
-        <div className="semaine-dialog-fields">
-          <FormField label="Nom de l’émission" htmlFor="emission-title">
-            <TextField.Root
-              id="emission-title"
-              value={title}
-              onChange={(event) => setTitle(event.target.value)}
-              placeholder="Hop Pop Hop"
-              disabled={busy != null}
-            />
-          </FormField>
-          <SelectField
-            label="Identifiant du plateau"
-            value={host}
-            options={hostOptions}
-            onValueChange={setHost}
-            disabled={busy != null}
-            hint="Tant qu’aucune émission ne nomme quelqu’un, tout compte stream peut se brancher. Dès qu’une émission a un identifiant, chacun ne passe que sur son créneau. Un admin passe toujours."
-          />
-          <FormField label="Phrase artiste" htmlFor="emission-artist">
-            <TextField.Root
-              id="emission-artist"
-              value={artist}
-              onChange={(event) => setArtist(event.target.value)}
-              placeholder="avec Marie et Jean"
-              disabled={busy != null}
-            />
-          </FormField>
-          <FormField label="Début" htmlFor="emission-start">
-            <TextField.Root
-              id="emission-start"
-              type="time"
-              value={start}
-              onChange={(event) => setStart(event.target.value)}
-              disabled={busy != null}
-            />
-          </FormField>
-          <FormField label="Fin" htmlFor="emission-end" hint="24:00 accepté pour minuit.">
-            <TextField.Root
-              id="emission-end"
-              type="time"
-              value={end === "24:00" ? "23:59" : end}
-              onChange={(event) => setEnd(event.target.value)}
-              disabled={busy != null}
-            />
-          </FormField>
-        </div>
-        <div className="semaine-dialog-actions">
-          {row ? (
-            <ConfirmDialog
-              trigger={
-                <Button color="red" variant="soft" disabled={busy != null}>
-                  <Trash2 className="ui-button-icon" />
-                  Retirer
-                </Button>
-              }
-              title="Retirer cette émission en direct ?"
-              description="L’heure type de la plage n’est pas modifiée."
-              confirmLabel="Retirer"
-              busy={busy === "delete"}
-              onConfirm={remove}
-            />
-          ) : (
-            <span />
-          )}
-          <Flex gap="2" justify="end">
-            <Button variant="soft" color="gray" disabled={busy != null} onClick={onClose}>
-              Annuler
-            </Button>
-            <Button disabled={busy != null || !title.trim() || !artist.trim()} onClick={() => void save()}>
-              {busy === "save" ? <Spinner size="1" /> : <Save className="ui-button-icon" />}
-              Enregistrer
-            </Button>
-          </Flex>
-        </div>
-      </Dialog.Content>
-    </Dialog.Root>
+    <button
+      type="button"
+      className={`prog-show${live ? " is-live" : ""}`}
+      style={{ top: pct(start), height: pct(end - start) }}
+      aria-label={`Émission en direct ${row.title}, ${hhmm(start)} à ${hhmm(row.end_minute ?? start)}`}
+      title={`${row.title} · ${row.artist}${row.host_username ? ` · ${row.host_username}` : ""}`}
+      onClick={onOpen}
+    >
+      <span className="prog-run-name">{row.title}</span>
+      <span className="prog-run-time">
+        {hhmm(start)} → {hhmm(row.end_minute ?? start)}
+      </span>
+    </button>
   );
 }
