@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import type { Page, Route } from "@playwright/test";
 import { DEFAULT_SOURCE_URL, type Brand } from "../src/lib/brand.ts";
 import { monitorSources, sourceById } from "../src/lib/monitorSource.ts";
 import { antenne, expect, seConnecter, tenirLAntenne, test } from "./banc.ts";
@@ -127,6 +127,60 @@ test("un flux qui s’arrête : le casque réessaie seul, sans marteler, et le d
   // Sans marteler : chaque reprise ratée allonge l'attente, jusqu'à 3 s. En
   // 5 s, une poignée de connexions, pas vingt-cinq.
   expect(await enCinqSecondes(page, connexions)).toBeLessThanOrEqual(8);
+});
+
+test("un flux qui ne répond jamais : le casque cesse d’attendre, et le dit", async ({ page }) => {
+  // Le serveur accepte la connexion sans jamais répondre : une machine
+  // injoignable à mi-chemin, un proxy qui attend son amont. L'horloge de la
+  // page saute les 8 s que le casque laisse à chaque demande.
+  await page.clock.install();
+  const flux = await adresseDuFlux(page);
+  const enAttente: Route[] = [];
+  await page.route(versLeFlux(flux), (route) => {
+    enAttente.push(route);
+  });
+
+  await seConnecter(page, "animateur");
+  await casque(page).click();
+  // La demande attend sa réponse, et le bouton ne dit encore rien…
+  await expect.poll(() => enAttente.length).toBe(1);
+  await expect(casque(page)).not.toHaveAccessibleName(/ne répond pas/);
+  // … puis, sans réponse en 8 s, le casque l'abandonne, et le dit.
+  await page.clock.fastForward(8_000);
+  await expect(casque(page)).toHaveAccessibleName("Arrêter l’écoute. Le flux ne répond pas : le casque réessaie seul");
+  // Il demande ensuite le flux en MSE, puis par l'élément audio, qui
+  // n'attendent pas plus : l'essai échoue, et le casque réessaie seul, après le
+  // backoff.
+  for (const demandes of [2, 3]) {
+    await expect.poll(() => enAttente.length).toBe(demandes);
+    await page.clock.fastForward(8_000);
+  }
+  const chemins = () => enAttente.map((route) => route.request().resourceType());
+  await expect.poll(chemins).toEqual(["fetch", "fetch", "media", "fetch"]);
+});
+
+test("l’élément audio sans réponse : le casque le dit aussi", async ({ page }) => {
+  // Le PCM et le MSE échouent tout de suite : le casque passe à l'élément
+  // audio, dont la demande reste sans réponse. L'élément ne signale même pas
+  // qu'il attend (waiting), ce que guette sa garde de calage : seule la borne
+  // de play() peut finir l'essai.
+  await page.clock.install();
+  await page.addInitScript(() => document.addEventListener("waiting", (event) => event.stopPropagation(), true));
+  const flux = await adresseDuFlux(page);
+  const parLElement: Route[] = [];
+  await page.route(versLeFlux(flux), (route) => {
+    if (route.request().resourceType() === "media") parLElement.push(route);
+    else void route.abort();
+  });
+
+  await seConnecter(page, "animateur");
+  await casque(page).click();
+  await expect.poll(() => parLElement.length).toBe(1);
+  await expect(casque(page)).not.toHaveAccessibleName(/ne répond pas/);
+  // L'élément n'attend pas plus qu'une demande du flux : l'essai échoue, et le
+  // bouton le dit.
+  await page.clock.fastForward(8_000);
+  await expect(casque(page)).toHaveAccessibleName("Arrêter l’écoute. Le flux ne répond pas : le casque réessaie seul");
 });
 
 test("l’admin choisit la source de son casque, et la retrouve", async ({ page }) => {

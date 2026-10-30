@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
-import { readStream } from "../api/monitorStream";
+import { answerWithin, readStream } from "../api/monitorStream";
 import {
   MonitorPcmSink,
   PcmAggregator,
@@ -283,6 +283,28 @@ export function useMonitor(
     [scheduleReconnect],
   );
 
+  // Demande le flux. Un serveur peut accepter la connexion sans jamais
+  // répondre : sans en-têtes en STALL_MS, la demande est abandonnée, le bouton
+  // dit que le flux ne répond pas, et l'essai passe au chemin suivant.
+  const requestStream = useCallback(async (url: string, gen: number) => {
+    const abort = new AbortController();
+    abortRef.current = abort;
+    const res = await answerWithin(
+      fetch(url, { mode: "cors", cache: "no-store", signal: abort.signal }),
+      STALL_MS,
+      () => {
+        abort.abort();
+        if (playGen.current === gen) setStreamDown(true);
+      },
+    );
+    if (playGen.current !== gen) {
+      abort.abort();
+      throw new Error("stale");
+    }
+    if (!res.ok || !res.body) throw new Error("fetch");
+    return { body: res.body, abort };
+  }, []);
+
   const startWav = useCallback(
     async (url: string, gen: number) => {
       ensureGraph();
@@ -294,21 +316,10 @@ export function useMonitor(
       pcmSinkRef.current = sink;
       const parser = new WavPcmParser();
 
-      const abort = new AbortController();
-      abortRef.current = abort;
-      const res = await fetch(url, {
-        mode: "cors",
-        cache: "no-store",
-        signal: abort.signal,
-      });
-      if (playGen.current !== gen) {
-        abort.abort();
-        throw new Error("stale");
-      }
-      if (!res.ok || !res.body) throw new Error("fetch");
-      void pumpPcm(res.body.getReader(), abort, gen, sink, (chunk) => parser.push(chunk));
+      const { body, abort } = await requestStream(url, gen);
+      void pumpPcm(body.getReader(), abort, gen, sink, (chunk) => parser.push(chunk));
     },
-    [ensureGraph, pumpPcm],
+    [ensureGraph, pumpPcm, requestStream],
   );
 
   const startPcm = useCallback(
@@ -333,20 +344,9 @@ export function useMonitor(
       const sink = new MonitorPcmSink(ctx, tap, timing.keepS, timing.maxS, timing.startS);
       pcmSinkRef.current = sink;
 
-      const abort = new AbortController();
-      abortRef.current = abort;
-      const res = await fetch(url, {
-        mode: "cors",
-        cache: "no-store",
-        signal: abort.signal,
-      });
-      if (playGen.current !== gen) {
-        abort.abort();
-        throw new Error("stale");
-      }
-      if (!res.ok || !res.body) throw new Error("fetch");
+      const { body, abort } = await requestStream(url, gen);
       let synced = false;
-      void pumpPcm(res.body.getReader(), abort, gen, sink, (value) => {
+      void pumpPcm(body.getReader(), abort, gen, sink, (value) => {
         let chunk = value;
         if (!synced) {
           chunk = skipId3(chunk);
@@ -358,7 +358,7 @@ export function useMonitor(
         return decoder.decode(chunk);
       });
     },
-    [ensureGraph, pumpPcm, startWav],
+    [ensureGraph, pumpPcm, requestStream, startWav],
   );
 
   const startMse = useCallback(
@@ -368,18 +368,7 @@ export function useMonitor(
       if (!window.MediaSource || !MediaSource.isTypeSupported("audio/mpeg")) {
         throw new Error("mse");
       }
-      const abort = new AbortController();
-      abortRef.current = abort;
-      const res = await fetch(url, {
-        mode: "cors",
-        cache: "no-store",
-        signal: abort.signal,
-      });
-      if (playGen.current !== gen) {
-        abort.abort();
-        throw new Error("stale");
-      }
-      if (!res.ok || !res.body) throw new Error("fetch");
+      const { body } = await requestStream(url, gen);
 
       const mediaSource = new MediaSource();
       const obj = URL.createObjectURL(mediaSource);
@@ -394,7 +383,7 @@ export function useMonitor(
       const timing = pcmTimingForStream(url);
       const sb = mediaSource.addSourceBuffer("audio/mpeg");
       sb.mode = "sequence";
-      const reader = res.body.getReader();
+      const reader = body.getReader();
       let dropping = DROP_MS > 0;
       let tFirst = 0;
       let synced = false;
@@ -452,7 +441,7 @@ export function useMonitor(
         }
       })();
     },
-    [scheduleReconnect],
+    [requestStream, scheduleReconnect],
   );
 
   const play = useCallback(async () => {
@@ -464,6 +453,8 @@ export function useMonitor(
     playingRef.current = true;
     ensureGraph();
     applyMute(mutedRef.current);
+    // Sans geste de l'utilisateur, cette attente dure jusqu'à son premier clic.
+    // Elle ne compte pas dans celle du flux, bornée à chaque demande.
     if (ctxRef.current?.state === "suspended") {
       await ctxRef.current.resume().catch(() => undefined);
     }
@@ -513,14 +504,16 @@ export function useMonitor(
       if (ctxRef.current?.state === "suspended") {
         await ctxRef.current.resume().catch(() => undefined);
       }
+      // L'élément n'attend pas sa réponse plus longtemps qu'une demande du
+      // flux : sans elle, l'essai échoue, et le bouton le dit.
       if (usedElement) {
         try {
-          await audio.play();
+          await answerWithin(audio.play(), STALL_MS);
         } catch (err) {
           if (!(err instanceof DOMException) || err.name !== "NotAllowedError") throw err;
           audio.muted = true;
           applyMute(true);
-          await audio.play();
+          await answerWithin(audio.play(), STALL_MS);
         }
       }
       if (gen !== playGen.current) return;

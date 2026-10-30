@@ -56,3 +56,19 @@ export async function readStream(
   }
   return { closed: false, steady };
 }
+
+/**
+ * Attend la réponse du serveur du flux, `ms` au plus. Un serveur peut accepter
+ * la connexion sans jamais répondre : une machine injoignable à mi-chemin, un
+ * proxy qui attend son amont. Passé ce délai, `giveUp` abandonne la demande,
+ * et l'attente échoue. `readStream` prend le relais une fois la réponse là.
+ */
+export function answerWithin<T>(pending: Promise<T>, ms: number, giveUp?: () => void): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      giveUp?.();
+      reject(new Error("timeout"));
+    }, ms);
+    pending.finally(() => clearTimeout(timer)).then(resolve, reject);
+  });
+}
