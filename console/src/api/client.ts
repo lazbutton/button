@@ -1,3 +1,4 @@
+import { isEngineUnreachable, isUnreachableStatus } from "./engineUnreachable";
 import { apiCacheClear, apiSharedGet } from "./jsonCache";
 import { isUnknownRoute, UNKNOWN_ROUTE_MESSAGE } from "./unknownRoute";
 
@@ -48,6 +49,7 @@ function raiseForStatus(response: Response, body?: { error?: string }): never {
     throw new ApiRequestError(405, "Cette action n’est pas disponible. Recharge la page.");
   }
   const detail = body?.error?.trim();
+  if (isEngineUnreachable(response.status, detail)) throw new ApiUnavailableError();
   if (isUnknownRoute(response.status, detail)) throw new ApiRequestError(404, UNKNOWN_ROUTE_MESSAGE);
   if (detail) throw new ApiRequestError(response.status, detail);
   throw new ApiUnavailableError();
@@ -265,6 +267,8 @@ export async function apiLogin(username: string, password: string): Promise<void
     apiCacheClear();
     return;
   }
+  // La page de nginx devant un moteur arrêté n'est pas un mot de passe refusé.
+  if (isUnreachableStatus(response.status)) throw new ApiUnavailableError();
   throw new ApiAuthError();
 }
 
