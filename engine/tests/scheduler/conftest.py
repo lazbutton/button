@@ -3,9 +3,11 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import pytest
+from quart import Quart
 from quart.testing import (
     # avoid quart.typing.TestClientProtocol because pytest considers it as a test class
     QuartClient,
+    TestApp,
 )
 from sqlalchemy.orm import Session as ormSession
 
@@ -15,6 +17,27 @@ from radiotomate.enums import CartMode, ScheduleMode
 from radiotomate.models import Cart, Sound, User
 from radiotomate.quart import CustomQuart
 from radiotomate.scheduler_app import app_factory
+
+
+class PatientTestApp(TestApp):
+    """
+    Quart's ``TestApp`` gives the whole lifespan shutdown 6 s, while the app itself
+    grants its background tasks ``BACKGROUND_TASK_SHUTDOWN_TIMEOUT`` (5 s) before
+    cancelling them. A one-shot task still running at teardown (e.g. a clock tick
+    retrying an unreachable playout) on a loaded CI runner was enough to raise
+    ``TimeoutError``. Keep Quart's grace, but leave the harness room on top of it.
+    """
+
+    __test__ = False  # not a test class, despite its name
+
+    def __init__(self, app: Quart) -> None:
+        grace = app.config["BACKGROUND_TASK_SHUTDOWN_TIMEOUT"]
+        super().__init__(app, shutdown_timeout=grace + 10)
+
+
+@pytest.fixture(autouse=True)
+def patient_test_app(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(Quart, "test_app_class", PatientTestApp)
 
 
 @pytest.fixture(scope="session")
