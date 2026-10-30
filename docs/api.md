@@ -31,6 +31,8 @@ Moteur arrêté, nginx répond lui-même 502, ou 504 si le moteur tarde, avec sa
 
 La console abandonne une lecture JSON (`GET`) restée sans réponse au bout de 10 s, corps compris, et la traite comme un moteur injoignable (`console/src/api/readDeadline.ts`). nginx, lui, attend le moteur une heure. Une route que la console lit répond donc en moins de 10 s : le moteur attend lui-même le scheduler jusqu'à 8 s, sur `/antenne/state.json`.
 
+Un geste (`POST`, `PUT`, `PATCH` ou `DELETE`) a 10 s pour répondre, corps compris, et lier un dossier de la banque à un bac 60 s : le moteur y lit jusqu'à 2000 fichiers (`console/src/api/sendDeadline.ts`). Le jeton CSRF qu'un geste demande d'abord se lit comme une lecture, avec son délai. Passé ce délai, le moteur a peut-être fait le geste : la console l'abandonne et dit « L’automate ne répond pas. Le geste a peut-être été fait : vérifie avant de réessayer. » Un dépôt de sons en multipart (`POST /carts/<id>/sounds.json`) dure le temps de l'envoi : il n'est abandonné que si aucun octet ne part pendant 30 s, ou sans réponse 30 s après le dernier. Une route qui reçoit un geste répond donc en moins de 10 s : pour un geste, le moteur attend lui-même le scheduler 5 s au plus.
+
 La forme exacte des objets est dans `console/src/api/types.ts`, et côté moteur dans les fonctions `*_payload` des services. Cette page donne les routes, les droits et les champs qui comptent.
 
 ### Santé

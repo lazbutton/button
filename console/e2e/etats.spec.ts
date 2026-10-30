@@ -1,5 +1,6 @@
 import type { Page, Route } from "@playwright/test";
 import { READ_DEADLINE_MS } from "../src/api/readDeadline.ts";
+import { SEND_DEADLINE_MS } from "../src/api/sendDeadline.ts";
 import {
   alerte,
   antenne,
@@ -18,9 +19,9 @@ import { engineRoutes } from "./routes.ts";
 // Ce que la console dit quand le moteur répond mal. Chaque cas est simulé par
 // page.route devant le vrai moteur de démo : session expirée (401), droit
 // manquant (403), moteur injoignable (connexion refusée), moteur muet (une
-// lecture qui ne reçoit jamais de réponse), moteur arrêté derrière nginx (502
-// en HTML), envoi trop lourd pour nginx (413 en HTML) et route absente,
-// c'est-à-dire un moteur plus ancien que la console (404).
+// lecture ou un geste qui ne reçoit jamais de réponse), moteur arrêté derrière
+// nginx (502 en HTML), envoi trop lourd pour nginx (413 en HTML) et route
+// absente, c'est-à-dire un moteur plus ancien que la console (404).
 
 // Ce que le relais envoie au moteur : le reste vient de la console.
 const MOTEUR = new RegExp(`^/(${engineRoutes})`);
@@ -131,6 +132,19 @@ test("moteur arrêté derrière nginx pendant un geste : la console le dit, sans
   await suivant(page).click();
   await expect(alerte(page, "L’automate ne répond pas. Réessaie dans un instant.")).toBeVisible();
   await expect(page.getByText(/Bad Gateway/)).toHaveCount(0);
+});
+
+test("moteur muet pendant un geste : la console dit que le geste a peut-être été fait", async ({ page }) => {
+  await seConnecter(page, "animateur");
+  // Le moteur reçoit « Suivant », puis ne répond plus : la demande reste pendante.
+  await page.route("**/live.json", (route) => {
+    if (!passer(route)) return route.continue();
+  });
+
+  await suivant(page).click();
+  await expect(
+    alerte(page, "L’automate ne répond pas. Le geste a peut-être été fait : vérifie avant de réessayer."),
+  ).toBeVisible({ timeout: SEND_DEADLINE_MS + 5_000 });
 });
 
 test("moteur arrêté derrière nginx à la connexion : la console ne parle pas de mot de passe", async ({ page }) => {
