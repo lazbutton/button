@@ -5,6 +5,7 @@ import { ErrorState, LoadingState } from "../ui/DataState";
 import { FormField } from "../ui/FormField";
 import { AccountProvider } from "./AccountContext";
 import { ApiAuthError, ApiUnavailableError, apiLogin, apiLogout, apiProbeSession } from "./client";
+import { cookieRefused, cookieRefusedMessage } from "./sessionCookie";
 import { forgetUsername, rememberUsername } from "./sessionUser";
 import type { ApiLoadError } from "./useApiJson";
 import { label } from "../lib/brand";
@@ -114,6 +115,10 @@ function StudioLogin({ onLoggedIn }: { onLoggedIn: () => void }) {
     try {
       await apiLogin(username, password);
       rememberUsername(username);
+      if (await cookieRefused(apiProbeSession, (caught) => caught instanceof ApiAuthError)) {
+        setFail(cookieRefusedMessage(window.location.protocol, navigator.cookieEnabled));
+        return;
+      }
       onLoggedIn();
     } catch (caught) {
       if (caught instanceof ApiUnavailableError) {
