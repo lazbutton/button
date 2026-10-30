@@ -36,5 +36,5 @@ Rien de ce dossier ne se lance contre une station en service. Les essais se font
 
 ## Pièges
 
-- `init-radiotomate.sh` tourne à chaque démarrage : il applique les migrations du schéma. Revenir à une image plus ancienne demande de redescendre le schéma d'abord : [docs/deploiement.md](../docs/deploiement.md#revenir-en-arrière). Après une migration ratée à mi-chemin, seule la copie faite avant elle ramène une base saine : [docs/exploitation/sauvegarde.md](../docs/exploitation/sauvegarde.md#remettre-la-copie).
+- `init-radiotomate.sh` tourne à chaque démarrage : il applique les migrations du schéma. Revenir à une image plus ancienne demande de redescendre le schéma d'abord : [docs/deploiement.md](../docs/deploiement.md#revenir-en-arrière). Une migration ratée ne laisse rien, mais celles passées avant elle au même démarrage restent, et l'image d'avant ne lit plus la base : [docs/exploitation/sauvegarde.md](../docs/exploitation/sauvegarde.md#remettre-la-copie).
 - `deploy/local/` est un banc audio avec des mots de passe de test publics. Il ne sert jamais pour une station.

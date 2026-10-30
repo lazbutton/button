@@ -74,7 +74,7 @@ Le scheduler surveille l’antenne (`scheduler/alerts.py`) : silence, playout in
 
 `scheduler/retention.py` purge ce qui est fini : conducteur joué, commandes acquittées, versions orphelines. Le journal `metadata_log` est exporté en JSONL avant suppression. Rien de futur n’est effacé.
 
-`radiotomate update` copie la base dans `backups/`, à côté d’elle, avant la première migration due, et garde les cinq dernières copies. Si la copie échoue, aucune migration ne passe. Voir [`exploitation/sauvegarde.md`](../exploitation/sauvegarde.md#la-copie-avant-une-migration). Sur une instance qui existe déjà, `radiotomate install` ne fait que la mettre à jour : si cela échoue, il ne supprime plus sa base ni sa configuration.
+`radiotomate update` copie la base dans `backups/`, à côté d’elle, avant la première migration due, et garde les cinq dernières copies. Si la copie échoue, aucune migration ne passe. Voir [`exploitation/sauvegarde.md`](../exploitation/sauvegarde.md#la-copie-avant-une-migration). Chaque version du schéma passe ensuite dans sa propre transaction, clés étrangères coupées puis vérifiées : celle qui échoue ne laisse rien. Sur une instance qui existe déjà, `radiotomate install` ne fait que la mettre à jour : si cela échoue, il ne supprime plus sa base ni sa configuration.
 
 `/health/live` et `/health/ready` existent sur l’interface et le scheduler. L’installateur Podman ajoute les sondes correspondantes, et peut monter la banque (`MEDIA_HOST`, `MEDIA_ROOT`) dans les conteneurs.
 

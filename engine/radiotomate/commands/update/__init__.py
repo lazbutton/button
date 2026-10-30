@@ -5,6 +5,11 @@ Each version of the schema is in a sub-module, named `vX.py`, where `X` is the v
 number. Each sub-module must define functions `upgrade(conn)` and `downgrade(conn)`,
 that will be called with a SQLAlchemy connection object.
 
+Each upgrade or downgrade runs in its own transaction, with the change of
+`SCHEMA_VERSION`: one that fails leaves nothing behind. Foreign keys are off
+meanwhile, and checked before the commit. So a sub-module never commits, rolls back
+nor vacuums, and deleting a parent row doesn't cascade to its children.
+
 Before the first upgrade, the database is copied to a `backups` folder next to it, as
 `avant-vX-YYYYMMDDTHHMMSSZ.db`, where `X` is the first version to apply. If the copy
 fails, no upgrade is applied. Once the upgrades succeeded, only the last
@@ -104,6 +109,56 @@ def prune_backups(backup_path):
         click.secho(f"Old database copies not deleted: {error}", fg="yellow")
 
 
+async def apply_schema_change(conn, change, version):
+    """
+    Run `change(conn)`, an upgrade or a downgrade, then set SCHEMA_VERSION to
+    `version`, in one transaction: if anything fails, nothing of it stays.
+
+    Foreign keys are off meanwhile, as SQLite says to do before rebuilding a table:
+    within a transaction, `PRAGMA foreign_keys=OFF` is silently ignored, and dropping
+    the old table would empty its child tables by cascade. Before the commit,
+    `PRAGMA foreign_key_check` must not find more violations than before. Those
+    already there are not the change's doing: they don't stop it, even when it renames
+    their table.
+    """
+    import sqlite3
+    from collections import Counter
+
+    from sqlalchemy import text
+
+    async def violations():
+        result = await conn.exec_driver_sql("PRAGMA foreign_key_check")
+        return Counter((table, parent) for table, _, parent, _ in result)
+
+    await conn.exec_driver_sql("PRAGMA foreign_keys=OFF")
+    try:
+        if (await conn.exec_driver_sql("PRAGMA foreign_keys")).scalar():
+            raise RuntimeError("Foreign keys still on: a transaction is already open")
+        # the driver runs in autocommit mode (see radiotomate.db), where SQLAlchemy
+        # sends no BEGIN. IMMEDIATE takes the write lock now, not halfway through
+        await conn.exec_driver_sql("BEGIN IMMEDIATE")
+        try:
+            before = await violations()
+            await change(conn)
+            q = text("update settings set value=:value where key=:key")
+            await conn.execute(q, {"value": str(version), "key": "SCHEMA_VERSION"})
+            after = await violations()
+            if after.total() > before.total():
+                broken = ", ".join(
+                    f"{count} {table} -> {parent}"
+                    for (table, parent), count in sorted((after - before).items())
+                )
+                raise sqlite3.IntegrityError(f"FOREIGN KEY constraint failed: {broken}")
+            await conn.exec_driver_sql("COMMIT")
+        except BaseException:
+            # through the driver, which does nothing if SQLite ended the transaction
+            await conn.rollback()
+            click.secho("rolled back", fg="red", bold=True)
+            raise
+    finally:
+        await conn.exec_driver_sql("PRAGMA foreign_keys=ON")
+
+
 async def do_update(engine, target_version=None):
     import sys
     from importlib import import_module
@@ -151,10 +206,7 @@ async def do_update(engine, target_version=None):
             for i in range(current_version + 1, target_version + 1):
                 click.echo(f"Applying schema change #{i}... ", nl=False)
                 module = import_module(f"radiotomate.commands.update.v{i}")
-                await module.upgrade(conn)
-                q = text("update settings set value=:value where key=:key")
-                await conn.execute(q, {"value": str(i), "key": "SCHEMA_VERSION"})
-                await conn.commit()
+                await apply_schema_change(conn, module.upgrade, i)
                 click.secho("OK", fg="green", bold=True)
             if backup_path:
                 prune_backups(backup_path)
@@ -162,10 +214,7 @@ async def do_update(engine, target_version=None):
             for i in range(current_version, target_version, -1):
                 click.echo(f"Reverting schema change # {i-1}... ", nl=False)
                 module = import_module(f"radiotomate.commands.update.v{i}")
-                await module.downgrade(conn)
-                q = text("update settings set value=:value where key=:key")
-                await conn.execute(q, {"value": str(i - 1), "key": "SCHEMA_VERSION"})
-                await conn.commit()
+                await apply_schema_change(conn, module.downgrade, i - 1)
                 click.secho("OK", fg="green", bold=True)
         else:
             click.secho("DB is up-to-date", fg="green", bold=True)
@@ -183,7 +232,8 @@ def update(config, target_version=None):
     Update a Radiotomate installation
 
     Before upgrading, the database is copied to a backups folder next to it.
-    Downgrades make no copy: back up first.
+    Downgrades make no copy: back up first. Each schema change runs in its own
+    transaction: one that fails leaves nothing behind.
     """
     import asyncio
 
