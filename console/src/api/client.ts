@@ -1,5 +1,6 @@
 import { isEngineUnreachable, isUnreachableStatus } from "./engineUnreachable";
 import { apiCacheClear, apiSharedGet } from "./jsonCache";
+import { isPlayoutUnavailable, PLAYOUT_UNAVAILABLE_MESSAGE } from "./playoutUnavailable";
 import { isUnknownRoute, UNKNOWN_ROUTE_MESSAGE } from "./unknownRoute";
 
 export const API_PREFIX = import.meta.env.DEV ? "/api" : "";
@@ -52,6 +53,7 @@ function raiseForStatus(response: Response, body?: { error?: string }): never {
     throw new ApiRequestError(413, "Envoi trop lourd pour le serveur. Dépose moins de fichiers à la fois, ou des fichiers plus légers.");
   }
   const detail = body?.error?.trim();
+  if (isPlayoutUnavailable(response.status, detail)) throw new ApiRequestError(502, PLAYOUT_UNAVAILABLE_MESSAGE);
   if (isEngineUnreachable(response.status, detail)) throw new ApiUnavailableError();
   if (isUnknownRoute(response.status, detail)) throw new ApiRequestError(404, UNKNOWN_ROUTE_MESSAGE);
   if (detail) throw new ApiRequestError(response.status, detail);
