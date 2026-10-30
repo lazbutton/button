@@ -63,6 +63,11 @@ services:
       ICECAST_ADMIN_EMAIL: ${ICECAST_ADMIN_EMAIL:-admin@localhost}
     ports:
       - "${ICECAST_PORT:-18000}:8000"
+    # Avec les secrets de .env.example, Icecast ne démarre pas non plus : sinon,
+    # n'importe qui diffuserait sur le mount laissé libre par le playout.
+    depends_on:
+      radiotomate-init:
+        condition: service_completed_successfully
 
   nowplaying:
     image: ${BUTTON_IMAGES:-ghcr.io/lazbutton}/button-nowplaying:main
@@ -85,6 +90,10 @@ services:
       - ${BUTTON_MEDIA:-./media}:/media:ro
     ports:
       - "${NOWPLAYING_PORT:-6820}:6820"
+    # Comme Icecast : pas de /hook ouvert avec un secret d'exemple.
+    depends_on:
+      radiotomate-init:
+        condition: service_completed_successfully
 
   radiotomate-init:
     image: ${BUTTON_IMAGES:-ghcr.io/lazbutton}/button-radiotomate:${RT_TAG:-main}
@@ -98,12 +107,17 @@ services:
       RADIOTOMATE_DATA: /data
       BEETSDIR: /data/Beets
       MEDIA_ROOT: /media
+      # Les cinq secrets : le script refuse ceux de .env.example avant tout.
       ICECAST_SOURCE_PASSWORD: ${ICECAST_SOURCE_PASSWORD:?ICECAST_SOURCE_PASSWORD manquant dans .env}
+      ICECAST_ADMIN_PASSWORD: ${ICECAST_ADMIN_PASSWORD:?ICECAST_ADMIN_PASSWORD manquant dans .env}
       RT_NOWPLAYING_SECRET: ${RT_NOWPLAYING_SECRET:?RT_NOWPLAYING_SECRET manquant dans .env}
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:?MEILI_MASTER_KEY manquant dans .env}
       RT_ADMIN_USER: ${RT_ADMIN_USER:-button}
       RT_ADMIN_PASSWORD: ${RT_ADMIN_PASSWORD:-}
       # false seulement pour un accès en HTTP seul : voir docs/deploiement.md.
       RT_COOKIE_SECURE: ${RT_COOKIE_SECURE:-true}
+      # 1 en secours seulement : un secret trop court avertit sans bloquer.
+      RT_ALLOW_SHORT_SECRETS: ${RT_ALLOW_SHORT_SECRETS:-}
     volumes:
       - ${RT_DATA:-./data/radiotomate}:/data
       - ${BUTTON_MEDIA:-./media}:/media
