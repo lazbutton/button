@@ -1,13 +1,14 @@
 import type { Page, Route } from "@playwright/test";
 import { READ_DEADLINE_MS } from "../src/api/readDeadline.ts";
-import { antenne, avis, bibliotheque, expect, file, remplirLaConnexion, seConnecter, test } from "./banc.ts";
+import { antenne, avis, bibliotheque, comptes, expect, file, remplirLaConnexion, seConnecter, test } from "./banc.ts";
 import { engineRoutes } from "./routes.ts";
 
 // Ce que la console dit quand le moteur répond mal. Chaque cas est simulé par
 // page.route devant le vrai moteur de démo : session expirée (401), droit
 // manquant (403), moteur injoignable (connexion refusée), moteur muet (une
-// lecture qui ne reçoit jamais de réponse) et route absente, c'est-à-dire un
-// moteur plus ancien que la console (404).
+// lecture qui ne reçoit jamais de réponse), moteur arrêté derrière nginx (502
+// en HTML), envoi trop lourd pour nginx (413 en HTML) et route absente,
+// c'est-à-dire un moteur plus ancien que la console (404).
 
 // Ce que le relais envoie au moteur : le reste vient de la console.
 const MOTEUR = new RegExp(`^/(${engineRoutes})`);
@@ -25,6 +26,22 @@ async function versUneRouteAbsente(route: Route): Promise<number> {
   await route.fulfill({ response: reponse });
   return reponse.status();
 }
+
+/**
+ * En prod, nginx relaie l'API : moteur arrêté, il répond lui-même 502, avec sa
+ * page HTML. Le banc n'a pas de nginx devant le moteur : le parcours la sert.
+ */
+const PAGE_502 = [
+  "<html>",
+  "<head><title>502 Bad Gateway</title></head>",
+  "<body>",
+  "<center><h1>502 Bad Gateway</h1></center>",
+  "<hr><center>nginx</center>",
+  "</body>",
+  "</html>",
+  "",
+].join("\r\n");
+const moteurArrete = (route: Route) => route.fulfill({ status: 502, contentType: "text/html", body: PAGE_502 });
 
 const suivant = (page: Page) => antenne(page).getByRole("button", { name: /^Suivant/ });
 const passer = (route: Route) => route.request().method() === "DELETE";
@@ -93,6 +110,59 @@ test("moteur injoignable pendant un geste : la console le dit", async ({ page })
 
   await suivant(page).click();
   await expect(avis(page, "L’automate ne répond pas. Réessaie dans un instant.")).toBeVisible();
+});
+
+test("moteur arrêté derrière nginx pendant un geste : la console le dit, sans la page de nginx", async ({ page }) => {
+  await seConnecter(page, "animateur");
+  await page.route("**/live.json", (route) => (passer(route) ? moteurArrete(route) : route.continue()));
+
+  await suivant(page).click();
+  await expect(avis(page, "L’automate ne répond pas. Réessaie dans un instant.")).toBeVisible();
+  await expect(avis(page, /Bad Gateway/)).toHaveCount(0);
+});
+
+test("moteur arrêté derrière nginx à la connexion : la console ne parle pas de mot de passe", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("button", { name: "Se connecter" })).toBeVisible();
+  // Le moteur s'arrête avant l'envoi : /login.json, puis le repli sur le
+  // formulaire de /login, reçoivent la page de nginx.
+  await page.route(versLeMoteur, moteurArrete);
+
+  await remplirLaConnexion(page, "animateur");
+  await expect(avis(page, "L’automate ne répond pas. Vérifie qu’il tourne, puis réessaie.")).toBeVisible();
+});
+
+test("connexion par le formulaire de repli : un mot de passe refusé se dit comme tel", async ({ page }) => {
+  await page.goto("/");
+  // /login.json ne répond pas : la console passe par le formulaire de /login,
+  // où le moteur refuse le mot de passe par une page HTML, en 401.
+  await page.route("**/login.json", (route) => route.abort("connectionrefused"));
+
+  await page.getByLabel("Identifiant", { exact: true }).fill(comptes().accounts.animateur);
+  await page.getByLabel("Mot de passe", { exact: true }).fill("pas-le-bon");
+  await page.getByRole("button", { name: "Se connecter" }).click();
+  await expect(avis(page, /^Identifiant ou mot de passe incorrect\./)).toBeVisible();
+});
+
+test("envoi trop lourd pour nginx : le bac le dit, sans la page de nginx", async ({ page }) => {
+  await seConnecter(page, "programmateur");
+  await expect(suivant(page)).toBeEnabled();
+  await page.goto("/sons");
+  // nginx refuse un envoi de plus de 512 Mo (client_max_body_size) par sa page HTML.
+  const page413 = PAGE_502.replaceAll("502 Bad Gateway", "413 Request Entity Too Large");
+  await page.route("**/carts/*/sounds.json*", (route) =>
+    route.request().method() === "POST"
+      ? route.fulfill({ status: 413, contentType: "text/html", body: page413 })
+      : route.continue(),
+  );
+
+  await page
+    .locator('input[type="file"][accept^="audio"]')
+    .setInputFiles({ name: "emission.wav", mimeType: "audio/wav", buffer: Buffer.from("RIFF") });
+  await expect(
+    avis(page, "Envoi trop lourd pour le serveur. Dépose moins de fichiers à la fois, ou des fichiers plus légers."),
+  ).toBeVisible();
+  await expect(avis(page, /Request Entity|Le moteur ne répond pas/)).toHaveCount(0);
 });
 
 test("moteur injoignable, pupitre ouvert : la barre le dit, puis repart", async ({ page }) => {
