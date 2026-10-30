@@ -3,6 +3,7 @@ import { UsersRound } from "lucide-react";
 import type { ReactNode } from "react";
 import { useAccount } from "../../api/AccountContext";
 import { ANTENNE_STATE_JSON } from "../../api/antenneState";
+import { apiAnsweredAt } from "../../api/jsonCache";
 import { audience, audienceLabel, topAir, topHealth } from "../../api/topbar";
 import type { AntenneState } from "../../api/types";
 import { useApiJson } from "../../api/useApiJson";
@@ -38,7 +39,12 @@ export function Topbar({ leading }: { leading?: ReactNode }) {
       {leading}
       <div className="tb-onair">
         <AirStatus air={air} health={health} antenne={antenne.data} isAdmin={isAdmin} />
-        <NowPlaying live={monitor.snapshot} />
+        {/* Le dernier relevé reste à l'écran : le titre dit qu'il n'est plus lu, et depuis quand. */}
+        <NowPlaying
+          live={monitor.snapshot}
+          stale={monitor.snapshotUnreachable}
+          answeredAt={apiAnsweredAt("/live.json")}
+        />
       </div>
       <div className="tb-tools">
         <ListenControl />

@@ -3,6 +3,7 @@
  * Pur : pas de React, testable en node.
  */
 import { formatRemain } from "../lib/nowPlaying.ts";
+import { hhmm, parisWall } from "./agendaView.ts";
 import {
   airBanner,
   derivePillars,
@@ -77,6 +78,68 @@ export function topAir(input: {
     return { tone: "alert", label: banner.cause || "Problème", detail: "" };
   }
   return { tone: "on", label: "En onde", detail: live ? airSourceLabel(live) : "" };
+}
+
+/** Sous ce reste, le compte à rebours passe à l'orange. */
+const ENDING_S = 15;
+
+export type TopNow = {
+  title: string;
+  artist: string;
+  /** Rien à l'antenne. */
+  idle: boolean;
+  /** Le moteur ne répond plus : le dernier titre connu, en retrait. */
+  stale: boolean;
+  /** Avancée et compte à rebours. */
+  timed: boolean;
+  ratio: number;
+  remain: string;
+  ending: boolean;
+  /** À la place de l'avancée quand le moteur ne répond plus : « Sans nouvelles depuis 20:16 ». */
+  note: string;
+  /** Nom du lien vers le pupitre. */
+  label: string;
+};
+
+/** Le titre en cours de la barre, lu comme la carte du pupitre. */
+export function topNow(input: {
+  live: LiveSnapshot | null;
+  /** Titre et artiste tirés du relevé (`liveToItem`). */
+  item: { title: string; artist?: string } | undefined;
+  clock: { elapsedSec: number; remainingSec: number; durationSec: number };
+  /** Le moteur ne répond plus : `live` est son dernier relevé. */
+  stale: boolean;
+  /** L'heure de sa dernière réponse, en ms, s'il a répondu une fois. */
+  answeredAt: number | undefined;
+}): TopNow {
+  const { live, item, clock, stale } = input;
+  const offline = !live || live.status === "offline";
+  const harbor = !offline && isHarborSource(live?.source);
+  // Sans métadonnées, l'encodeur du direct ne dit que « Direct » : le nom de l'émission parle mieux.
+  const known =
+    item && !(harbor && item.title === "Direct") ? item.title : harbor ? live?.emission?.title || "Direct" : "";
+  const title = known || (stale ? "Aucun titre connu" : offline ? "Rien à l’antenne" : "—");
+  const artist = item?.artist ?? "";
+  const named = `${title}${artist ? `, ${artist}` : ""}`;
+  // Le dernier titre connu reste, mais son temps ne se compte plus : rien ne dit qu'il passe encore.
+  const timed = !stale && !offline && !harbor && clock.durationSec > 1;
+  const remain = formatRemain(clock.remainingSec);
+  const since = input.answeredAt == null ? "" : ` depuis ${hhmm(parisWall(new Date(input.answeredAt)).minute)}`;
+  const note = stale ? `Sans nouvelles${since}` : "";
+  return {
+    title,
+    artist,
+    idle: !stale && offline,
+    stale,
+    timed,
+    ratio: timed ? Math.min(1, clock.elapsedSec / clock.durationSec) : 0,
+    remain,
+    ending: timed && clock.remainingSec <= ENDING_S,
+    note,
+    label: stale
+      ? `${note}. ${known ? `Dernier titre connu : ${named}` : title}. Ouvrir l’antenne.`
+      : `À l’antenne : ${named}${timed ? `, reste ${remain.slice(1)}` : ""}. Ouvrir l’antenne.`,
+  };
 }
 
 /** Auditeurs du flux public : mounts hors studio, sinon mounts locaux. Le casque .wav ne compte pas. */

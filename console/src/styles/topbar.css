@@ -371,7 +371,9 @@
   color: var(--app-text-faint);
 }
 
-.tb-now[data-idle="true"] .tb-now-title {
+/* Rien à l'antenne, ou le dernier titre connu d'un moteur qui ne répond plus : en retrait, comme sur le pupitre. */
+.tb-now[data-idle="true"] .tb-now-title,
+.tb-now[data-stale="true"] .tb-now-title {
   color: var(--app-text-muted);
   font-weight: 500;
 }
@@ -381,6 +383,17 @@
   align-items: center;
   gap: 0.6rem;
   height: 0.75rem;
+}
+
+/* La mention prend la largeur que lui laisse le titre : sur un téléphone, elle ne serre pas l'état de l'antenne. */
+.tb-now-note {
+  flex: 1 1 auto;
+  overflow: hidden;
+  contain: inline-size;
+  color: var(--app-text-muted);
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tb-now-track {

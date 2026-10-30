@@ -95,7 +95,7 @@ Les parcours, dans `console/e2e/` :
 | Fichier | Ce qu'il vérifie |
 |---|---|
 | `antenne.spec.ts` | se connecter, puis voir l'antenne |
-| `barre.spec.ts` | la barre du haut : ce qui passe, l'état de l'antenne et son détail, le casque et sa source, un flux muet ou qui s'arrête, le menu du compte, le lien « Code source » |
+| `barre.spec.ts` | la barre du haut : ce qui passe, et le dernier titre connu quand le moteur ne répond plus, l'état de l'antenne et son détail, le casque et sa source, un flux muet ou qui s'arrête, le menu du compte, le lien « Code source » |
 | `pupitre.spec.ts` | Espace, `/` et Entrée, la pré-écoute, « Diffuser », déplacer une ligne au clavier et à la souris, retirer puis annuler, le focus rendu à « Passer en direct » |
 | `etats.spec.ts` | session expirée, droit manquant, moteur injoignable, moteur arrêté derrière nginx (502 en HTML), envoi trop lourd pour nginx (413 en HTML) et route absente, puis les gestes refusés ou sans réponse de la page Automate, simulés par `page.route` devant le moteur de démo et le faux catalogue |
 | `roles.spec.ts` | ce que voient l'animateur, le programmateur et l'admin |
