@@ -54,6 +54,13 @@ def scheduler_unavailable_response():
     return jsonify({"error": "scheduler_unavailable"}), 502
 
 
+def playout_rejected_response():
+    # The scheduler answered an error. Not a 502: the console takes 502 for an
+    # unreachable engine, and would not show this text.
+    message = "Le playout a refusé ce son : rien n'est parti à l'antenne."
+    return jsonify({"error": message, "code": "playout_rejected"}), 400
+
+
 def _float_field(value: object, default: float = 0.0) -> float:
     try:
         number = float(value if value is not None else default)

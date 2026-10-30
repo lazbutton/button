@@ -7,7 +7,7 @@ module only *edits* rows that the clock will later push.
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 from uuid import uuid4
 
 from sqlalchemy import select
@@ -191,26 +191,43 @@ async def _planned_at_for_insert(
     return datetime.now()
 
 
-async def insert_desk_item(session: ormSession, data: dict) -> RundownItem:
-    suppress_at = str(data.get("suppress_at") or "").strip()
-    if suppress_at:
-        return await _insert_suppress(session, suppress_at)
+class DeskPin(NamedTuple):
+    path: str
+    kind: str
+    artist: str
+    title: str
+    duration: float
 
+
+def read_desk_pin(data: dict) -> DeskPin:
+    """Checked fields of a desk pin. "Play now" reads them before its order."""
     path = str(data.get("path") or "").strip()
     if not path:
         raise DomainValidationError("Chemin audio requis.", field="path")
     kind = str(data.get("kind") or PositionKind.SON.value).strip()
     if kind not in DESK_KINDS:
         raise DomainValidationError("Type audio inconnu.", field="kind")
-    artist = str(data.get("artist") or "").strip()
-    title = str(data.get("title") or "").strip()
     try:
         duration = float(data.get("duration") or 0)
     except (TypeError, ValueError) as exc:
         raise DomainValidationError("Durée invalide.", field="duration") from exc
     if duration <= 0:
         duration = 8.0
+    return DeskPin(
+        path=path,
+        kind=kind,
+        artist=str(data.get("artist") or "").strip(),
+        title=str(data.get("title") or "").strip(),
+        duration=duration,
+    )
 
+
+async def insert_desk_item(session: ormSession, data: dict) -> RundownItem:
+    suppress_at = str(data.get("suppress_at") or "").strip()
+    if suppress_at:
+        return await _insert_suppress(session, suppress_at)
+
+    path, kind, artist, title, duration = read_desk_pin(data)
     sound = await Sound.from_media_path(session, path)
     version = await ensure_programming_version(session)
     planned_at = await _planned_at_for_insert(
