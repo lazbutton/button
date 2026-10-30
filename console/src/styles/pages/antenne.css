@@ -43,7 +43,8 @@
   --ant-state-ink: var(--app-live-ink);
 }
 
-.ant[data-state="off"] {
+.ant[data-state="off"],
+.ant[data-state="stale"] {
   --ant-state: var(--app-text-faint);
   --ant-state-ink: var(--app-text-muted);
 }
@@ -338,8 +339,14 @@
   color: var(--app-live-ink);
 }
 
-.ant[data-state="off"] .ant-air-count-value {
+.ant[data-state="off"] .ant-air-count-value,
+.ant[data-state="stale"] .ant-air-count-value {
   color: var(--app-text-faint);
+}
+
+/* Sans nouvelles du moteur : le dernier titre connu reste, en retrait. */
+.ant[data-state="stale"] .ant-air-title {
+  color: var(--app-text-muted);
 }
 
 .ant-air[data-ending="true"] .ant-air-count-value {
@@ -579,6 +586,29 @@
 }
 
 /* File */
+
+/* La file ne se lit plus : ses lignes restent, en retrait, sous cette mention. */
+.ant-queue-stale {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0.55rem 0.9rem;
+  border-bottom: 1px solid var(--app-border);
+  background: color-mix(in srgb, var(--app-danger) 9%, var(--app-surface-1));
+  font-size: 0.8125rem;
+}
+
+.ant-queue-stale > svg {
+  flex: none;
+  margin-top: 0.1rem;
+  color: var(--app-live-ink);
+}
+
+.ant-queue-list[data-stale="true"] li,
+.ant-queue-list[data-stale="true"] li.is-next :is(.ant-queue-n, .ant-queue-at) {
+  color: var(--app-text-muted);
+}
 
 .ant-queue-list {
   flex: 1 1 auto;

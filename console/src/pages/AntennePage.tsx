@@ -7,6 +7,7 @@ import { OnAirCard, type AirState } from "../components/antenne/OnAirCard";
 import { QueuePanel } from "../components/antenne/QueuePanel";
 import { ProtoToast, useProtoToast } from "../components/ProtoToast";
 import { useAntennaClock } from "../lib/liveClock";
+import { useMonitorState } from "../lib/MonitorContext";
 import { anchorHint, deskAlert, ownsSpace, SKIP_GUARD_MS, spaceSkips } from "../api/antenneDesk";
 import { airBanner, ANTENNE_STATE_JSON } from "../api/antenneState";
 import {
@@ -23,7 +24,7 @@ import { deskKindFromHit, labelsFromHit, type LibraryHit } from "../api/library"
 import { useAccount } from "../api/AccountContext";
 import { harborIsLive } from "../api/emissionMeta";
 import { stopDiffusion } from "../api/agenda";
-import { timeLabel } from "../api/agendaView";
+import { hhmm, parisWall, timeLabel } from "../api/agendaView";
 import { glanceNowItem } from "../api/liveMap";
 import { airSourceLabel } from "../api/topbar";
 import { SessionGate } from "../api/SessionGate";
@@ -42,6 +43,7 @@ import type {
   Rundown,
   RundownItem,
 } from "../api/types";
+import { apiAnsweredAt } from "../api/jsonCache";
 import { useApiJson } from "../api/useApiJson";
 import "../styles/pages/antenne.css";
 
@@ -52,6 +54,8 @@ export function AntennePage() {
   const rundown = useApiJson<Rundown>(CONDUCTEUR_JSON, 3000);
   const emissions = useApiJson<EmissionsResponse>("/antenne/emissions.json", 3000);
   const antenne = useApiJson<AntenneState>(ANTENNE_STATE_JSON, 5000);
+  // La barre du haut lit aussi /live.json : quand elle dit le moteur injoignable, le pupitre aussi.
+  const { snapshotUnreachable } = useMonitorState();
   const loading = live.loading;
   const error = live.error ?? rundown.error;
 
@@ -66,6 +70,7 @@ export function AntennePage() {
     <SessionGate loading={loading} error={error} ready={live.data != null} onRetry={retry}>
       <AntenneDesk
         live={live.data}
+        liveUnreadable={live.error === "down" || snapshotUnreachable}
         rundown={rundown.data}
         rundownUnreadable={rundown.error === "down"}
         emissions={emissions.data}
@@ -114,6 +119,7 @@ function keyTarget(target: EventTarget | null) {
 
 function AntenneDesk({
   live,
+  liveUnreadable,
   rundown,
   rundownUnreadable,
   emissions,
@@ -122,6 +128,8 @@ function AntenneDesk({
   onLiveReload,
 }: {
   live: LiveSnapshot | null;
+  /** Le moteur ne donne plus l'antenne : `live` est le dernier relevé. */
+  liveUnreadable: boolean;
   rundown: Rundown | null;
   /** La dernière lecture de la file a échoué. */
   rundownUnreadable: boolean;
@@ -159,13 +167,15 @@ function AntenneDesk({
   const renameTitleRef = useRef<HTMLInputElement>(null);
   const undoRef = useRef<(() => Promise<void>) | null>(null);
 
+  // Un geste qui échoue s'annonce en alerte : deviné d'après le texte, le ton
+  // ferait passer un refus ou un moteur muet pour une information.
   const fail = useCallback(
     (caught: unknown, fallback: string, forbidden = "Il faut le droit antenne. Demande à un admin si tu dois pouvoir le faire.") => {
-      if (caught instanceof ApiAuthError) show("Session expirée. Reconnecte-toi.");
-      else if (caught instanceof ApiForbiddenError) show(forbidden);
-      else if (caught instanceof ApiRequestError) show(caught.message);
-      else if (caught instanceof ApiUnavailableError) show("L’automate ne répond pas. Réessaie dans un instant.");
-      else show(fallback);
+      if (caught instanceof ApiAuthError) show("Session expirée. Reconnecte-toi.", "error");
+      else if (caught instanceof ApiForbiddenError) show(forbidden, "error");
+      else if (caught instanceof ApiRequestError) show(caught.message, "error");
+      else if (caught instanceof ApiUnavailableError) show("L’automate ne répond pas. Réessaie dans un instant.", "error");
+      else show(fallback, "error");
     },
     [show],
   );
@@ -367,10 +377,10 @@ function AntenneDesk({
   }, [directOpen, harbor, offline, skipEngine]);
 
   const endsAt = useMemo(() => {
-    if (offline || harbor || remainingSec <= 0) return null;
+    if (offline || harbor || liveUnreadable || remainingSec <= 0) return null;
     const end = new Date(wall.getTime() + remainingSec * 1000);
     return `${String(end.getHours()).padStart(2, "0")}:${String(end.getMinutes()).padStart(2, "0")}`;
-  }, [harbor, offline, remainingSec, wall]);
+  }, [harbor, liveUnreadable, offline, remainingSec, wall]);
   const status = airBanner({
     harbor,
     directTitle: currentShow?.title || "",
@@ -380,12 +390,15 @@ function AntenneDesk({
     incidentKinds: (antenne?.incidents ?? []).map((incident) => incident.kind),
   });
   const airState: AirState = offline ? "off" : status.tone;
-  const alert = deskAlert(status);
-  const anchor = harbor || offline ? null : anchorHint(rundown ? nextAnchoredItem(rundown.items, wall) : null, wall);
+  // La dernière réponse du moteur, à cet écran ou à la barre du haut.
+  const lastAnswer = liveUnreadable ? new Date(apiAnsweredAt("/live.json") ?? wall.getTime()) : null;
+  const alert = deskAlert(status, lastAnswer ? hhmm(parisWall(lastAnswer).minute) : null);
+  const anchor =
+    harbor || offline || liveUnreadable ? null : anchorHint(rundown ? nextAnchoredItem(rundown.items, wall) : null, wall);
   const namingOpen = Boolean(harbor && (renameOpen || !currentShow));
 
   return (
-    <div className="ant" data-state={airState}>
+    <div className="ant" data-state={liveUnreadable ? "stale" : airState}>
       {alert ? (
         <div className="ant-alert" data-tone={alert.tone}>
           <TriangleAlert size={18} aria-hidden="true" />
@@ -403,6 +416,7 @@ function AntenneDesk({
 
       <OnAirCard
         state={airState}
+        stale={liveUnreadable}
         item={now}
         elapsedSec={elapsedSec}
         durationSec={durationSec}
