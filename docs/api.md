@@ -19,7 +19,15 @@ Pour le direct, le harbor accepte un compte `stream`. Dès qu'une émission hebd
 
 ## Routes
 
-La console préfixe `/api` en dev. En prod, nginx ne laisse passer qu’une liste de chemins. Les mutations envoient `X-CSRF-Token` lu dans `GET /csrf.json` → `{csrf_token}`. Refus : `401 {error:"unauthenticated"}`, `403 {error:"forbidden"}`.
+La console préfixe `/api` en dev. En prod, nginx ne laisse passer qu’une liste de chemins (`console/docker/nginx.conf.template`) : une route nouvelle doit y entrer, et `console/src/api/nginxRoutes.test.ts` le vérifie. Les mutations envoient `X-CSRF-Token` lu dans `GET /csrf.json` → `{csrf_token}`. Refus : `401 {error:"unauthenticated"}`, `403 {error:"forbidden"}`.
+
+Une erreur métier répond `{error, code, message, field?}`, avec `error` et `message` en français : 400 (`validation_error`), 404 (`not_found`) ou 409 (`conflict`). Ces erreurs viennent de `engine/radiotomate/domain/errors.py`.
+
+La forme exacte des objets est dans `console/src/api/types.ts`, et côté moteur dans les fonctions `*_payload` des services. Cette page donne les routes, les droits et les champs qui comptent.
+
+### Santé
+
+`GET /health/live` et `GET /health/ready`, sans session, sur l'interface comme sur le scheduler. `ready` vérifie la base, et pour le scheduler aussi le battement et le playout. Un contrôle sans compte passe par là.
 
 ### Session
 
@@ -58,7 +66,21 @@ Un item : `{id, at, kind, when, resource, queue, status, status_code, reason, cl
 
 `POST` sur la même URL, `{reset:true}`, exige `autodj`. L’horizon vient de la query (`horizon=30` dans Automate).
 
-Écritures du pupitre, droit `live` : `POST /autodj/conducteur/items.json` (à la suite, ou `{suppress_at}` pour masquer un item d’horloge), `DELETE …/items/{id}.json`, `PUT …/items/ranks.json` `{ids}`, `POST …/now.json`.
+Écritures du pupitre, droit `live` : `POST /autodj/conducteur/items.json` (à la suite, ou `{suppress_at}` pour masquer un item d’horloge), `PATCH …/items/{id}.json` (`path`, `kind`, `artist`, `title`, `duration`), `DELETE …/items/{id}.json`, `PUT …/items/ranks.json` `{ids}`, `POST …/now.json`. Elles répondent l'état du pupitre.
+
+### Programmation
+
+Lecture avec une session, écriture avec le droit `autodj`. Une création répond 201.
+
+- `GET /autodj/clocks.json` → `{clocks}`. Une horloge : `{id, version, name, fallback_cart, fallback_cart_id, motif, anchors}` : `motif` est la suite enchaînée des positions, `anchors` les positions calées sur une minute.
+- `POST /autodj/clocks.json` → `{clock}`, `PUT` et `DELETE /autodj/clocks/{id}.json`.
+- `GET /autodj/slots.json` → `{slots}`. Un créneau : `{id, version, day_of_week, minute, title, color, clock_id, clock}`.
+- `POST /autodj/slots.json` → `{slot}`, `PUT` et `DELETE /autodj/slots/{id}.json`.
+- `GET /autodj/categories.json` → `{categories}`. Une catégorie : `{id, name, query, empty_query, count}`, où `query` est une requête Beets.
+- `POST /autodj/categories.json` → `{category}`, `PUT` et `DELETE /autodj/categories/{id}.json`.
+- `GET /autodj/testquery.json?query=…` → `{count, sample}` : essaie une requête avant de l'enregistrer.
+
+Une modification d'horloge ou de créneau porte la `version` lue : si l'objet a changé entre-temps, elle est refusée.
 
 ### Émissions
 
@@ -67,6 +89,8 @@ Un item : `{id, at, kind, when, resource, queue, status, status_code, reason, cl
 Hebdo : `{id, version, scope:"weekly", title, artist, day_of_week, start_minute, end_minute, host_username}`. Session : `starts_at` / `ends_at` à la place des minutes.
 
 `POST` session `{scope:"session", title, artist}` exige le harbor déjà branché et le droit `live`. Il remplace la session en cours. `POST` hebdo `{title, artist, day_of_week, start_minute, end_minute, host_username}` exige `autodj`. Chevauchement refusé.
+
+`PUT /antenne/emissions/{id}.json` modifie une émission hebdo (`autodj`). `DELETE /antenne/emissions/session.json` termine la session en cours (`live`). `DELETE /antenne/emissions/{id}.json` demande `live` pour une session, `autodj` pour une émission hebdo.
 
 ### Agenda
 
@@ -78,7 +102,7 @@ Hebdo : `{id, version, scope:"weekly", title, artist, day_of_week, start_minute,
 
 - `POST /agenda/diffusions/preview.json` : les dates d'une répétition, avec leurs conflits.
 - `POST /agenda/diffusions.json` `{kind, title, start, end, guest_id | guest_name, host_username, repeat?:{rule, count | until, nth}, only?}` : tout ou rien, chevauchement refusé (409).
-- `PUT` / `DELETE /agenda/diffusions/{id}.json` (`?suivantes=1` pour la suite d'une série).
+- `GET /agenda/diffusions/{id}.json` (session) → `{diffusion}`. `PUT` / `DELETE` sur la même adresse (`?suivantes=1` pour la suite d'une série).
 - `PUT` / `DELETE /agenda/diffusions/{id}/file.json` `{path, duration}` : un fichier de la banque.
 - `POST` / `DELETE /agenda/exceptions.json` `{emission_id, date}` : annuler une émission hebdo un jour.
 - `GET` / `POST` / `PUT` / `DELETE /agenda/guests[/{id}].json`, `POST /agenda/guests/{id}/token.json` (nouveau lien).
@@ -98,6 +122,20 @@ Sans session : `GET /public/guest/{jeton}.json` et `PUT /public/guest/{jeton}/di
 `mode` vaut `playlist`, `playlist_loop`, `random` ou `relay`. Ce n’est pas `clock` / `loop` / `once`. `schedule_mode` est à part (`clock`, `jingles`, `timed`). `url` n’est rempli qu’en `relay`. `ident_pads` est le drapeau des pads. Un son : `{id, rank, title, duration, active, available, gain, peak, last_played, uploader, path}`.
 
 Créer un relais : `POST /carts.json` avec `mode:"relay"`, une URL HTTP complète et `max_duration` en secondes. Sans durée max, le moteur répond 400.
+
+Écritures, droit `carts` :
+
+- `POST /carts.json` → `201 {cart}`, `PUT /carts/{id}.json` avec la `version` lue → `{cart}`, `DELETE /carts/{id}.json`.
+- `POST /carts/{id}/sounds.json` : des fichiers envoyés (multipart, `?delta=1` pour répondre seulement le cart), ou `{folders:[…]}` pour rattacher des dossiers de la banque.
+- `POST /carts/{id}/sounds/delete.json` `{ids}` → `{cart}`.
+- `PUT /carts/{id}/sounds/{son}.json`, par exemple `{title}` ou `{active}` → `{cart, sound}` ; `DELETE` → `{cart}`.
+- `PUT /carts/{id}/sounds/ranks.json` `{ranks:[ids]}` → `{cart}`.
+
+Jouer tout de suite, droit `live` : `POST /carts/{id}/now.json` et `POST /carts/{id}/sounds/{son}/now.json` → `{ok:true}`. Pendant un direct : `409 {error, code:"harbor_live"}`.
+
+### Banque
+
+`GET /media/bank.json` (session) → `{available, folders:[{path, count}]}` : les dossiers de la banque qu'un cart peut rattacher. `available` est faux si la banque n'est pas montée.
 
 ### Système
 

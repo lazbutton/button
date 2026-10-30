@@ -1,6 +1,6 @@
 # Radiotomate — ce qui a changé
 
-28 septembre 2026.
+28 septembre 2026, complété le 30 octobre 2026.
 
 Ce texte décrit le moteur dans `engine/` par rapport à l’amont [Radiotomate](https://radiotomate.org/) de Martin Kirchgessner, commit `130030bb` (`https://git.sr.ht/~martink/radiotomate`). Licence inchangée : AGPL-3.0-or-later. Le `README.md` et le `CHANGELOG.md` du dossier restent ceux de l’amont.
 
@@ -46,8 +46,17 @@ L’interface HTMX reste. À côté, les mêmes objets ont une forme JSON, avec 
 | Conducteur | `/autodj/conducteur.json` |
 | Émissions | `/antenne/emissions.json` |
 | Antenne | `/live.json`, `/antenne/state.json`, `/antenne/flush.json` |
+| Agenda | `/agenda.json`, `/agenda/…`, et sans session `/public/guest/…` |
+| Système | `/system/disk.json` |
+| Santé | `/health/live`, `/health/ready` |
+
+Le détail de chaque route est dans [`docs/api.md`](../api.md).
 
 `/antenne`, `/conducteur`, `/programmation`, `/sons` et `/reglages` renvoient la page d’accueil de la console quand son build est posé à côté du moteur (`interface.console_dist`). En production, le nginx de la console sert ces pages lui-même : la console est une application à part, le moteur sert les données.
+
+## Agenda
+
+L’Agenda (migration v17) ajoute des émissions à une date précise : un set enregistré, souvent déposé par un invité par un lien privé, ou un direct daté. Les tables `agenda_*` stockent de l’UTC naïf, alors que les tables historiques gardent l’heure locale du conteneur ; les conversions passent par `domain/agenda.py`. Le scheduler fait passer les sets à leur heure (`scheduler/agenda.py`). Les routes de l’invité sont publiques (`interface/public.py`), et le catalogue déclare les fichiers reçus par des routes internes protégées par jeton. Le réglage `agenda_enabled` coupe tout l’Agenda.
 
 ## Émissions, banque, comptes
 
@@ -73,7 +82,7 @@ Le scheduler surveille l’antenne (`scheduler/alerts.py`) : silence, playout in
 
 `brand.json` et `brand.py` portent le nom affiché (`INTERFACE_NAME`), le logo et les libellés. `layout.jinja` est en `lang=fr`, avec `suite.css`. La feuille `sass/_suite.scss` est la charte noir et blanc du pupitre. Les pages HTMX d’origine (live, carts, auto-DJ, utilisateurs) restent servies par le même processus.
 
-## Schéma, de v7 à v16
+## Schéma, de v7 à v17
 
 L’amont s’arrête à v6. Les versions suivantes :
 
@@ -89,6 +98,7 @@ L’amont s’arrête à v6. Les versions suivantes :
 | v14 | Tous les carts `TIMED` passent en `CLOCK`, tables APScheduler supprimées |
 | v15 | `emissions.host_username` |
 | v16 | `carts.ident_pads` |
+| v17 | Agenda : diffusions datées, invités, fichiers des sets, jours annulés des émissions hebdo |
 
 ## Modules ajoutés
 
@@ -98,9 +108,11 @@ Exploitation : `alerts.py`, `metrics.py`, `retention.py`, `health.py`, et `inter
 
 Métier : `domain/`, `services/` (carts, auto-DJ, émissions, banque, grille NTF), `models/clock.py`, `emission.py`, `execution.py`, `music_category.py`.
 
-Interface : `account.py`, `csrf.py`, `emissions.py`, `integrity.py`, `json_util.py`, `spa.py`.
+Interface : `account.py`, `csrf.py`, `emissions.py`, `integrity.py`, `json_util.py`, `spa.py`, `system.py`.
 
-Les tests nouveaux couvrent l’horloge, le conducteur, les alertes, le harbor, la rétention, la grille NTF, le CSRF, les JSON d’admin et le tick filtré. `liquidsoap --check` sur `playout/radiotomate.liq` fait partie de la vérification.
+Agenda : `models/agenda.py`, `domain/agenda.py`, `services/agenda.py`, `scheduler/agenda.py`, `interface/agenda.py`, `interface/public.py`. Banque : `services/media_bank.py`.
+
+Les tests nouveaux couvrent l’horloge, le conducteur, les alertes, le harbor, la rétention, la grille NTF, le CSRF, les JSON d’admin, le tick filtré, l’Agenda et la banque. `liquidsoap --check` sur `playout/radiotomate.liq` fait partie de la vérification.
 
 ## Ce qui n’a pas bougé
 

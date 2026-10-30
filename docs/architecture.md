@@ -25,6 +25,8 @@ BUTTON tient l'antenne d'une radio 24 h sur 24 : musique en rotation, habillage,
    catalogue (+ Meilisearch) ◄── tusd (envoi reprenable)
         │
    banque de sons ◄── dropbox (Beets, promotion de l'inbox)
+        ▲
+        └── share (Samba, profil « share ») : la banque dans le Finder
 
    nowplaying ◄── métadonnées du moteur ──► now.json, pour les sites et players
 ```
@@ -43,6 +45,8 @@ BUTTON tient l'antenne d'une radio 24 h sur 24 : musique en rotation, habillage,
 | Icecast | `services/icecast/` | `button-icecast` | 8000, publié en 18000 |
 | Meilisearch | — | `getmeili/meilisearch` | interne |
 | tusd | — | `tusproject/tusd` | 8080 interne |
+| radiotomate-init | `engine/`, `deploy/scripts/` | `button-radiotomate` | — : prépare la station à chaque démarrage, puis s'arrête |
+| share | `deploy/share/` | `button-share` | 445, sur `127.0.0.1` par défaut, seulement avec `--profile share` |
 
 L'interface et le scheduler partagent le réseau du playout (`network_mode: service:radiotomate-playout`). Redémarrer le playout seul les rend injoignables : on recrée toujours les trois ensemble.
 
@@ -56,6 +60,8 @@ L'interface et le scheduler partagent le réseau du playout (`network_mode: serv
 
 Liquidsoap choisit la source dans cet ordre : **direct (harbor) > relais > carts > jingles > auto-DJ**. Les titres de l'auto-DJ s'enchaînent avec un fondu de 3 s. Les autres transitions se font en coupe franche ([savonet/liquidsoap#4179](https://github.com/savonet/liquidsoap/issues/4179)).
 
+L'**Agenda** ajoute des diffusions à une date précise : un set déposé passe à son heure (`scheduler/agenda.py`), et un direct daté ouvre le harbor au compte prévu. Un invité dépose son set par un lien privé, sans compte : le fichier passe par tusd, puis le catalogue le range dans `40-emissions` et le déclare au moteur. L'interrupteur `agenda_enabled` coupe tout l'Agenda.
+
 Pendant un direct, l'horloge se met en pause et laisse tomber les ancres dues. À la fin, les files jingles et auto-DJ sont vidées et le titre auto-DJ entamé est sauté : la grille reprend sur un morceau entier.
 
 ## Les données
@@ -64,9 +70,13 @@ Pendant un direct, l'horloge se met en pause et laisse tomber les ancres dues. �
 |---|---|---|
 | Base de la station | `RT_DATA/radiotomate.db` (SQLite) | une par station ; schéma migré par `radiotomate update` au démarrage |
 | Configuration du moteur | `RT_DATA/radiotomate.yaml` | sorties, alertes, rétention, métriques ; écrite par `radiotomate-init` |
-| Banque de sons | `BUTTON_MEDIA` | `00-inbox`, `10-rotation`, `20-archives`, `30-habillage`, `50-carts`… |
+| Banque de sons | `BUTTON_MEDIA` | `00-inbox`, `10-rotation`, `20-archives`, `30-habillage`, `40-emissions`, `50-carts`… |
 | Bibliothèque Beets | `RT_DATA/Beets` | index de la banque, ReplayGain |
 | Index de recherche | `MEILI_DATA` | reconstruit par le catalogue |
+| Envois en cours | volume `tusd-data` | les morceaux d'un envoi reprenable |
+| Mots de passe du dossier partagé | volume `share-private` | écrits par le catalogue, lus par `share` ; jamais dans la banque |
+
+Les heures ne sont pas stockées de la même façon partout : heure locale dans les tables historiques, UTC dans l'Agenda. Voir l'[ADR 0008](decisions/0008-deux-conventions-d-heure.md).
 
 ## Ce que le moteur surveille
 
@@ -84,4 +94,6 @@ Pendant un direct, l'horloge se met en pause et laisse tomber les ancres dues. �
 | [`services/`](../services/) | Catalogue, nowplaying, Icecast |
 | [`deploy/`](../deploy/) | Compose de la station, scripts d'initialisation, banc audio local |
 | [`docs/`](./) | Cette documentation |
-| [`scripts/`](../scripts/) | Outils de développement |
+| [`scripts/`](../scripts/) | Le banc local (`dev.sh`) et les vérifications de la CI (`verifier.sh`) |
+
+Chaque dossier principal a son `AGENTS.md` : les règles et les pièges pour y travailler. Les choix qui structurent le tout sont dans [decisions/](decisions/README.md).
