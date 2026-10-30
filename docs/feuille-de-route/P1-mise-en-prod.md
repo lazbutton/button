@@ -8,8 +8,8 @@ Le format des fiches, les tailles et la façon de prendre une fiche sont dans le
 
 | Fiche | Titre | Taille | Dépend de | État |
 |---|---|---|---|---|
-| [SEC-01](#sec-01--protéger-le-catalogue) | Protéger le catalogue | S | — | à faire |
-| [SEC-02](#sec-02--cookie-de-session-sécurisé-par-défaut) | Cookie de session sécurisé par défaut | S | — | à faire |
+| [SEC-01](#sec-01--protéger-le-catalogue) | Protéger le catalogue | S | — | fait, `ed13ff2` |
+| [SEC-02](#sec-02--cookie-de-session-sécurisé-par-défaut) | Cookie de session sécurisé par défaut | S | — | fait, `22ed07a` |
 | [SEC-03](#sec-03--limiter-les-essais-de-connexion) | Limiter les essais de connexion | M | — | à faire |
 | [SEC-04](#sec-04--identifiants-dencodeur-dédiés) | Identifiants d'encodeur dédiés | M | — | à faire |
 | [SEC-05](#sec-05--en-têtes-de-sécurité) | En-têtes de sécurité | S | — | à faire |
@@ -18,11 +18,11 @@ Le format des fiches, les tailles et la façon de prendre une fiche sont dans le
 | [GEN-01](#gen-01--réglages-de-la-station-dans-la-console) | Réglages de la station dans la console | L | — | à faire |
 | [GEN-02](#gen-02--sortir-les-données-dune-station-du-code) | Sortir les données d'une station du code | M | GEN-01 | à faire |
 | [GEN-03](#gen-03--garde-fou-contre-les-données-de-station) | Garde-fou contre les données de station | S | — | à faire |
-| [TST-01](#tst-01--banc-reproductible-et-playwright) | Banc reproductible et Playwright | M | — | à faire |
+| [TST-01](#tst-01--banc-reproductible-et-playwright) | Banc reproductible et Playwright | M | — | fait, `99b2cdf` |
 | [TST-02](#tst-02--parcours-critiques) | Parcours critiques | M | TST-01 | à faire |
 | [TST-03](#tst-03--parcours-en-ci-et-accessibilité) | Parcours en CI et accessibilité | S | TST-02 | à faire |
 | [MAJ-01](#maj-01--versions-et-canal-stable) | Versions et canal stable | M | — | à faire |
-| [MAJ-02](#maj-02--copie-de-la-base-avant-chaque-migration) | Copie de la base avant chaque migration | S | — | à faire |
+| [MAJ-02](#maj-02--copie-de-la-base-avant-chaque-migration) | Copie de la base avant chaque migration | S | — | fait, `26f0fcc` |
 | [MAJ-03](#maj-03--contrôle-après-déploiement) | Contrôle après déploiement | S | SEC-01 | à faire |
 | [MAJ-04](#maj-04--commande-de-mise-à-jour) | Commande de mise à jour | L | MAJ-01, MAJ-02, MAJ-03, INS-03 | à faire |
 | [MAJ-05](#maj-05--retour-arrière-automatique) | Retour arrière automatique | M | MAJ-04 | à faire |

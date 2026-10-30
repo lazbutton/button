@@ -3,9 +3,10 @@ import logging
 from quart import Blueprint, g, jsonify, render_template, request, url_for
 from werkzeug.exceptions import BadRequest, Conflict, NotFound
 
-from radiotomate.auth import login_required, permission_required
+from radiotomate.auth import current_user, login_required, permission_required
 from radiotomate.interface.json_util import forbidden_unless, read_json_object
 from radiotomate.models import User
+from radiotomate.services.stream_token import stream_token_payload
 
 _log = logging.getLogger(__name__)
 
@@ -94,6 +95,56 @@ async def delete_user_json(user_id: int):
     await g.dbsession.delete(user)
     await g.dbsession.commit()
     return jsonify({"ok": True})
+
+
+async def _renewed_stream_token(user: User):
+    token = user.renew_stream_token()
+    await g.dbsession.commit()
+    _log.info(
+        "Encoder token of %s renewed by %s",
+        user.username,
+        current_user.user.username,
+    )
+    response = jsonify({"token": token, **stream_token_payload(user)})
+    # shown once: no copy of it anywhere on the way
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@blueprint.get("/users/me/stream-token.json")
+@login_required
+async def my_stream_token_json():
+    return jsonify(stream_token_payload(current_user.user))
+
+
+@blueprint.post("/users/me/stream-token.json")
+@login_required
+async def renew_my_stream_token_json():
+    return await _renewed_stream_token(current_user.user)
+
+
+@blueprint.get("/users/<int:user_id>/stream-token.json")
+@login_required
+async def stream_token_json(user_id: int):
+    deny = forbidden_unless("admin")
+    if deny:
+        return deny
+    user = await User.from_id(g.dbsession, user_id)
+    if not user:
+        raise NotFound(f"User {user_id} not found")
+    return jsonify(stream_token_payload(user))
+
+
+@blueprint.post("/users/<int:user_id>/stream-token.json")
+@login_required
+async def renew_stream_token_json(user_id: int):
+    deny = forbidden_unless("admin")
+    if deny:
+        return deny
+    user = await User.from_id(g.dbsession, user_id)
+    if not user:
+        raise NotFound(f"User {user_id} not found")
+    return await _renewed_stream_token(user)
 
 
 @blueprint.get("/users")

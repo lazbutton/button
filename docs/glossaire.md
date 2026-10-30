@@ -29,6 +29,7 @@ Les mots de la radio et ceux du code. Quand la console et le code n'emploient pa
 | Inbox | Le dossier où arrivent les fichiers envoyés, avant d'être rangés | `00-inbox` |
 | Interface | Le processus web du moteur, port 6811 : pages HTMX de l'amont et API JSON de la console | `interface_app.py` |
 | Invité | Une personne sans compte, qui dépose son set par un lien privé | `agenda_guests`, page `/invitation` |
+| Jeton d'encodeur | Le mot de passe que l'encodeur envoie au harbor, à la place de celui du compte. Un par compte, montré une seule fois | `users.stream_token_hash`, `services/stream_token.py` |
 | Journal d'antenne | Ce qui est vraiment passé, remonté par Liquidsoap, auquel le conducteur se réconcilie | `metadata_log` |
 | Migration | Une évolution du schéma de la base | `commands/update/vNN.py` |
 | Moteur | Le fork de Radiotomate : playout, scheduler et interface | `engine/` |
