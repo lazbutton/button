@@ -630,11 +630,15 @@ export function useMonitor(
     const audio = audioRef.current;
     if (!audio) return;
 
+    // L'élément a fini, échoué ou calé : le casque se reconnecte, avec le
+    // backoff. Un flux absent, un 404 d'Icecast pendant que le playout
+    // redémarre par exemple, allonge ainsi l'attente au lieu d'être redemandé
+    // toutes les 200 ms.
     const bump = () => {
       if (!wantLiveRef.current) return;
       if (!audio.getAttribute("src") && !pcmSinkRef.current) return;
       setLive(false);
-      scheduleReconnect(RECONNECT_MIN_MS);
+      scheduleReconnect();
     };
 
     const onWaiting = () => {

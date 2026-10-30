@@ -88,13 +88,18 @@ test("écouter l’antenne au casque, puis arrêter", async ({ page }) => {
   await expect(casque(page)).toHaveAccessibleName("Écouter au casque : Antenne publique");
 });
 
-test("un flux muet au casque : la console le dit", async ({ page }) => {
+test("un flux muet au casque : la console le dit, sans marteler", async ({ page }) => {
   // Le banc coupe le flux : le casque n'entend rien, et le bouton le dit.
+  const demandes = demandesDuFlux(page, await adresseDuFlux(page));
   await seConnecter(page, "animateur");
   await casque(page).click();
   await expect(casque(page)).toHaveAccessibleName("Arrêter l’écoute. Le flux ne répond pas : le casque réessaie seul", {
     timeout: 10_000,
   });
+  // Chaque essai demande le flux jusqu'à trois fois : en PCM, en MSE, puis par
+  // l'élément audio. Le backoff en laisse sept en 5 s au plus ; un essai toutes
+  // les 200 ms en ferait plus de vingt.
+  expect(await enCinqSecondes(page, demandes)).toBeLessThanOrEqual(24);
 });
 
 test("un flux qui s’arrête : le casque réessaie seul, sans marteler, et le dit", async ({ page }) => {
