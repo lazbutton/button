@@ -204,6 +204,12 @@ export function useMonitor(
     abortRef.current?.abort();
     abortRef.current = null;
     teardownPcm();
+    // Le calage que guettait l'élément ne vaut que pour ce qu'il chargeait :
+    // sinon, 8 s plus tard, il relancerait la connexion suivante, même saine.
+    if (stallTimer.current != null) {
+      window.clearTimeout(stallTimer.current);
+      stallTimer.current = null;
+    }
     const audio = audioRef.current;
     if (audio) {
       audio.pause();
