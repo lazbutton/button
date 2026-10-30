@@ -106,7 +106,9 @@ server {
         proxy_send_timeout 30s;
     }
 
-    location ~ ^/(csrf\.json|login\.json|login|logout|live\.json|account\.json|users\.json|users/|carts\.json|carts/|autodj/|antenne/|agenda\.json|agenda/|health/|system/) {
+    # Engine routes. A route missing here works in dev (Vite proxy) and gets
+    # the console's index.html in prod: src/api/nginxRoutes.test.ts checks it.
+    location ~ ^/(csrf\.json|login\.json|login|logout|live\.json|account\.json|users\.json|users/|carts\.json|carts/|media/bank\.json|autodj/|antenne/|agenda\.json|agenda/|health/|system/) {
         resolver 127.0.0.11 ipv6=off valid=10s;
         set $rt_backend ${AUTOMATE_BACKEND};
         proxy_pass $rt_backend;

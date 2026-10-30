@@ -18,13 +18,15 @@ Ce qui change par rapport à l'amont est décrit en détail dans [`docs/moteur/c
 | `radiotomate/models/`, `domain/`, `services/` | Modèles SQLAlchemy, règles métier, opérations partagées |
 | `radiotomate/commands/update/` | Migrations du schéma (`vN.py`), appliquées par `radiotomate update` |
 | `playout/radiotomate.liq` | Le script Liquidsoap (2.4.5) qui produit le son |
-| `tests/` | Tests du scheduler et des routes JSON (`tests/scheduler`), tests Playwright de l'interface (`tests/interface`) |
+| `tests/` | Tests du scheduler, du domaine et des routes JSON (`tests/scheduler`, en CI) ; tests Playwright des pages HTMX de l'amont (`tests/interface`, hors CI) |
 
 ## Règles du fork
 
 - **Patches minces.** Le script Liquidsoap ne se réécrit pas : on l'amende, et `liquidsoap --check` tourne en CI.
 - **Compatibilité.** Les routes JSON gardent leur forme. Une migration de schéma s'ajoute toujours (`vN+1`) et sait se défaire (`downgrade`).
-- **Le nom du paquet reste `radiotomate`** (commande, imports, migrations), pour garder la filiation et faciliter les échanges avec l'amont.
+- **Le nom du paquet reste `radiotomate`** (commande, imports, migrations), pour garder la filiation et faciliter les échanges avec l'amont. Voir l'[ADR 0006](../docs/decisions/0006-le-paquet-reste-radiotomate.md).
+
+Les consignes pour travailler dans ce dossier, et ses pièges, sont dans [AGENTS.md](AGENTS.md).
 
 ## Lancer le moteur seul
 
@@ -42,9 +44,11 @@ L'interface répond sur http://127.0.0.1:6811. Pour le banc complet avec la cons
 
 ## Vérifier
 
+Depuis la racine du dépôt, comme la CI :
+
 ```bash
-poetry run ruff check && poetry run ruff format --check
-poetry run pytest tests/scheduler tests/test_*.py
-poetry run pytest tests/interface      # Playwright : `poetry run playwright install chromium` une fois
-RTCONFIG=… liquidsoap --check playout/radiotomate.liq
+./scripts/verifier.sh moteur        # ruff check, ruff format --check, pytest avec TZ=Europe/Paris
+./scripts/verifier.sh liquidsoap    # liquidsoap --check playout/radiotomate.liq, dans Docker
 ```
+
+Les tests Playwright des pages HTMX ne tournent pas en CI. Pour les lancer : `poetry run playwright install chromium` une fois, puis `poetry run pytest tests/interface`.

@@ -4,7 +4,7 @@ Une station complète tient dans [`deploy/compose.yml`](../deploy/compose.yml) :
 
 ## Prérequis
 
-- Une machine Linux avec Docker et Compose v2.
+- Une machine Linux x86-64 avec Docker et Compose v2. Les images ne sont construites que pour `linux/amd64`.
 - De la place pour la banque de sons.
 - Pour un accès public, un reverse proxy HTTPS devant la console et le flux, par exemple Caddy.
 
@@ -40,6 +40,17 @@ Au premier démarrage, `radiotomate-init` prépare tout, et peut être relancé 
 | Titre en cours | `http://<machine>:6820/now.json` |
 | Catalogue | `http://<machine>:30127` |
 
+**Docker contourne le pare-feu.** Ces ports sont publiés sur toutes les interfaces, et un port publié par Docker reste joignable même si ufw le ferme. Sur une machine exposée à Internet, les lier à `127.0.0.1` dans `.env`, puis placer un reverse proxy HTTPS devant :
+
+```bash
+CONSOLE_PORT=127.0.0.1:30126
+ICECAST_PORT=127.0.0.1:18000
+NOWPLAYING_PORT=127.0.0.1:6820
+CATALOG_PORT=127.0.0.1:30127
+```
+
+Vérifier ensuite depuis une autre machine, par exemple avec `nc -zv <machine> 30126`, et non avec `ufw status`.
+
 Le harbor (l'entrée du direct, port 6800) n'est pas publié par défaut. Pour qu'un encodeur se branche sur cette machine, ajouter un `compose.override.yml` :
 
 ```yaml
@@ -48,6 +59,12 @@ services:
     ports:
       - "6800:6800"
 ```
+
+Le harbor accepte aujourd'hui l'identifiant et le mot de passe du compte de l'animateur. Avant de l'ouvrir à Internet, lire la fiche SEC-04 de la [feuille de route](feuille-de-route/P1-mise-en-prod.md).
+
+## Avant d'exposer une station à Internet
+
+Une installation sur une machine exposée reste un essai tant que les fiches [P1](feuille-de-route/P1-mise-en-prod.md) ne sont pas faites, en particulier celles de sécurité : catalogue protégé, cookie sécurisé, essais de connexion limités, identifiants d'encodeur, en-têtes, secrets d'exemple refusés, ports fermés.
 
 ## Régler le moteur
 
@@ -67,6 +84,8 @@ docker compose up -d
 ```
 
 Sans `RT_TAG`, la station suit `main`. Pour geler une version, mettre un tag daté dans `.env` : `RT_TAG=AAAAMMJJ-sha7`. Les tags existants sont listés sur la page des packages GitHub.
+
+`RT_TAG` ne gèle que le moteur et le playout. La console, Icecast, nowplaying, le catalogue et le partage suivent `main` tant que les versions publiées n'existent pas : voir MAJ-01 dans la [feuille de route](feuille-de-route/P1-mise-en-prod.md).
 
 ## Revenir en arrière
 

@@ -34,31 +34,55 @@ Ensuite, depuis la racine du dépôt :
 
 `Ctrl-C` arrête les deux. Pour tester le tuyau audio (Icecast et titre en cours) sans la station entière, voir [`deploy/local/`](../deploy/local/README.md).
 
+Un seul banc à la fois par machine : les ports du moteur sont écrits en dur. Pour faire travailler plusieurs agents en même temps, voir [travailler-a-plusieurs.md](travailler-a-plusieurs.md).
+
 ## Vérifier avant de proposer un changement
 
-| Partie | Commandes |
-|---|---|
-| Moteur | `cd engine && poetry run ruff check && poetry run ruff format --check && poetry run pytest tests/scheduler tests/test_*.py` |
-| Interface du moteur | `poetry run pytest tests/interface`, après `poetry run playwright install chromium` une fois |
-| Script Liquidsoap | `RTCONFIG=… liquidsoap --check engine/playout/radiotomate.liq` |
-| Console | `cd console && npm test && npm run build` |
-| Catalogue | `cd services/catalog && python test_inbox_api.py` |
-| Compose | `cd deploy && docker compose config --quiet`, avec un `.env` rempli |
+```bash
+./scripts/verifier.sh                   # tout ce qui peut tourner sur cette machine
+./scripts/verifier.sh moteur console    # seulement ces parties
+```
 
-La CI ([`.github/workflows/`](../.github/workflows/)) relance ces vérifications sur chaque pull request, pour les dossiers touchés, sauf les tests Playwright et le Compose. Sur `main`, elle publie aussi les images Docker, seulement si tout est vert.
+Le script lance les mêmes commandes que la CI ([`.github/workflows/`](../.github/workflows/)) :
+
+| Partie | Ce qui tourne | Il faut |
+|---|---|---|
+| `moteur` | `ruff check`, `ruff format --check`, puis `pytest` avec `TZ=Europe/Paris`, sans `tests/interface` ni `tests/e2e` | Poetry |
+| `liquidsoap` | `liquidsoap --check engine/playout/radiotomate.liq`, avec un `RTCONFIG` minimal | Docker |
+| `console` | `npm test`, puis `tsc` et `vite build` | Node 22, `npm install` fait |
+| `services` | les six tests du catalogue listés dans `services.yml` | `services/catalog/.venv`, voir plus bas |
+| `nginx` | `nginx -t` sur `console/docker/nginx.conf.template` | Docker |
+| `deploy` | `docker compose config` avec `.env.example`, puis ShellCheck s'il est installé | Docker |
+
+Sans argument, une partie à qui il manque un outil est sautée, et le résumé le dit. Nommée, elle échoue.
+
+Les dépendances du catalogue vont dans un environnement à part, une fois :
+
+```bash
+python3 -m venv services/catalog/.venv
+services/catalog/.venv/bin/pip install -r services/catalog/requirements.txt
+```
+
+Les tests Playwright des pages HTMX de l'amont ne tournent pas en CI : `cd engine && poetry run playwright install chromium`, une fois, puis `poetry run pytest tests/interface`.
+
+Sur `main`, la CI publie aussi les images Docker, seulement si tout est vert.
 
 ## Règles du projet
 
-- **L'API JSON est un contrat.** Une route du moteur ne change de forme qu'avec la console, dans le même commit, et [`docs/api.md`](api.md) suit.
+Elles sont dans le [AGENTS.md](../AGENTS.md) de la racine, communes aux personnes et aux agents, et dans le `AGENTS.md` de chaque dossier. Les plus importantes :
+
+- **L'API JSON est un contrat.** Une route du moteur ne change de forme qu'avec la console, dans la même branche, et [`docs/api.md`](api.md) suit. Une route nouvelle entre dans la liste de nginx : un test le vérifie.
 - **Le moteur reste un fork mince.** Les changements y sont minimaux et rétro-compatibles. Le script Liquidsoap s'amende, il ne se réécrit pas. Voir [`engine/FORK.md`](../engine/FORK.md).
-- **Le schéma de la base ne recule jamais.** Toute évolution est une nouvelle migration `engine/radiotomate/commands/update/vN.py`, avec `upgrade` et `downgrade`.
+- **Le schéma de la base ne recule jamais.** Toute évolution est une nouvelle migration, et une migration publiée ne se modifie plus.
+- **Aucune donnée de station dans le dépôt** : ni secret, ni adresse, ni compte réel.
 - **L'interface est en français**, en thème clair et sombre, utilisable au clavier et sur téléphone.
 - **Un commit par sujet.** Le message dit ce qui change, puis pourquoi.
 
 ## Écrire une migration
 
-1. Ajouter `vN.py` (le numéro suivant) avec `async def upgrade(conn)` et `async def downgrade(conn)`.
-2. Mettre à jour le modèle SQLAlchemy concerné.
-3. Vérifier l'aller-retour sur une copie de base : `radiotomate update --target-version N-1`, puis `radiotomate update`.
+1. Ajouter `engine/radiotomate/commands/update/vNN.py`, avec le numéro libre suivant, `async def upgrade(conn)` et `async def downgrade(conn)`. La dernière publiée est v17.
+2. Mettre à jour le modèle SQLAlchemy concerné, dans le même commit.
+3. Ajouter son test dans `engine/tests/test_migrations.py` : une base de la version d'avant, avec des données, qui monte puis redescend.
+4. Vérifier l'aller-retour sur une copie de base : `radiotomate update --target-version N-1`, puis `radiotomate update`.
 
 `radiotomate-init` applique les migrations à chaque démarrage. Revenir à une image plus ancienne demande donc de redescendre d'abord le schéma : voir [`deploiement.md`](deploiement.md#revenir-en-arrière).
