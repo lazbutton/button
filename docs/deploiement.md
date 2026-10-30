@@ -87,6 +87,41 @@ docker compose up -d --force-recreate radiotomate-playout radiotomate-interface 
 
 **Ne jamais redémarrer `radiotomate-playout` seul** : l'interface et le scheduler partagent son réseau, et deviendraient injoignables.
 
+## Les en-têtes de sécurité
+
+Le nginx de la console pose ces en-têtes sur chaque réponse :
+
+| En-tête | Valeur | Pour |
+|---|---|---|
+| `X-Content-Type-Options` | `nosniff` | un fichier n'est jamais lu comme un script |
+| `X-Frame-Options` | `DENY` | aucune page de la console dans un cadre d'un autre site |
+| `Referrer-Policy` | `strict-origin-when-cross-origin`, et `no-referrer` pour un invité | l'adresse d'une page ne fuit pas vers un autre site |
+| `Permissions-Policy` | `camera=(), microphone=()` | ni caméra ni micro |
+| `Content-Security-Policy-Report-Only` | voir plus bas | les sources permises de chaque ressource |
+
+`Strict-Transport-Security` vient du reverse proxy HTTPS, pas de la console.
+
+La CSP est en rodage : elle ne bloque rien. Le navigateur signale dans sa console, celle des outils de développement, ce qu'elle bloquerait, sur des lignes qui commencent par `[Report Only]`. Elle permet l'origine de la console, plus `blob:` pour l'écoute. Quand le flux et `now.json` passent par le même domaine que la console, derrière le reverse proxy, il n'y a rien à régler.
+
+Sinon, sur un autre domaine ou sur un port publié comme `18000` ou `6820`, déclarer leurs origines à la console, séparées par des espaces :
+
+| Variable | Pour | Exemple |
+|---|---|---|
+| `CSP_MEDIA_SRC` | le flux et Icecast : l'écoute, le moniteur, le statut | `https://flux.radio.example` |
+| `CSP_CONNECT_SRC` | `now.json`, et toute autre adresse que la console lit | `https://titre.radio.example` |
+
+`compose.yml` ne les transmet pas encore à la console. Un `compose.override.yml`, à côté de lui, s'en charge :
+
+```yaml
+services:
+  console:
+    environment:
+      CSP_MEDIA_SRC: https://flux.radio.example
+      CSP_CONNECT_SRC: https://titre.radio.example
+```
+
+Puis `docker compose up -d console`. Une valeur qui contient autre chose que des adresses, comme un guillemet ou un point-virgule, empêche la console de démarrer : `docker compose logs console` dit pourquoi. Pour vérifier les deux variables, ouvrir la console, lancer l'écoute, puis chercher des lignes `[Report Only]` dans la console du navigateur.
+
 ## Mettre à jour
 
 ```bash

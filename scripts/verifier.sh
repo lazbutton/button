@@ -85,15 +85,19 @@ check_services() {
 
 check_nginx() {
   need_docker || return
-  # Le gabarit passe par l'entrée standard, envsubst tourne dans le conteneur,
-  # et les relais pointent sur 127.0.0.1 : un nom inconnu ferait échouer nginx -t.
-  docker run --rm -i \
+  # Les fichiers de console/docker/ vont où le Dockerfile les met, puis le
+  # script de démarrage de l'image les rend : le gabarit et ses en-têtes de
+  # sécurité. Les relais pointent sur 127.0.0.1 : un nom inconnu ferait
+  # échouer nginx -t. Le dépôt est monté, jamais le dossier temporaire du Mac.
+  docker run --rm \
+    -v "$root/console/docker:/button:ro" \
     -e AUTOMATE_BACKEND=http://127.0.0.1:6811 \
     -e CATALOG_UPSTREAM=http://127.0.0.1:30127 \
     -e TUSD_UPSTREAM=http://127.0.0.1:8080 \
-    nginx:1.27-alpine sh -c \
-    "envsubst '\${AUTOMATE_BACKEND} \${CATALOG_UPSTREAM} \${TUSD_UPSTREAM}' > /etc/nginx/conf.d/default.conf && nginx -t" \
-    <"$root/console/docker/nginx.conf.template"
+    nginx:1.27-alpine sh -c '
+      cp /button/nginx.conf.template /etc/nginx/nginx-default.conf.template &&
+      cp /button/security-headers.conf.template /etc/nginx/security-headers.conf.template &&
+      sh /button/docker-entrypoint.sh && nginx -t'
 }
 
 check_deploy() {
