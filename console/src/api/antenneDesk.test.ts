@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { anchorHint, deskAlert, mmss, ownsSpace, previewUrl, progressLabel, spaceSkips, SKIP_GUARD_MS } from "./antenneDesk.ts";
+import { anchorHint, deskAlert, mmss, ownsSpace, previewFailure, previewUrl, progressLabel, spaceSkips, SKIP_GUARD_MS } from "./antenneDesk.ts";
 
 const free = { tag: "DIV", role: null, editable: false };
 
@@ -56,4 +56,14 @@ test("alert only when something is wrong", () => {
 
 test("preview url escapes the id", () => {
   assert.equal(previewUrl("a/b c"), "/library/media/a%2Fb%20c");
+});
+
+test("a stopped preview says why", () => {
+  assert.equal(previewFailure(401), "Session expirée : recharge la page et reconnecte-toi.");
+  for (const status of [null, 500, 502, 504]) {
+    assert.equal(previewFailure(status), "Pré-écoute impossible : le catalogue ne répond pas.", String(status));
+  }
+  for (const status of [200, 206, 404]) {
+    assert.equal(previewFailure(status), "Pré-écoute impossible : le fichier ne répond pas.", String(status));
+  }
 });
