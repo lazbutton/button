@@ -1,5 +1,6 @@
 import type { Page, Route } from "@playwright/test";
 import { READ_DEADLINE_MS } from "../src/api/readDeadline.ts";
+import { SEND_DEADLINE_MS } from "../src/api/sendDeadline.ts";
 import {
   alerte,
   antenne,
@@ -18,11 +19,11 @@ import { engineRoutes } from "./routes.ts";
 // Ce que la console dit quand le moteur répond mal. Chaque cas est simulé par
 // page.route devant le vrai moteur de démo : session expirée (401), droit
 // manquant (403), moteur injoignable (connexion refusée), moteur muet (une
-// lecture qui ne reçoit jamais de réponse), moteur arrêté derrière nginx (502
-// en HTML), envoi trop lourd pour nginx (413 en HTML) et route absente,
-// c'est-à-dire un moteur plus ancien que la console (404). La page Automate
-// passe aussi par le catalogue : un refus ou un catalogue injoignable y sont
-// simulés devant le faux catalogue.
+// lecture ou un geste qui ne reçoit jamais de réponse), moteur arrêté derrière
+// nginx (502 en HTML), envoi trop lourd pour nginx (413 en HTML) et route
+// absente, c'est-à-dire un moteur plus ancien que la console (404). La page
+// Automate passe aussi par le catalogue : un refus ou un catalogue injoignable
+// y sont simulés devant le faux catalogue.
 
 // Ce que le relais envoie au moteur : le reste vient de la console.
 const MOTEUR = new RegExp(`^/(${engineRoutes})`);
@@ -157,6 +158,19 @@ test("moteur arrêté derrière nginx pendant un geste : la console le dit, sans
   await expect(page.getByText(/Bad Gateway/)).toHaveCount(0);
 });
 
+test("moteur muet pendant un geste : la console dit que le geste a peut-être été fait", async ({ page }) => {
+  await seConnecter(page, "animateur");
+  // « Suivant » part, puis ne reçoit jamais de réponse : la demande reste pendante.
+  await page.route("**/live.json", (route) => {
+    if (!passer(route)) return route.continue();
+  });
+
+  await suivant(page).click();
+  await expect(
+    alerte(page, "L’automate ne répond pas. Le geste a peut-être été fait : vérifie avant de réessayer."),
+  ).toBeVisible({ timeout: SEND_DEADLINE_MS + 5_000 });
+});
+
 test("moteur arrêté derrière nginx à la connexion : la console ne parle pas de mot de passe", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("button", { name: "Se connecter" })).toBeVisible();
@@ -166,6 +180,25 @@ test("moteur arrêté derrière nginx à la connexion : la console ne parle pas 
 
   await remplirLaConnexion(page, "animateur");
   await expect(alerte(page, "L’automate ne répond pas. Vérifie qu’il tourne, puis réessaie.")).toBeVisible();
+});
+
+test("moteur muet à la connexion : la console le dit, sans attendre le formulaire de repli", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("button", { name: "Se connecter" })).toBeVisible();
+  // /login.json part, puis ne reçoit jamais de réponse. Le formulaire de /login
+  // attendrait le même moteur muet : la console ne l'essaie pas.
+  const repli: string[] = [];
+  await page.route("**/login.json", () => {});
+  await page.route("**/login", (route) => {
+    repli.push(route.request().method());
+    return route.continue();
+  });
+
+  await remplirLaConnexion(page, "animateur");
+  await expect(alerte(page, "L’automate ne répond pas. Vérifie qu’il tourne, puis réessaie.")).toBeVisible({
+    timeout: SEND_DEADLINE_MS + 5_000,
+  });
+  expect(repli).toEqual([]);
 });
 
 test("connexion par le formulaire de repli : un mot de passe refusé se dit comme tel", async ({ page }) => {
