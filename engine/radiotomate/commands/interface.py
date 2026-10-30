@@ -10,8 +10,15 @@ from . import radiotomate_cli
     is_flag=True,
     help="Reloads app on changes (when developing))",
 )
+@click.option(
+    "--port",
+    type=click.IntRange(1, 65535),
+    default=6811,
+    show_default=True,
+    help="Port to listen on",
+)
 @click.pass_obj
-def interface(config_dict, demo, reload):
+def interface(config_dict, demo, reload, port):
     """
     Start the Radiotomate web application
     """
@@ -35,9 +42,9 @@ def interface(config_dict, demo, reload):
         beets = BeetsIntegration.default()
 
     app = app_factory(config_dict, reload, beets)
-    Scheduler.init(config_dict, app, demo=demo)
+    Scheduler.init(config_dict, app, demo=demo, interface_port=port)
     if reload:
-        app.run(use_reloader=reload, host="0.0.0.0", port=6811)
+        app.run(use_reloader=reload, host="0.0.0.0", port=port)
     else:
 
         @app.before_serving
@@ -45,7 +52,7 @@ def interface(config_dict, demo, reload):
             ShutdownManager().setup_signal_handler()
 
         config = CustomQuart.make_basic_hypercorn_config()
-        config.bind = ["0.0.0.0:6811"]
+        config.bind = [f"0.0.0.0:{port}"]
         asyncio.run(serve(app, config, shutdown_trigger=ShutdownManager().wait))
 
     if demo:

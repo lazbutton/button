@@ -35,7 +35,7 @@ git branch -d fiche/SEC-01-catalogue
 
 | Ressource | Pourquoi | Que faire |
 |---|---|---|
-| Ports 6811, 6822 et 6833 | Écrits en dur dans le moteur | Un seul moteur de démo par machine. `scripts/dev.sh` refuse de démarrer si 6811 est pris. Voir DEV-01 |
+| Ports 6811, 6822 et 6833 | Les ports par défaut du moteur. `--port` change ceux de l'interface et du scheduler, mais l'interface appelle le scheduler sur 6822 et lui le playout sur 6833 | Un seul `scripts/dev.sh` par machine : il refuse de démarrer si 6811 est pris. `scripts/e2e.sh` prend des ports libres : il tourne à côté, même lancé plusieurs fois en même temps. Le reste : DEV-01 |
 | Port 5175 | La console de dev le prend en `strictPort` | Une deuxième console, branchée sur le même moteur : `npx vite --port 5176 --strictPort` |
 | Projet Compose `button` | Deux `docker compose up`, depuis deux worktrees, se marchent dessus | `docker compose -p <nom>` et d'autres ports, ou une seule station de test à la fois |
 | Le graphe du code | Il décrit la copie où il a été construit | Voir [plus bas](#le-graphe-du-code) |

@@ -9,8 +9,15 @@ from . import radiotomate_cli
     is_flag=True,
     help="Reloads app on changes (when developing)",
 )
+@click.option(
+    "--port",
+    type=click.IntRange(1, 65535),
+    default=6822,
+    show_default=True,
+    help="Port to listen on. The interface still calls 6822.",
+)
 @click.pass_obj
-def scheduler(config_dict, reload):
+def scheduler(config_dict, reload, port):
     """
     Start the Radiotomate scheduler service
     """
@@ -29,7 +36,7 @@ def scheduler(config_dict, reload):
     Watchdog(app)
 
     if reload:
-        app.run(use_reloader=reload, host="0.0.0.0", port=6822)
+        app.run(use_reloader=reload, host="0.0.0.0", port=port)
     else:
 
         @app.before_serving
@@ -37,5 +44,5 @@ def scheduler(config_dict, reload):
             ShutdownManager().setup_signal_handler()
 
         config = CustomQuart.make_basic_hypercorn_config()
-        config.bind = ["0.0.0.0:6822"]
+        config.bind = [f"0.0.0.0:{port}"]
         asyncio.run(serve(app, config, shutdown_trigger=ShutdownManager().wait))

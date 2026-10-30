@@ -61,14 +61,19 @@ class Scheduler:
         return cls._instance
 
     @classmethod
-    def init(cls, config, app: CustomQuart, demo=False) -> Scheduler:
+    def init(
+        cls, config, app: CustomQuart, demo=False, interface_port=6811
+    ) -> Scheduler:
+        """
+        In demo mode there is no scheduler process: the interface answers in its
+        place, so the demo follows the interface's port.
+        """
         if cls._instance is not None:
             raise RuntimeError("init has already been called")
         if demo:
-            implementation = SchedulerDemo
+            cls._instance = SchedulerDemo(config, app, interface_port)
         else:
-            implementation = cls
-        cls._instance = implementation(config, app)
+            cls._instance = cls(config, app)
         app.after_serving(cls.after_serving)
         return cls._instance
 
@@ -278,9 +283,9 @@ class SchedulerDemo(Scheduler):
 
     TRACK_LENGTH = 180
 
-    def __init__(self, config, app: CustomQuart):
+    def __init__(self, config, app: CustomQuart, interface_port=6811):
         self.client = httpx.AsyncClient(
-            base_url="http://127.0.0.1:6811",
+            base_url=f"http://127.0.0.1:{interface_port}",
             headers={
                 "X-Auth-Token": config["playout_process_config"]["token"],
             },
