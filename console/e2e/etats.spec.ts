@@ -1,11 +1,13 @@
 import type { Page, Route } from "@playwright/test";
+import { READ_DEADLINE_MS } from "../src/api/readDeadline.ts";
 import { antenne, avis, bibliotheque, expect, file, remplirLaConnexion, seConnecter, test } from "./banc.ts";
 import { engineRoutes } from "./routes.ts";
 
 // Ce que la console dit quand le moteur répond mal. Chaque cas est simulé par
 // page.route devant le vrai moteur de démo : session expirée (401), droit
-// manquant (403), moteur injoignable (connexion refusée) et route absente,
-// c'est-à-dire un moteur plus ancien que la console (404).
+// manquant (403), moteur injoignable (connexion refusée), moteur muet (une
+// lecture qui ne reçoit jamais de réponse) et route absente, c'est-à-dire un
+// moteur plus ancien que la console (404).
 
 // Ce que le relais envoie au moteur : le reste vient de la console.
 const MOTEUR = new RegExp(`^/(${engineRoutes})`);
@@ -106,6 +108,25 @@ test("moteur injoignable, pupitre ouvert : la barre le dit, puis repart", async 
 
   await page.unroute(versLeMoteur);
   await expect(etat).toHaveAccessibleName(/^Antenne : En onde/, { timeout: 15_000 });
+});
+
+test("moteur muet, pupitre ouvert : la barre le dit, puis repart", async ({ page }) => {
+  // Deux attentes du délai de lecture, en plus de la connexion.
+  test.slow();
+  await seConnecter(page, "animateur");
+  await expect(suivant(page)).toBeEnabled();
+  const etat = page.getByRole("banner").getByRole("button", { name: /^Antenne : / });
+  // Le moteur accepte la connexion, puis ne répond plus : boucle Quart bloquée,
+  // ou téléphone dont le réseau perd les paquets. Ses lectures restent pendantes.
+  await page.route(versLeMoteur, () => {});
+
+  await expect(etat).toHaveAccessibleName("Antenne : Automate injoignable. Santé : état indisponible.", {
+    timeout: READ_DEADLINE_MS + 10_000,
+  });
+
+  // Les lectures restées sans réponse ne retiennent pas les suivantes.
+  await page.unroute(versLeMoteur);
+  await expect(etat).toHaveAccessibleName(/^Antenne : En onde/, { timeout: READ_DEADLINE_MS + 10_000 });
 });
 
 test("moteur injoignable pour la file seule : la file ne se dit pas vide", async ({ page }) => {
