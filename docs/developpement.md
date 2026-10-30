@@ -108,7 +108,7 @@ Un parcours s'écrit dans `console/e2e/<sujet>.spec.ts`. Il importe de `e2e/banc
 
 - `test` et `expect`. `test` fait échouer un parcours sur toute erreur JavaScript de la page. Il coupe aussi ce qui sortirait du banc : `brand.json` nomme le flux d'une vraie station, que le casque demande dès l'ouverture. Une requête vers un autre site échoue, et un lien vers un autre site ouvre une page vide à son adresse. Un parcours qui a besoin du flux le sert lui-même par `page.route`, qui passe avant le banc, comme dans `barre.spec.ts` ;
 - `seConnecter(page, rôle)`, pour entrer avec un compte semé, ou `remplirLaConnexion(page, rôle)` quand l'écran de connexion est déjà affiché ;
-- `antenne`, `file` et `bibliotheque`, les trois régions du pupitre, `avis` pour un message de la console, et `tenirLAntenne`.
+- `antenne`, `file` et `bibliotheque`, les trois régions du pupitre, `avis` pour un message de la console annoncé comme un état, `alerte` pour un message annoncé comme une alerte, et `tenirLAntenne`.
 
 Un parcours trouve les éléments par leur rôle et leur nom accessible, jamais par une classe CSS. Un parcours neuf se vérifie une fois : casser dans la console ce qu'il vérifie, le voir échouer, puis défaire.
 
