@@ -43,6 +43,10 @@ if TYPE_CHECKING:
 _log = logging.getLogger(__name__)
 
 
+class SchedulerUnavailableError(Exception):
+    """The scheduler process did not answer: stopped, or too slow."""
+
+
 class Scheduler:
     """
     This is a singleton: use `Scheduler.get()`.
@@ -94,8 +98,17 @@ class Scheduler:
             },
         )
 
+    async def _request(self, method: str, path: str, **kwargs) -> httpx.Response:
+        """Raises SchedulerUnavailableError when the scheduler does not answer."""
+        try:
+            return await self.client.request(method, path, **kwargs)
+        except httpx.HTTPError as exc:
+            # %r: a ReadTimeout from a stuck scheduler has an empty message
+            _log.warning("scheduler %s %s failed: %r", method, path, exc)
+            raise SchedulerUnavailableError(repr(exc)) from exc
+
     async def skip(self):
-        await self.client.delete("/live")
+        await self._request("DELETE", "/live")
 
     async def state(self) -> dict | None:
         """Antenna state (`/antenne/state.json`) or None when unreachable."""
@@ -184,7 +197,7 @@ class Scheduler:
 
     async def push_cart(self, cart_id: int):
         _log.debug("Pushing cart %d now", cart_id)
-        result = await self.client.post(f"/schedule/{cart_id}/now")
+        result = await self._request("POST", f"/schedule/{cart_id}/now")
         if result.status_code != 200:
             _log.error(
                 "Error while pushing cart %d: %s %s",
@@ -196,7 +209,9 @@ class Scheduler:
 
     async def push_sound(self, cart_id: int, sound_id: int):
         _log.debug("Pushing cart %d sound %d now", cart_id, sound_id)
-        result = await self.client.post(f"/schedule/{cart_id}/sounds/{sound_id}/now")
+        result = await self._request(
+            "POST", f"/schedule/{cart_id}/sounds/{sound_id}/now"
+        )
         if result.status_code != 200:
             _log.error(
                 "Error while pushing sound %d of cart %d: %s %s",
@@ -216,7 +231,8 @@ class Scheduler:
         kind: str = "son",
     ):
         _log.debug("Pushing bank path now: %s", path)
-        result = await self.client.post(
+        result = await self._request(
+            "POST",
             "/schedule/path/now",
             json={"path": path, "artist": artist, "title": title, "kind": kind},
         )
