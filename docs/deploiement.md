@@ -17,7 +17,7 @@ cp .env.example .env
 chmod 600 .env
 ```
 
-Dans `.env`, remplacer chaque `change-me`, puis choisir les chemins des données (`RT_DATA`, `BUTTON_MEDIA`…). Ensuite :
+Dans `.env`, remplacer chaque `change-me`, puis choisir les chemins des données (`RT_DATA`, `BUTTON_MEDIA`…). Sans HTTPS devant la console, poser aussi `RT_COOKIE_SECURE=false` : voir [le cookie de session](#le-cookie-de-session). Ensuite :
 
 ```bash
 docker compose pull
@@ -31,6 +31,7 @@ Au premier démarrage, `radiotomate-init` prépare tout, et peut être relancé 
 - crée l'arborescence de la banque de sons ;
 - configure Beets (ReplayGain) ;
 - branche la sortie Icecast et le relais des métadonnées vers nowplaying ;
+- règle le cookie de session : `Secure`, sauf avec `RT_COOKIE_SECURE=false` ;
 - crée le compte admin `RT_ADMIN_USER` s'il n'existe pas.
 
 | Service | Adresse par défaut |
@@ -62,9 +63,19 @@ services:
 
 Le harbor accepte aujourd'hui l'identifiant et le mot de passe du compte de l'animateur. Avant de l'ouvrir à Internet, lire la fiche SEC-04 de la [feuille de route](feuille-de-route/P1-mise-en-prod.md).
 
+## Le cookie de session
+
+Par défaut, le cookie de session porte l'attribut `Secure` : le navigateur ne l'accepte et ne le renvoie qu'en `https://`. Seule exception, Chrome et Firefox l'acceptent aussi sur `http://localhost`. Une fois connecté en HTTPS, ouvrir par erreur une adresse en `http://` n'envoie donc pas la session en clair.
+
+Pour un accès en HTTP seul, sur un banc local ou un réseau privé, poser `RT_COOKIE_SECURE=false` dans `.env`. Sinon, personne ne peut se connecter : la console accepte le mot de passe, puis revient à l'écran de connexion. En HTTP, le mot de passe et le cookie passent en clair : à réserver à un réseau de confiance. Avec `false`, `radiotomate-init` le rappelle dans son journal à chaque démarrage (`docker compose logs radiotomate-init`).
+
+Pour changer `RT_COOKIE_SECURE` sur une station en service, modifier `.env`, puis recréer les trois services du moteur ensemble, comme pour [un réglage du moteur](#régler-le-moteur) : `radiotomate-init` repasse d'abord et réécrit `radiotomate.yaml`.
+
+Derrière un reverse proxy, le journal de `radiotomate-interface` peut afficher « Secure cookies will be ignored on insecure requests » : le moteur ne voit que le HTTP de nginx. Quand le navigateur est en `https://`, ce message est sans conséquence.
+
 ## Avant d'exposer une station à Internet
 
-Une installation sur une machine exposée reste un essai tant que les fiches [P1](feuille-de-route/P1-mise-en-prod.md) ne sont pas faites, en particulier celles de sécurité : catalogue protégé, cookie sécurisé, essais de connexion limités, identifiants d'encodeur, en-têtes, secrets d'exemple refusés, ports fermés.
+Une installation sur une machine exposée reste un essai tant que les fiches [P1](feuille-de-route/P1-mise-en-prod.md) ne sont pas faites, en particulier celles de sécurité : catalogue protégé, essais de connexion limités, identifiants d'encodeur, en-têtes, secrets d'exemple refusés, ports fermés.
 
 ## Régler le moteur
 
