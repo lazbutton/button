@@ -9,7 +9,7 @@ export const MODE_LABELS: Record<CartMode, string> = {
 };
 
 export const MODE_HELP: Record<CartMode, string> = {
-  playlist: "Joue les sons dans l’ordre, une fois.",
+  playlist: "Joue dans l’ordre les sons jamais passés, puis reprend au début.",
   playlist_loop: "Reprend au début après le dernier son.",
   random: "Tire un son au hasard parmi les pistes actives analysées.",
   relay: "Diffuse un flux Icecast externe. La durée max. est obligatoire.",
