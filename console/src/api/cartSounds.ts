@@ -1,5 +1,6 @@
 import { apiGet, apiPostJson, apiUpload } from "./client";
 import { chunkFiles } from "./audioDrop";
+import { BANK_SEND_DEADLINE_MS } from "./sendDeadline";
 import type { BankResponse, Cart } from "./types";
 
 export type CartImportProgress = {
@@ -83,7 +84,7 @@ export function attachBankFolders(
   cartId: number,
   folders: string[],
 ): Promise<{ cart: Cart }> {
-  return apiPostJson<{ cart: Cart }>(`/carts/${cartId}/sounds.json?delta=1`, { folders });
+  return apiPostJson<{ cart: Cart }>(`/carts/${cartId}/sounds.json?delta=1`, { folders }, BANK_SEND_DEADLINE_MS);
 }
 
 export function deleteCartSounds(cartId: number, ids: number[]): Promise<{ cart: Cart }> {
