@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { previewUrl } from "../api/antenneDesk";
+import { previewFailure, previewUrl } from "../api/antenneDesk";
 import { useMonitorState } from "./MonitorContext";
 
 /**
@@ -31,6 +31,16 @@ export function usePreview(onError: (message: string) => void) {
   const stopRef = useRef(stop);
   stopRef.current = stop;
 
+  // play() et l'élément audio peuvent signaler le même échec : le premier arrête
+  // la pré-écoute et dit pourquoi. Un titre déjà arrêté ou remplacé ne dit plus rien.
+  const fail = useCallback((src: string | null) => {
+    if (!src || audioRef.current?.getAttribute("src") !== src) return;
+    stopRef.current();
+    void fetch(src, { method: "HEAD", cache: "no-store", signal: AbortSignal.timeout(5000) })
+      .then((response) => response.status, () => null)
+      .then((status) => onErrorRef.current(previewFailure(status)));
+  }, []);
+
   const toggle = useCallback(
     (id: string) => {
       if (playingId === id) {
@@ -42,22 +52,29 @@ export function usePreview(onError: (message: string) => void) {
         audio = new Audio();
         audio.preload = "auto";
         audio.addEventListener("ended", () => stopRef.current());
+        // Une requête qui échoue en cours de lecture (session expirée, réseau coupé)
+        // ne se voit qu'ici : play() a déjà réussi. Un événement en retard, arrivé
+        // après un arrêt ou un changement de titre, ne porte plus d'erreur.
+        audio.addEventListener("error", () => {
+          const current = audioRef.current;
+          if (current?.error) fail(current.getAttribute("src"));
+        });
         audioRef.current = audio;
       }
       if (restoreRef.current === null) {
         restoreRef.current = isMuted();
         applyMute(true);
       }
-      audio.src = previewUrl(id);
+      const src = previewUrl(id);
+      audio.src = src;
       setPlayingId(id);
       void audio.play().catch((caught: unknown) => {
         // Un autre titre a pris la place : rien à signaler.
         if (caught instanceof DOMException && caught.name === "AbortError") return;
-        stopRef.current();
-        onErrorRef.current("Pré-écoute impossible : le fichier ne répond pas.");
+        fail(src);
       });
     },
-    [applyMute, isMuted, playingId, stop],
+    [applyMute, fail, isMuted, playingId, stop],
   );
 
   useEffect(() => () => stopRef.current(), []);

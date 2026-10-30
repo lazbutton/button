@@ -98,3 +98,13 @@ export function deskAlert(status: { tone: string; label: string; cause: string }
 export function previewUrl(id: string): string {
   return `/library/media/${encodeURIComponent(id)}`;
 }
+
+/**
+ * Pourquoi une pré-écoute s'est arrêtée, d'après le statut que le catalogue
+ * rend pour la même adresse (null : pas de réponse). L'élément audio ne le dit pas.
+ */
+export function previewFailure(status: number | null): string {
+  if (status === 401) return "Session expirée : recharge la page et reconnecte-toi.";
+  if (status === null || status >= 500) return "Pré-écoute impossible : le catalogue ne répond pas.";
+  return "Pré-écoute impossible : le fichier ne répond pas.";
+}
