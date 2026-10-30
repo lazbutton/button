@@ -272,7 +272,12 @@ async def push_now(cart_id: str):
     if not cart:
         return f"cart #{cart_id} not found", 404
     result = await push_cart(g.dbsession, current_app, cid)
-    if result is not None and not result.ok:
+    if result is None:
+        # No sound ready: all disabled, not analysed yet, or a one-shot playlist
+        # played through. Nothing went to the playout.
+        detail = f"cart #{cid} has no sound ready"
+        return {"ok": False, "error": "cart_empty", "detail": detail}, 409
+    if not result.ok:
         return failure_body(result), 502
     return "", 200
 

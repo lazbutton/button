@@ -34,6 +34,7 @@ from radiotomate.models import Cart, Sound
 from radiotomate.models.cart import URL_TO_AUTODJ_QUEUE
 from radiotomate.models.execution import RundownItem
 from radiotomate.scheduler_api import (
+    CartEmptyError,
     PlayoutUnavailableError,
     Scheduler,
     SchedulerUnavailableError,
@@ -972,6 +973,7 @@ async def push_now_json(cart_id: int):  # noqa: PLR0911
     if not current_user.user.can_live():
         return jsonify({"error": "forbidden"}), 403
     from radiotomate.interface.live import (
+        cart_empty_response,
         harbor_busy_response,
         harbor_is_live,
         playout_rejected_response,
@@ -990,6 +992,8 @@ async def push_now_json(cart_id: int):  # noqa: PLR0911
         return scheduler_unavailable_response()
     except PlayoutUnavailableError:
         return playout_unavailable_response()
+    except CartEmptyError:
+        return cart_empty_response()
     except RuntimeError:
         return playout_rejected_response()
     invalidate_conducteur_cache()

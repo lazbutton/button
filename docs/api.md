@@ -139,7 +139,7 @@ Créer un relais : `POST /carts.json` avec `mode:"relay"`, une URL HTTP complèt
 - `PUT /carts/{id}/sounds/{son}.json`, par exemple `{title}` ou `{active}` → `{cart, sound}` ; `DELETE` → `{cart}`.
 - `PUT /carts/{id}/sounds/ranks.json` `{ranks:[ids]}` → `{cart}`.
 
-Jouer tout de suite, droit `live` : `POST /carts/{id}/now.json` et `POST /carts/{id}/sounds/{son}/now.json` → `{ok:true}`. Pendant un direct : `409 {error, code:"harbor_live"}`. Si le scheduler ne répond pas : `502 {error:"scheduler_unavailable"}`. Si c'est le playout : `502 {error:"playout_unavailable"}`. S'il refuse l'ordre : `400 {error, code:"playout_rejected"}`, comme au pupitre.
+Jouer tout de suite, droit `live` : `POST /carts/{id}/now.json` et `POST /carts/{id}/sounds/{son}/now.json` → `{ok:true}`. Pendant un direct : `409 {error, code:"harbor_live"}`. Un bac dont aucun son n'est prêt, c'est-à-dire actif, analysé et, en playlist simple, pas encore passé : `POST /carts/{id}/now.json` rend `409 {error, code:"cart_empty"}`, avec `error` en français, et rien ne part à l'antenne. Si le scheduler ne répond pas : `502 {error:"scheduler_unavailable"}`. Si c'est le playout : `502 {error:"playout_unavailable"}`. S'il refuse l'ordre : `400 {error, code:"playout_rejected"}`, comme au pupitre.
 
 ### Banque
 

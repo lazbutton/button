@@ -78,6 +78,44 @@ async def test_demo_live_skip_and_fire_sound(  # noqa: PLR0913
         Scheduler.reset_instance()
 
 
+async def test_demo_cart_without_sound_ready(  # noqa: PLR0913
+    raw_app,
+    app_configration: dict,
+    beets_integration: BeetsIntegration,
+    dbsession: ormSession,
+    users_password: str,
+    jingles_cart,
+    pubs_cart,
+):
+    """As the scheduler: no sound ready, nothing plays, and the console is told."""
+    user = User(username="demo-cart-empty")
+    user.update_password(users_password)
+    user.update_permissions({"can_live": "true"})
+    dbsession.add(user)
+    spot = await dbsession.scalar(select(Sound).where(Sound.cart_id == pubs_cart.id))
+    assert spot is not None
+    spot.active = False
+    await dbsession.commit()
+
+    iface = _demo_app(app_configration, beets_integration)
+    try:
+        async with iface.test_app():
+            client = iface.test_client()
+            await _login(client, "demo-cart-empty", users_password)
+            await _wait_simulating(client)
+            fired = await client.post(f"/carts/{pubs_cart.id}/now.json")
+            assert fired.status_code == 409
+            assert await fired.get_json() == {
+                "error": "Ce bac n'a aucun son prêt : rien n'est parti à l'antenne.",
+                "code": "cart_empty",
+            }
+            # The demo used to play the cart's first sound, even disabled.
+            now = await (await client.get("/live.json")).get_json()
+            assert now["title"] != spot.title
+    finally:
+        Scheduler.reset_instance()
+
+
 async def test_demo_conducteur_follows_live_queue(  # noqa: PLR0913
     raw_app,
     app_configration: dict,
