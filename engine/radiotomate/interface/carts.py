@@ -33,7 +33,7 @@ from radiotomate.interface.spa import console_dist
 from radiotomate.models import Cart, Sound
 from radiotomate.models.cart import URL_TO_AUTODJ_QUEUE
 from radiotomate.models.execution import RundownItem
-from radiotomate.scheduler_api import Scheduler
+from radiotomate.scheduler_api import Scheduler, SchedulerUnavailableError
 from radiotomate.services import media_bank
 from radiotomate.services.carts import (
     assert_cart_deletable,
@@ -967,7 +967,11 @@ async def push_now(cart_id: int):
 async def push_now_json(cart_id: int):
     if not current_user.user.can_live():
         return jsonify({"error": "forbidden"}), 403
-    from radiotomate.interface.live import harbor_busy_response, harbor_is_live
+    from radiotomate.interface.live import (
+        harbor_busy_response,
+        harbor_is_live,
+        scheduler_unavailable_response,
+    )
 
     if harbor_is_live():
         return harbor_busy_response()
@@ -976,6 +980,8 @@ async def push_now_json(cart_id: int):
         return jsonify({"error": "not_found"}), 404
     try:
         await Scheduler.get().push_cart(cart_id)
+    except SchedulerUnavailableError:
+        return scheduler_unavailable_response()
     except RuntimeError as exc:
         return jsonify({"error": str(exc)}), 400
     invalidate_conducteur_cache()
@@ -984,10 +990,14 @@ async def push_now_json(cart_id: int):
 
 @blueprint.post("/carts/<int:cart_id>/sounds/<int:sound_id>/now.json")
 @login_required
-async def push_sound_now_json(cart_id: int, sound_id: int):
+async def push_sound_now_json(cart_id: int, sound_id: int):  # noqa: PLR0911
     if not current_user.user.can_live():
         return jsonify({"error": "forbidden"}), 403
-    from radiotomate.interface.live import harbor_busy_response, harbor_is_live
+    from radiotomate.interface.live import (
+        harbor_busy_response,
+        harbor_is_live,
+        scheduler_unavailable_response,
+    )
 
     if harbor_is_live():
         return harbor_busy_response()
@@ -999,6 +1009,8 @@ async def push_sound_now_json(cart_id: int, sound_id: int):
         return jsonify({"error": "not_found"}), 404
     try:
         await Scheduler.get().push_sound(cart_id, sound_id)
+    except SchedulerUnavailableError:
+        return scheduler_unavailable_response()
     except RuntimeError as exc:
         return jsonify({"error": str(exc)}), 400
     invalidate_conducteur_cache()

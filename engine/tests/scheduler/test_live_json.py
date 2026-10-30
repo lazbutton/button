@@ -1,5 +1,7 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
+import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session as ormSession
 
@@ -144,6 +146,45 @@ async def test_skip_json_ok_with_scheduler_mock(
     mock.skip.assert_awaited_once()
 
 
+def _scheduler_down(error: type[httpx.TransportError], sent: list[str]) -> Scheduler:
+    """The real client, facing a scheduler that does not answer. `sent` logs orders."""
+
+    def no_answer(request: httpx.Request) -> httpx.Response:
+        sent.append(f"{request.method} {request.url.path}")
+        raise error("no answer", request=request)
+
+    scheduler = Scheduler.__new__(Scheduler)
+    scheduler.client = httpx.AsyncClient(
+        base_url="http://127.0.0.1:6822",
+        transport=httpx.MockTransport(no_answer),
+    )
+    return scheduler
+
+
+@pytest.mark.parametrize("error", [httpx.ConnectError, httpx.ReadTimeout])
+async def test_skip_json_502_when_scheduler_down(  # noqa: PLR0913
+    raw_app,
+    app_configration: dict,
+    beets_integration: BeetsIntegration,
+    dbsession: ormSession,
+    users_password: str,
+    error: type[httpx.TransportError],
+):
+    user = User(username="live-json-down")
+    user.update_password(users_password)
+    user.update_permissions({"can_live": "true"})
+    dbsession.add(user)
+    await dbsession.commit()
+    client = _interface_client(app_configration, beets_integration)
+    await _login(client, "live-json-down", users_password)
+    sent: list[str] = []
+    with patch.object(Scheduler, "get", return_value=_scheduler_down(error, sent)):
+        response = await client.delete("/live.json")
+    assert response.status_code == 502
+    assert await response.get_json() == {"error": "scheduler_unavailable"}
+    assert sent == ["DELETE /live"]
+
+
 async def test_push_now_json_404_and_200(  # noqa: PLR0913
     raw_app,
     app_configration: dict,
@@ -249,6 +290,54 @@ async def test_now_json_conflict_when_harbor(  # noqa: PLR0913
     mock.push_path.assert_not_called()
 
 
+async def test_now_json_502_when_scheduler_down(  # noqa: PLR0913
+    raw_app,
+    app_configration: dict,
+    beets_integration: BeetsIntegration,
+    dbsession: ormSession,
+    users_password: str,
+    jingles_cart,
+):
+    user = User(username="live-json-fire-down")
+    user.update_password(users_password)
+    user.update_permissions({"can_live": "true"})
+    dbsession.add(user)
+    await dbsession.commit()
+    sound = await dbsession.scalar(
+        select(Sound).where(Sound.cart_id == jingles_cart.id)
+    )
+    assert sound is not None
+    client = _interface_client(app_configration, beets_integration)
+    await _login(client, "live-json-fire-down", users_password)
+    live_mod.set_live_snapshot(None)
+    sent: list[str] = []
+    down = _scheduler_down(httpx.ConnectError, sent)
+    with patch.object(Scheduler, "get", return_value=down):
+        answers = {
+            "cart": await client.post(f"/carts/{jingles_cart.id}/now.json"),
+            "pad": await client.post(
+                f"/carts/{jingles_cart.id}/sounds/{sound.id}/now.json",
+            ),
+            "desk sound": await client.post(
+                "/autodj/conducteur/now.json",
+                json={"path": str(sound.path)},
+            ),
+            "desk path": await client.post(
+                "/autodj/conducteur/now.json",
+                json={"path": "/media/x.mp3", "title": "X", "artist": "Y"},
+            ),
+        }
+    for name, response in answers.items():
+        assert response.status_code == 502, name
+        assert await response.get_json() == {"error": "scheduler_unavailable"}, name
+    assert sent == [
+        f"POST /schedule/{jingles_cart.id}/now",
+        f"POST /schedule/{jingles_cart.id}/sounds/{sound.id}/now",
+        f"POST /schedule/{jingles_cart.id}/sounds/{sound.id}/now",
+        "POST /schedule/path/now",
+    ]
+
+
 async def test_antenne_state_and_flush_json(
     raw_app,
     app_configration: dict,
@@ -280,6 +369,7 @@ async def test_antenne_state_and_flush_json(
         mock.state = AsyncMock(return_value=None)
         down = await client.get("/antenne/state.json")
         assert down.status_code == 502
+        assert await down.get_json() == {"error": "scheduler_unavailable"}
 
         flushed = await client.post("/antenne/flush.json")
         assert flushed.status_code == 200
