@@ -43,6 +43,13 @@ La forme exacte des objets est dans `console/src/api/types.ts`, et côté moteur
 
 `GET /health/live` et `GET /health/ready`, sans session, sur l'interface comme sur le scheduler. `ready` vérifie la base, et pour le scheduler aussi le battement et le playout. Un contrôle sans compte passe par là.
 
+### Site de la station
+
+Deux routes sans session ni cookie, en lecture seule, pour le site web de la station, hébergé sur un autre domaine. Elles répondent `Access-Control-Allow-Origin: *` et se gardent en cache (`Cache-Control: public`) ; une erreur répond `no-store`. Elles ne donnent que des titres, des heures et un type : jamais d'invité, d'animateur, de fichier, de droits, de tracklist ni d'état de préparation. Les heures sont celles de Paris, à la seconde, avec leur décalage : `2026-10-30T18:00:00+01:00`. nginx les relaie par son bloc `/public/`, limité à 10 requêtes par seconde et par adresse.
+
+- `GET /public/programme.json` → `{timezone, from, to, items}`, en cache une minute. Les sept jours qui commencent aujourd'hui, triés par début. Un item : `{starts_at, ends_at, title, kind}`. `kind` vaut `emission` (une émission hebdo), `set` (un set enregistré de l'Agenda) ou `direct` (un direct daté de l'Agenda). Une émission hebdo annulée ce jour-là, ou couverte par une diffusion datée, n'y figure pas ; une diffusion manquée non plus. Quand l'Agenda est coupé (`agenda_enabled`), `items` est vide.
+- `GET /public/historique.json?limit=20` → `{items}`, en cache 15 secondes. Les derniers titres de musique, le plus récent d'abord. Un item : `{played_at, title, artist, album}`. `limit` vaut 20 par défaut et 50 au plus ; un nombre illisible ou inférieur à 1 répond 400 (`field: "limit"`). La source est le journal d'antenne (`metadata_log`), et une ligne n'y passe que si elle est rattachée à un élément `musique` du conducteur et jouée par l'automate (files `autodj` ou `carts`). Restent donc dehors les jingles, idents, pubs, sons, sets, directs (`stream`) et relais. Un titre vide, « En attente de métadonnées » ou coupé par une synchro dure (`extra.skipped`) est écarté. Un titre repris après une coupure ne compte qu'une fois, à l'heure de son début.
+
 ### Session
 
 - `POST /login.json` `{username, password}` → `{ok:true, username, permissions}`. Pas besoin de jeton CSRF.

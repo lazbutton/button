@@ -100,6 +100,7 @@ L’interface HTMX reste. À côté, les mêmes objets ont une forme JSON, avec 
 | Système | `/system/disk.json` |
 | Station | `/station.json`, et sans session `/public/station.json` |
 | Santé | `/health/live`, `/health/ready` |
+| Site de la station | sans session : `/public/programme.json`, `/public/historique.json` |
 
 Le détail de chaque route est dans [`docs/api.md`](../api.md).
 
@@ -176,9 +177,9 @@ Horloges et antenne : `scheduler/clock.py`, `timing.py`, `music_rules.py`, `desk
 
 Exploitation : `alerts.py`, `metrics.py`, `retention.py`, `health.py`, `interface/health.py`, et `commands/maintenance.py`.
 
-Métier : `domain/`, `services/` (carts, auto-DJ, requêtes Beets, émissions, banque, réglages de la station, jeton d’encodeur), `models/clock.py`, `emission.py`, `execution.py`, `music_category.py`.
+Métier : `domain/`, `services/` (carts, auto-DJ, requêtes Beets, émissions, banque, réglages de la station, jeton d’encodeur, site de la station), `models/clock.py`, `emission.py`, `execution.py`, `music_category.py`.
 
-Interface : `account.py`, `csrf.py`, `emissions.py`, `integrity.py`, `json_util.py`, `spa.py`, `system.py`.
+Interface : `account.py`, `csrf.py`, `emissions.py`, `integrity.py`, `json_util.py`, `spa.py`, `station_public.py`, `system.py`.
 
 Agenda : `models/agenda.py`, `domain/agenda.py`, `services/agenda.py`, `scheduler/agenda.py`, `interface/agenda.py`, `interface/public.py`. Banque : `services/media_bank.py`.
 
