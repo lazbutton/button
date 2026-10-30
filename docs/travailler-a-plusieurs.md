@@ -69,6 +69,8 @@ Les tests, eux, tournent en parallèle sans souci : pytest travaille dans des do
 
 L'outil `code-review-graph`, s'il est installé, garde un graphe du code dans `.code-review-graph/`, ignoré par git. Un hook de commit le met à jour. Dans Claude Code, un hook le met aussi à jour après chaque écriture.
 
+`code-review-graph install` écrit aussi des réglages pour chaque outil d'agent : `.mcp.json`, `.claude/settings.json`, `.claude/skills/`, `.cursor/`, `GEMINI.md`, `.github/instructions/` et d'autres. Ils ne sont pas versionnés, car ils dépendent de la machine : `.mcp.json` porte un chemin absolu. Pour ne plus les voir dans `git status`, les lister dans `.git/info/exclude`, qui vaut pour la copie et ses worktrees.
+
 Le graphe décrit la copie où il a été construit. Dans un worktree, le hook de commit ne fait rien, sauf avec `CRG_HOOK_WORKTREES=1`, et le serveur de l'outil peut répondre pour la copie principale. Dans un worktree, toujours vérifier dans les fichiers du worktree.
 
 ## Les pièges déjà rencontrés
