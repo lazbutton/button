@@ -15,12 +15,17 @@ server {
     client_max_body_size 512m;
     access_log /var/log/nginx/access.log button_masked;
 
+    # Each block that answers the browser includes the security headers: one
+    # with its own add_header would not inherit them from here. Internal blocks
+    # answer nginx only. src/api/nginxRoutes.test.ts checks.
     location /assets/ {
+        include /etc/nginx/security-headers.conf;
         try_files $uri =404;
         add_header Cache-Control "public, max-age=31536000, immutable";
     }
 
     location ~* \.(js|css|png|svg|ico|woff2?)$ {
+        include /etc/nginx/security-headers.conf;
         try_files $uri =404;
     }
 
@@ -49,6 +54,7 @@ server {
     }
 
     location = /library/inbox.json {
+        include /etc/nginx/security-headers.conf;
         auth_request /_session;
         proxy_pass ${CATALOG_UPSTREAM}/inbox.json;
         proxy_http_version 1.1;
@@ -58,6 +64,7 @@ server {
     }
 
     location /tus/ {
+        include /etc/nginx/security-headers.conf;
         auth_request /_deposit;
         client_max_body_size 0;
         proxy_request_buffering off;
@@ -76,6 +83,7 @@ server {
     # The catalogue (search, pre-listen): a team session. The catalogue checks
     # it too, since its port can be reached without nginx.
     location /library/ {
+        include /etc/nginx/security-headers.conf;
         auth_request /_session;
         proxy_pass ${CATALOG_UPSTREAM}/;
         proxy_http_version 1.1;
@@ -89,13 +97,18 @@ server {
     # A guest's page (Agenda): /invitation#<token>. The token stays after the
     # "#", so it never reaches a server; its API is throttled, never indexed.
     location = /invitation {
+        include /etc/nginx/security-headers.conf;
+        set $button_referrer_policy "no-referrer";
         limit_req zone=button_public burst=20 nodelay;
-        add_header Referrer-Policy "no-referrer" always;
         add_header X-Robots-Tag "noindex, nofollow" always;
         try_files /index.html =404;
     }
 
     location ^~ /public/ {
+        include /etc/nginx/security-headers.conf;
+        # The engine sets its own Referrer-Policy (no-referrer) on these
+        # answers: empty, nginx adds none.
+        set $button_referrer_policy "";
         limit_req zone=button_public burst=20 nodelay;
         resolver 127.0.0.11 ipv6=off valid=10s;
         set $rt_backend ${AUTOMATE_BACKEND};
@@ -112,6 +125,7 @@ server {
     # Engine routes. A route missing here works in dev (Vite proxy) and gets
     # the console's index.html in prod: src/api/nginxRoutes.test.ts checks it.
     location ~ ^/(csrf\.json|login\.json|login|logout|live\.json|account\.json|users\.json|users/|carts\.json|carts/|media/bank\.json|autodj/|antenne/|agenda\.json|agenda/|health/|system/) {
+        include /etc/nginx/security-headers.conf;
         resolver 127.0.0.11 ipv6=off valid=10s;
         set $rt_backend ${AUTOMATE_BACKEND};
         proxy_pass $rt_backend;
@@ -127,6 +141,7 @@ server {
     }
 
     location / {
+        include /etc/nginx/security-headers.conf;
         try_files $uri $uri/ /index.html;
     }
 }

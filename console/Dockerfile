@@ -9,10 +9,13 @@ RUN npm run build
 
 FROM nginx:1.27-alpine
 COPY docker/nginx.conf.template /etc/nginx/nginx-default.conf.template
+COPY docker/security-headers.conf.template /etc/nginx/security-headers.conf.template
 COPY docker/docker-entrypoint.sh /docker-entrypoint.d/99-automate-backend.sh
 COPY --from=build /app/dist /usr/share/nginx/html
 RUN chmod +x /docker-entrypoint.d/99-automate-backend.sh
 ENV AUTOMATE_BACKEND=http://127.0.0.1:6811
 ENV CATALOG_UPSTREAM=http://catalog:30127
 ENV TUSD_UPSTREAM=http://tusd:8080
+ENV CSP_MEDIA_SRC=
+ENV CSP_CONNECT_SRC=
 EXPOSE 80
