@@ -1,4 +1,5 @@
 import type { Page, Route } from "@playwright/test";
+import { READ_DEADLINE_MS } from "../src/api/readDeadline.ts";
 import {
   alerte,
   antenne,
@@ -16,11 +17,12 @@ import { engineRoutes } from "./routes.ts";
 
 // Ce que la console dit quand le moteur répond mal. Chaque cas est simulé par
 // page.route devant le vrai moteur de démo : session expirée (401), droit
-// manquant (403), moteur injoignable (connexion refusée), moteur arrêté
-// derrière nginx (502 en HTML), envoi trop lourd pour nginx (413 en HTML) et
-// route absente, c'est-à-dire un moteur plus ancien que la console (404). La
-// page Automate passe aussi par le catalogue : un refus ou un catalogue
-// injoignable y sont simulés devant le faux catalogue.
+// manquant (403), moteur injoignable (connexion refusée), moteur muet (une
+// lecture qui ne reçoit jamais de réponse), moteur arrêté derrière nginx (502
+// en HTML), envoi trop lourd pour nginx (413 en HTML) et route absente,
+// c'est-à-dire un moteur plus ancien que la console (404). La page Automate
+// passe aussi par le catalogue : un refus ou un catalogue injoignable y sont
+// simulés devant le faux catalogue.
 
 // Ce que le relais envoie au moteur : le reste vient de la console.
 const MOTEUR = new RegExp(`^/(${engineRoutes})`);
@@ -258,6 +260,29 @@ test("moteur injoignable pendant un direct : la carte reste celle du direct", as
   await expect(antenne(page)).toContainText("Direct du banc");
   await expect(encodeur).toBeVisible();
   await expect(antenne(page).getByRole("button", { name: /^(Suivant|Passer en direct)/ })).toHaveCount(0);
+});
+
+test("moteur muet, pupitre ouvert : la barre et le pupitre le disent, puis repartent", async ({ page }) => {
+  // Deux attentes du délai de lecture, en plus de la connexion.
+  test.slow();
+  await seConnecter(page, "animateur");
+  await expect(suivant(page)).toBeEnabled();
+  const etat = page.getByRole("banner").getByRole("button", { name: /^Antenne : / });
+  // Le moteur accepte la connexion, puis ne répond plus : boucle Quart bloquée,
+  // ou téléphone dont le réseau perd les paquets. Ses lectures restent pendantes.
+  await page.route(versLeMoteur, () => {});
+
+  await expect(etat).toHaveAccessibleName("Antenne : Automate injoignable. Santé : état indisponible.", {
+    timeout: READ_DEADLINE_MS + 10_000,
+  });
+  await expect(alerte(page, /^Automate injoignable Le pupitre ne reçoit plus de nouvelles depuis/)).toBeVisible();
+  await expect(antenne(page)).toContainText("Sans nouvelles");
+
+  // Les lectures restées sans réponse ne retiennent pas les suivantes.
+  await page.unroute(versLeMoteur);
+  await expect(etat).toHaveAccessibleName(/^Antenne : En onde/, { timeout: READ_DEADLINE_MS + 10_000 });
+  await expect(alerte(page, "Automate injoignable")).toHaveCount(0);
+  await expect(antenne(page)).not.toContainText("Sans nouvelles");
 });
 
 test("moteur injoignable pour la file seule : la file ne se dit pas vide", async ({ page }) => {
