@@ -45,6 +45,8 @@ export type MonitorState = {
   analyserL: AnalyserNode | null;
   analyserR: AnalyserNode | null;
   live: boolean;
+  /** La dernière connexion au flux a échoué : le casque réessaie seul. */
+  streamDown: boolean;
   muted: boolean;
   lagMs: number | null;
   toggleMute: () => void;
@@ -91,6 +93,7 @@ export function useMonitor(
   const playRef = useRef<() => Promise<void>>(async () => {});
 
   const [live, setLive] = useState(false);
+  const [streamDown, setStreamDown] = useState(false);
   const [muted, setMuted] = useState(true);
   const [lagMs, setLagMs] = useState<number | null>(null);
   const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
@@ -516,11 +519,15 @@ export function useMonitor(
       if (gen !== playGen.current) return;
       backoffRef.current = RECONNECT_MIN_MS;
       setLive(true);
+      setStreamDown(false);
     } catch {
       if (gen !== playGen.current) return;
       teardownStream();
       setLive(false);
-      if (wantLiveRef.current) scheduleReconnect();
+      if (wantLiveRef.current) {
+        setStreamDown(true);
+        scheduleReconnect();
+      }
     }
   }, [
     applyMute,
@@ -570,6 +577,8 @@ export function useMonitor(
 
   useEffect(() => {
     wantLiveRef.current = enabled;
+    // Un autre flux, ou plus de flux : l'échec du précédent ne vaut plus.
+    setStreamDown(false);
     if (!enabled) {
       clearReconnect();
       if (stallTimer.current != null) {
@@ -693,6 +702,7 @@ export function useMonitor(
     analyserL,
     analyserR,
     live,
+    streamDown,
     muted,
     lagMs,
     toggleMute,

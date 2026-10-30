@@ -27,18 +27,21 @@ export function ListenControl() {
       kind: monitor.listenKind,
       fileMissing: monitor.fileMissing,
       fileLoading: monitor.fileLoading,
+      streamDown: monitor.streamDown,
       startsInS: waiting ? monitor.remaining : null,
       lagMs: monitor.lagMs,
     },
     source?.label ?? "Antenne publique",
   );
-  const Icon = monitor.fileMissing ? TriangleAlert : Headphones;
+  // Le flux se connecte, muet, dès l'ouverture : son échec ne se montre qu'à l'écoute.
+  const broken = monitor.fileMissing || (listening && monitor.streamDown);
+  const Icon = broken ? TriangleAlert : Headphones;
 
   return (
     <div
       className="tb-listen"
       data-on={listening ? "true" : "false"}
-      data-error={monitor.fileMissing ? "true" : "false"}
+      data-error={broken ? "true" : "false"}
     >
       <Tooltip content={hint}>
         <button
