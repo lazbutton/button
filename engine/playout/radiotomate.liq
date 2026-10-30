@@ -184,6 +184,7 @@ relay = input.http(id="relay", RELAY_DEFAULT_URL,
 ################################ LIVE SHOWS ####################################
 
 # stream_auth_function ensures incoming streams are authenticated against Radiotomate's users directory
+# the encoder sends its account's username, and its encoder token as password (scheduler/harbor.py)
 def stream_auth_function(login) =
   res = post_to_radiotomate("/can_stream", login)
   if res.status_code == 200 then

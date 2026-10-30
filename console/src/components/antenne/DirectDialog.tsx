@@ -1,10 +1,12 @@
 import { Dialog } from "@radix-ui/themes";
-import { Check, Copy, X } from "lucide-react";
-import { useState, type RefObject } from "react";
+import { X } from "lucide-react";
+import type { RefObject } from "react";
 import { useAccount } from "../../api/AccountContext";
 import { HARBOR_PHASE_LABEL, harborDetail, harborPhase, slotRule, weeklyHost } from "../../api/harborPanel";
 import type { AntenneState, EmissionsResponse, LiveSnapshot } from "../../api/types";
 import { useBrand } from "../../lib/BrandContext";
+import { CopyValue } from "./CopyValue";
+import { StreamToken } from "./StreamToken";
 
 function hostFromBase(base?: string): string {
   if (!base) return "";
@@ -13,30 +15,6 @@ function hostFromBase(base?: string): string {
   } catch {
     return "";
   }
-}
-
-function CopyValue({ label, value }: { label: string; value: string }) {
-  const [done, setDone] = useState(false);
-  return (
-    <button
-      type="button"
-      className="ant-copy"
-      aria-label={`Copier ${label} : ${value}`}
-      title="Copier"
-      onClick={() => {
-        void navigator.clipboard
-          ?.writeText(value)
-          .then(() => {
-            setDone(true);
-            window.setTimeout(() => setDone(false), 1400);
-          })
-          .catch(() => undefined);
-      }}
-    >
-      <code>{value}</code>
-      {done ? <Check size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
-    </button>
-  );
 }
 
 /** Se brancher en direct : état de l'encodeur, règle du créneau, réglages à copier dans BUTT ou Mixxx. */
@@ -70,10 +48,11 @@ export function DirectDialog({
   const host = weeklyHost(emissions?.emissions, show?.id);
   const address = hostFromBase(brand.apps.harbor?.url) || "radio.lazbutton.xyz";
   const username = account?.username?.trim();
+  const mayStream = isAdmin || canBroadcast;
   const accountLine = isAdmin
     ? "Un admin peut se brancher même hors créneau."
     : canBroadcast
-      ? `Identifiant : ${username || "celui de ton compte"}. Mot de passe : celui du compte.`
+      ? ""
       : "Ce compte n’a pas le droit Stream : l’encodeur sera refusé. Demande-le à un admin.";
 
   return (
@@ -119,6 +98,16 @@ export function DirectDialog({
           <dd>
             <CopyValue label="le mount" value="/stream" />
           </dd>
+          {mayStream ? (
+            <>
+              <dt>Identifiant</dt>
+              <dd>{username ? <CopyValue label="l’identifiant" value={username} /> : "Celui de ton compte"}</dd>
+              <dt>Mot de passe</dt>
+              <dd>
+                <StreamToken owner="me" />
+              </dd>
+            </>
+          ) : null}
           <dt>Format</dt>
           <dd>MP3, 128 à 192 kbps</dd>
         </dl>

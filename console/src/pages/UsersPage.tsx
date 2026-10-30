@@ -20,6 +20,7 @@ import { slotsForHost } from "../api/hostSlots";
 import { setVolumePassword } from "../api/volume";
 import {
   canBroadcast,
+  listedAsHost,
   permissionsFromRole,
   ROLE_LABEL,
   roleFromPermissions,
@@ -28,6 +29,7 @@ import {
 import { SessionGate } from "../api/SessionGate";
 import type { Emission, EmissionsResponse, User, UsersResponse } from "../api/types";
 import { useApiJson } from "../api/useApiJson";
+import { StreamToken } from "../components/antenne/StreamToken";
 import "../styles/pages/admin.css";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
 import { EmptyState } from "../ui/EmptyState";
@@ -470,6 +472,13 @@ function UserFiche({
           <Button type="button" disabled={busy || !password.trim()} onClick={() => void savePassword()}>
             Réinitialiser le mot de passe
           </Button>
+          {listedAsHost(user.permissions) ? (
+            <>
+              <h3 className="admin-account-title">Jeton d’encodeur</h3>
+              <p>Le mot de passe de son encodeur. Renouveler le jeton coupe l’ancien : transmets le nouveau.</p>
+              <StreamToken owner={user.id} />
+            </>
+          ) : null}
           {role === "animateur" ? (
             <p>Ce compte n’a pas le dossier de la station.</p>
           ) : (
