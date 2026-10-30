@@ -121,7 +121,7 @@ Sans session : `GET /public/guest/{jeton}.json` et `PUT /public/guest/{jeton}/di
 
 `GET /antenne/state.json` → `{at, playout, engine, incidents, listeners, asrun, next_live_slot}`, ou `502 {error:"scheduler_unavailable"}` si le scheduler ne répond pas. `playout` porte `reachable, source, silence_s, rms_db, harbor_s`. Un incident : `{kind, detail, since_s, notified}`. `POST /antenne/flush.json` → `{ok:true}`, droit `live`, ou `502 {error:"scheduler_unavailable"}`.
 
-Les gestes d'antenne passent par le scheduler, puis par le playout : « Suivant » (`DELETE /live.json`), « Vider les files » (`POST /antenne/flush.json`), jouer tout de suite un bac, un son ou une ligne du pupitre. Si le playout ne répond pas, arrêté ou figé, ils rendent `502 {error:"playout_unavailable"}`. « Suivant » et « Vider les files » le rendent aussi pour toute autre erreur du scheduler ou du playout. Un playout seulement lent a pu faire l'ordre : l'interface attend donc le verdict du scheduler, jusqu'à 20 s.
+Les gestes d'antenne passent par le scheduler, puis par le playout : « Suivant » (`DELETE /live.json`), « Vider les files » (`POST /antenne/flush.json`), jouer tout de suite un bac, un son ou une ligne du pupitre. Si le playout ne répond pas, arrêté ou figé, ils rendent `502 {error:"playout_unavailable"}`. « Suivant » et « Vider les files » le rendent aussi pour toute autre erreur du scheduler ou du playout. Un playout seulement lent a pu faire l'ordre : le scheduler ne renvoie un geste que si la connexion a été refusée, et l'interface attend son verdict jusqu'à 12 s.
 
 ### Carts
 

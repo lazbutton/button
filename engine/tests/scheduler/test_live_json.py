@@ -13,7 +13,6 @@ from radiotomate.quart import CustomQuart
 from radiotomate.scheduler.execution import DESK_ORIGIN
 from radiotomate.scheduler.playout import (
     DEFAULT_BACKOFF_SECONDS,
-    DEFAULT_MAX_ATTEMPTS,
     DEFAULT_TIMEOUT_SECONDS,
 )
 from radiotomate.scheduler_api import Scheduler
@@ -733,10 +732,11 @@ async def test_orders_wait_for_the_scheduler_attempts():
     await scheduler.push_cart(1)
     await scheduler.push_sound(1, 2)
     await scheduler.push_path("/media/x.mp3")
-    attempts = DEFAULT_MAX_ATTEMPTS * DEFAULT_TIMEOUT_SECONDS
-    attempts += sum(DEFAULT_BACKOFF_SECONDS)
+    # A cart pushes two sounds, one after the other: two timeouts on the playout
+    # at most, or refused connections tried three times.
+    gesture = 2 * DEFAULT_TIMEOUT_SECONDS + sum(DEFAULT_BACKOFF_SECONDS)
     assert len(reads) == 5
-    assert all(read > attempts for read in reads)
+    assert all(read > gesture for read in reads)
 
 
 async def test_gestures_through_the_scheduler(  # noqa: PLR0913

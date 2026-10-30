@@ -505,7 +505,7 @@ def _playout_down(error: type[httpx.TransportError], sent: list[str]):
 
 @pytest.mark.parametrize(
     ("error", "attempts"),
-    [(httpx.ConnectError, 3), (httpx.ReadTimeout, 3)],
+    [(httpx.ConnectError, 3), (httpx.ConnectTimeout, 1), (httpx.ReadTimeout, 1)],
 )
 async def test_orders_502_when_playout_down(  # noqa: PLR0913
     app: CustomQuart,
@@ -537,7 +537,8 @@ async def test_orders_502_when_playout_down(  # noqa: PLR0913
         assert response.status_code == 502, name
         body = await response.get_json()
         assert (body["ok"], body["error"]) == (False, "playout_unavailable"), name
-    # A cart stops at its first sound.
+    # A refused connection is tried again. After a timeout, the order may have
+    # passed, and someone waits for the answer. A cart stops at its first sound.
     carts = ["POST /queue/carts"] * attempts
     assert sent == carts * 3 + ["POST /queue/flush"] * attempts
 

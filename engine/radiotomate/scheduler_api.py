@@ -42,10 +42,11 @@ if TYPE_CHECKING:
 
 _log = logging.getLogger(__name__)
 
-# An antenna order waits for the scheduler's own attempts on the playout (three
-# of 5 s at most, see PlayoutGateway): giving up sooner, the interface would not
-# know whether the order passed.
-ORDER_TIMEOUT = httpx.Timeout(5.0, read=20.0)
+# An antenna order waits for the scheduler's verdict on the playout: one try of
+# 5 s at most per order to the playout (gesture_gateway_for), two for the two
+# sounds of a cart. Giving up sooner, the interface would not know whether the
+# order passed. Someone waits for the answer: not much longer.
+ORDER_TIMEOUT = httpx.Timeout(5.0, read=12.0)
 
 
 class SchedulerUnavailableError(Exception):

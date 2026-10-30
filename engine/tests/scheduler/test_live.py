@@ -216,7 +216,7 @@ async def test_skip(
 
 @pytest.mark.parametrize(
     ("error", "attempts"),
-    [(httpx.ConnectError, 3), (httpx.ReadTimeout, 3)],
+    [(httpx.ConnectError, 3), (httpx.ConnectTimeout, 1), (httpx.ReadTimeout, 1)],
 )
 async def test_skip_502_when_playout_down(  # noqa: PLR0913
     app: CustomQuart,
@@ -232,6 +232,7 @@ async def test_skip_502_when_playout_down(  # noqa: PLR0913
     assert response.status_code == 502
     body = await response.get_json()
     assert (body["ok"], body["error"]) == (False, "playout_unavailable")
+    # A slow skip may have passed: sent again, it would skip a second track.
     assert sent == ["DELETE /live"] * attempts
 
 

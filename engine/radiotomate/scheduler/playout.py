@@ -36,7 +36,11 @@ class PlayoutError(Exception):
 
 
 class PlayoutGateway:
-    """Timeouts, retries and a single call site for queue / skip / relay."""
+    """
+    Timeouts, retries and a single call site for queue / skip / relay.
+    ``once``: the order is sent once, and only a refused connection is tried
+    again (see gesture_gateway_for).
+    """
 
     def __init__(
         self,
@@ -45,11 +49,13 @@ class PlayoutGateway:
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
         max_attempts: int = DEFAULT_MAX_ATTEMPTS,
         backoff: tuple[float, ...] = DEFAULT_BACKOFF_SECONDS,
+        once: bool = False,
     ):
         self.client = client
         self.timeout = timeout
         self.max_attempts = max(1, min(5, max_attempts))
         self.backoff = backoff
+        self.once = once
 
     async def queue(self, queue: str, payload: dict) -> PlayoutResult:
         result = await self._request("POST", f"/queue/{queue}", json=payload)
@@ -128,6 +134,8 @@ class PlayoutGateway:
                     self.max_attempts,
                     exc,
                 )
+                if self.once and not isinstance(exc, httpx.ConnectError):
+                    return last
             else:
                 body: Any
                 try:
@@ -154,7 +162,7 @@ class PlayoutGateway:
                     response.status_code,
                     body,
                 )
-                if not transient:
+                if not transient or self.once:
                     return last
 
             if attempt >= self.max_attempts:
@@ -203,3 +211,13 @@ def failure_body(result: PlayoutResult) -> dict:
 
 def gateway_for(client: httpx.AsyncClient) -> PlayoutGateway:
     return PlayoutGateway(client)
+
+
+def gesture_gateway_for(client: httpx.AsyncClient) -> PlayoutGateway:
+    """
+    For an order someone waits on: skip, push now, flush. After a timeout or an
+    answer, the playout may have carried it out, and sending it again could skip
+    two tracks; someone also waits for the verdict. Only a refused connection,
+    which fails at once, is tried again.
+    """
+    return PlayoutGateway(client, once=True)

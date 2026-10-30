@@ -21,6 +21,7 @@ from radiotomate.scheduler.playout import (
     PlayoutResult,
     failure_body,
     gateway_for,
+    gesture_gateway_for,
 )
 
 _log = logging.getLogger(__name__)
@@ -53,7 +54,7 @@ async def push_cart(
 ) -> PlayoutResult | None:
     """The playout's answer, or None when there was nothing to push."""
     _log.debug("starting push_cart(%d)", cart_id)
-    gateway = gateway_for(current_app.config["PLAYOUT_CLIENT"])
+    gateway = gesture_gateway_for(current_app.config["PLAYOUT_CLIENT"])
     cart = await Cart.from_id(session, cart_id, load_sounds=True)
     if not cart:
         _log.warning(f"Scheduled cart #{cart_id} not found")
@@ -71,7 +72,7 @@ async def push_named_sound(
 ) -> PlayoutResult | None:
     """The playout's answer, or None when the cart or the sound does not exist."""
     _log.debug("starting push_named_sound(%d, %d)", cart_id, sound_id)
-    gateway = gateway_for(current_app.config["PLAYOUT_CLIENT"])
+    gateway = gesture_gateway_for(current_app.config["PLAYOUT_CLIENT"])
     cart = await Cart.from_id(session, cart_id, load_sounds=True)
     if not cart:
         _log.warning("Cart #%d not found", cart_id)
@@ -95,7 +96,7 @@ async def push_bank_path(  # noqa: PLR0913
     kind: str = "son",
 ) -> PlayoutResult:
     _ = session
-    gateway = gateway_for(current_app.config["PLAYOUT_CLIENT"])
+    gateway = gesture_gateway_for(current_app.config["PLAYOUT_CLIENT"])
     if kind == "jingle":
         queue = "jingles"
     elif kind == "musique":
@@ -295,7 +296,7 @@ async def push_sound_now(cart_id: str, sound_id: str):
 @blueprint.post("/queues/flush")
 @token_required
 async def flush_playout_queues():
-    gateway = gateway_for(current_app.config["PLAYOUT_CLIENT"])
+    gateway = gesture_gateway_for(current_app.config["PLAYOUT_CLIENT"])
     result = await gateway.flush_queues()
     if not result.ok:
         return failure_body(result), 502
