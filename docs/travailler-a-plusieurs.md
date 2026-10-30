@@ -103,7 +103,7 @@ Le graphe décrit la copie où il a été construit. Dans un worktree, le hook d
 - Le projet Compose s'appelle `button`. Le renommer recrée vides les volumes `button_tusd-data` et `button_share-private`.
 - La CI publie les images sous le propriétaire du dépôt. Transférer le dépôt change donc le registre, sans aucune erreur visible.
 - Un contrôle sans compte ne peut pas lire `/antenne/state.json`. Il lit les `/health/ready` de l'interface et du scheduler.
-- Pour valider nginx dans Docker sur macOS, le gabarit passe par l'entrée standard : le dossier temporaire du Mac n'est pas toujours monté dans la VM. `scripts/verifier.sh nginx` le fait.
+- Pour valider nginx dans Docker sur macOS, ne pas monter le dossier temporaire du Mac : il n'est pas toujours monté dans la VM. `scripts/verifier.sh nginx` monte `console/docker/` depuis le dépôt.
 
 **Outils**
 

@@ -12,7 +12,7 @@ Le guide complet : [`docs/deploiement.md`](../docs/deploiement.md). Pour travail
 
 | Script | Rôle |
 |---|---|
-| `init-radiotomate.sh` | Premier démarrage et chaque démarrage : config, migrations, Beets, compte admin |
+| `init-radiotomate.sh` | Premier démarrage et chaque démarrage : secrets, config, migrations, Beets, compte admin |
 | `setup-media-tree.sh` | Crée l'arborescence de la banque de sons |
 | `beets-import-loop.sh` | Boucle d'indexation de la banque (conteneur `radiotomate-dropbox`) |
 | `promote-inbox.sh` | Range l'inbox dans la banque, à chaque tour de la boucle |

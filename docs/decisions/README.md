@@ -19,6 +19,7 @@ Une décision s'écrit quand un choix coûte cher à défaire, ou quand quelqu'u
 | [0011](0011-liste-des-routes-dans-nginx.md) | Les routes du moteur passent par une liste dans nginx |
 | [0012](0012-l-interface-est-en-francais.md) | L'interface est en français |
 | [0013](0013-bloquer-l-adresse-jamais-le-compte.md) | Un échec de connexion bloque l'adresse, jamais le compte |
+| [0014](0014-interrupteur-avant-le-moteur.md) | Avant le moteur, l'interrupteur est dans `.env` |
 
 ## Le gabarit
 
