@@ -1,3 +1,4 @@
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -7,7 +8,8 @@ from sqlalchemy.orm import Session as ormSession
 
 from radiotomate.beets import BeetsIntegration
 from radiotomate.interface import live as live_mod
-from radiotomate.models import Sound, User
+from radiotomate.models import RundownItem, Sound, User
+from radiotomate.scheduler.execution import DESK_ORIGIN
 from radiotomate.scheduler_api import Scheduler
 from tests.scheduler.test_studio_json import _interface_client, _login
 
@@ -146,6 +148,16 @@ async def test_skip_json_ok_with_scheduler_mock(
     mock.skip.assert_awaited_once()
 
 
+def _scheduler_facing(handler) -> Scheduler:
+    """The real client, in front of a fake scheduler: `handler` answers each order."""
+    scheduler = Scheduler.__new__(Scheduler)
+    scheduler.client = httpx.AsyncClient(
+        base_url="http://127.0.0.1:6822",
+        transport=httpx.MockTransport(handler),
+    )
+    return scheduler
+
+
 def _scheduler_down(error: type[httpx.TransportError], sent: list[str]) -> Scheduler:
     """The real client, facing a scheduler that does not answer. `sent` logs orders."""
 
@@ -153,12 +165,7 @@ def _scheduler_down(error: type[httpx.TransportError], sent: list[str]) -> Sched
         sent.append(f"{request.method} {request.url.path}")
         raise error("no answer", request=request)
 
-    scheduler = Scheduler.__new__(Scheduler)
-    scheduler.client = httpx.AsyncClient(
-        base_url="http://127.0.0.1:6822",
-        transport=httpx.MockTransport(no_answer),
-    )
-    return scheduler
+    return _scheduler_facing(no_answer)
 
 
 @pytest.mark.parametrize("error", [httpx.ConnectError, httpx.ReadTimeout])
@@ -336,6 +343,220 @@ async def test_now_json_502_when_scheduler_down(  # noqa: PLR0913
         f"POST /schedule/{jingles_cart.id}/sounds/{sound.id}/now",
         "POST /schedule/path/now",
     ]
+
+
+def _scheduler_refusing(status: int, text: str, sent: list[str]) -> Scheduler:
+    """A scheduler that answers every order with an error. `sent` logs orders."""
+
+    def refuse(request: httpx.Request) -> httpx.Response:
+        sent.append(f"{request.method} {request.url.path}")
+        return httpx.Response(status, text=text)
+
+    return _scheduler_facing(refuse)
+
+
+async def _live_client(
+    app_configration: dict,
+    beets_integration: BeetsIntegration,
+    dbsession: ormSession,
+    users_password: str,
+    username: str,
+):
+    user = User(username=username)
+    user.update_password(users_password)
+    user.update_permissions({"can_live": "true"})
+    dbsession.add(user)
+    await dbsession.commit()
+    client = _interface_client(app_configration, beets_integration)
+    await _login(client, username, users_password)
+    live_mod.set_live_snapshot(None)
+    return client
+
+
+async def _desk_lines(dbsession: ormSession) -> list[str]:
+    """Paths of the desk lines in the rundown."""
+    rows = await dbsession.scalars(
+        select(RundownItem.path).where(RundownItem.origin == DESK_ORIGIN)
+    )
+    return list(rows)
+
+
+PLAYOUT_REJECTED = {
+    "error": "Le playout a refusé ce son : rien n'est parti à l'antenne.",
+    "code": "playout_rejected",
+}
+
+
+@pytest.mark.parametrize(
+    ("status", "text"),
+    [(502, "playout rejected path"), (404, "cart or sound not found")],
+)
+async def test_now_json_400_when_playout_rejects(  # noqa: PLR0913
+    raw_app,
+    app_configration: dict,
+    beets_integration: BeetsIntegration,
+    dbsession: ormSession,
+    users_password: str,
+    jingles_cart,
+    status: int,
+    text: str,
+):
+    client = await _live_client(
+        app_configration,
+        beets_integration,
+        dbsession,
+        users_password,
+        "live-json-refused",
+    )
+    sound = await dbsession.scalar(
+        select(Sound).where(Sound.cart_id == jingles_cart.id)
+    )
+    assert sound is not None
+    sent: list[str] = []
+    refusing = _scheduler_refusing(status, text, sent)
+    with patch.object(Scheduler, "get", return_value=refusing):
+        answers = {
+            "cart": await client.post(f"/carts/{jingles_cart.id}/now.json"),
+            "pad": await client.post(
+                f"/carts/{jingles_cart.id}/sounds/{sound.id}/now.json",
+            ),
+            "desk sound": await client.post(
+                "/autodj/conducteur/now.json",
+                json={"path": str(sound.path)},
+            ),
+            "desk path": await client.post(
+                "/autodj/conducteur/now.json",
+                json={"path": "/media/x.mp3", "title": "X", "artist": "Y"},
+            ),
+        }
+    for name, response in answers.items():
+        assert response.status_code == 400, name
+        assert await response.get_json() == PLAYOUT_REJECTED, name
+    assert sent == [
+        f"POST /schedule/{jingles_cart.id}/now",
+        f"POST /schedule/{jingles_cart.id}/sounds/{sound.id}/now",
+        f"POST /schedule/{jingles_cart.id}/sounds/{sound.id}/now",
+        "POST /schedule/path/now",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("scheduler", "status"),
+    [
+        (lambda sent: _scheduler_down(httpx.ConnectError, sent), 502),
+        (lambda sent: _scheduler_refusing(502, "playout rejected path", sent), 400),
+    ],
+    ids=["down", "refused"],
+)
+async def test_now_json_failed_order_leaves_no_desk_line(  # noqa: PLR0913
+    raw_app,
+    app_configration: dict,
+    beets_integration: BeetsIntegration,
+    dbsession: ormSession,
+    users_password: str,
+    scheduler,
+    status: int,
+):
+    client = await _live_client(
+        app_configration,
+        beets_integration,
+        dbsession,
+        users_password,
+        "live-json-orphan",
+    )
+    sent: list[str] = []
+    with patch.object(Scheduler, "get", return_value=scheduler(sent)):
+        answers = [
+            await client.post(
+                "/autodj/conducteur/now.json",
+                json={"path": "/media/x.mp3", "title": "X", "artist": "Y"},
+            )
+            for _ in range(2)
+        ]
+    assert [answer.status_code for answer in answers] == [status, status]
+    assert sent == ["POST /schedule/path/now"] * 2
+    assert await _desk_lines(dbsession) == []
+
+
+# A placement field means nothing for a title already sent: even a bad one is
+# ignored, and cannot fail the route once the title is on air.
+@pytest.mark.parametrize(
+    "placement",
+    [{}, {"replace_at": "x"}, {"suppress_at": "x"}],
+    ids=["plain", "replace_at", "suppress_at"],
+)
+async def test_now_json_posts_desk_line_after_order(  # noqa: PLR0913
+    raw_app,
+    app_configration: dict,
+    beets_integration: BeetsIntegration,
+    dbsession: ormSession,
+    users_password: str,
+    placement: dict,
+):
+    client = await _live_client(
+        app_configration,
+        beets_integration,
+        dbsession,
+        users_password,
+        "live-json-fire-path",
+    )
+    orders: list[dict] = []
+    lines_at_order: list[list[str]] = []
+
+    async def accept(request: httpx.Request) -> httpx.Response:
+        orders.append(json.loads(request.content))
+        lines_at_order.append(await _desk_lines(dbsession))
+        return httpx.Response(200)
+
+    with patch.object(Scheduler, "get", return_value=_scheduler_facing(accept)):
+        response = await client.post(
+            "/autodj/conducteur/now.json",
+            json={
+                "path": "/media/x.mp3",
+                "title": "X",
+                "artist": "Y",
+                "kind": "jingle",
+                "duration": 9,
+                **placement,
+            },
+        )
+    assert response.status_code == 200, await response.get_data(as_text=True)
+    assert orders == [
+        {"path": "/media/x.mp3", "artist": "Y", "title": "X", "kind": "jingle"}
+    ]
+    assert lines_at_order == [[]]
+    assert await _desk_lines(dbsession) == ["/media/x.mp3"]
+    payload = await response.get_json()
+    desk = [item for item in payload["items"] if item.get("origin") == DESK_ORIGIN]
+    assert [item["path"] for item in desk] == ["/media/x.mp3"]
+
+
+async def test_now_json_checks_desk_line_before_order(
+    raw_app,
+    app_configration: dict,
+    beets_integration: BeetsIntegration,
+    dbsession: ormSession,
+    users_password: str,
+):
+    client = await _live_client(
+        app_configration,
+        beets_integration,
+        dbsession,
+        users_password,
+        "live-json-bad-kind",
+    )
+    sent: list[str] = []
+    down = _scheduler_down(httpx.ConnectError, sent)
+    with patch.object(Scheduler, "get", return_value=down):
+        response = await client.post(
+            "/autodj/conducteur/now.json",
+            json={"path": "/media/x.mp3", "kind": "cassette"},
+        )
+    assert response.status_code == 400
+    payload = await response.get_json()
+    assert (payload["code"], payload["field"]) == ("validation_error", "kind")
+    assert sent == []
+    assert await _desk_lines(dbsession) == []
 
 
 async def test_antenne_state_and_flush_json(

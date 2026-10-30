@@ -970,6 +970,7 @@ async def push_now_json(cart_id: int):
     from radiotomate.interface.live import (
         harbor_busy_response,
         harbor_is_live,
+        playout_rejected_response,
         scheduler_unavailable_response,
     )
 
@@ -982,8 +983,8 @@ async def push_now_json(cart_id: int):
         await Scheduler.get().push_cart(cart_id)
     except SchedulerUnavailableError:
         return scheduler_unavailable_response()
-    except RuntimeError as exc:
-        return jsonify({"error": str(exc)}), 400
+    except RuntimeError:
+        return playout_rejected_response()
     invalidate_conducteur_cache()
     return jsonify({"ok": True})
 
@@ -996,6 +997,7 @@ async def push_sound_now_json(cart_id: int, sound_id: int):  # noqa: PLR0911
     from radiotomate.interface.live import (
         harbor_busy_response,
         harbor_is_live,
+        playout_rejected_response,
         scheduler_unavailable_response,
     )
 
@@ -1011,8 +1013,8 @@ async def push_sound_now_json(cart_id: int, sound_id: int):  # noqa: PLR0911
         await Scheduler.get().push_sound(cart_id, sound_id)
     except SchedulerUnavailableError:
         return scheduler_unavailable_response()
-    except RuntimeError as exc:
-        return jsonify({"error": str(exc)}), 400
+    except RuntimeError:
+        return playout_rejected_response()
     invalidate_conducteur_cache()
     return jsonify({"ok": True})
 

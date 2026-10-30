@@ -78,7 +78,7 @@ Un item : `{id, at, kind, when, resource, queue, status, status_code, reason, cl
 
 `POST` sur la même URL, `{reset:true}`, exige `autodj`. L’horizon vient de la query (`horizon=30` dans Automate).
 
-Écritures du pupitre, droit `live` : `POST /autodj/conducteur/items.json` (à la suite, ou `{suppress_at}` pour masquer un item d’horloge), `PATCH …/items/{id}.json` (`path`, `kind`, `artist`, `title`, `duration`), `DELETE …/items/{id}.json`, `PUT …/items/ranks.json` `{ids}`, `POST …/now.json`. Elles répondent l'état du pupitre. Si le scheduler ne répond pas, `POST …/now.json` rend `502 {error:"scheduler_unavailable"}`.
+Écritures du pupitre, droit `live` : `POST /autodj/conducteur/items.json` (à la suite, ou `{suppress_at}` pour masquer un item d’horloge), `PATCH …/items/{id}.json` (`path`, `kind`, `artist`, `title`, `duration`), `DELETE …/items/{id}.json`, `PUT …/items/ranks.json` `{ids}`, `POST …/now.json`. Elles répondent l'état du pupitre. Si le scheduler ne répond pas, `POST …/now.json` rend `502 {error:"scheduler_unavailable"}`. S'il refuse l'ordre, par exemple pour un fichier que le playout ne sait pas lire : `400 {error, code:"playout_rejected"}`, avec `error` en français. Un titre de la banque n'entre au conducteur, en ligne du pupitre, qu'une fois l'ordre passé, avec ses seuls `path`, `kind`, `artist`, `title` et `duration` : un ordre qui échoue n'y laisse rien.
 
 ### Programmation
 
@@ -143,7 +143,7 @@ Créer un relais : `POST /carts.json` avec `mode:"relay"`, une URL HTTP complèt
 - `PUT /carts/{id}/sounds/{son}.json`, par exemple `{title}` ou `{active}` → `{cart, sound}` ; `DELETE` → `{cart}`.
 - `PUT /carts/{id}/sounds/ranks.json` `{ranks:[ids]}` → `{cart}`.
 
-Jouer tout de suite, droit `live` : `POST /carts/{id}/now.json` et `POST /carts/{id}/sounds/{son}/now.json` → `{ok:true}`. Pendant un direct : `409 {error, code:"harbor_live"}`. Si le scheduler ne répond pas : `502 {error:"scheduler_unavailable"}`.
+Jouer tout de suite, droit `live` : `POST /carts/{id}/now.json` et `POST /carts/{id}/sounds/{son}/now.json` → `{ok:true}`. Pendant un direct : `409 {error, code:"harbor_live"}`. Si le scheduler ne répond pas : `502 {error:"scheduler_unavailable"}`. S'il refuse l'ordre : `400 {error, code:"playout_rejected"}`, comme au pupitre.
 
 ### Banque
 
