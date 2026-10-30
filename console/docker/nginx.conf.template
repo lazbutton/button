@@ -18,7 +18,10 @@ server {
     # Each block that answers the browser includes the security headers: one
     # with its own add_header would not inherit them from here. Internal blocks
     # answer nginx only. src/api/nginxRoutes.test.ts checks.
-    location /assets/ {
+
+    # Vite's hashed files, cached for a year. ^~ skips the regex blocks: the
+    # one below would otherwise serve the .js and .css, without the cache.
+    location ^~ /assets/ {
         include /etc/nginx/security-headers.conf;
         try_files $uri =404;
         add_header Cache-Control "public, max-age=31536000, immutable";
