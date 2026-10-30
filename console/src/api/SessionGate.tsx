@@ -65,6 +65,9 @@ export function ApiSession({ children }: { children: ReactNode }) {
   const [error, setError] = useState<ApiLoadError | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const readyRef = useRef(false);
+  // Une déconnexion à la fois : une seconde, réglée plus tard, rendrait l'écran
+  // de connexion à une session rouverte entre-temps.
+  const leavingRef = useRef(false);
 
   const retry = useCallback(() => {
     setError(null);
@@ -84,10 +87,13 @@ export function ApiSession({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(() => {
-    void apiLogout().then((closed) => {
+    if (leavingRef.current) return;
+    leavingRef.current = true;
+    void apiLogout().then((reached) => {
+      leavingRef.current = false;
       forgetUsername();
       readyRef.current = false;
-      setNotice(closed ? null : LOGOUT_UNREACHED_MESSAGE);
+      setNotice(reached ? null : LOGOUT_UNREACHED_MESSAGE);
       setError("auth");
       setLoading(false);
     });

@@ -16,9 +16,11 @@ export const LOGOUT_UNREACHED_MESSAGE =
 
 /**
  * Demande la fermeture de la session, avec le délai des lectures : un moteur
- * muet ne retient pas la déconnexion. Rend false si la demande n'a pas atteint
- * le moteur : sans réponse, ou une réponse du relais qui dit le moteur
- * injoignable. Toute autre réponse vient du moteur, même une erreur.
+ * muet ne retient pas la déconnexion. Rend false si rien ne dit que le moteur
+ * l'a reçue : pas de réponse dans le délai, ou une réponse du relais qui le dit
+ * injoignable. Une demande abandonnée a pu l'atteindre quand même : la session
+ * y est donc peut-être encore ouverte. Toute autre réponse vient du moteur,
+ * même une erreur.
  */
 export async function closeSession(
   request: (signal: AbortSignal) => Promise<Pick<Response, "status">>,

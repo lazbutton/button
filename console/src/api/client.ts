@@ -323,11 +323,11 @@ export async function apiLogin(username: string, password: string): Promise<void
 
 /**
  * La session locale est abandonnée même si le moteur ne répond pas, au plus
- * tard au bout du délai des lectures. Rend false si la déconnexion n'a pas
- * atteint le moteur : la session y est peut-être encore ouverte.
+ * tard au bout du délai des lectures. Rend false si rien ne dit que le moteur
+ * a reçu la déconnexion : la session y est peut-être encore ouverte.
  */
 export async function apiLogout(): Promise<boolean> {
-  const closed = await closeSession((signal) =>
+  const reached = await closeSession((signal) =>
     fetch(`${API_PREFIX}/logout`, {
       method: "GET",
       credentials: "include",
@@ -337,5 +337,5 @@ export async function apiLogout(): Promise<boolean> {
   );
   csrfToken = null;
   apiCacheClear();
-  return closed;
+  return reached;
 }

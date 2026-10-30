@@ -46,7 +46,7 @@ La forme exacte des objets est dans `console/src/api/types.ts`, et côté moteur
 ### Session
 
 - `POST /login.json` `{username, password}` → `{ok:true, username, permissions}`. Pas besoin de jeton CSRF.
-- `GET /logout` : ce n’est pas du JSON, c’est une redirection HTML. La console l'attend 10 s au plus, puis oublie sa session quoi qu'il arrive (`console/src/api/sessionLogout.ts`). Sans réponse, connexion refusée, ou 502, 503 ou 504 de nginx, la demande n'a pas atteint le moteur. La session y reste ouverte, et son cookie valable : un rechargement la rouvre une fois le moteur revenu. L'écran de connexion le dit.
+- `GET /logout` : ce n’est pas du JSON, c’est une redirection HTML. La console l'attend 10 s au plus, puis oublie sa session quoi qu'il arrive (`console/src/api/sessionLogout.ts`). Sans réponse dans ce délai, sur une connexion refusée, ou sur un 502, 503 ou 504 de nginx, rien ne dit que le moteur a reçu la demande. La session y est peut-être encore ouverte, et son cookie valable : un rechargement la rouvre une fois le moteur revenu. L'écran de connexion le dit.
 - `GET /account.json` → `{username, permissions:{admin, stream, live, carts, not_audio, autodj}}`, tous des booléens.
 - `PUT /account.json` `{password}` → la même forme. Mot de passe vide → 400.
 
