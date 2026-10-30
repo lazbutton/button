@@ -33,8 +33,8 @@ jobs:
       run:
         working-directory: services/catalog
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
       - run: pip install -r requirements.txt
@@ -51,18 +51,18 @@ jobs:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Dated tag
         id: tag
         run: echo "dated=$(date -u +%Y%m%d)-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
       - name: Build and push Icecast
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ./services/icecast
           platforms: linux/amd64
@@ -77,7 +77,7 @@ jobs:
           cache-from: type=gha,scope=icecast
           cache-to: type=gha,mode=max,scope=icecast
       - name: Build and push nowplaying
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ./services/nowplaying
           platforms: linux/amd64
@@ -92,7 +92,7 @@ jobs:
           cache-from: type=gha,scope=nowplaying
           cache-to: type=gha,mode=max,scope=nowplaying
       - name: Build and push catalogue
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           # Repository root: the image also ships deploy/scripts/setup-media-tree.sh.
           context: .
@@ -109,7 +109,7 @@ jobs:
           cache-from: type=gha,scope=catalog
           cache-to: type=gha,mode=max,scope=catalog
       - name: Build and push share
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ./deploy/share/Dockerfile
