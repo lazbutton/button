@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, mock, test } from "node:test";
-import { readStream, type StreamWatch } from "./monitorStream.ts";
+import { answerWithin, playedSeconds, readStream, type StreamWatch } from "./monitorStream.ts";
 
 beforeEach(() => mock.timers.enable({ apis: ["setTimeout", "Date"] }));
 afterEach(() => mock.timers.reset());
@@ -123,4 +123,83 @@ test("reading stops once the casque gave up on the connection", async () => {
   conn.send();
   assert.deepEqual(await end, { closed: false, steady: false });
   assert.equal(chunks, 1);
+});
+
+/** Une demande au serveur du flux, réglée à la main. */
+function request<T>() {
+  let answer!: (value: T) => void;
+  let fail!: (error: unknown) => void;
+  const pending = new Promise<T>((resolve, reject) => {
+    answer = resolve;
+    fail = reject;
+  });
+  return { pending, answer, fail };
+}
+
+test("a server that never answers: the wait gives up after ms", async () => {
+  const req = request<string>();
+  let gaveUp = 0;
+  let settled = false;
+  const wait = answerWithin(req.pending, 8000, () => {
+    gaveUp += 1;
+  });
+  void wait.catch(() => undefined).finally(() => {
+    settled = true;
+  });
+  mock.timers.tick(7999);
+  await settle();
+  assert.equal(gaveUp, 0);
+  assert.equal(settled, false);
+  mock.timers.tick(1);
+  assert.equal(gaveUp, 1);
+  await assert.rejects(wait, /timeout/);
+});
+
+test("an answer in time goes through, and nothing is given up", async () => {
+  const req = request<string>();
+  let gaveUp = 0;
+  const wait = answerWithin(req.pending, 8000, () => {
+    gaveUp += 1;
+  });
+  mock.timers.tick(7999);
+  req.answer("en-têtes");
+  assert.equal(await wait, "en-têtes");
+  // La réponse arrivée, le délai ne coupe plus rien.
+  mock.timers.tick(60_000);
+  assert.equal(gaveUp, 0);
+});
+
+test("a refusal in time goes through as is", async () => {
+  const req = request<string>();
+  let gaveUp = 0;
+  const wait = answerWithin(req.pending, 8000, () => {
+    gaveUp += 1;
+  });
+  const refused = new TypeError("Failed to fetch");
+  req.fail(refused);
+  await assert.rejects(wait, (error) => error === refused);
+  mock.timers.tick(60_000);
+  assert.equal(gaveUp, 0);
+});
+
+test("a request cut by the give-up fails late, without surfacing", async () => {
+  // L'abandon coupe la demande, qui échoue à son tour, comme un fetch qu'on
+  // abandonne : l'attente, elle, a déjà échoué.
+  const req = request<string>();
+  const wait = answerWithin(req.pending, 8000, () =>
+    req.fail(new DOMException("The operation was aborted.", "AbortError")),
+  );
+  mock.timers.tick(8000);
+  await assert.rejects(wait, /timeout/);
+});
+
+test("what the element played is the sum of its played ranges", () => {
+  const ranges = (...pairs: [number, number][]) => ({
+    length: pairs.length,
+    start: (i: number) => pairs[i][0],
+    end: (i: number) => pairs[i][1],
+  });
+  assert.equal(playedSeconds(ranges()), 0);
+  // Rattraper le direct saute en avant : l'élément a alors deux plages jouées.
+  assert.equal(playedSeconds(ranges([0, 1.5], [4, 6])), 3.5);
 });

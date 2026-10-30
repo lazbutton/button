@@ -4,12 +4,14 @@ from collections import Counter
 from unittest.mock import patch
 
 import httpx
+import pytest
 from quart.testing import QuartClient
 from sqlalchemy.orm import Session as ormSession
 
 from radiotomate.interface.autodj import MultiDict, process_filters
 from radiotomate.models import AutoDJSlot, Cart
 from radiotomate.quart import CustomQuart
+from tests.scheduler.test_schedule import _playout, _playout_down
 
 
 async def test_live(client: QuartClient, auth: dict):
@@ -192,6 +194,46 @@ async def test_pick_filter(
     await dbsession.commit()
     counts = Counter(slot.pick_filter() for i in range(1000))
     assert (counts["one"] + counts["two"] + counts["three"]) == 1000
+
+
+async def test_skip(
+    app: CustomQuart,
+    client: QuartClient,
+    auth: dict,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    sent: list[str] = []
+
+    def skipped(request: httpx.Request) -> httpx.Response:
+        sent.append(f"{request.method} {request.url.path}")
+        return httpx.Response(200)
+
+    monkeypatch.setitem(app.config, "PLAYOUT_CLIENT", _playout(skipped))
+    response = await client.delete("/live", headers=auth)
+    assert response.status_code == 200
+    assert sent == ["DELETE /live"]
+
+
+@pytest.mark.parametrize(
+    ("error", "attempts"),
+    [(httpx.ConnectError, 3), (httpx.ConnectTimeout, 1), (httpx.ReadTimeout, 1)],
+)
+async def test_skip_502_when_playout_down(  # noqa: PLR0913
+    app: CustomQuart,
+    client: QuartClient,
+    auth: dict,
+    monkeypatch: pytest.MonkeyPatch,
+    error: type[httpx.TransportError],
+    attempts: int,
+):
+    sent: list[str] = []
+    monkeypatch.setitem(app.config, "PLAYOUT_CLIENT", _playout_down(error, sent))
+    response = await client.delete("/live", headers=auth)
+    assert response.status_code == 502
+    body = await response.get_json()
+    assert (body["ok"], body["error"]) == (False, "playout_unavailable")
+    # A slow skip may have passed: sent again, it would skip a second track.
+    assert sent == ["DELETE /live"] * attempts
 
 
 async def test_harbor_disconnect_flushes_jingles_and_autodj(raw_app: CustomQuart):

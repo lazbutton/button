@@ -863,5 +863,6 @@ from radiotomate.scheduler.desk import (  # noqa: E402, F401
     list_active_desk_items,
     merge_desk_into_items,
     patch_desk_item,
+    read_desk_pin,
     reorder_desk_items,
 )
