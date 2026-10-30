@@ -1,4 +1,4 @@
-import { ArrowRight, GripVertical, Lock, X } from "lucide-react";
+import { ArrowRight, GripVertical, Lock, TriangleAlert, X } from "lucide-react";
 import { useState, type DragEvent, type KeyboardEvent } from "react";
 import { Link } from "react-router-dom";
 import { mmss } from "../../api/antenneDesk";
@@ -35,7 +35,7 @@ export function QueuePanel({
   onInsertHit,
 }: {
   rundown: Rundown | null;
-  /** Le moteur n'a pas donné la file : elle ne se dit pas vide. */
+  /** Le moteur ne donne plus la file : elle ne se dit pas vide, et ses lignes déjà lues se disent vieillies. */
   unreadable: boolean;
   live: LiveSnapshot | null;
   wall: Date;
@@ -107,8 +107,17 @@ export function QueuePanel({
         </span>
       </header>
 
+      {/* Toujours là, vide tant que la file se lit : un lecteur d'écran annonce la mention quand elle arrive. */}
+      <div role="status">
+        {upcoming.length && unreadable ? (
+          <p className="ant-queue-stale">
+            <TriangleAlert size={15} aria-hidden="true" />
+            La file ne répond plus : ces lignes peuvent avoir changé.
+          </p>
+        ) : null}
+      </div>
       {upcoming.length ? (
-        <ol className="ant-queue-list">
+        <ol className="ant-queue-list" data-stale={unreadable ? "true" : "false"}>
           {upcoming.map((item, index) => {
             const locked = queueItemLocked(item, onAirId);
             const movable = Boolean(item.id) && !locked;
