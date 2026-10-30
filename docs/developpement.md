@@ -95,9 +95,10 @@ Les parcours, dans `console/e2e/` :
 | Fichier | Ce qu'il vérifie |
 |---|---|
 | `antenne.spec.ts` | se connecter, puis voir l'antenne |
-| `barre.spec.ts` | la barre du haut : ce qui passe, l'état de l'antenne et son détail, le casque et sa source, un flux muet ou qui s'arrête, le menu du compte, le lien « Code source » |
+| `barre.spec.ts` | la barre du haut : ce qui passe, l'état de l'antenne et son détail, le casque et sa source, un flux muet, qui s'arrête ou qui ne répond jamais, en PCM comme par l'élément audio, le menu du compte, le lien « Code source » |
+| `barre.spec.ts` | la barre du haut : ce qui passe, et le dernier titre connu quand le moteur ne répond plus, l'état de l'antenne et son détail, le casque et sa source, un flux muet ou qui s'arrête, le menu du compte, le lien « Code source » |
 | `pupitre.spec.ts` | Espace, `/` et Entrée, la pré-écoute, « Diffuser », déplacer une ligne au clavier et à la souris, retirer puis annuler, le focus rendu à « Passer en direct » |
-| `etats.spec.ts` | session expirée, droit manquant, moteur injoignable, moteur arrêté derrière nginx (502 en HTML), envoi trop lourd pour nginx (413 en HTML) et route absente, simulés par `page.route` devant le moteur de démo |
+| `etats.spec.ts` | session expirée, droit manquant, moteur injoignable, moteur arrêté derrière nginx (502 en HTML), envoi trop lourd pour nginx (413 en HTML) et route absente, puis les gestes refusés ou sans réponse de la page Automate, simulés par `page.route` devant le moteur de démo et le faux catalogue |
 | `bacs.spec.ts` | « Diffuser maintenant » sur un bac sans son prêt : la console dit que rien n'est parti |
 | `roles.spec.ts` | ce que voient l'animateur, le programmateur et l'admin |
 | `apparence.spec.ts` | le thème clair et le sombre, choisis dans le menu du compte ou suivant l'appareil |
@@ -112,6 +113,8 @@ Un parcours s'écrit dans `console/e2e/<sujet>.spec.ts`. Il importe de `e2e/banc
 - `antenne`, `file` et `bibliotheque`, les trois régions du pupitre, `avis` pour un message de la console annoncé comme un état, `alerte` pour un message annoncé comme une alerte, et `tenirLAntenne`.
 
 Un parcours trouve les éléments par leur rôle et leur nom accessible, jamais par une classe CSS. Un parcours neuf se vérifie une fois : casser dans la console ce qu'il vérifie, le voir échouer, puis défaire.
+
+Un parcours n'attend pas pour de vrai une minuterie de la console, comme les 8 s que le casque laisse au flux. Il pose `page.clock.install()` avant d'ouvrir la page, puis avance l'horloge avec `page.clock.fastForward()`, comme dans `barre.spec.ts`. `page.clock.runFor()` déroule aussi chaque image des animations : le parcours devient bien plus lent.
 
 Le moteur de démo est partagé par tous les parcours d'un lancement, et il enchaîne seul les titres de son horloge. Un jingle n'y dure que 4 s : la file bouge à chaque fin de titre. Un parcours qui touche à la file appelle d'abord `tenirLAntenne(page)`, qui passe au titre suivant jusqu'à en trouver un qui tient l'antenne une minute. Après un « Suivant », le moteur de démo est en avance sur son horloge, et il date une ligne mise à la suite de l'heure de l'appui : la file la range parmi ce qui est passé. Pour ce geste, un parcours lit la demande envoyée au moteur, pas la file.
 

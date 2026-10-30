@@ -19,7 +19,9 @@ import { engineRoutes } from "./routes.ts";
 // manquant (403), moteur injoignable (connexion refusée), moteur arrêté
 // derrière nginx (502 en HTML), playout muet (502 playout_unavailable), envoi
 // trop lourd pour nginx (413 en HTML) et route absente, c'est-à-dire un moteur
-// plus ancien que la console (404).
+// plus ancien que la console (404). La page Automate passe aussi par le
+// catalogue : un refus ou un catalogue injoignable y sont simulés devant le
+// faux catalogue.
 
 // Ce que le relais envoie au moteur : le reste vient de la console.
 const MOTEUR = new RegExp(`^/(${engineRoutes})`);
@@ -121,6 +123,28 @@ test("moteur injoignable pendant un geste : la console le dit", async ({ page })
 
   await suivant(page).click();
   await expect(alerte(page, "L’automate ne répond pas. Réessaie dans un instant.")).toBeVisible();
+});
+
+test("moteur injoignable pendant « Annuler » : la console dit que la ligne reste retirée", async ({ page }) => {
+  await seConnecter(page, "animateur");
+  await tenirLAntenne(page);
+  // La dernière ligne visible vient de l'horloge : son heure de passage la désigne.
+  const heure = (await file(page).getByRole("listitem").last().getByRole("time").textContent()) ?? "";
+  expect(heure).toMatch(/^\d{2}:\d{2}:\d{2}$/);
+  const ligne = file(page).getByRole("listitem").filter({ hasText: heure });
+  await expect(ligne).toHaveCount(1);
+  await ligne.getByRole("button", { name: /^Retirer / }).click();
+  const retrait = avis(page, "Retiré de la file.");
+  await expect(retrait).toBeVisible();
+  await expect(ligne).toHaveCount(0);
+
+  // Le retrait est passé. L'annulation, elle, ne trouve plus le moteur, et
+  // « Annuler » ne revient pas : la console dit comment remettre la ligne.
+  await page.route(/\/autodj\/conducteur\/items/, (route) => route.abort("connectionrefused"));
+  await retrait.getByRole("button", { name: "Annuler" }).click();
+  await expect(
+    alerte(page, "L’automate ne répond pas. La ligne reste retirée : remets-la depuis la bibliothèque."),
+  ).toBeVisible();
 });
 
 test("moteur arrêté derrière nginx pendant un geste : la console le dit, sans la page de nginx", async ({ page }) => {
@@ -309,4 +333,40 @@ test("route absente pendant un geste : la console le dit en français", async ({
   await suivant(page).click();
   await expect(alerte(page, "Cette action demande un moteur plus récent. Mets à jour le moteur.")).toBeVisible();
   await expect(page.getByText(/requested URL/)).toHaveCount(0);
+});
+
+test("page Automate : un geste refusé ou sans réponse s’annonce en alerte", async ({ page }) => {
+  await seConnecter(page, "admin");
+  await page.getByRole("navigation", { name: "Console" }).getByRole("link", { name: "Réglages" }).click();
+  await page.getByRole("tab", { name: "Automate" }).click();
+  // Les gestes de dépannage se confirment dans une fenêtre.
+  const geste = async (bouton: string, confirmation: string) => {
+    await page.getByRole("button", { name: bouton, exact: true }).click();
+    await page.getByRole("dialog").getByRole("button", { name: confirmation, exact: true }).click();
+  };
+
+  // Vider les files passe par le moteur.
+  for (const [reponse, message] of [
+    [{ status: 403, json: { error: "forbidden" } }, "Réservé à un admin. Reconnecte-toi avec ce compte."],
+    [null, "L’automate ne répond pas. Réessaie dans un instant."],
+    [{ status: 401, json: { error: "unauthenticated" } }, "Session expirée. Reconnecte-toi."],
+  ] as const) {
+    await page.route("**/antenne/flush.json", (route) =>
+      reponse ? route.fulfill(reponse) : route.abort("connectionrefused"),
+    );
+    await geste("Vider les files", "Vider les files");
+    await expect(alerte(page, message)).toBeVisible();
+    await page.unroute("**/antenne/flush.json");
+  }
+
+  // Retirer les titres hors bacs passe par le catalogue.
+  for (const [reponse, message] of [
+    [{ status: 403, json: { error: "forbidden" } }, "Réservé à un admin. Reconnecte-toi avec ce compte."],
+    [null, "Le catalogue ne répond pas. Réessaie dans un instant."],
+  ] as const) {
+    await page.route("**/library/prune", (route) => (reponse ? route.fulfill(reponse) : route.abort("connectionrefused")));
+    await geste("Retirer les titres hors bacs", "Retirer");
+    await expect(alerte(page, message)).toBeVisible();
+    await page.unroute("**/library/prune");
+  }
 });
