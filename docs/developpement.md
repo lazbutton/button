@@ -90,7 +90,29 @@ Chaque pièce prend un port libre, jamais ceux du banc de dev : deux lancements 
 
 Tout s'arrête à la fin, même après un échec ou un `Ctrl-C`. Si tout passe, le dossier du lancement est effacé. Sinon il reste, avec le journal de chaque pièce (`moteur.log`, `console.log`…) et, dans `resultats/`, les captures et les traces d'un parcours raté. Pour rejouer une trace : `cd console && npx playwright show-trace ../.e2e/<lancement>/resultats/<parcours>/trace.zip`. Rien ne purge ces dossiers : `rm -rf .e2e` les efface tous, quand aucun lancement ne tourne.
 
-Un parcours s'écrit dans `console/e2e/<sujet>.spec.ts`. Il importe `test` et `expect` de `e2e/banc.ts`, qui fait aussi échouer un parcours sur toute erreur JavaScript de la page, et `seConnecter(page, rôle)` pour entrer avec un compte semé.
+Les parcours, dans `console/e2e/` :
+
+| Fichier | Ce qu'il vérifie |
+|---|---|
+| `antenne.spec.ts` | se connecter, puis voir l'antenne |
+| `barre.spec.ts` | la barre du haut : ce qui passe, l'état de l'antenne et son détail, le casque et sa source, le menu du compte, le lien « Code source » |
+| `pupitre.spec.ts` | Espace, `/` et Entrée, la pré-écoute, « Diffuser », déplacer une ligne au clavier et à la souris, retirer puis annuler, le focus rendu à « Passer en direct » |
+| `etats.spec.ts` | session expirée, droit manquant, moteur injoignable et route absente, simulés par `page.route` devant le moteur de démo |
+| `roles.spec.ts` | ce que voient l'animateur, le programmateur et l'admin |
+| `apparence.spec.ts` | le thème clair et le sombre, choisis dans le menu du compte ou suivant l'appareil |
+| `telephone.spec.ts` | la console sur un téléphone de 360 px, au doigt |
+
+Un défaut connu de la console garde son parcours en `test.fixme`, avec la raison en commentaire : Playwright le saute. Pour le voir échouer, remplacer `test.fixme` par `test` le temps d'un lancement.
+
+Un parcours s'écrit dans `console/e2e/<sujet>.spec.ts`. Il importe de `e2e/banc.ts` :
+
+- `test` et `expect`. `test` fait échouer un parcours sur toute erreur JavaScript de la page. Il coupe aussi ce qui sortirait du banc : `brand.json` nomme le flux d'une vraie station, que le casque demande dès l'ouverture. Une requête vers un autre site échoue, et un lien vers un autre site ouvre une page vide à son adresse ;
+- `seConnecter(page, rôle)`, pour entrer avec un compte semé, ou `remplirLaConnexion(page, rôle)` quand l'écran de connexion est déjà affiché ;
+- `antenne`, `file` et `bibliotheque`, les trois régions du pupitre, `avis` pour un message de la console, et `tenirLAntenne`.
+
+Un parcours trouve les éléments par leur rôle et leur nom accessible, jamais par une classe CSS. Un parcours neuf se vérifie une fois : casser dans la console ce qu'il vérifie, le voir échouer, puis défaire.
+
+Le moteur de démo est partagé par tous les parcours d'un lancement, et il enchaîne seul les titres de son horloge. Un jingle n'y dure que 4 s : la file bouge à chaque fin de titre. Un parcours qui touche à la file appelle d'abord `tenirLAntenne(page)`, qui passe au titre suivant jusqu'à en trouver un qui tient l'antenne une minute. Après un « Suivant », le moteur de démo est en avance sur son horloge, et il date une ligne mise à la suite de l'heure de l'appui : la file la range parmi ce qui est passé. Pour ce geste, un parcours lit la demande envoyée au moteur, pas la file.
 
 Sur `main`, la CI publie aussi les images Docker, seulement si tout est vert.
 
