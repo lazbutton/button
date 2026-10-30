@@ -271,7 +271,7 @@ test("moteur injoignable pendant un direct : la carte reste celle du direct", as
   await expect(antenne(page).getByRole("button", { name: /^(Suivant|Passer en direct)/ })).toHaveCount(0);
 });
 
-test("moteur muet, pupitre ouvert : la barre le dit, puis repart", async ({ page }) => {
+test("moteur muet, pupitre ouvert : la barre et le pupitre le disent, puis repartent", async ({ page }) => {
   // Deux attentes du délai de lecture, en plus de la connexion.
   test.slow();
   await seConnecter(page, "animateur");
@@ -284,10 +284,14 @@ test("moteur muet, pupitre ouvert : la barre le dit, puis repart", async ({ page
   await expect(etat).toHaveAccessibleName("Antenne : Automate injoignable. Santé : état indisponible.", {
     timeout: READ_DEADLINE_MS + 10_000,
   });
+  await expect(alerte(page, /^Automate injoignable Le pupitre ne reçoit plus de nouvelles depuis/)).toBeVisible();
+  await expect(antenne(page)).toContainText("Sans nouvelles");
 
   // Les lectures restées sans réponse ne retiennent pas les suivantes.
   await page.unroute(versLeMoteur);
   await expect(etat).toHaveAccessibleName(/^Antenne : En onde/, { timeout: READ_DEADLINE_MS + 10_000 });
+  await expect(alerte(page, "Automate injoignable")).toHaveCount(0);
+  await expect(antenne(page)).not.toContainText("Sans nouvelles");
 });
 
 test("moteur injoignable pour la file seule : la file ne se dit pas vide", async ({ page }) => {
