@@ -10,6 +10,7 @@ import { useAccount } from "../api/AccountContext";
 import { useLogout } from "../api/SessionGate";
 import type { EmissionsResponse } from "../api/types";
 import { useApiJson } from "../api/useApiJson";
+import { StreamToken } from "../components/antenne/StreamToken";
 import { APPEARANCE_OPTIONS, useAppearance } from "../lib/Appearance";
 import { FormField } from "../ui/FormField";
 import { Panel, SectionHeader } from "../ui/Panel";
@@ -104,6 +105,16 @@ export function MonComptePage() {
               ))}
             </ul>
             <p className="admin-account-line">Ton compte peut se brancher 15 min avant le début de chacun.</p>
+          </>
+        ) : null}
+        {isAdmin || direct ? (
+          <>
+            <h3 className="admin-account-title">Jeton d’encodeur</h3>
+            <p className="admin-account-line">
+              Dans BUTT ou Mixxx : ton identifiant, puis ce jeton comme mot de passe. Le mot de passe du compte reste
+              hors de l’encodeur.
+            </p>
+            <StreamToken owner="me" />
           </>
         ) : null}
         <h3 className="admin-account-title">Apparence</h3>

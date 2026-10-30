@@ -17,6 +17,8 @@ Lecture inverse : `admin` → Admin ; sinon `carts` ou `autodj` → Programmateu
 
 Pour le direct, le harbor accepte un compte `stream`. Dès qu'une émission hebdomadaire nomme un animateur (`host_username`), un compte non admin n'entre que pendant son propre créneau.
 
+L'encodeur envoie l'identifiant du compte, et son jeton d'encodeur comme mot de passe (voir [Comptes](#comptes)). Le mot de passe du compte passe aussi, tant que le réglage `features.allow_account_password` de la table `settings` n'est pas faux : `0`, `false`, `off` ou une valeur vide. Une clé absente compte comme vraie. Le moteur relit le réglage à chaque connexion de l'encodeur.
+
 ## Routes
 
 La console préfixe `/api` en dev. En prod, nginx ne laisse passer qu’une liste de chemins (`console/docker/nginx.conf.template`) : une route nouvelle doit y entrer, et `console/src/api/nginxRoutes.test.ts` le vérifie. Les mutations envoient `X-CSRF-Token` lu dans `GET /csrf.json` → `{csrf_token}`. Refus : `401 {error:"unauthenticated"}`, `403 {error:"forbidden"}`.
@@ -144,6 +146,14 @@ Jouer tout de suite, droit `live` : `POST /carts/{id}/now.json` et `POST /carts/
 ### Comptes
 
 `GET/POST /users.json`, `PUT/DELETE /users/{id}.json`, admin seulement. Un compte : `{id, username, notes, permissions}`. `PUT` accepte `notes`, `password`, `permissions`, `username`.
+
+Le jeton d'encodeur, un par compte :
+
+- `GET /users/me/stream-token.json` → `{created_at}` pour le compte connecté, quel que soit son rôle. `created_at` est l'heure de Paris à la minute, ou `null` sans jeton.
+- `POST /users/me/stream-token.json`, sans corps → `{token, created_at}`. Crée le jeton, ou le remplace : l'ancien est refusé dès la connexion suivante de l'encodeur. C'est la seule réponse qui porte le jeton, avec `Cache-Control: no-store`. Le moteur n'en garde qu'une empreinte SHA-256.
+- `GET` et `POST /users/{id}/stream-token.json` : la même chose pour un autre compte, admin seulement. Compte inconnu → 404.
+
+Un moteur plus ancien que la console n'a pas ces routes : il répond 404, et la console dit de le mettre à jour.
 
 ### Catalogue (service à part du moteur)
 

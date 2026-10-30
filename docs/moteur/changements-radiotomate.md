@@ -39,7 +39,7 @@ L’interface HTMX reste. À côté, les mêmes objets ont une forme JSON, avec 
 | Domaine | Chemins |
 | --- | --- |
 | Compte | `/account.json`, `/login.json` |
-| Utilisateurs | `/users.json` |
+| Utilisateurs | `/users.json`, `/users/…/stream-token.json` |
 | Carts et sons | `/carts.json`, sons, rangs, lecture immédiate |
 | Banque | `/media/bank.json` |
 | Horloges | `/autodj/clocks.json`, `/slots.json`, `/categories.json` |
@@ -66,6 +66,8 @@ Un cart peut pointer un dossier de la banque (`bank_folder`, v12) et marquer ses
 
 Chaque personne a une page de compte. Les utilisateurs se créent et se modifient aussi en JSON.
 
+Chaque compte a un jeton d’encodeur (v18, `services/stream_token.py`). L’encodeur l’envoie au harbor à la place du mot de passe du compte. `/can_stream` accepte encore ce mot de passe tant que le réglage `features.allow_account_password` n’est pas faux. Le moteur ne garde du jeton qu’une empreinte SHA-256.
+
 ## Exploitation
 
 Le scheduler surveille l’antenne (`scheduler/alerts.py`) : silence, playout injoignable, heartbeat perdu, sortie Icecast coupée, créneau live sans encodeur. Une alerte part une fois, puis une note de retour, vers un webhook JSON ou une tâche Vikunja. Le bloc YAML est `alerts:`.
@@ -86,7 +88,7 @@ Le scheduler surveille l’antenne (`scheduler/alerts.py`) : silence, playout in
 
 `brand.json` et `brand.py` portent le nom affiché (`INTERFACE_NAME`), le logo et les libellés. `layout.jinja` est en `lang=fr`, avec `suite.css`. La feuille `sass/_suite.scss` est la charte noir et blanc du pupitre. Les pages HTMX d’origine (live, carts, auto-DJ, utilisateurs) restent servies par le même processus.
 
-## Schéma, de v7 à v17
+## Schéma, de v7 à v18
 
 L’amont s’arrête à v6. Les versions suivantes :
 
@@ -103,6 +105,7 @@ L’amont s’arrête à v6. Les versions suivantes :
 | v15 | `emissions.host_username` |
 | v16 | `carts.ident_pads` |
 | v17 | Agenda : diffusions datées, invités, fichiers des sets, jours annulés des émissions hebdo |
+| v18 | `users.stream_token_hash` et `users.stream_token_created_at` : le jeton d’encodeur |
 
 ## Modules ajoutés
 
@@ -110,7 +113,7 @@ Horloges et antenne : `scheduler/clock.py`, `timing.py`, `music_rules.py`, `desk
 
 Exploitation : `alerts.py`, `metrics.py`, `retention.py`, `health.py`, et `interface/health.py`.
 
-Métier : `domain/`, `services/` (carts, auto-DJ, émissions, banque, grille NTF), `models/clock.py`, `emission.py`, `execution.py`, `music_category.py`.
+Métier : `domain/`, `services/` (carts, auto-DJ, émissions, banque, grille NTF, jeton d’encodeur), `models/clock.py`, `emission.py`, `execution.py`, `music_category.py`.
 
 Interface : `account.py`, `csrf.py`, `emissions.py`, `integrity.py`, `json_util.py`, `spa.py`, `system.py`.
 
@@ -120,4 +123,4 @@ Les tests nouveaux couvrent l’horloge, le conducteur, les alertes, le harbor, 
 
 ## Ce qui n’a pas bougé
 
-Le choix d’un son dans un cart (playlist, boucle, aléatoire, relais), les filtres Beets de l’auto-DJ, le harbor, les comptes et les droits, les sorties Icecast, PulseAudio et ALSA, et le rendu serveur HTMX. L’installateur Podman et les quadlets restent le chemin d’installation de l’amont, avec les sondes et le montage de banque en plus.
+Le choix d’un son dans un cart (playlist, boucle, aléatoire, relais), les filtres Beets de l’auto-DJ, le harbor et les droits des comptes, à part le jeton d’encodeur, les sorties Icecast, PulseAudio et ALSA, et le rendu serveur HTMX. L’installateur Podman et les quadlets restent le chemin d’installation de l’amont, avec les sondes et le montage de banque en plus.
