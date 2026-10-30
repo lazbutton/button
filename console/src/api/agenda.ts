@@ -1,4 +1,12 @@
-import { API_PREFIX, apiDeleteJson, apiGet, apiPostJson, apiPut } from "./client";
+import {
+  API_PREFIX,
+  apiDeleteJson,
+  apiGet,
+  ApiNoAnswerError,
+  apiPostJson,
+  apiPut,
+  ApiUnavailableError,
+} from "./client";
 
 export type AgendaKind = "set" | "live";
 export type AirStatus = "upcoming" | "on_air" | "aired" | "missed";
@@ -131,8 +139,14 @@ export function agendaPath(from: string, to: string): string {
   return `/agenda.json?from=${from}&to=${to}`;
 }
 
-export function previewDiffusions(fields: DiffusionFields): Promise<PreviewResponse> {
-  return apiPostJson<PreviewResponse>("/agenda/diffusions/preview.json", fields);
+export async function previewDiffusions(fields: DiffusionFields): Promise<PreviewResponse> {
+  try {
+    return await apiPostJson<PreviewResponse>("/agenda/diffusions/preview.json", fields);
+  } catch (caught) {
+    // Un aperçu ne crée rien : sans réponse, l'automate est injoignable, aucun geste n'a pu être fait.
+    if (caught instanceof ApiNoAnswerError) throw new ApiUnavailableError();
+    throw caught;
+  }
 }
 
 export async function createDiffusions(fields: DiffusionFields): Promise<Diffusion[]> {

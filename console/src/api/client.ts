@@ -1,7 +1,7 @@
 import { isEngineUnreachable, isUnreachableStatus } from "./engineUnreachable";
 import { apiCacheClear, apiSharedGet } from "./jsonCache";
 import { READ_DEADLINE_MS, withDeadline } from "./readDeadline";
-import { NO_ANSWER_MESSAGE, SEND_DEADLINE_MS, UPLOAD_IDLE_MS, withIdleDeadline } from "./sendDeadline";
+import { NO_ANSWER_MESSAGE, SEND_DEADLINE_MS, UPLOAD_IDLE_MS, withUploadDeadline } from "./sendDeadline";
 import { isUnknownRoute, UNKNOWN_ROUTE_MESSAGE } from "./unknownRoute";
 
 export const API_PREFIX = import.meta.env.DEV ? "/api" : "";
@@ -195,33 +195,35 @@ export function apiPatch<T>(path: string, body: unknown): Promise<T> {
   return apiSendJson<T>("PATCH", path, body);
 }
 
+type FormAnswer = { ok: boolean; status: number; text: string };
+
 // Par XMLHttpRequest : fetch ne dit pas où en est l'envoi du corps. Chaque
-// octet parti, puis le dernier, sont des signes de vie.
-function postForm(
-  path: string,
-  form: FormData,
-  token: string,
-  signal: AbortSignal,
-  alive: () => void,
-): Promise<{ ok: boolean; status: number; text: string }> {
-  return new Promise((resolve, reject) => {
-    const request = new XMLHttpRequest();
-    request.open("POST", `${API_PREFIX}${path}`);
-    request.withCredentials = true;
-    request.setRequestHeader("X-CSRF-Token", token);
-    request.upload.onprogress = alive;
-    request.upload.onload = alive;
-    request.onload = () =>
-      resolve({
-        ok: request.status >= 200 && request.status < 300,
-        status: request.status,
-        text: request.responseText,
-      });
-    request.onerror = () => reject(new ApiUnavailableError());
-    request.onabort = () => reject(new ApiUnavailableError());
-    signal.addEventListener("abort", () => request.abort());
-    request.send(form);
-  });
+// octet parti est un signe de vie, et le dernier ouvre l'attente de la réponse.
+function postForm(path: string, form: FormData, token: string): Promise<FormAnswer> {
+  return withUploadDeadline(
+    UPLOAD_IDLE_MS,
+    (signal, alive, sent) =>
+      new Promise<FormAnswer>((resolve, reject) => {
+        const request = new XMLHttpRequest();
+        request.open("POST", `${API_PREFIX}${path}`);
+        request.withCredentials = true;
+        request.setRequestHeader("X-CSRF-Token", token);
+        request.upload.onprogress = alive;
+        request.upload.onload = sent;
+        request.onload = () =>
+          resolve({
+            ok: request.status >= 200 && request.status < 300,
+            status: request.status,
+            text: request.responseText,
+          });
+        request.onerror = () => reject(new ApiUnavailableError());
+        request.onabort = () => reject(new ApiUnavailableError());
+        signal.addEventListener("abort", () => request.abort());
+        request.send(form);
+      }),
+    () => new ApiUnavailableError(),
+    () => new ApiNoAnswerError(),
+  );
 }
 
 export async function apiUpload<T>(
@@ -233,11 +235,7 @@ export async function apiUpload<T>(
   const list = Array.isArray(files) ? files : [files];
   for (const file of list) form.append(field, file);
   const token = await ensureCsrfToken();
-  const response = await withIdleDeadline(
-    UPLOAD_IDLE_MS,
-    (signal, alive) => postForm(path, form, token, signal, alive),
-    () => new ApiNoAnswerError(),
-  );
+  const response = await postForm(path, form, token);
   const payload = parseJsonText<{ error?: string } & T>(response.text);
   if (!response.ok) raiseForStatus(response, payload);
   return payload as T;

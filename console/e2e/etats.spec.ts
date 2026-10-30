@@ -136,7 +136,7 @@ test("moteur arrêté derrière nginx pendant un geste : la console le dit, sans
 
 test("moteur muet pendant un geste : la console dit que le geste a peut-être été fait", async ({ page }) => {
   await seConnecter(page, "animateur");
-  // Le moteur reçoit « Suivant », puis ne répond plus : la demande reste pendante.
+  // « Suivant » part, puis ne reçoit jamais de réponse : la demande reste pendante.
   await page.route("**/live.json", (route) => {
     if (!passer(route)) return route.continue();
   });
@@ -156,6 +156,25 @@ test("moteur arrêté derrière nginx à la connexion : la console ne parle pas 
 
   await remplirLaConnexion(page, "animateur");
   await expect(alerte(page, "L’automate ne répond pas. Vérifie qu’il tourne, puis réessaie.")).toBeVisible();
+});
+
+test("moteur muet à la connexion : la console le dit, sans attendre le formulaire de repli", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("button", { name: "Se connecter" })).toBeVisible();
+  // /login.json part, puis ne reçoit jamais de réponse. Le formulaire de /login
+  // attendrait le même moteur muet : la console ne l'essaie pas.
+  const repli: string[] = [];
+  await page.route("**/login.json", () => {});
+  await page.route("**/login", (route) => {
+    repli.push(route.request().method());
+    return route.continue();
+  });
+
+  await remplirLaConnexion(page, "animateur");
+  await expect(alerte(page, "L’automate ne répond pas. Vérifie qu’il tourne, puis réessaie.")).toBeVisible({
+    timeout: SEND_DEADLINE_MS + 5_000,
+  });
+  expect(repli).toEqual([]);
 });
 
 test("connexion par le formulaire de repli : un mot de passe refusé se dit comme tel", async ({ page }) => {

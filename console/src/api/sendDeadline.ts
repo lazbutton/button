@@ -13,7 +13,8 @@ export const BANK_SEND_DEADLINE_MS = 60_000;
 /**
  * Un dépôt de sons dure le temps de les envoyer, plusieurs minutes sur un
  * réseau lent. Il n'est abandonné que s'il n'avance plus : aucun octet parti
- * pendant ce temps, ou pas de réponse ce temps après le dernier.
+ * pendant ce temps, ou pas de réponse ce temps après le dernier
+ * (`withUploadDeadline`).
  */
 export const UPLOAD_IDLE_MS = 30_000;
 
@@ -57,4 +58,36 @@ export function withIdleDeadline<T>(
       },
     );
   });
+}
+
+/**
+ * Le délai d'un dépôt, en deux temps. Tant que le corps part, un dépôt qui
+ * n'avance plus est coupé, et rejette avec `unsent()` : nginx garde le corps
+ * entier avant de le relayer, le moteur n'a rien reçu. Après le dernier octet
+ * (`sent`), la réponse a tout le délai. Passé ce délai, le dépôt rejette avec
+ * `unanswered()`, sans être coupé : le moteur écrit peut-être encore les
+ * fichiers sous leur nom, et un dépôt coupé laisserait un son tronqué dans le
+ * dossier du bac, que le scheduler y rattacherait.
+ */
+export function withUploadDeadline<T>(
+  ms: number,
+  send: (signal: AbortSignal, alive: () => void, sent: () => void) => Promise<T>,
+  unsent: () => Error,
+  unanswered: () => Error,
+): Promise<T> {
+  let allSent = false;
+  const cut = new AbortController();
+  return withIdleDeadline(
+    ms,
+    (signal, alive) => {
+      signal.addEventListener("abort", () => {
+        if (!allSent) cut.abort();
+      });
+      return send(cut.signal, alive, () => {
+        allSent = true;
+        alive();
+      });
+    },
+    () => (allSent ? unanswered() : unsent()),
+  );
 }

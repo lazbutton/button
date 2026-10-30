@@ -1,9 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { UPLOAD_IDLE_MS, withIdleDeadline } from "./sendDeadline.ts";
+import { UPLOAD_IDLE_MS, withIdleDeadline, withUploadDeadline } from "./sendDeadline.ts";
 
 class NoAnswer extends Error {}
 const late = () => new NoAnswer();
+
+// Le dépôt n'a pas atteint le moteur, ou il l'a peut-être traité.
+class Unsent extends Error {}
+class Unanswered extends Error {}
+const unsent = () => new Unsent();
+const unanswered = () => new Unanswered();
 
 // Le moteur a reçu l'envoi, puis ne répond plus.
 const silent = () => new Promise<never>(() => {});
@@ -100,4 +106,58 @@ test("a sign of life after the deadline does not restart it", async (t) => {
   alive();
   t.mock.timers.tick(1_000);
   assert.equal(lates, 1);
+});
+
+test("an upload stalled before its last byte is cut, and never reached the engine", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let signal: AbortSignal | undefined;
+  let alive = () => {};
+  const upload = withUploadDeadline(
+    UPLOAD_IDLE_MS,
+    (given, beat) => {
+      signal = given;
+      alive = beat;
+      return silent();
+    },
+    unsent,
+    unanswered,
+  );
+
+  // Le réseau perd les paquets à 40 % : plus un octet ne part.
+  t.mock.timers.tick(20_000);
+  alive();
+  t.mock.timers.tick(UPLOAD_IDLE_MS);
+  await assert.rejects(upload, Unsent);
+  assert.equal(signal?.aborted, true);
+});
+
+test("after its last byte, an upload stops waiting without being cut", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let signal: AbortSignal | undefined;
+  let sent = () => {};
+  const upload = withUploadDeadline(
+    UPLOAD_IDLE_MS,
+    (given, _alive, done) => {
+      signal = given;
+      sent = done;
+      return silent();
+    },
+    unsent,
+    unanswered,
+  );
+  let settled = false;
+  upload.catch(() => {
+    settled = true;
+  });
+
+  // Le dernier octet part juste avant le délai : la réponse a tout le délai.
+  t.mock.timers.tick(UPLOAD_IDLE_MS - 1);
+  sent();
+  t.mock.timers.tick(UPLOAD_IDLE_MS - 1);
+  await Promise.resolve();
+  assert.equal(settled, false);
+  t.mock.timers.tick(1);
+  await assert.rejects(upload, Unanswered);
+  // Le moteur écrit peut-être encore les fichiers : couper laisserait un son tronqué.
+  assert.equal(signal?.aborted, false);
 });
