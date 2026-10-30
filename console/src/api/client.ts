@@ -48,6 +48,9 @@ function raiseForStatus(response: Response, body?: { error?: string }): never {
   if (response.status === 405) {
     throw new ApiRequestError(405, "Cette action n’est pas disponible. Recharge la page.");
   }
+  if (response.status === 413) {
+    throw new ApiRequestError(413, "Envoi trop lourd pour le serveur. Dépose moins de fichiers à la fois, ou des fichiers plus légers.");
+  }
   const detail = body?.error?.trim();
   if (isEngineUnreachable(response.status, detail)) throw new ApiUnavailableError();
   if (isUnknownRoute(response.status, detail)) throw new ApiRequestError(404, UNKNOWN_ROUTE_MESSAGE);

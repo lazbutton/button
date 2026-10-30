@@ -27,7 +27,7 @@ Une erreur métier répond `{error, code, message, field?}`, avec `error` et `me
 
 Une route que le moteur ne connaît pas répond 404 `{error}`, avec la description par défaut de werkzeug, en anglais : « The requested URL was not found on the server. … ». La console y reconnaît un moteur plus ancien qu'elle (`console/src/api/unknownRoute.ts`), et dit de le mettre à jour.
 
-Moteur arrêté, nginx répond lui-même 502, ou 504 si le moteur tarde, avec sa page HTML. Hors 401, 403 et 405, qui gardent leur sens, la console traite 502, 503 et 504, et toute erreur dont le corps est du HTML, comme un moteur injoignable (`console/src/api/engineUnreachable.ts`) : elle ne montre jamais ce HTML. Sur `/login`, où le moteur répond lui-même en HTML, seul le statut compte. Une erreur que la console doit montrer telle quelle ne prend donc ni 502, ni 503, ni 504.
+Moteur arrêté, nginx répond lui-même 502, ou 504 si le moteur tarde, avec sa page HTML. Hors 401, 403, 405 et 413, qui ont chacun leur message, la console traite 502, 503 et 504, et toute erreur dont le corps est du HTML, comme un moteur injoignable (`console/src/api/engineUnreachable.ts`) : elle ne montre jamais ce HTML. Sur `/login`, où le moteur répond lui-même en HTML, seul le statut compte. Un 413 dit qu'un envoi dépasse ce que nginx accepte, 512 Mo (`client_max_body_size`) : la console dit de déposer moins de fichiers à la fois. Une erreur que la console doit montrer telle quelle ne prend donc ni 502, ni 503, ni 504.
 
 La forme exacte des objets est dans `console/src/api/types.ts`, et côté moteur dans les fonctions `*_payload` des services. Cette page donne les routes, les droits et les champs qui comptent.
 

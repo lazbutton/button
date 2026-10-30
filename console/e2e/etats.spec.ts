@@ -5,8 +5,8 @@ import { engineRoutes } from "./routes.ts";
 // Ce que la console dit quand le moteur répond mal. Chaque cas est simulé par
 // page.route devant le vrai moteur de démo : session expirée (401), droit
 // manquant (403), moteur injoignable (connexion refusée), moteur arrêté
-// derrière nginx (502 en HTML) et route absente, c'est-à-dire un moteur plus
-// ancien que la console (404).
+// derrière nginx (502 en HTML), envoi trop lourd pour nginx (413 en HTML) et
+// route absente, c'est-à-dire un moteur plus ancien que la console (404).
 
 // Ce que le relais envoie au moteur : le reste vient de la console.
 const MOTEUR = new RegExp(`^/(${engineRoutes})`);
@@ -140,6 +140,27 @@ test("connexion par le formulaire de repli : un mot de passe refusé se dit comm
   await page.getByLabel("Mot de passe", { exact: true }).fill("pas-le-bon");
   await page.getByRole("button", { name: "Se connecter" }).click();
   await expect(avis(page, /^Identifiant ou mot de passe incorrect\./)).toBeVisible();
+});
+
+test("envoi trop lourd pour nginx : le bac le dit, sans la page de nginx", async ({ page }) => {
+  await seConnecter(page, "programmateur");
+  await expect(suivant(page)).toBeEnabled();
+  await page.goto("/sons");
+  // nginx refuse un envoi de plus de 512 Mo (client_max_body_size) par sa page HTML.
+  const page413 = PAGE_502.replaceAll("502 Bad Gateway", "413 Request Entity Too Large");
+  await page.route("**/carts/*/sounds.json*", (route) =>
+    route.request().method() === "POST"
+      ? route.fulfill({ status: 413, contentType: "text/html", body: page413 })
+      : route.continue(),
+  );
+
+  await page
+    .locator('input[type="file"][accept^="audio"]')
+    .setInputFiles({ name: "emission.wav", mimeType: "audio/wav", buffer: Buffer.from("RIFF") });
+  await expect(
+    avis(page, "Envoi trop lourd pour le serveur. Dépose moins de fichiers à la fois, ou des fichiers plus légers."),
+  ).toBeVisible();
+  await expect(avis(page, /Request Entity|Le moteur ne répond pas/)).toHaveCount(0);
 });
 
 test("moteur injoignable, pupitre ouvert : la barre le dit, puis repart", async ({ page }) => {
