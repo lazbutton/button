@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import { readStream } from "../api/monitorStream";
 import {
   MonitorPcmSink,
   PcmAggregator,
@@ -7,6 +8,7 @@ import {
   mp3Twin,
   pcmTimingForStream,
   skipId3,
+  type PcmFrame,
 } from "./monitorPcm";
 import {
   fetchNowPlaying,
@@ -18,6 +20,8 @@ const STREAM_FALLBACK = "https://radio.lazbutton.xyz/button.mp3";
 const RECONNECT_MIN_MS = 200;
 const RECONNECT_MAX_MS = 3000;
 const STALL_MS = 8000;
+/** Une connexion PCM qui débite depuis ce temps a repris : le backoff repart du bas. */
+const STEADY_MS = 3000;
 const DROP_MS = 0;
 
 function skipToMp3(chunk: Uint8Array) {
@@ -45,7 +49,7 @@ export type MonitorState = {
   analyserL: AnalyserNode | null;
   analyserR: AnalyserNode | null;
   live: boolean;
-  /** La dernière connexion au flux a échoué : le casque réessaie seul. */
+  /** La dernière connexion au flux a échoué, ou n'a pas tenu : le casque réessaie seul. */
   streamDown: boolean;
   muted: boolean;
   lagMs: number | null;
@@ -200,6 +204,12 @@ export function useMonitor(
     abortRef.current?.abort();
     abortRef.current = null;
     teardownPcm();
+    // Le calage que guettait l'élément ne vaut que pour ce qu'il chargeait :
+    // sinon, 8 s plus tard, il relancerait la connexion suivante, même saine.
+    if (stallTimer.current != null) {
+      window.clearTimeout(stallTimer.current);
+      stallTimer.current = null;
+    }
     const audio = audioRef.current;
     if (audio) {
       audio.pause();
@@ -233,6 +243,46 @@ export function useMonitor(
     [],
   );
 
+  // Joue le flux PCM ou WAV jusqu'à sa fin : fermé par le serveur, coupé, ou
+  // muet depuis STALL_MS. Le casque se reconnecte alors, avec le backoff. Une
+  // connexion qui n'a pas tenu STEADY_MS est une reprise ratée : le bouton le
+  // dit, et l'attente continue de monter, pour ne pas marteler un serveur qui
+  // accepte la connexion puis la ferme aussitôt.
+  const pumpPcm = useCallback(
+    async (
+      reader: ReadableStreamDefaultReader<Uint8Array>,
+      abort: AbortController,
+      gen: number,
+      sink: MonitorPcmSink,
+      decode: (chunk: Uint8Array) => PcmFrame | null,
+    ) => {
+      const agg = new PcmAggregator();
+      const enqueue = (frame: PcmFrame | null) => {
+        if (frame) sink.enqueue(frame.channelData, frame.samplesDecoded, frame.sampleRate);
+      };
+      const end = await readStream(reader, {
+        stallMs: STALL_MS,
+        steadyMs: STEADY_MS,
+        alive: () => playingRef.current && playGen.current === gen,
+        stall: () => abort.abort(),
+        onChunk: (chunk) => {
+          const decoded = decode(chunk);
+          if (decoded) enqueue(agg.push(decoded.channelData, decoded.samplesDecoded, decoded.sampleRate));
+        },
+        onSteady: () => {
+          backoffRef.current = RECONNECT_MIN_MS;
+          setStreamDown(false);
+        },
+      });
+      if (playGen.current !== gen || !wantLiveRef.current) return;
+      if (end.closed) enqueue(agg.flush());
+      setLive(false);
+      if (!end.steady) setStreamDown(true);
+      scheduleReconnect();
+    },
+    [scheduleReconnect],
+  );
+
   const startWav = useCallback(
     async (url: string, gen: number) => {
       ensureGraph();
@@ -243,7 +293,6 @@ export function useMonitor(
       const sink = new MonitorPcmSink(ctx, tap, timing.keepS, timing.maxS, timing.startS);
       pcmSinkRef.current = sink;
       const parser = new WavPcmParser();
-      const agg = new PcmAggregator();
 
       const abort = new AbortController();
       abortRef.current = abort;
@@ -257,31 +306,9 @@ export function useMonitor(
         throw new Error("stale");
       }
       if (!res.ok || !res.body) throw new Error("fetch");
-      const reader = res.body.getReader();
-
-      void (async () => {
-        try {
-          while (playingRef.current && playGen.current === gen) {
-            const { done, value } = await reader.read();
-            if (done || !value?.byteLength) {
-              const rest = agg.flush();
-              if (rest) sink.enqueue(rest.channelData, rest.samplesDecoded, rest.sampleRate);
-              break;
-            }
-            const decoded = parser.push(value);
-            if (!decoded) continue;
-            const batch = agg.push(decoded.channelData, decoded.samplesDecoded, decoded.sampleRate);
-            if (batch) sink.enqueue(batch.channelData, batch.samplesDecoded, batch.sampleRate);
-          }
-        } catch {
-          if (playGen.current === gen && wantLiveRef.current) {
-            setLive(false);
-            scheduleReconnect(RECONNECT_MIN_MS);
-          }
-        }
-      })();
+      void pumpPcm(res.body.getReader(), abort, gen, sink, (chunk) => parser.push(chunk));
     },
-    [ensureGraph, scheduleReconnect],
+    [ensureGraph, pumpPcm],
   );
 
   const startPcm = useCallback(
@@ -305,7 +332,6 @@ export function useMonitor(
       const timing = pcmTimingForStream(url);
       const sink = new MonitorPcmSink(ctx, tap, timing.keepS, timing.maxS, timing.startS);
       pcmSinkRef.current = sink;
-      const agg = new PcmAggregator();
 
       const abort = new AbortController();
       abortRef.current = abort;
@@ -319,39 +345,20 @@ export function useMonitor(
         throw new Error("stale");
       }
       if (!res.ok || !res.body) throw new Error("fetch");
-      const reader = res.body.getReader();
       let synced = false;
-
-      void (async () => {
-        try {
-          while (playingRef.current && playGen.current === gen) {
-            const { done, value } = await reader.read();
-            if (done || !value?.byteLength) {
-              const rest = agg.flush();
-              if (rest) sink.enqueue(rest.channelData, rest.samplesDecoded, rest.sampleRate);
-              break;
-            }
-            let chunk: Uint8Array = value;
-            if (!synced) {
-              chunk = skipId3(chunk);
-              const mp3 = skipToMp3(chunk);
-              if (!mp3) continue;
-              chunk = mp3;
-              synced = true;
-            }
-            const decoded = decoder.decode(chunk);
-            const batch = agg.push(decoded.channelData, decoded.samplesDecoded, decoded.sampleRate);
-            if (batch) sink.enqueue(batch.channelData, batch.samplesDecoded, batch.sampleRate);
-          }
-        } catch {
-          if (playGen.current === gen && wantLiveRef.current) {
-            setLive(false);
-            scheduleReconnect(RECONNECT_MIN_MS);
-          }
+      void pumpPcm(res.body.getReader(), abort, gen, sink, (value) => {
+        let chunk = value;
+        if (!synced) {
+          chunk = skipId3(chunk);
+          const mp3 = skipToMp3(chunk);
+          if (!mp3) return null;
+          chunk = mp3;
+          synced = true;
         }
-      })();
+        return decoder.decode(chunk);
+      });
     },
-    [ensureGraph, scheduleReconnect, startWav],
+    [ensureGraph, pumpPcm, startWav],
   );
 
   const startMse = useCallback(
@@ -517,9 +524,13 @@ export function useMonitor(
         }
       }
       if (gen !== playGen.current) return;
-      backoffRef.current = RECONNECT_MIN_MS;
       setLive(true);
-      setStreamDown(false);
+      // L'élément joue déjà. Le flux PCM, lui, n'a repris qu'une fois qu'il a
+      // débité un moment : pumpPcm le dit.
+      if (usedElement) {
+        backoffRef.current = RECONNECT_MIN_MS;
+        setStreamDown(false);
+      }
     } catch {
       if (gen !== playGen.current) return;
       teardownStream();
@@ -564,6 +575,8 @@ export function useMonitor(
     const next = !mutedRef.current;
     void (async () => {
       if (!playingRef.current) await playRef.current();
+      // Écouter pendant que le casque attend sa reprise : il réessaie tout de suite.
+      else if (!next && reconnectTimer.current != null) void playRef.current();
       if (ctxRef.current?.state === "suspended") {
         await ctxRef.current.resume().catch(() => undefined);
       }
@@ -623,11 +636,15 @@ export function useMonitor(
     const audio = audioRef.current;
     if (!audio) return;
 
+    // L'élément a fini, échoué ou calé : le casque se reconnecte, avec le
+    // backoff. Un flux absent, un 404 d'Icecast pendant que le playout
+    // redémarre par exemple, allonge ainsi l'attente au lieu d'être redemandé
+    // toutes les 200 ms.
     const bump = () => {
       if (!wantLiveRef.current) return;
       if (!audio.getAttribute("src") && !pcmSinkRef.current) return;
       setLive(false);
-      scheduleReconnect(RECONNECT_MIN_MS);
+      scheduleReconnect();
     };
 
     const onWaiting = () => {
