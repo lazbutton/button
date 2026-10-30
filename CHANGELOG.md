@@ -17,5 +17,6 @@ Première version publique en préparation.
 - Corrigé : en prod, nginx ne relayait pas `/media/bank.json`. Rattacher un dossier de la banque à un cart ne marchait qu'en dev. Un test de la console vérifie maintenant que chaque route qu'elle appelle passe nginx.
 - Corrigé : modifier seulement un fichier Markdown du moteur, de la console ou des services, un `AGENTS.md` par exemple, reconstruisait les images. Une station qui suit `main` les redéployait, avec une coupure d'antenne quand le moteur ou Icecast redémarrait. La CI ignore maintenant ces fichiers.
 - Corrigé : la recherche dans la banque et la lecture de ses fichiers répondaient à n'importe qui. Sur une machine exposée, toute la médiathèque se téléchargeait sans compte. nginx et le catalogue demandent maintenant une session, sauf pour les sondes et le hook de tusd.
+- Corrigé : une pré-écoute coupée en cours de lecture, par une session expirée ou une coupure réseau, s'arrêtait sans message, et le casque d'antenne restait muet. La console rend maintenant le casque et dit pourquoi la pré-écoute s'est arrêtée.
 
 Le détail des changements du moteur par rapport à l'amont : [docs/moteur/changements-radiotomate.md](docs/moteur/changements-radiotomate.md). L'historique de Radiotomate lui-même : [engine/CHANGELOG.md](engine/CHANGELOG.md).
