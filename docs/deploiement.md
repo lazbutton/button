@@ -17,7 +17,7 @@ cp .env.example .env
 chmod 600 .env
 ```
 
-Dans `.env`, remplacer chaque `change-me`, puis choisir les chemins des données (`RT_DATA`, `BUTTON_MEDIA`…). Sans HTTPS devant la console, poser aussi `RT_COOKIE_SECURE=false` : voir [le cookie de session](#le-cookie-de-session). Ensuite :
+Dans `.env`, remplacer chaque `change-me` : voir [les secrets](#les-secrets). Puis choisir les chemins des données (`RT_DATA`, `BUTTON_MEDIA`…). Sans HTTPS devant la console, poser aussi `RT_COOKIE_SECURE=false` : voir [le cookie de session](#le-cookie-de-session). Ensuite :
 
 ```bash
 docker compose pull
@@ -27,6 +27,7 @@ docker compose ps        # attendre radiotomate-scheduler « healthy »
 
 Au premier démarrage, `radiotomate-init` prépare tout, et peut être relancé sans danger :
 
+- vérifie d'abord les secrets : avec ceux de `.env.example`, il s'arrête, et ni le moteur, ni Icecast, ni nowplaying ne démarrent ;
 - crée `radiotomate.yaml`, la base, et applique les migrations du schéma ;
 - crée l'arborescence de la banque de sons ;
 - configure Beets (ReplayGain) ;
@@ -63,6 +64,38 @@ services:
 
 Le harbor accepte aujourd'hui l'identifiant et le mot de passe du compte de l'animateur. Avant de l'ouvrir à Internet, lire la fiche SEC-04 de la [feuille de route](feuille-de-route/P1-mise-en-prod.md).
 
+## Les secrets
+
+`.env` porte cinq secrets. Les quatre secrets de machine, que personne ne tape, sont `ICECAST_SOURCE_PASSWORD`, `ICECAST_ADMIN_PASSWORD`, `RT_NOWPLAYING_SECRET` et `MEILI_MASTER_KEY`. Vide, l'un d'eux arrête déjà `docker compose`, qui le nomme. Ensuite, à chaque démarrage et avant de toucher à la base, `radiotomate-init` les vérifie. Il s'arrête si un secret vaut `change-me`, la valeur de `.env.example`, connue de tous, ou si un secret de machine fait moins de 24 caractères. Le moteur, Icecast et nowplaying l'attendent : aucun ne démarre, et l'antenne reste coupée. Pour tirer un secret :
+
+```bash
+openssl rand -hex 24
+```
+
+S'en tenir à ces lettres et chiffres : Icecast recopie mal un mot de passe qui contient `&`, `\` ou `<`.
+
+`RT_ADMIN_PASSWORD` est le mot de passe du compte admin `RT_ADMIN_USER`. `radiotomate-init` crée ce compte quand il manque : au premier démarrage, mais aussi après sa suppression ou un changement de son nom. Il n'a pas de longueur minimale. Une fois le compte créé, vider `RT_ADMIN_PASSWORD` : sinon, un compte admin supprimé revient au démarrage suivant, avec ce mot de passe. Vide, il n'est refusé qu'à la première installation, qui démarrerait sans compte admin. Le changer ne change pas un compte existant : un compte créé avec `change-me` garde ce mot de passe, à changer dans la console, Mon compte. D'ici là, `radiotomate-init` le rappelle dans son journal à chaque démarrage, sans bloquer.
+
+Quand le contrôle refuse, le journal de `radiotomate-init` nomme chaque variable à changer, et la commande pour repartir : `docker compose logs radiotomate-init`. Il ne montre jamais la valeur d'un secret. Le contrôle passe à chaque `docker compose up`, pas au redémarrage de la machine. Un moteur déjà en marche continue donc de tourner, mais ne repart pas quand il est recréé, par une mise à jour par exemple.
+
+Pour savoir avant une mise à jour si la station démarrera, lancer le contrôle seul, après `git pull` et avant `docker compose up`. Il n'écrit rien et n'arrête rien :
+
+```bash
+docker compose run --rm --no-deps -e RT_INIT_CHECK_ONLY=1 radiotomate-init
+```
+
+Il répond « Secrets : rien ne bloque le démarrage », ou nomme ce qu'il faut changer. `RT_INIT_CHECK_ONLY` se passe ainsi, sur la ligne de commande, jamais dans `.env`.
+
+Pour changer un secret de machine, sur une station en service comme sur une station bloquée par le contrôle, modifier `.env`, puis recréer toute la station :
+
+```bash
+docker compose up -d --force-recreate
+```
+
+L'antenne se coupe le temps du redémarrage. Sur une station en service, un simple `docker compose up -d` ne suffit pas : il ne recrée que les services dont la configuration change. Icecast prend alors le nouveau mot de passe, mais le playout garde l'ancien, et le flux tombe. Pour `RT_ADMIN_PASSWORD` seul, `docker compose up -d` suffit : seul `radiotomate-init` le lit.
+
+En secours seulement, poser `RT_ALLOW_SHORT_SECRETS=1` dans `.env`, puis lancer `docker compose up -d`, laisse démarrer une station dont un secret de machine est trop court. `radiotomate-init` le rappelle alors dans son journal à chaque démarrage. Un secret vide ou à `change-me` reste refusé. Remplacer ensuite les secrets trop courts, retirer la ligne, puis recréer toute la station. Pourquoi une variable de `.env` et non un réglage de la console : voir la décision [0014](decisions/0014-interrupteur-avant-le-moteur.md).
+
 ## Le cookie de session
 
 Par défaut, le cookie de session porte l'attribut `Secure` : le navigateur ne l'accepte et ne le renvoie qu'en `https://`. Seule exception, Chrome et Firefox l'acceptent aussi sur `http://localhost`. Une fois connecté en HTTPS, ouvrir par erreur une adresse en `http://` n'envoie donc pas la session en clair.
@@ -75,7 +108,7 @@ Derrière un reverse proxy, le journal de `radiotomate-interface` peut afficher 
 
 ## Avant d'exposer une station à Internet
 
-Une installation sur une machine exposée reste un essai tant que les fiches [P1](feuille-de-route/P1-mise-en-prod.md) ne sont pas faites, en particulier celles de sécurité : catalogue protégé, essais de connexion limités, identifiants d'encodeur, en-têtes, secrets d'exemple refusés, ports fermés.
+Une installation sur une machine exposée reste un essai tant que les fiches [P1](feuille-de-route/P1-mise-en-prod.md) ne sont pas faites, en particulier celles de sécurité : catalogue protégé, essais de connexion limités, identifiants d'encodeur, en-têtes, ports fermés.
 
 ## Régler le moteur
 
@@ -123,6 +156,8 @@ services:
 Puis `docker compose up -d console`. Une valeur qui contient autre chose que des adresses, comme un guillemet ou un point-virgule, empêche la console de démarrer : `docker compose logs console` dit pourquoi. Pour vérifier les deux variables, ouvrir la console, lancer l'écoute, puis chercher des lignes `[Report Only]` dans la console du navigateur.
 
 ## Mettre à jour
+
+Avant, s'assurer que les secrets laisseront la station démarrer : voir [les secrets](#les-secrets).
 
 ```bash
 docker compose pull
