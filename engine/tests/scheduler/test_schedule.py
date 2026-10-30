@@ -2,6 +2,7 @@ from asyncio import sleep
 from unittest.mock import patch
 
 import httpx
+import pytest
 from quart.testing import QuartClient
 from sqlalchemy.orm import Session as ormSession
 
@@ -9,6 +10,7 @@ from radiotomate.enums import CartMode, ScheduleMode
 from radiotomate.interface.carts import apply_schedule
 from radiotomate.models import Cart, Sound
 from radiotomate.models.cart import URL_TO_AUTODJ_QUEUE
+from radiotomate.quart import CustomQuart
 
 
 def test_schedule_summary():
@@ -481,3 +483,114 @@ async def test_queues_flush(
     body = await result.get_json()
     assert body["ok"] is True
     assert body["queues"]["jingles"]["removed"] == 5
+
+
+def _playout(handler) -> httpx.AsyncClient:
+    """The scheduler's playout client, in front of `handler`, which answers it."""
+    return httpx.AsyncClient(
+        base_url="http://127.0.0.1:6833",
+        transport=httpx.MockTransport(handler),
+    )
+
+
+def _playout_down(error: type[httpx.TransportError], sent: list[str]):
+    """A playout that does not answer: `error` on each request, logged in `sent`."""
+
+    def no_answer(request: httpx.Request) -> httpx.Response:
+        sent.append(f"{request.method} {request.url.path}")
+        raise error("no answer", request=request)
+
+    return _playout(no_answer)
+
+
+@pytest.mark.parametrize(
+    ("error", "attempts"),
+    [(httpx.ConnectError, 3), (httpx.ConnectTimeout, 1), (httpx.ReadTimeout, 1)],
+)
+async def test_orders_502_when_playout_down(  # noqa: PLR0913
+    app: CustomQuart,
+    client: QuartClient,
+    fake_cart: Cart,
+    fake_sound: Sound,
+    fake_sound2: Sound,
+    auth: dict,
+    monkeypatch: pytest.MonkeyPatch,
+    error: type[httpx.TransportError],
+    attempts: int,
+):
+    sent: list[str] = []
+    monkeypatch.setitem(app.config, "PLAYOUT_CLIENT", _playout_down(error, sent))
+    answers = {
+        "cart": await client.post(f"/schedule/{fake_cart.id}/now", headers=auth),
+        "sound": await client.post(
+            f"/schedule/{fake_cart.id}/sounds/{fake_sound2.id}/now",
+            headers=auth,
+        ),
+        "path": await client.post(
+            "/schedule/path/now",
+            headers=auth,
+            json={"path": "/media/x.mp3"},
+        ),
+        "flush": await client.post("/queues/flush", headers=auth),
+    }
+    for name, response in answers.items():
+        assert response.status_code == 502, name
+        body = await response.get_json()
+        assert (body["ok"], body["error"]) == (False, "playout_unavailable"), name
+    # A refused connection is tried again. After a timeout, the order may have
+    # passed, and someone waits for the answer. A cart stops at its first sound.
+    carts = ["POST /queue/carts"] * attempts
+    assert sent == carts * 3 + ["POST /queue/flush"] * attempts
+
+
+async def test_orders_502_when_playout_rejects(  # noqa: PLR0913
+    app: CustomQuart,
+    client: QuartClient,
+    fake_cart: Cart,
+    fake_sound: Sound,
+    auth: dict,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    sent: list[str] = []
+
+    def refuse(request: httpx.Request) -> httpx.Response:
+        sent.append(f"{request.method} {request.url.path}")
+        return httpx.Response(400, json={"error": "cannot resolve /media/x.mp3"})
+
+    monkeypatch.setitem(app.config, "PLAYOUT_CLIENT", _playout(refuse))
+    answers = [
+        await client.post(f"/schedule/{fake_cart.id}/now", headers=auth),
+        await client.post(
+            "/schedule/path/now",
+            headers=auth,
+            json={"path": "/media/x.mp3"},
+        ),
+    ]
+    for response in answers:
+        assert response.status_code == 502
+        assert await response.get_json() == {
+            "ok": False,
+            "error": "playout_rejected",
+            "detail": "cannot resolve /media/x.mp3",
+        }
+    assert sent == ["POST /queue/carts"] * 2
+
+
+async def test_relay_cart_502_when_playout_down(  # noqa: PLR0913
+    app: CustomQuart,
+    client: QuartClient,
+    dbsession: ormSession,
+    fake_cart: Cart,
+    auth: dict,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fake_cart.mode = CartMode.RELAY
+    fake_cart.url = "https://radio.example/relay.mp3"
+    await dbsession.commit()
+    sent: list[str] = []
+    down = _playout_down(httpx.ConnectError, sent)
+    monkeypatch.setitem(app.config, "PLAYOUT_CLIENT", down)
+    response = await client.post(f"/schedule/{fake_cart.id}/now", headers=auth)
+    assert response.status_code == 502
+    assert (await response.get_json())["error"] == "playout_unavailable"
+    assert sent == ["POST /relay"] * 3

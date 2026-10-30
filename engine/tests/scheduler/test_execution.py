@@ -260,6 +260,42 @@ async def test_playout_gateway_retries_transient():
     assert client.post.call_count == 2
 
 
+async def test_playout_gateway_keeps_its_retries_for_the_clock():
+    client = AsyncMock()
+    client.post = AsyncMock(
+        side_effect=[httpx.ReadTimeout(""), httpx.Response(200, json={"ok": 1})]
+    )
+    gateway = PlayoutGateway(client, max_attempts=3, backoff=(0, 0))
+    result = await gateway.queue("autodj", {"path": "/tmp/a.mp3"})
+    assert (result.ok, result.attempts) == (True, 2)
+
+
+async def test_gesture_gateway_sends_an_order_once():
+    client = AsyncMock()
+    client.delete = AsyncMock(side_effect=httpx.ReadTimeout(""))
+    client.post = AsyncMock(
+        side_effect=[httpx.ConnectTimeout(""), httpx.Response(500, json={})]
+    )
+    gateway = PlayoutGateway(client, once=True, backoff=(0, 0))
+    skipped = await gateway.skip()
+    assert (skipped.ok, skipped.attempts, skipped.error) == (False, 1, "ReadTimeout")
+    late = await gateway.queue("carts", {"path": "/tmp/a.mp3"})
+    assert (late.ok, late.attempts) == (False, 1)
+    crashed = await gateway.queue("carts", {"path": "/tmp/a.mp3"})
+    assert (crashed.ok, crashed.attempts, crashed.status_code) == (False, 1, 500)
+    assert (client.delete.call_count, client.post.call_count) == (1, 2)
+
+
+async def test_gesture_gateway_tries_a_refused_connection_again():
+    client = AsyncMock()
+    client.delete = AsyncMock(
+        side_effect=[httpx.ConnectError("refused"), httpx.Response(200)]
+    )
+    gateway = PlayoutGateway(client, once=True, backoff=(0, 0))
+    skipped = await gateway.skip()
+    assert (skipped.ok, skipped.attempts) == (True, 2)
+
+
 async def test_soft_sync_waits_then_fires_without_skip(
     dbsession: ormSession,
     jingles_cart,

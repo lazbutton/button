@@ -9,8 +9,14 @@ from sqlalchemy.orm import Session as ormSession
 from radiotomate.beets import BeetsIntegration
 from radiotomate.interface import live as live_mod
 from radiotomate.models import RundownItem, Sound, User
+from radiotomate.quart import CustomQuart
 from radiotomate.scheduler.execution import DESK_ORIGIN
+from radiotomate.scheduler.playout import (
+    DEFAULT_BACKOFF_SECONDS,
+    DEFAULT_TIMEOUT_SECONDS,
+)
 from radiotomate.scheduler_api import Scheduler
+from tests.scheduler.test_schedule import _playout
 from tests.scheduler.test_studio_json import _interface_client, _login
 
 
@@ -557,6 +563,223 @@ async def test_now_json_checks_desk_line_before_order(
     assert (payload["code"], payload["field"]) == ("validation_error", "kind")
     assert sent == []
     assert await _desk_lines(dbsession) == []
+
+
+def _scheduler_without_playout(sent: list[str]) -> Scheduler:
+    """A scheduler that answers every order: its playout did not answer."""
+
+    def no_playout(request: httpx.Request) -> httpx.Response:
+        sent.append(f"{request.method} {request.url.path}")
+        body = {"ok": False, "error": "playout_unavailable", "detail": "ReadTimeout"}
+        return httpx.Response(502, json=body)
+
+    return _scheduler_facing(no_playout)
+
+
+async def test_gestures_502_when_playout_down(  # noqa: PLR0913
+    raw_app,
+    app_configration: dict,
+    beets_integration: BeetsIntegration,
+    dbsession: ormSession,
+    users_password: str,
+    jingles_cart,
+):
+    client = await _live_client(
+        app_configration,
+        beets_integration,
+        dbsession,
+        users_password,
+        "live-json-no-playout",
+    )
+    sound = await dbsession.scalar(
+        select(Sound).where(Sound.cart_id == jingles_cart.id)
+    )
+    assert sound is not None
+    sent: list[str] = []
+    no_playout = _scheduler_without_playout(sent)
+    with patch.object(Scheduler, "get", return_value=no_playout):
+        answers = {
+            "skip": await client.delete("/live.json"),
+            "flush": await client.post("/antenne/flush.json"),
+            "cart": await client.post(f"/carts/{jingles_cart.id}/now.json"),
+            "pad": await client.post(
+                f"/carts/{jingles_cart.id}/sounds/{sound.id}/now.json",
+            ),
+            "desk sound": await client.post(
+                "/autodj/conducteur/now.json",
+                json={"path": str(sound.path)},
+            ),
+            "desk path": await client.post(
+                "/autodj/conducteur/now.json",
+                json={"path": "/media/x.mp3", "title": "X", "artist": "Y"},
+            ),
+        }
+    for name, response in answers.items():
+        assert response.status_code == 502, name
+        assert await response.get_json() == {"error": "playout_unavailable"}, name
+    assert sent == [
+        "DELETE /live",
+        "POST /queues/flush",
+        f"POST /schedule/{jingles_cart.id}/now",
+        f"POST /schedule/{jingles_cart.id}/sounds/{sound.id}/now",
+        f"POST /schedule/{jingles_cart.id}/sounds/{sound.id}/now",
+        "POST /schedule/path/now",
+    ]
+    assert await _desk_lines(dbsession) == []
+
+
+@pytest.mark.parametrize(
+    ("status", "body"),
+    [(502, {"ok": False, "error": "playout_rejected", "detail": "crash"}), (500, None)],
+    ids=["playout", "scheduler"],
+)
+async def test_skip_and_flush_json_502_when_the_order_fails(  # noqa: PLR0913
+    raw_app,
+    app_configration: dict,
+    beets_integration: BeetsIntegration,
+    dbsession: ormSession,
+    users_password: str,
+    status: int,
+    body: dict | None,
+):
+    """Any other error says to check the antenna, never server_error."""
+    client = await _live_client(
+        app_configration,
+        beets_integration,
+        dbsession,
+        users_password,
+        "live-json-order-fails",
+    )
+    sent: list[str] = []
+
+    def fail(request: httpx.Request) -> httpx.Response:
+        sent.append(f"{request.method} {request.url.path}")
+        if body is None:
+            return httpx.Response(status, text="Internal Server Error")
+        return httpx.Response(status, json=body)
+
+    with patch.object(Scheduler, "get", return_value=_scheduler_facing(fail)):
+        answers = {
+            "skip": await client.delete("/live.json"),
+            "flush": await client.post("/antenne/flush.json"),
+        }
+    for name, response in answers.items():
+        assert response.status_code == 502, name
+        assert await response.get_json() == {"error": "playout_unavailable"}, name
+    assert sent == ["DELETE /live", "POST /queues/flush"]
+
+
+async def test_skip_page_says_when_playout_down(
+    raw_app,
+    app_configration: dict,
+    beets_integration: BeetsIntegration,
+    dbsession: ormSession,
+    users_password: str,
+):
+    """The HTMX page says it through its own error path, as for a cart."""
+    client = await _live_client(
+        app_configration,
+        beets_integration,
+        dbsession,
+        users_password,
+        "live-page-no-playout",
+    )
+    sent: list[str] = []
+    no_playout = _scheduler_without_playout(sent)
+    with patch.object(Scheduler, "get", return_value=no_playout):
+        response = await client.delete("/live", headers={"HX-Request": "true"})
+    assert response.status_code == 400
+    message = json.loads(response.headers["HX-Trigger"])["radiotomateMessage"]
+    assert message["text"] == "Le playout ne répond pas."
+    assert sent == ["DELETE /live"]
+
+
+@pytest.mark.parametrize("error", [httpx.ConnectError, httpx.ReadTimeout])
+async def test_flush_json_502_when_scheduler_down(  # noqa: PLR0913
+    raw_app,
+    app_configration: dict,
+    beets_integration: BeetsIntegration,
+    dbsession: ormSession,
+    users_password: str,
+    error: type[httpx.TransportError],
+):
+    client = await _live_client(
+        app_configration,
+        beets_integration,
+        dbsession,
+        users_password,
+        "live-json-flush-down",
+    )
+    sent: list[str] = []
+    with patch.object(Scheduler, "get", return_value=_scheduler_down(error, sent)):
+        response = await client.post("/antenne/flush.json")
+    assert response.status_code == 502
+    assert await response.get_json() == {"error": "scheduler_unavailable"}
+    assert sent == ["POST /queues/flush"]
+
+
+async def test_orders_wait_for_the_scheduler_attempts():
+    """The scheduler's verdict on the playout arrives before the order gives up."""
+    reads: list[float] = []
+
+    def accept(request: httpx.Request) -> httpx.Response:
+        reads.append(request.extensions["timeout"]["read"])
+        return httpx.Response(200, json={"ok": True})
+
+    scheduler = _scheduler_facing(accept)
+    await scheduler.skip()
+    await scheduler.flush_queues()
+    await scheduler.push_cart(1)
+    await scheduler.push_sound(1, 2)
+    await scheduler.push_path("/media/x.mp3")
+    # A cart pushes two sounds, one after the other: two timeouts on the playout
+    # at most, or refused connections tried three times.
+    gesture = 2 * DEFAULT_TIMEOUT_SECONDS + sum(DEFAULT_BACKOFF_SECONDS)
+    assert len(reads) == 5
+    assert all(read > gesture for read in reads)
+
+
+async def test_gestures_through_the_scheduler(  # noqa: PLR0913
+    app: CustomQuart,
+    app_configration: dict,
+    beets_integration: BeetsIntegration,
+    dbsession: ormSession,
+    users_password: str,
+    auth: dict,
+    jingles_cart,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The interface reads what the real scheduler answers when the playout fails."""
+    sent: list[str] = []
+
+    def playout(request: httpx.Request) -> httpx.Response:
+        sent.append(f"{request.method} {request.url.path}")
+        if request.method == "DELETE":
+            raise httpx.ConnectError("no answer", request=request)
+        return httpx.Response(400, json={"error": "cannot resolve the sound"})
+
+    monkeypatch.setitem(app.config, "PLAYOUT_CLIENT", _playout(playout))
+    scheduler = Scheduler.__new__(Scheduler)
+    scheduler.client = httpx.AsyncClient(
+        base_url="http://127.0.0.1:6822",
+        transport=httpx.ASGITransport(app=app),
+        headers=auth,
+    )
+    client = await _live_client(
+        app_configration,
+        beets_integration,
+        dbsession,
+        users_password,
+        "live-json-scheduler",
+    )
+    with patch.object(Scheduler, "get", return_value=scheduler):
+        skipped = await client.delete("/live.json")
+        fired = await client.post(f"/carts/{jingles_cart.id}/now.json")
+    assert skipped.status_code == 502
+    assert await skipped.get_json() == {"error": "playout_unavailable"}
+    assert fired.status_code == 400
+    assert await fired.get_json() == PLAYOUT_REJECTED
+    assert sent == ["DELETE /live"] * 3 + ["POST /queue/jingles"]
 
 
 async def test_antenne_state_and_flush_json(

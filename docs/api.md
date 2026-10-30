@@ -27,7 +27,7 @@ Une erreur métier répond `{error, code, message, field?}`, avec `error` et `me
 
 Une route que le moteur ne connaît pas répond 404 `{error}`, avec la description par défaut de werkzeug, en anglais : « The requested URL was not found on the server. … ». La console y reconnaît un moteur plus ancien qu'elle (`console/src/api/unknownRoute.ts`), et dit de le mettre à jour.
 
-Moteur arrêté, nginx répond lui-même 502, ou 504 si le moteur tarde, avec sa page HTML. Hors 401, 403, 405 et 413, qui ont chacun leur message, la console traite 502, 503 et 504, et toute erreur dont le corps est du HTML, comme un moteur injoignable (`console/src/api/engineUnreachable.ts`) : elle ne montre jamais ce HTML. Sur `/login`, où le moteur répond lui-même en HTML, seul le statut compte. Un 413 dit qu'un envoi dépasse ce que nginx accepte, 512 Mo (`client_max_body_size`) : la console dit de déposer moins de fichiers à la fois. Une erreur que la console doit montrer telle quelle ne prend donc ni 502, ni 503, ni 504.
+Moteur arrêté, nginx répond lui-même 502, ou 504 si le moteur tarde, avec sa page HTML. Hors 401, 403, 405 et 413, qui ont chacun leur message, la console traite 502, 503 et 504, et toute erreur dont le corps est du HTML, comme un moteur injoignable (`console/src/api/engineUnreachable.ts`) : elle ne montre jamais ce HTML. Seule exception, un 502 `{error:"playout_unavailable"}` : le moteur répond, mais son playout non. La console dit alors « Le playout ne répond pas. Vérifie l’antenne avant de recommencer. » (`console/src/api/playoutUnavailable.ts`). Sur `/login`, où le moteur répond lui-même en HTML, seul le statut compte. Un 413 dit qu'un envoi dépasse ce que nginx accepte, 512 Mo (`client_max_body_size`) : la console dit de déposer moins de fichiers à la fois. Une erreur que la console doit montrer telle quelle ne prend donc ni 502, ni 503, ni 504.
 
 La console abandonne une lecture JSON (`GET`) restée sans réponse au bout de 10 s, corps compris, et la traite comme un moteur injoignable (`console/src/api/readDeadline.ts`). nginx, lui, attend le moteur une heure. Une route que la console lit répond donc en moins de 10 s : le moteur attend lui-même le scheduler jusqu'à 8 s, sur `/antenne/state.json`.
 
@@ -68,7 +68,7 @@ La forme exacte des objets est dans `console/src/api/types.ts`, et côté moteur
 }
 ```
 
-`emission`, ajouté par-dessus, vaut `null` ou `{id, title, artist, state:"waiting"|"on_air", until, scope, start_minute?, day_of_week?}`. `DELETE /live.json` → `{ok:true}` si le compte a `live` (un admin passe). Si le scheduler ne répond pas : `502 {error:"scheduler_unavailable"}`.
+`emission`, ajouté par-dessus, vaut `null` ou `{id, title, artist, state:"waiting"|"on_air", until, scope, start_minute?, day_of_week?}`. `DELETE /live.json` → `{ok:true}` si le compte a `live` (un admin passe). Si le scheduler ne répond pas : `502 {error:"scheduler_unavailable"}`. Si c'est le playout : `502 {error:"playout_unavailable"}`, voir [Antenne](#antenne).
 
 ### Conducteur
 
@@ -78,7 +78,7 @@ Un item : `{id, at, kind, when, resource, queue, status, status_code, reason, cl
 
 `POST` sur la même URL, `{reset:true}`, exige `autodj`. L’horizon vient de la query (`horizon=30` dans Automate).
 
-Écritures du pupitre, droit `live` : `POST /autodj/conducteur/items.json` (à la suite, ou `{suppress_at}` pour masquer un item d’horloge), `PATCH …/items/{id}.json` (`path`, `kind`, `artist`, `title`, `duration`), `DELETE …/items/{id}.json`, `PUT …/items/ranks.json` `{ids}`, `POST …/now.json`. Elles répondent l'état du pupitre. Si le scheduler ne répond pas, `POST …/now.json` rend `502 {error:"scheduler_unavailable"}`. S'il refuse l'ordre, par exemple pour un fichier que le playout ne sait pas lire : `400 {error, code:"playout_rejected"}`, avec `error` en français. Un titre de la banque n'entre au conducteur, en ligne du pupitre, qu'une fois l'ordre passé, avec ses seuls `path`, `kind`, `artist`, `title` et `duration` : un ordre qui échoue n'y laisse rien.
+Écritures du pupitre, droit `live` : `POST /autodj/conducteur/items.json` (à la suite, ou `{suppress_at}` pour masquer un item d’horloge), `PATCH …/items/{id}.json` (`path`, `kind`, `artist`, `title`, `duration`), `DELETE …/items/{id}.json`, `PUT …/items/ranks.json` `{ids}`, `POST …/now.json`. Elles répondent l'état du pupitre. Si le scheduler ne répond pas, `POST …/now.json` rend `502 {error:"scheduler_unavailable"}`, et `502 {error:"playout_unavailable"}` si c'est le playout. S'il refuse l'ordre, par exemple pour un fichier que le playout ne sait pas lire : `400 {error, code:"playout_rejected"}`, avec `error` en français. Un titre de la banque n'entre au conducteur, en ligne du pupitre, qu'une fois l'ordre passé, avec ses seuls `path`, `kind`, `artist`, `title` et `duration` : un ordre qui échoue n'y laisse rien.
 
 ### Programmation
 
@@ -125,7 +125,9 @@ Sans session : `GET /public/guest/{jeton}.json` et `PUT /public/guest/{jeton}/di
 
 ### Antenne
 
-`GET /antenne/state.json` → `{at, playout, engine, incidents, listeners, asrun, next_live_slot}`, ou `502 {error:"scheduler_unavailable"}` si le scheduler ne répond pas. `playout` porte `reachable, source, silence_s, rms_db, harbor_s`. Un incident : `{kind, detail, since_s, notified}`. `POST /antenne/flush.json` → `{ok:true}`, droit `live`.
+`GET /antenne/state.json` → `{at, playout, engine, incidents, listeners, asrun, next_live_slot}`, ou `502 {error:"scheduler_unavailable"}` si le scheduler ne répond pas. `playout` porte `reachable, source, silence_s, rms_db, harbor_s`. Un incident : `{kind, detail, since_s, notified}`. `POST /antenne/flush.json` → `{ok:true}`, droit `live`, ou `502 {error:"scheduler_unavailable"}`.
+
+Les gestes d'antenne passent par le scheduler, puis par le playout : « Suivant » (`DELETE /live.json`), « Vider les files » (`POST /antenne/flush.json`), jouer tout de suite un bac, un son ou une ligne du pupitre. Si le playout ne répond pas, arrêté ou figé, ils rendent `502 {error:"playout_unavailable"}`. « Suivant » et « Vider les files » le rendent aussi pour toute autre erreur du scheduler ou du playout. Un playout seulement lent a pu faire l'ordre : le scheduler ne renvoie un geste que si la connexion a été refusée, et l'interface attend son verdict jusqu'à 12 s.
 
 ### Carts
 
@@ -143,7 +145,7 @@ Créer un relais : `POST /carts.json` avec `mode:"relay"`, une URL HTTP complèt
 - `PUT /carts/{id}/sounds/{son}.json`, par exemple `{title}` ou `{active}` → `{cart, sound}` ; `DELETE` → `{cart}`.
 - `PUT /carts/{id}/sounds/ranks.json` `{ranks:[ids]}` → `{cart}`.
 
-Jouer tout de suite, droit `live` : `POST /carts/{id}/now.json` et `POST /carts/{id}/sounds/{son}/now.json` → `{ok:true}`. Pendant un direct : `409 {error, code:"harbor_live"}`. Si le scheduler ne répond pas : `502 {error:"scheduler_unavailable"}`. S'il refuse l'ordre : `400 {error, code:"playout_rejected"}`, comme au pupitre.
+Jouer tout de suite, droit `live` : `POST /carts/{id}/now.json` et `POST /carts/{id}/sounds/{son}/now.json` → `{ok:true}`. Pendant un direct : `409 {error, code:"harbor_live"}`. Si le scheduler ne répond pas : `502 {error:"scheduler_unavailable"}`. Si c'est le playout : `502 {error:"playout_unavailable"}`. S'il refuse l'ordre : `400 {error, code:"playout_rejected"}`, comme au pupitre.
 
 ### Banque
 

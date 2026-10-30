@@ -328,8 +328,10 @@ logging.getLogger("hypercorn.access").addFilter(LiveFilter())
 @blueprint.delete("/live")
 @token_required
 async def skip():
-    from radiotomate.scheduler.playout import gateway_for
+    from radiotomate.scheduler.playout import failure_body, gesture_gateway_for
 
-    gateway = gateway_for(current_app.config["PLAYOUT_CLIENT"])
-    await gateway.skip()
+    gateway = gesture_gateway_for(current_app.config["PLAYOUT_CLIENT"])
+    result = await gateway.skip()
+    if not result.ok:
+        return failure_body(result), 502
     return "", 200

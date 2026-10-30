@@ -33,7 +33,11 @@ from radiotomate.interface.spa import console_dist
 from radiotomate.models import Cart, Sound
 from radiotomate.models.cart import URL_TO_AUTODJ_QUEUE
 from radiotomate.models.execution import RundownItem
-from radiotomate.scheduler_api import Scheduler, SchedulerUnavailableError
+from radiotomate.scheduler_api import (
+    PlayoutUnavailableError,
+    Scheduler,
+    SchedulerUnavailableError,
+)
 from radiotomate.services import media_bank
 from radiotomate.services.carts import (
     assert_cart_deletable,
@@ -964,13 +968,14 @@ async def push_now(cart_id: int):
 
 @blueprint.post("/carts/<int:cart_id>/now.json")
 @login_required
-async def push_now_json(cart_id: int):
+async def push_now_json(cart_id: int):  # noqa: PLR0911
     if not current_user.user.can_live():
         return jsonify({"error": "forbidden"}), 403
     from radiotomate.interface.live import (
         harbor_busy_response,
         harbor_is_live,
         playout_rejected_response,
+        playout_unavailable_response,
         scheduler_unavailable_response,
     )
 
@@ -983,6 +988,8 @@ async def push_now_json(cart_id: int):
         await Scheduler.get().push_cart(cart_id)
     except SchedulerUnavailableError:
         return scheduler_unavailable_response()
+    except PlayoutUnavailableError:
+        return playout_unavailable_response()
     except RuntimeError:
         return playout_rejected_response()
     invalidate_conducteur_cache()
@@ -998,6 +1005,7 @@ async def push_sound_now_json(cart_id: int, sound_id: int):  # noqa: PLR0911
         harbor_busy_response,
         harbor_is_live,
         playout_rejected_response,
+        playout_unavailable_response,
         scheduler_unavailable_response,
     )
 
@@ -1013,6 +1021,8 @@ async def push_sound_now_json(cart_id: int, sound_id: int):  # noqa: PLR0911
         await Scheduler.get().push_sound(cart_id, sound_id)
     except SchedulerUnavailableError:
         return scheduler_unavailable_response()
+    except PlayoutUnavailableError:
+        return playout_unavailable_response()
     except RuntimeError:
         return playout_rejected_response()
     invalidate_conducteur_cache()

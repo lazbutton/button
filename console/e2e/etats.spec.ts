@@ -20,10 +20,10 @@ import { engineRoutes } from "./routes.ts";
 // page.route devant le vrai moteur de démo : session expirée (401), droit
 // manquant (403), moteur injoignable (connexion refusée), moteur muet (une
 // lecture ou un geste qui ne reçoit jamais de réponse), moteur arrêté derrière
-// nginx (502 en HTML), envoi trop lourd pour nginx (413 en HTML) et route
-// absente, c'est-à-dire un moteur plus ancien que la console (404). La page
-// Automate passe aussi par le catalogue : un refus ou un catalogue injoignable
-// y sont simulés devant le faux catalogue.
+// nginx (502 en HTML), playout muet (502 playout_unavailable), envoi trop lourd
+// pour nginx (413 en HTML) et route absente, c'est-à-dire un moteur plus ancien
+// que la console (404). La page Automate passe aussi par le catalogue : un refus
+// ou un catalogue injoignable y sont simulés devant le faux catalogue.
 
 // Ce que le relais envoie au moteur : le reste vient de la console.
 const MOTEUR = new RegExp(`^/(${engineRoutes})`);
@@ -169,6 +169,18 @@ test("moteur muet pendant un geste : la console dit que le geste a peut-être é
   await expect(
     alerte(page, "L’automate ne répond pas. Le geste a peut-être été fait : vérifie avant de réessayer."),
   ).toBeVisible({ timeout: SEND_DEADLINE_MS + 5_000 });
+});
+
+test("playout muet pendant un geste : la console le dit, sans parler de l’automate", async ({ page }) => {
+  await seConnecter(page, "animateur");
+  // Le moteur répond, mais Liquidsoap non : arrêté, ou figé.
+  await page.route("**/live.json", (route) =>
+    passer(route) ? route.fulfill({ status: 502, json: { error: "playout_unavailable" } }) : route.continue(),
+  );
+
+  await suivant(page).click();
+  await expect(alerte(page, "Le playout ne répond pas. Vérifie l’antenne avant de recommencer.")).toBeVisible();
+  await expect(page.getByText(/^L’automate ne répond pas\./)).toHaveCount(0);
 });
 
 test("moteur arrêté derrière nginx à la connexion : la console ne parle pas de mot de passe", async ({ page }) => {
