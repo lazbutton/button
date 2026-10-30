@@ -1,6 +1,6 @@
-import { readFileSync } from "node:fs";
 import { mergeConfig } from "vite";
 import base from "../vite.config.ts";
+import { engineRoutes } from "./routes.ts";
 
 // vite preview sert le build de la console comme nginx le sert en prod : les
 // routes du moteur à la racine, le catalogue sous /library, tusd sous /tus.
@@ -13,10 +13,6 @@ function address(name: string): string {
   if (!value) throw new Error(`${name} manque : lancer les parcours avec ./scripts/e2e.sh.`);
   return value;
 }
-
-const template = readFileSync(new URL("../docker/nginx.conf.template", import.meta.url), "utf8");
-const engineRoutes = template.match(/location ~ \^\/\((.+)\) \{/)?.[1];
-if (!engineRoutes) throw new Error("Liste des routes du moteur introuvable dans nginx.conf.template.");
 
 const engine = address("E2E_MOTEUR");
 

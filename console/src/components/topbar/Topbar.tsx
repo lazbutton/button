@@ -21,8 +21,10 @@ export function Topbar({ leading }: { leading?: ReactNode }) {
   const { isAdmin } = useAccount();
   const monitor = useMonitorState();
   const antenne = useApiJson<AntenneState>(ANTENNE_STATE_JSON, 5000);
-  const health = topHealth(antenne.data, monitor.snapshot, new Date());
-  const fresh = health.stale ? null : antenne.data;
+  // Le moteur ne répond plus : son dernier état ne dit plus que tout va bien.
+  const state = antenne.error || monitor.snapshotUnreachable ? null : antenne.data;
+  const health = topHealth(state, monitor.snapshot, new Date());
+  const fresh = health.stale ? null : state;
   const air = topAir({
     live: monitor.snapshot,
     antenne: fresh,

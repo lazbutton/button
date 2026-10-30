@@ -72,8 +72,6 @@ Le harbor accepte aujourd'hui l'identifiant et le mot de passe du compte de l'an
 openssl rand -hex 24
 ```
 
-S'en tenir à ces lettres et chiffres : Icecast recopie mal un mot de passe qui contient `&`, `\` ou `<`.
-
 `RT_ADMIN_PASSWORD` est le mot de passe du compte admin `RT_ADMIN_USER`. `radiotomate-init` crée ce compte quand il manque : au premier démarrage, mais aussi après sa suppression ou un changement de son nom. Il n'a pas de longueur minimale. Une fois le compte créé, vider `RT_ADMIN_PASSWORD` : sinon, un compte admin supprimé revient au démarrage suivant, avec ce mot de passe. Vide, il n'est refusé qu'à la première installation, qui démarrerait sans compte admin. Le changer ne change pas un compte existant : un compte créé avec `change-me` garde ce mot de passe, à changer dans la console, Mon compte. D'ici là, `radiotomate-init` le rappelle dans son journal à chaque démarrage, sans bloquer.
 
 Quand le contrôle refuse, le journal de `radiotomate-init` nomme chaque variable à changer, et la commande pour repartir : `docker compose logs radiotomate-init`. Il ne montre jamais la valeur d'un secret. Le contrôle passe à chaque `docker compose up`, pas au redémarrage de la machine. Un moteur déjà en marche continue donc de tourner, mais ne repart pas quand il est recréé, par une mise à jour par exemple.

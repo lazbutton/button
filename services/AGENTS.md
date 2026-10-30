@@ -7,7 +7,7 @@
 ```bash
 cd services/catalog
 pip install -r requirements.txt          # dans un venv, une fois
-../../scripts/verifier.sh services       # les huit tests, comme la CI
+../../scripts/verifier.sh services       # les neuf tests, comme la CI
 ```
 
 Pour essayer Icecast et nowplaying seuls : [deploy/local/](../deploy/local/README.md).
@@ -25,10 +25,10 @@ Pour essayer Icecast et nowplaying seuls : [deploy/local/](../deploy/local/READM
 ## Tests
 
 - Chaque test est un script `unittest` lancé seul : `python test_inbox_api.py`. Les faux services, comme un faux moteur, sont des `BaseHTTPRequestHandler` dans le test.
-- La CI lance huit fichiers, listés dans `.github/workflows/services.yml` sous la forme `- run: python test_xxx.py`. `scripts/verifier.sh` lit cette liste : un fichier de test nouveau s'y ajoute, sinon personne ne le lance.
+- La CI lance neuf fichiers, listés dans `.github/workflows/services.yml` sous la forme `- run: python test_xxx.py`. `scripts/verifier.sh` lit cette liste : un fichier de test nouveau s'y ajoute, sinon personne ne le lance.
 
 ## nowplaying et Icecast
 
 - `nowplaying/nowplaying.py` reçoit les métadonnées du moteur (`POST /hook`, jeton `RT_NOWPLAYING_SECRET`) et publie `now.json`.
-- `icecast/icecast.xml` se règle au démarrage par `docker-entrypoint.sh`. Une modification demande de reconstruire l'image.
+- `icecast/icecast.xml` se règle au démarrage par `docker-entrypoint.sh`, qui y recopie les mots de passe et l'e-mail tels quels. Son test, `catalog/test_icecast_config.py`, lance le script avec un faux `icecast2`. Une modification demande de reconstruire l'image.
 - Le mount public d'une station ne se remplace jamais par un essai. On essaie sur un autre mount, ou sur le banc local.

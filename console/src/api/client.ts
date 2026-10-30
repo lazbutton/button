@@ -1,4 +1,5 @@
 import { apiCacheClear, apiSharedGet } from "./jsonCache";
+import { isUnknownRoute, UNKNOWN_ROUTE_MESSAGE } from "./unknownRoute";
 
 export const API_PREFIX = import.meta.env.DEV ? "/api" : "";
 
@@ -47,6 +48,7 @@ function raiseForStatus(response: Response, body?: { error?: string }): never {
     throw new ApiRequestError(405, "Cette action n’est pas disponible. Recharge la page.");
   }
   const detail = body?.error?.trim();
+  if (isUnknownRoute(response.status, detail)) throw new ApiRequestError(404, UNKNOWN_ROUTE_MESSAGE);
   if (detail) throw new ApiRequestError(response.status, detail);
   throw new ApiUnavailableError();
 }

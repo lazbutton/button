@@ -67,6 +67,7 @@ export function AntennePage() {
       <AntenneDesk
         live={live.data}
         rundown={rundown.data}
+        rundownUnreadable={rundown.error === "down"}
         emissions={emissions.data}
         antenne={antenne.data}
         setRundown={rundown.setData}
@@ -114,6 +115,7 @@ function keyTarget(target: EventTarget | null) {
 function AntenneDesk({
   live,
   rundown,
+  rundownUnreadable,
   emissions,
   antenne,
   setRundown,
@@ -121,6 +123,8 @@ function AntenneDesk({
 }: {
   live: LiveSnapshot | null;
   rundown: Rundown | null;
+  /** La dernière lecture de la file a échoué. */
+  rundownUnreadable: boolean;
   emissions: EmissionsResponse | null;
   antenne: AntenneState | null;
   setRundown: Dispatch<SetStateAction<Rundown | null>>;
@@ -492,6 +496,7 @@ function AntenneDesk({
       <div className="ant-stage">
         <QueuePanel
           rundown={rundown}
+          unreadable={rundownUnreadable}
           live={live}
           wall={wall}
           onRemove={(item) => void removeItem(item)}
