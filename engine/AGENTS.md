@@ -27,6 +27,7 @@ La CI lance `pytest` avec `TZ=Europe/Paris`, sans `tests/interface` ni `tests/e2
 | `playout/radiotomate.liq` | Le script Liquidsoap 2.4.5 |
 | `tests/scheduler/` | Tests du scheduler, du domaine et des routes JSON. Ils tournent en CI |
 | `tests/interface/` | Tests Playwright des pages HTMX de l'amont. Hors CI |
+| `tests/e2e/` | Le semis des parcours de la console (`scripts/e2e.sh`). Hors pytest |
 
 ## Ajouter une route JSON
 
@@ -58,6 +59,6 @@ Une fonction risquée se coupe par une clé de la table `settings` (modèle `Set
 
 - `radiotomate update` sert déjà aux migrations. Une nouvelle commande d'exploitation va sous `radiotomate maintenance …`, groupe à créer dans `commands/` à la première commande.
 - Dans un service, une fonction nommée `update` masque le `update` de SQLAlchemy. Importer `update as sql_update` ; ruff le signale (F811).
-- Les ports sont écrits en dur : 6811 pour l'interface (`commands/interface.py`), 6822 pour le scheduler, 6833 pour le playout (`scheduler_api.py`, `scheduler_app.py`). Un seul moteur de démo par machine.
+- Les ports par défaut : 6811 pour l'interface, 6822 pour le scheduler, 6833 pour le playout. `interface --port` et `scheduler --port` changent les deux premiers, et la démo suit le port de l'interface. Mais l'interface appelle toujours le scheduler sur 6822 (`scheduler_api.py`), et le scheduler le playout sur 6833 (`scheduler_app.py`) : voir DEV-01.
 - Liquidsoap 2.4 ne fond pas les transitions de `fallback` (savonet/liquidsoap#4179). Le script s'amende, il ne se réécrit pas. `liquidsoap --check` demande un `RTCONFIG` minimal : `scripts/verifier.sh liquidsoap` le fournit.
 - `README.md`, `CHANGELOG.md`, `TODO.md` et `AUTHORS` de ce dossier sont ceux de l'amont, en anglais : ne pas les modifier. Les changements du fork se notent dans [docs/moteur/changements-radiotomate.md](../docs/moteur/changements-radiotomate.md).

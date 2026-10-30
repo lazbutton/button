@@ -27,6 +27,7 @@ En dev, Vite relaie `/api` vers le moteur, `/library` vers le catalogue et `/tus
 | `src/lib/` | Hooks et contexte : marque (`brand.ts`), écoute (`useMonitor.ts`), heure de Paris (`parisClock.ts`) |
 | `src/styles/tokens.css` | Les couleurs et tailles, en clair et en sombre |
 | `docker/nginx.conf.template` | Le nginx de prod, avec la liste des routes du moteur |
+| `e2e/` | Les parcours Playwright, avec le faux catalogue et le faux tusd (`stubs/`) |
 
 ## Les règles de l'interface
 
@@ -45,7 +46,7 @@ En dev, Vite relaie `/api` vers le moteur, `/library` vers le catalogue et `/tus
 - `npm test` lance `node --experimental-strip-types --test src/api/*.test.ts`. Seuls les fichiers de test au premier niveau de `src/api/` tournent. La logique à tester va donc dans un module de `src/api/`, sans React.
 - Les imports des tests portent l'extension `.ts`. `tsc` ignore les tests (`tsconfig.json`).
 - `src/api/nginxRoutes.test.ts` échoue si la console appelle une route du moteur que nginx ne relaie pas.
-- Les parcours dans un vrai navigateur arrivent avec la fiche TST-01 de la feuille de route.
+- Les parcours dans un vrai navigateur sont dans `e2e/`, avec Playwright. `../scripts/e2e.sh` monte leur banc et les lance : [docs/developpement.md](../docs/developpement.md#les-parcours-dans-un-navigateur).
 
 ## Pièges
 

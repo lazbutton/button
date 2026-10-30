@@ -13,7 +13,7 @@ BUTTON est un automate de diffusion pour radios associatives, sous licence AGPL-
 | `services/` | Catalogue, titre en cours, Icecast | [services/AGENTS.md](services/AGENTS.md) |
 | `deploy/` | Compose de la station, scripts de l'hôte, dossier partagé | [deploy/AGENTS.md](deploy/AGENTS.md) |
 | `docs/` | La documentation, en français | [docs/README.md](docs/README.md) |
-| `scripts/` | Banc local (`dev.sh`) et vérifications (`verifier.sh`) | ce fichier |
+| `scripts/` | Banc local (`dev.sh`), parcours dans un navigateur (`e2e.sh`) et vérifications (`verifier.sh`) | ce fichier |
 
 Pour comprendre le tout : [docs/architecture.md](docs/architecture.md). Pour le vocabulaire : [docs/glossaire.md](docs/glossaire.md).
 

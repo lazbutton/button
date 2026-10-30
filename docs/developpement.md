@@ -34,7 +34,7 @@ Ensuite, depuis la racine du dépôt :
 
 `Ctrl-C` arrête les deux. Pour tester le tuyau audio (Icecast et titre en cours) sans la station entière, voir [`deploy/local/`](../deploy/local/README.md).
 
-Un seul banc à la fois par machine : les ports du moteur sont écrits en dur. Pour faire travailler plusieurs agents en même temps, voir [travailler-a-plusieurs.md](travailler-a-plusieurs.md).
+Un seul `scripts/dev.sh` à la fois par machine : il prend les ports par défaut. Les parcours dans un navigateur, eux, prennent des ports libres et tournent à côté ([plus bas](#les-parcours-dans-un-navigateur)). Pour faire travailler plusieurs agents en même temps, voir [travailler-a-plusieurs.md](travailler-a-plusieurs.md).
 
 ## Vérifier avant de proposer un changement
 
@@ -64,6 +64,33 @@ services/catalog/.venv/bin/pip install -r services/catalog/requirements.txt
 ```
 
 Les tests Playwright des pages HTMX de l'amont ne tournent pas en CI : `cd engine && poetry run playwright install chromium`, une fois, puis `poetry run pytest tests/interface`.
+
+## Les parcours dans un navigateur
+
+Les parcours de la console passent par un vrai navigateur, avec [Playwright](https://playwright.dev/) :
+
+```bash
+./scripts/e2e.sh                          # tous les parcours
+./scripts/e2e.sh e2e/antenne.spec.ts      # un fichier : les arguments vont à Playwright
+./scripts/e2e.sh --headed                 # en voyant le navigateur
+```
+
+Il faut `poetry install` dans `engine/` et `npm install` dans `console/`, rien d'autre. Au premier lancement, Playwright télécharge Chromium, une fois par machine, hors du dépôt (`~/Library/Caches/ms-playwright` sur macOS). Sous Linux, les bibliothèques dont il a besoin s'installent avec `cd console && npx playwright install-deps chromium`, qui demande les droits d'administration. Ni `verifier.sh` ni la CI ne lancent encore les parcours : c'est la fiche TST-03.
+
+Le script monte un banc à part, dans `.e2e/<date>-<pid>/`, ignoré par git :
+
+| Pièce | Ce que c'est |
+|---|---|
+| Moteur | l'interface en mode démo (`radiotomate interface --demo --port …`), sur une base semée par `engine/tests/e2e/seed.py` : un compte par rôle, des carts, une horloge pour toute la semaine, et une petite banque pour `MEDIA_ROOT` |
+| Comptes | `comptes.json` : `admin`, `programmateur` et `animateur`, avec un mot de passe tiré à chaque lancement |
+| Faux services | `console/e2e/stubs/` : le catalogue (recherche et fichiers de la banque) et tusd (envois tus), sans Meilisearch ni Docker. Comme en prod, ils demandent au moteur une session ou, pour tusd, le lien d'un invité |
+| Console | le build de production, servi par `vite preview`, qui relaie comme nginx : les routes du moteur lues dans `console/docker/nginx.conf.template`, `/library` vers le catalogue, `/tus` vers tusd |
+
+Chaque pièce prend un port libre, jamais ceux du banc de dev : deux lancements tournent en même temps, et à côté de `scripts/dev.sh`. Dans un lancement, les parcours passent un par un, dans un seul navigateur.
+
+Tout s'arrête à la fin, même après un échec ou un `Ctrl-C`. Si tout passe, le dossier du lancement est effacé. Sinon il reste, avec le journal de chaque pièce (`moteur.log`, `console.log`…) et, dans `resultats/`, les captures et les traces d'un parcours raté. Pour rejouer une trace : `cd console && npx playwright show-trace ../.e2e/<lancement>/resultats/<parcours>/trace.zip`. Rien ne purge ces dossiers : `rm -rf .e2e` les efface tous, quand aucun lancement ne tourne.
+
+Un parcours s'écrit dans `console/e2e/<sujet>.spec.ts`. Il importe `test` et `expect` de `e2e/banc.ts`, qui fait aussi échouer un parcours sur toute erreur JavaScript de la page, et `seConnecter(page, rôle)` pour entrer avec un compte semé.
 
 Sur `main`, la CI publie aussi les images Docker, seulement si tout est vert.
 
