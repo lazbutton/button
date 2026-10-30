@@ -584,6 +584,13 @@ class CatalogHandler(BaseHTTPRequestHandler):
         if path in {"/health", "/health/live"}:
             json_response(self, {"status": "live"})
             return
+        # Any other route needs a session: the catalogue's port can be reached
+        # without nginx. The POST routes need an admin, except tusd's /tus-hook.
+        perms, why = account_permissions(self.headers.get("Cookie") or "")
+        if perms is None:
+            status = 401 if "session" in why else 502
+            json_response(self, {"error": why}, status)
+            return
         if path == "/search":
             query = (qs.get("q") or [""])[0]
             kind = (qs.get("kind") or [""])[0]
@@ -817,10 +824,10 @@ def deposit_allowed(event: dict) -> tuple[bool, str]:
     return cookie_allowed(cookie_of(event))
 
 
-def cookie_allowed(cookie: str) -> tuple[bool, str]:
-    """Dépôt de fichiers : admin, ou un droit sur les bacs ou l'auto-DJ."""
+def account_permissions(cookie: str) -> tuple[dict | None, str]:
+    """The rights of the session behind the browser's cookie, or why there are none."""
     if not AUTOMATE_URL:
-        return False, "dépôt non relié à l'automate"
+        return None, "catalogue non relié à l'automate"
     req = urllib.request.Request(
         f"{AUTOMATE_URL}/account.json",
         headers={"Cookie": cookie},
@@ -830,13 +837,21 @@ def cookie_allowed(cookie: str) -> tuple[bool, str]:
             payload = json.loads(resp.read().decode() or "{}")
     except urllib.error.HTTPError as exc:
         if exc.code in {401, 403}:
-            return False, "session expirée"
-        return False, "automate injoignable"
+            return None, "session expirée"
+        return None, "automate injoignable"
     except (OSError, json.JSONDecodeError):
-        return False, "automate injoignable"
+        return None, "automate injoignable"
     perms = payload.get("permissions") if isinstance(payload, dict) else None
     if not isinstance(perms, dict):
-        return False, "session expirée"
+        return None, "session expirée"
+    return perms, ""
+
+
+def cookie_allowed(cookie: str) -> tuple[bool, str]:
+    """Dépôt de fichiers : admin, ou un droit sur les bacs ou l'auto-DJ."""
+    perms, why = account_permissions(cookie)
+    if perms is None:
+        return False, why
     if perms.get("admin") or perms.get("carts") or perms.get("autodj"):
         return True, ""
     return False, "droit insuffisant"
@@ -865,23 +880,10 @@ def fetch_users(cookie: str) -> tuple[list | None, str]:
 
 
 def session_admin(cookie: str) -> tuple[bool, str]:
-    if not AUTOMATE_URL:
-        return False, "catalogue non relié à l'automate"
-    req = urllib.request.Request(
-        f"{AUTOMATE_URL}/account.json",
-        headers={"Cookie": cookie},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=4) as resp:
-            payload = json.loads(resp.read().decode() or "{}")
-    except urllib.error.HTTPError as exc:
-        if exc.code in {401, 403}:
-            return False, "session expirée"
-        return False, "automate injoignable"
-    except (OSError, json.JSONDecodeError):
-        return False, "automate injoignable"
-    perms = payload.get("permissions") if isinstance(payload, dict) else None
-    if not isinstance(perms, dict) or not perms.get("admin"):
+    perms, why = account_permissions(cookie)
+    if perms is None:
+        return False, why
+    if not perms.get("admin"):
         return False, "réservé à un admin"
     return True, ""
 

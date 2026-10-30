@@ -13,6 +13,8 @@ const TEMPLATE = fileURLToPath(new URL("../../docker/nginx.conf.template", impor
 
 /** Les chemins servis par d'autres blocs de nginx que la liste du moteur. */
 const OTHER_LOCATIONS = /^\/(library|tus|public)\//;
+/** Le catalogue et tusd : nginx y demande une session. */
+const SESSION_LOCATIONS = /^\^?\/(library|tus)\//;
 
 const CALL =
   /\b(?:apiGet|apiSend|apiPost|apiDelete|apiDeleteJson|apiPostJson|apiPut|apiPatch|apiUpload|apiBlob|apiArrayBuffer|publicJson)\s*(?:<[^()]*?>)?\s*\(\s*(?:"[A-Z]+"\s*,\s*)?["'`](\/[^"'`]*)/g;
@@ -23,6 +25,14 @@ function engineAllowlist(): RegExp {
   const match = template.match(/location ~ \^\/\((.+)\) \{/);
   assert.ok(match, "liste des routes du moteur introuvable dans nginx.conf.template");
   return new RegExp(`^/(${match[1]})`);
+}
+
+/** Les blocs `location` du gabarit : leur chemin, puis leur contenu. */
+function locationBlocks(): [string, string][] {
+  const template = readFileSync(TEMPLATE, "utf8");
+  return [...template.matchAll(/^\s*location\s+(?:\S+\s+)?(\S+)\s*\{\n([\s\S]*?)\n\s*\}$/gm)].map(
+    (match) => [match[1], match[2]],
+  );
 }
 
 function sources(dir: string): string[] {
@@ -60,6 +70,14 @@ test("chaque route appelée par la console passe nginx en prod", () => {
     .filter(([path]) => !OTHER_LOCATIONS.test(path) && !allowed.test(path))
     .map(([path, file]) => `${path} (${file})`);
   assert.deepEqual(blocked, [], "à ajouter dans console/docker/nginx.conf.template");
+});
+
+test("le catalogue et les envois demandent une session à nginx", () => {
+  const blocks = locationBlocks().filter(([path]) => SESSION_LOCATIONS.test(path));
+  const paths = blocks.map(([path]) => path);
+  assert.ok(paths.includes("/library/") && paths.includes("/tus/"), `blocs trouvés : ${paths.join(", ")}`);
+  const open = blocks.filter(([, body]) => !/^\s*auth_request\s+\/\S*;/m.test(body)).map(([path]) => path);
+  assert.deepEqual(open, [], "auth_request manquant dans console/docker/nginx.conf.template");
 });
 
 test("le motif reconnaît les appels de la console", () => {

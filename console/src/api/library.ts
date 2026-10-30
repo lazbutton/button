@@ -86,6 +86,7 @@ export async function librarySearch(params: {
     throw new Error("Catalogue injoignable.");
   }
   const payload = (await response.json().catch(() => ({}))) as LibrarySearchResponse;
+  if (response.status === 401) throw new Error("Session expirée : recharge la page et reconnecte-toi.");
   if (!response.ok) {
     throw new Error(payload.error?.trim() || "Recherche catalogue impossible.");
   }
