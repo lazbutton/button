@@ -14,7 +14,7 @@ console ensemble.
 cd console
 npm install
 npm run dev          # http://127.0.0.1:5175/
-npm test             # tests unitaires (node --test)
+npm test             # tests unitaires (node --test), dont la liste des routes de nginx
 npm run build        # vérification des types puis build de production
 ```
 
@@ -39,6 +39,8 @@ En dev, Vite relaie les appels :
 
 Les rôles (Animateur, Programmateur, Admin) se traduisent en droits du moteur
 au moment d'écrire un compte : voir [`docs/api.md`](../docs/api.md).
+
+Les règles de l'interface et les pièges du code sont dans [`AGENTS.md`](AGENTS.md).
 
 ## Image Docker
 

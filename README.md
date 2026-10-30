@@ -39,7 +39,10 @@ La suite est dans [docs/deploiement.md](docs/deploiement.md).
 
 ```bash
 ./scripts/dev.sh          # moteur sur :6811, console sur :5175
+./scripts/verifier.sh     # les vérifications de la CI
 ```
+
+Ce qui reste à faire avant une mise en production sur un VPS est dans la [feuille de route](docs/feuille-de-route/P1-mise-en-prod.md). Les agents de code commencent par [AGENTS.md](AGENTS.md).
 
 ## Le dépôt
 
@@ -50,7 +53,7 @@ La suite est dans [docs/deploiement.md](docs/deploiement.md).
 | [`services/`](services/) | Catalogue, titre en cours, Icecast |
 | [`deploy/`](deploy/) | Compose de la station, scripts d'initialisation, banc audio local |
 | [`docs/`](docs/) | Documentation (en français) |
-| [`scripts/`](scripts/) | Outils de développement |
+| [`scripts/`](scripts/) | Banc local et vérifications |
 
 ## Contribuer
 

@@ -17,3 +17,9 @@ deploy/data/
 deploy/media/
 deploy/compose.override.yml
 deploy/local/data/
+# Added by code-review-graph
+.code-review-graph/
+
+# Claude Code : lanceurs locaux (chemins de la machine) et worktrees des agents
+.claude/launch.json
+.claude/worktrees/

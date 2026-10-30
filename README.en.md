@@ -39,7 +39,10 @@ Next steps: [docs/deploiement.md](docs/deploiement.md).
 
 ```bash
 ./scripts/dev.sh          # engine on :6811, console on :5175
+./scripts/verifier.sh     # the CI checks, locally
 ```
+
+What remains before a production install on a VPS is in the [roadmap](docs/feuille-de-route/P1-mise-en-prod.md), in French. Coding agents start with [AGENTS.md](AGENTS.md).
 
 ## Repository layout
 
@@ -50,7 +53,7 @@ Next steps: [docs/deploiement.md](docs/deploiement.md).
 | [`services/`](services/) | Catalogue, now playing, Icecast |
 | [`deploy/`](deploy/) | Station Compose file, init scripts, local audio bench |
 | [`docs/`](docs/) | Documentation (in French) |
-| [`scripts/`](scripts/) | Development tools |
+| [`scripts/`](scripts/) | Local bench and checks |
 
 ## Contributing
 
