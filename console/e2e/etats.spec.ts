@@ -239,6 +239,34 @@ test("envoi trop lourd pour nginx : le bac le dit, sans la page de nginx", async
   await expect(page.getByText(/Request Entity|Le moteur ne répond pas/)).toHaveCount(0);
 });
 
+test("moteur muet pendant une pré-écoute : le bac le dit, puis la pré-écoute repart", async ({ page }) => {
+  test.slow();
+  await seConnecter(page, "programmateur");
+  await expect(suivant(page)).toBeEnabled();
+  await page.goto("/sons");
+  await page.getByRole("option", { name: /Musique de démo/ }).click();
+  const preEcoute = page
+    .getByRole("region", { name: "Musique de démo" })
+    .getByRole("button", { name: "Pré-écouter le bac" });
+  // Le son est demandé, puis ne vient jamais.
+  const son = /\/carts\/\d+\/sounds\/\d+$/;
+  await page.route(son, () => {});
+
+  await preEcoute.click();
+  await expect(alerte(page, "Pré-écoute impossible : l’automate ne répond pas.")).toBeVisible({
+    timeout: READ_DEADLINE_MS + 5_000,
+  });
+
+  // L'automate répond de nouveau : le son vient, et l'élément audio le lit.
+  await page.unroute(son);
+  await preEcoute.click();
+  await expect(page.getByRole("button", { name: "Arrêter la pré-écoute" }).first()).toBeVisible();
+  // L'élément audio n'a pas de rôle : il se reconnaît au son reçu, qu'il lit par une adresse blob:.
+  const duree = () =>
+    page.evaluate(() => [...document.querySelectorAll("audio")].find((audio) => audio.src.startsWith("blob:"))?.duration);
+  await expect.poll(duree).toBeGreaterThan(0);
+});
+
 test("moteur injoignable, pupitre ouvert : la barre et le pupitre le disent, puis repartent", async ({ page }) => {
   await seConnecter(page, "animateur");
   await tenirLAntenne(page);

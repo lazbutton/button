@@ -1,6 +1,6 @@
 import { isEngineUnreachable, isUnreachableStatus } from "./engineUnreachable";
 import { apiCacheClear, apiSharedGet } from "./jsonCache";
-import { READ_DEADLINE_MS, withDeadline } from "./readDeadline";
+import { READ_DEADLINE_MS, withBodyDeadline, withDeadline } from "./readDeadline";
 import { NO_ANSWER_MESSAGE, SEND_DEADLINE_MS, UPLOAD_IDLE_MS, withUploadDeadline } from "./sendDeadline";
 import { closeSession } from "./sessionLogout";
 import { isUnknownRoute, UNKNOWN_ROUTE_MESSAGE } from "./unknownRoute";
@@ -242,33 +242,35 @@ export async function apiUpload<T>(
   return payload as T;
 }
 
+// Un son se lit en entier avant d'être joué : sur un réseau lent, bien plus que
+// le délai des lectures. Ce délai vaut pour la réponse, puis pour chaque
+// morceau du son : seul un son qui n'avance plus est abandonné.
+function apiSound(path: string): Promise<Blob> {
+  return withBodyDeadline(
+    READ_DEADLINE_MS,
+    async (signal) => {
+      let response: Response;
+      try {
+        response = await fetch(`${API_PREFIX}${path}`, { credentials: "include", signal });
+      } catch {
+        throw new ApiUnavailableError();
+      }
+      if (!response.ok) {
+        const payload = await parseJson<{ error?: string }>(response);
+        raiseForStatus(response, payload);
+      }
+      return response;
+    },
+    () => new ApiUnavailableError(),
+  );
+}
+
 export async function apiBlob(path: string): Promise<string> {
-  let response: Response;
-  try {
-    response = await fetch(`${API_PREFIX}${path}`, { credentials: "include" });
-  } catch {
-    throw new ApiUnavailableError();
-  }
-  if (!response.ok) {
-    const payload = await parseJson<{ error?: string }>(response);
-    raiseForStatus(response, payload);
-  }
-  const blob = await response.blob();
-  return URL.createObjectURL(blob);
+  return URL.createObjectURL(await apiSound(path));
 }
 
 export async function apiArrayBuffer(path: string): Promise<ArrayBuffer> {
-  let response: Response;
-  try {
-    response = await fetch(`${API_PREFIX}${path}`, { credentials: "include" });
-  } catch {
-    throw new ApiUnavailableError();
-  }
-  if (!response.ok) {
-    const payload = await parseJson<{ error?: string }>(response);
-    raiseForStatus(response, payload);
-  }
-  return response.arrayBuffer();
+  return (await apiSound(path)).arrayBuffer();
 }
 
 export async function apiLogin(username: string, password: string): Promise<void> {

@@ -29,7 +29,15 @@ import { useEffect, useMemo, useRef, useState, type MouseEvent, type RefObject }
 import { audioFilesFromList, filesFromDataTransfer, isFileDrag } from "../../api/audioDrop";
 import { lastPlayedLabel, splitSoundTitle } from "../../api/cartMeta";
 import { deleteCartSounds, type CartImportProgress } from "../../api/cartSounds";
-import { apiBlob, apiDeleteJson, apiPost, apiPut, ApiForbiddenError, ApiRequestError } from "../../api/client";
+import {
+  apiBlob,
+  apiDeleteJson,
+  apiPost,
+  apiPut,
+  ApiForbiddenError,
+  ApiRequestError,
+  ApiUnavailableError,
+} from "../../api/client";
 import { fuzzyTitleMatch } from "../../api/fuzzyTitle";
 import { formatClock, percentOf } from "../../api/soundsView";
 import type { Cart, Sound } from "../../api/types";
@@ -159,7 +167,11 @@ export function SoundTable({
         })
         .catch(() => undefined);
     } catch (caught) {
-      fail(caught, "Lecture impossible.");
+      if (caught instanceof ApiUnavailableError) {
+        notify("Pré-écoute impossible : l’automate ne répond pas.", "error");
+      } else {
+        fail(caught, "Lecture impossible.");
+      }
       playingIdRef.current = null;
       setPlayingId(null);
     }
