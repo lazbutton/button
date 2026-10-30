@@ -18,6 +18,7 @@ const KICKER: Record<AirState, string> = {
 /** Ce qui passe : compte à rebours, titre, avancée, et les deux gestes du pupitre. */
 export function OnAirCard({
   state,
+  stale,
   item,
   elapsedSec,
   durationSec,
@@ -32,6 +33,8 @@ export function OnAirCard({
   children,
 }: {
   state: AirState;
+  /** Le moteur ne répond plus : la carte montre le dernier relevé, et ses gestes restent ceux de cet état. */
+  stale: boolean;
   item: CatalogItem | undefined;
   elapsedSec: number;
   durationSec: number;
@@ -50,19 +53,21 @@ export function OnAirCard({
 }) {
   const direct = state === "direct";
   const off = state === "off";
-  const timed = !direct && !off && durationSec > 1;
+  // Le dernier titre connu reste, mais son temps ne se compte plus : rien ne dit qu'il passe encore.
+  const timed = !direct && !off && !stale && durationSec > 1;
   const ending = timed && remainingSec <= ENDING_S;
-  const hero = off ? "—" : direct ? mmss(elapsedSec) : mmss(remainingSec);
-  const heroLabel = off ? "pas de signal" : direct ? "écoulé" : "restant";
+  const hero = stale || off ? "—" : direct ? mmss(elapsedSec) : mmss(remainingSec);
+  const heroLabel = stale ? "inconnu" : off ? "pas de signal" : direct ? "écoulé" : "restant";
   const ratio = timed ? Math.min(1, elapsedSec / durationSec) : 0;
-  const title = item?.title || item?.artist || (off ? "L’antenne ne répond pas" : "Rien à l’antenne");
+  const title =
+    item?.title || item?.artist || (stale ? "Aucun titre connu" : off ? "L’antenne ne répond pas" : "Rien à l’antenne");
   const artist = item?.title && item.artist ? item.artist : "";
 
   return (
     <section className="ant-air" data-state={state} data-ending={ending ? "true" : "false"} aria-label="À l’antenne">
       <div className="ant-air-kicker">
-        <span className="ant-air-badge">{KICKER[state]}</span>
-        {source && !direct && !off ? <span>{source}</span> : null}
+        <span className="ant-air-badge">{stale ? "Sans nouvelles" : KICKER[state]}</span>
+        {source && !direct && !off && !stale ? <span>{source}</span> : null}
         {endsAt ? <span>fin {endsAt}</span> : null}
         {anchor ? <span className="ant-air-anchor">{anchor}</span> : null}
       </div>

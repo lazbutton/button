@@ -58,9 +58,11 @@ export const antenne = (page: Page) => page.getByRole("region", { name: "À l’
 export const file = (page: Page) => page.getByRole("region", { name: "File" });
 export const bibliotheque = (page: Page) => page.getByRole("region", { name: "Bibliothèque" });
 
-/** Un message de la console, annoncé comme un état ou comme une alerte. */
-export const avis = (page: Page, texte: string | RegExp) =>
-  page.getByRole("status").or(page.getByRole("alert")).filter({ hasText: texte });
+/** Un message de la console annoncé comme un état : une confirmation, une information. */
+export const avis = (page: Page, texte: string | RegExp) => page.getByRole("status").filter({ hasText: texte });
+
+/** Un message de la console annoncé comme une alerte : un échec, une panne. */
+export const alerte = (page: Page, texte: string | RegExp) => page.getByRole("alert").filter({ hasText: texte });
 
 /** « 2:57 », « restant 2:57 » ou « 1:02:57 », en secondes. */
 export function secondes(texte: string | null): number {
