@@ -1,6 +1,7 @@
 import { isEngineUnreachable, isUnreachableStatus } from "./engineUnreachable";
 import { apiCacheClear, apiSharedGet } from "./jsonCache";
 import { isPlayoutUnavailable, PLAYOUT_UNAVAILABLE_MESSAGE } from "./playoutUnavailable";
+import { READ_DEADLINE_MS, withDeadline } from "./readDeadline";
 import { isUnknownRoute, UNKNOWN_ROUTE_MESSAGE } from "./unknownRoute";
 
 export const API_PREFIX = import.meta.env.DEV ? "/api" : "";
@@ -101,12 +102,13 @@ async function ensureCsrfToken(): Promise<string> {
   return csrfPromise;
 }
 
-async function apiGetOnce<T>(path: string): Promise<T> {
+async function apiGetOnce<T>(path: string, signal: AbortSignal): Promise<T> {
   let response: Response;
   try {
     response = await fetch(`${API_PREFIX}${path}`, {
       credentials: "include",
       cache: "no-store",
+      signal,
     });
   } catch {
     throw new ApiUnavailableError();
@@ -117,7 +119,9 @@ async function apiGetOnce<T>(path: string): Promise<T> {
 }
 
 export function apiGet<T>(path: string): Promise<T> {
-  return apiSharedGet(path, () => apiGetOnce<T>(path));
+  return apiSharedGet(path, () =>
+    withDeadline(READ_DEADLINE_MS, (signal) => apiGetOnce<T>(path, signal), () => new ApiUnavailableError()),
+  );
 }
 
 export function apiProbeSession(): Promise<{ csrf_token?: string }> {
