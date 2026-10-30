@@ -31,9 +31,10 @@ Rien de ce dossier ne se lance contre une station en service. Les essais se font
 - Un nouveau script de l'hôte n'a besoin que de Docker, de curl et d'openssl. Les deux scripts de sauvegarde demandent aussi `sqlite3` et `tar` sur l'hôte.
 - Chaque message d'erreur dit quoi faire ensuite.
 - ShellCheck passe sur chaque script.
+- Les tests de `restore-radiotomate.sh` sont dans `engine/tests/test_update_backup.py`, avec la copie qu'il remet : après une modification du script, lancer aussi `../scripts/verifier.sh moteur`. La CI du moteur ne se déclenche pas pour `deploy/`.
 - Les scripts Python (`export_share_roles.py`, `refresh_volume.py`, `share/apply_share.py`) n'utilisent que la bibliothèque standard. Leurs tests sont dans `services/catalog/` (`test_share.py`, `test_refresh_volume.py`).
 
 ## Pièges
 
-- `init-radiotomate.sh` tourne à chaque démarrage : il applique les migrations du schéma. Revenir à une image plus ancienne demande de redescendre le schéma d'abord : [docs/deploiement.md](../docs/deploiement.md#revenir-en-arrière).
+- `init-radiotomate.sh` tourne à chaque démarrage : il applique les migrations du schéma. Revenir à une image plus ancienne demande de redescendre le schéma d'abord : [docs/deploiement.md](../docs/deploiement.md#revenir-en-arrière). Après une migration ratée à mi-chemin, seule la copie faite avant elle ramène une base saine : [docs/exploitation/sauvegarde.md](../docs/exploitation/sauvegarde.md#remettre-la-copie).
 - `deploy/local/` est un banc audio avec des mots de passe de test publics. Il ne sert jamais pour une station.
