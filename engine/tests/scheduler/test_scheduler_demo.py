@@ -4,14 +4,19 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session as ormSession
 
 from radiotomate.beets import BeetsIntegration
+from radiotomate.enums import CartMode, ScheduleMode
+from radiotomate.interface import live as live_mod
 from radiotomate.interface_app import app_factory as interface_factory
-from radiotomate.models import Sound, User
+from radiotomate.models import Cart, Sound, User
 from radiotomate.scheduler_api import Scheduler
 from tests.scheduler.test_studio_json import _login
 
 
 def _demo_app(app_configration: dict, beets_integration: BeetsIntegration):
     Scheduler.reset_instance()
+    # The live snapshot outlives a test: without this, _wait_simulating would
+    # take the previous demo's for this one.
+    live_mod.set_live_snapshot(None)
     iface = interface_factory(app_configration, False, beets_integration)
     iface.config["INTERFACE_NAME"] = "BUTTON"
     Scheduler.init(app_configration, iface, demo=True)
@@ -112,6 +117,50 @@ async def test_demo_cart_without_sound_ready(  # noqa: PLR0913
             # The demo used to play the cart's first sound, even disabled.
             now = await (await client.get("/live.json")).get_json()
             assert now["title"] != spot.title
+    finally:
+        Scheduler.reset_instance()
+
+
+async def test_demo_relay_cart(  # noqa: PLR0913
+    raw_app,
+    app_configration: dict,
+    beets_integration: BeetsIntegration,
+    dbsession: ormSession,
+    users_password: str,
+    jingles_cart,
+    pubs_cart,
+):
+    """As the scheduler: a relay cart has no sound, its stream goes on air."""
+    user = User(username="demo-relay")
+    user.update_password(users_password)
+    user.update_permissions({"can_live": "true"})
+    dbsession.add(user)
+    relay = Cart(
+        title="Radio partenaire",
+        path=raw_app.config["DATA_ROOT"] / "relay",
+        url="https://radio.example/direct.mp3",
+        max_duration=600,
+        mode=CartMode.RELAY,
+        schedule_mode=ScheduleMode.CLOCK,
+    )
+    dbsession.add(relay)
+    await dbsession.commit()
+
+    iface = _demo_app(app_configration, beets_integration)
+    try:
+        async with iface.test_app():
+            client = iface.test_client()
+            await _login(client, "demo-relay", users_password)
+            await _wait_simulating(client)
+            fired = await client.post(f"/carts/{relay.id}/now.json")
+            # The demo used to look for the relay's next sound: a 500.
+            assert fired.status_code == 200
+            assert await fired.get_json() == {"ok": True}
+            now = await (await client.get("/live.json")).get_json()
+            assert now["source"] == "relay"
+            assert now["title"] == "Radio partenaire"
+            # It lasts max_duration, as the scheduler's timer would cut it.
+            assert 590 < now["remaining"] <= 600
     finally:
         Scheduler.reset_instance()
 
