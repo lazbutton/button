@@ -93,30 +93,33 @@ test("moteur injoignable pendant un geste : la console le dit", async ({ page })
   await expect(avis(page, "L’automate ne répond pas. Réessaie dans un instant.")).toBeVisible();
 });
 
-test.fixme("moteur injoignable, pupitre ouvert : la barre le dit", async ({ page }) => {
-  // Défaut de la console : useApiJson ne signale un moteur injoignable que s'il
-  // n'a encore rien lu. Pupitre chargé, la barre garde « En onde, Santé : tout va
-  // bien », et le compte à rebours s'arrête à 0:00 sans un mot.
+test("moteur injoignable, pupitre ouvert : la barre le dit, puis repart", async ({ page }) => {
   await seConnecter(page, "animateur");
   await expect(suivant(page)).toBeEnabled();
+  const etat = page.getByRole("banner").getByRole("button", { name: /^Antenne : / });
   await page.route(versLeMoteur, (route) => route.abort("connectionrefused"));
 
-  await expect(page.getByRole("banner").getByRole("button", { name: /^Antenne : / })).toHaveAccessibleName(
-    /injoignable/,
-    { timeout: 15_000 },
-  );
+  // Le dernier relevé, encore à l'écran, ne fait pas croire que tout va bien.
+  await expect(etat).toHaveAccessibleName("Antenne : Automate injoignable. Santé : état indisponible.", {
+    timeout: 15_000,
+  });
+
+  await page.unroute(versLeMoteur);
+  await expect(etat).toHaveAccessibleName(/^Antenne : En onde/, { timeout: 15_000 });
 });
 
-test.fixme("moteur injoignable pour la file seule : la file ne se dit pas vide", async ({ page }) => {
-  // Défaut de la console : une file illisible s'affiche comme une file vide,
-  // « Rien à la suite. Choisis un titre dans la bibliothèque », sans dire que
-  // le moteur ne l'a pas donnée.
-  await page.route("**/autodj/conducteur.json*", (route) => route.abort("connectionrefused"));
+test("moteur injoignable pour la file seule : la file ne se dit pas vide", async ({ page }) => {
+  const conducteur = "**/autodj/conducteur.json*";
+  await page.route(conducteur, (route) => route.abort("connectionrefused"));
   await seConnecter(page, "animateur");
   await expect(suivant(page)).toBeEnabled();
 
-  await expect(file(page)).toContainText(/ne répond pas|injoignable|impossible/);
+  await expect(file(page)).toContainText("La file ne répond pas.");
   await expect(file(page)).not.toContainText("Rien à la suite.");
+
+  // La file revient d'elle-même avec le moteur.
+  await page.unroute(conducteur);
+  await expect(file(page).getByRole("listitem").first()).toBeVisible({ timeout: 10_000 });
 });
 
 test("route absente : sans les émissions ni l’état de l’antenne, le pupitre reste", async ({ page }) => {
@@ -139,15 +142,12 @@ test("route absente : sans les émissions ni l’état de l’antenne, le pupitr
   );
 });
 
-test.fixme("route absente pendant un geste : la console le dit en français", async ({ page }) => {
-  // Défaut de la console : un 404 sur un geste affiche tel quel le message
-  // anglais du moteur, « The requested URL was not found on the server… ».
-  // Le message à mettre à la place reste à choisir : console/AGENTS.md prévoit
-  // « Mets à jour le moteur » pour une fonction plus récente que le moteur.
+test("route absente pendant un geste : la console le dit en français", async ({ page }) => {
+  // Le moteur répond le 404 de Quart, en anglais : la console dit pourquoi, et quoi faire.
   await seConnecter(page, "animateur");
   await page.route("**/live.json", (route) => (passer(route) ? versUneRouteAbsente(route) : route.continue()));
 
   await suivant(page).click();
-  await expect(avis(page, /moteur|automate/)).toBeVisible();
+  await expect(avis(page, "Cette action demande un moteur plus récent. Mets à jour le moteur.")).toBeVisible();
   await expect(avis(page, /requested URL/)).toHaveCount(0);
 });

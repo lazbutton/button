@@ -27,6 +27,7 @@ function fromLibrary(event: DragEvent): boolean {
 /** Ce qui passe ensuite : ordre, heures de passage, retrait, glisser depuis la bibliothèque. */
 export function QueuePanel({
   rundown,
+  unreadable,
   live,
   wall,
   onRemove,
@@ -34,6 +35,8 @@ export function QueuePanel({
   onInsertHit,
 }: {
   rundown: Rundown | null;
+  /** Le moteur n'a pas donné la file : elle ne se dit pas vide. */
+  unreadable: boolean;
   live: LiveSnapshot | null;
   wall: Date;
   onRemove: (item: RundownItem) => void;
@@ -221,6 +224,11 @@ export function QueuePanel({
             );
           })}
         </ol>
+      ) : unreadable ? (
+        <div className="ant-empty is-error">
+          <strong>La file ne répond pas.</strong>
+          <span>Elle revient dès que l’automate répond. Si ça dure, un admin regarde Réglages → Automate.</span>
+        </div>
       ) : (
         <div className="ant-empty">
           <strong>Rien à la suite.</strong>

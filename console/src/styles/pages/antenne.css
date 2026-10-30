@@ -15,6 +15,8 @@
   --ant-state: var(--app-ok);
   --ant-state-ink: var(--app-ok-ink);
   --ant-tap: 2.5rem;
+  /* La poignée de la file : étroite à la souris, une cible entière au doigt. */
+  --ant-grip: 1.9rem;
   box-sizing: border-box;
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
@@ -589,7 +591,7 @@
 
 .ant-queue-list li {
   display: grid;
-  grid-template-columns: 1.25rem 4.1rem 1.9rem minmax(0, 1fr) 2.75rem var(--ant-tap);
+  grid-template-columns: 1.25rem 4.1rem var(--ant-grip) minmax(0, 1fr) 2.75rem var(--ant-tap);
   align-items: center;
   gap: 0.45rem;
   min-height: 2.9rem;
@@ -641,7 +643,7 @@ li.is-next .ant-queue-at {
   appearance: none;
   display: grid;
   place-items: center;
-  width: 1.9rem;
+  width: var(--ant-grip);
   height: var(--ant-tap);
   margin: 0;
   padding: 0;
@@ -1206,6 +1208,10 @@ li.is-next .ant-queue-at {
 /* ---- Écran tactile : les gestes cachés au survol restent visibles -------- */
 
 @media (hover: none) {
+  .ant {
+    --ant-grip: var(--ant-tap);
+  }
+
   .ant-queue-remove,
   .ant-queue-grip,
   .ant-hit-add {
@@ -1305,7 +1311,7 @@ li.is-next .ant-queue-at {
   }
 
   .ant-queue-list li {
-    grid-template-columns: 1.1rem 3.9rem 1.9rem minmax(0, 1fr) var(--ant-tap);
+    grid-template-columns: 1.1rem 3.9rem var(--ant-grip) minmax(0, 1fr) var(--ant-tap);
     padding-left: 0.5rem;
   }
 

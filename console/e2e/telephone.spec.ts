@@ -102,8 +102,7 @@ test("les cibles du pupitre et de la barre font 40 px au moins", async ({ page }
   expect(petites).toEqual([]);
 });
 
-test.fixme("la poignée pour déplacer une ligne de la file fait 40 px au moins", async ({ page }) => {
-  // Défaut de la console : la poignée « Déplacer … » fait 30 px de large.
+test("la poignée pour déplacer une ligne de la file fait 40 px au moins", async ({ page }) => {
   const petites = await cibles([file(page).getByRole("listitem").first().getByRole("button", { name: /^Déplacer / })]);
   expect(petites).toEqual([]);
 });

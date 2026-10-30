@@ -54,13 +54,13 @@ test("écouter l’antenne au casque, puis arrêter", async ({ page }) => {
   await expect(casque(page)).toHaveAccessibleName("Écouter au casque : Antenne publique");
 });
 
-test.fixme("un flux muet au casque : la console le dit", async ({ page }) => {
-  // Défaut de la console : le banc coupe le flux, et le casque n'entend rien.
-  // Le bouton dit pourtant « Arrêter l’écoute. Couper le casque », sans un mot
-  // sur le flux qui ne répond pas.
+test("un flux muet au casque : la console le dit", async ({ page }) => {
+  // Le banc coupe le flux : le casque n'entend rien, et le bouton le dit.
   await seConnecter(page, "animateur");
   await casque(page).click();
-  await expect(casque(page)).toHaveAccessibleName(/ne répond pas|injoignable|indisponible/, { timeout: 10_000 });
+  await expect(casque(page)).toHaveAccessibleName("Arrêter l’écoute. Le flux ne répond pas : le casque réessaie seul", {
+    timeout: 10_000,
+  });
 });
 
 test("l’admin choisit la source de son casque, et la retrouve", async ({ page }) => {

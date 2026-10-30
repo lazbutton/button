@@ -10,6 +10,7 @@ export function useApiJson<T>(path: string, pollMs?: number) {
   const [loading, setLoading] = useState(() => apiCacheGet<T>(path) == null);
   const dataRef = useRef<T | null>(data);
   dataRef.current = data;
+  const failsRef = useRef(0);
 
   const setData = useCallback(
     (update: SetStateAction<T | null>) => {
@@ -31,18 +32,24 @@ export function useApiJson<T>(path: string, pollMs?: number) {
         setDataState(value);
       }
       setError(null);
+      failsRef.current = 0;
     } catch (caught) {
       if (caught instanceof ApiAuthError) {
         setError("auth");
         return;
       }
-      if (dataRef.current == null) setError("down");
+      // La donnée d'avant reste, mais l'écran doit savoir qu'elle n'est plus lue.
+      // Un raté seul, au réveil d'un téléphone ou sur un hoquet du réseau, ne
+      // le dit pas encore : le deuxième de suite, si.
+      failsRef.current += 1;
+      if (dataRef.current == null || failsRef.current >= 2) setError("down");
     } finally {
       setLoading(false);
     }
   }, [path]);
 
   useEffect(() => {
+    failsRef.current = 0;
     const cached = apiCacheGet<T>(path);
     if (cached != null) {
       dataRef.current = cached;
