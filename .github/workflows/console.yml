@@ -7,10 +7,12 @@ on:
     branches: [main]
     paths:
       - "console/**"
+      - "!console/**/*.md"
       - ".github/workflows/console.yml"
   pull_request:
     paths:
       - "console/**"
+      - "!console/**/*.md"
       - ".github/workflows/console.yml"
   workflow_dispatch:
 
