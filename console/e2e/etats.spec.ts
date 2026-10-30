@@ -1,6 +1,7 @@
 import type { Page, Route } from "@playwright/test";
 import { READ_DEADLINE_MS } from "../src/api/readDeadline.ts";
 import { SEND_DEADLINE_MS } from "../src/api/sendDeadline.ts";
+import { LOGOUT_UNREACHED_MESSAGE } from "../src/api/sessionLogout.ts";
 import {
   alerte,
   antenne,
@@ -58,6 +59,11 @@ const moteurArrete = (route: Route) => route.fulfill({ status: 502, contentType:
 
 const suivant = (page: Page) => antenne(page).getByRole("button", { name: /^Suivant/ });
 const passer = (route: Route) => route.request().method() === "DELETE";
+
+async function seDeconnecter(page: Page): Promise<void> {
+  await page.getByRole("banner").getByRole("button", { name: /^Compte .* : menu$/ }).click();
+  await page.getByRole("menuitem", { name: "Se déconnecter" }).click();
+}
 
 test("session expirée pendant un geste : la console le dit", async ({ page }) => {
   await seConnecter(page, "animateur");
@@ -175,6 +181,29 @@ test("moteur muet à la connexion : la console le dit, sans attendre le formulai
     timeout: SEND_DEADLINE_MS + 5_000,
   });
   expect(repli).toEqual([]);
+});
+
+test("moteur muet à la déconnexion : la console la lâche, et dit que la session est peut-être restée ouverte", async ({
+  page,
+}) => {
+  test.slow();
+  await seConnecter(page, "animateur");
+  await expect(suivant(page)).toBeEnabled();
+  // /logout part, puis ne reçoit jamais de réponse.
+  await page.route("**/logout", () => {});
+
+  await seDeconnecter(page);
+  await expect(page.getByRole("button", { name: "Se connecter" })).toBeVisible({ timeout: READ_DEADLINE_MS + 5_000 });
+  await expect(alerte(page, LOGOUT_UNREACHED_MESSAGE)).toBeVisible();
+
+  // Le moteur n'a pas fermé la session : recharger la page la rouvre…
+  await page.unroute("**/logout");
+  await page.reload();
+  await expect(suivant(page)).toBeEnabled();
+  // … et une déconnexion qui l'atteint ne dit rien de plus.
+  await seDeconnecter(page);
+  await expect(page.getByRole("button", { name: "Se connecter" })).toBeVisible();
+  await expect(page.getByRole("alert")).toHaveCount(0);
 });
 
 test("connexion par le formulaire de repli : un mot de passe refusé se dit comme tel", async ({ page }) => {

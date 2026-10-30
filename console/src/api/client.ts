@@ -2,6 +2,7 @@ import { isEngineUnreachable, isUnreachableStatus } from "./engineUnreachable";
 import { apiCacheClear, apiSharedGet } from "./jsonCache";
 import { READ_DEADLINE_MS, withDeadline } from "./readDeadline";
 import { NO_ANSWER_MESSAGE, SEND_DEADLINE_MS, UPLOAD_IDLE_MS, withUploadDeadline } from "./sendDeadline";
+import { closeSession } from "./sessionLogout";
 import { isUnknownRoute, UNKNOWN_ROUTE_MESSAGE } from "./unknownRoute";
 
 export const API_PREFIX = import.meta.env.DEV ? "/api" : "";
@@ -318,16 +319,21 @@ export async function apiLogin(username: string, password: string): Promise<void
   throw new ApiAuthError();
 }
 
-export async function apiLogout(): Promise<void> {
-  try {
-    await fetch(`${API_PREFIX}/logout`, {
+/**
+ * La session locale est abandonnée même si le moteur ne répond pas, au plus
+ * tard au bout du délai des lectures. Rend false si la déconnexion n'a pas
+ * atteint le moteur : la session y est peut-être encore ouverte.
+ */
+export async function apiLogout(): Promise<boolean> {
+  const closed = await closeSession((signal) =>
+    fetch(`${API_PREFIX}/logout`, {
       method: "GET",
       credentials: "include",
       redirect: "manual",
-    });
-  } catch {
-    /* la session locale est abandonnée même si le moteur ne répond pas */
-  }
+      signal,
+    }),
+  );
   csrfToken = null;
   apiCacheClear();
+  return closed;
 }
