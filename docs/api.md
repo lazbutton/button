@@ -25,6 +25,8 @@ La console préfixe `/api` en dev. En prod, nginx ne laisse passer qu’une list
 
 Une erreur métier répond `{error, code, message, field?}`, avec `error` et `message` en français : 400 (`validation_error`), 404 (`not_found`) ou 409 (`conflict`). Ces erreurs viennent de `engine/radiotomate/domain/errors.py`.
 
+Une route que le moteur ne connaît pas répond 404 `{error}`, avec la description par défaut de werkzeug, en anglais : « The requested URL was not found on the server. … ». La console y reconnaît un moteur plus ancien qu'elle (`console/src/api/unknownRoute.ts`), et dit de le mettre à jour.
+
 La forme exacte des objets est dans `console/src/api/types.ts`, et côté moteur dans les fonctions `*_payload` des services. Cette page donne les routes, les droits et les champs qui comptent.
 
 ### Santé

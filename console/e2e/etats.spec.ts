@@ -142,15 +142,12 @@ test("route absente : sans les émissions ni l’état de l’antenne, le pupitr
   );
 });
 
-test.fixme("route absente pendant un geste : la console le dit en français", async ({ page }) => {
-  // Défaut de la console : un 404 sur un geste affiche tel quel le message
-  // anglais du moteur, « The requested URL was not found on the server… ».
-  // Le message à mettre à la place reste à choisir : console/AGENTS.md prévoit
-  // « Mets à jour le moteur » pour une fonction plus récente que le moteur.
+test("route absente pendant un geste : la console le dit en français", async ({ page }) => {
+  // Le moteur répond le 404 de Quart, en anglais : la console dit pourquoi, et quoi faire.
   await seConnecter(page, "animateur");
   await page.route("**/live.json", (route) => (passer(route) ? versUneRouteAbsente(route) : route.continue()));
 
   await suivant(page).click();
-  await expect(avis(page, /moteur|automate/)).toBeVisible();
+  await expect(avis(page, "Cette action demande un moteur plus récent. Mets à jour le moteur.")).toBeVisible();
   await expect(avis(page, /requested URL/)).toHaveCount(0);
 });
