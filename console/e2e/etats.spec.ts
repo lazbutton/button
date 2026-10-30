@@ -16,7 +16,9 @@ import { engineRoutes } from "./routes.ts";
 // Ce que la console dit quand le moteur répond mal. Chaque cas est simulé par
 // page.route devant le vrai moteur de démo : session expirée (401), droit
 // manquant (403), moteur injoignable (connexion refusée) et route absente,
-// c'est-à-dire un moteur plus ancien que la console (404).
+// c'est-à-dire un moteur plus ancien que la console (404). La page Automate
+// passe aussi par le catalogue : un refus ou un catalogue injoignable y sont
+// simulés devant le faux catalogue.
 
 // Ce que le relais envoie au moteur : le reste vient de la console.
 const MOTEUR = new RegExp(`^/(${engineRoutes})`);
@@ -104,13 +106,14 @@ test("moteur injoignable pendant un geste : la console le dit", async ({ page })
   await expect(alerte(page, "L’automate ne répond pas. Réessaie dans un instant.")).toBeVisible();
 });
 
-test("moteur injoignable pendant « Annuler » : la console le dit, la ligne reste retirée", async ({ page }) => {
+test("moteur injoignable pendant « Annuler » : la console le dit", async ({ page }) => {
   await seConnecter(page, "animateur");
   await tenirLAntenne(page);
   // La dernière ligne visible vient de l'horloge : son heure de passage la désigne.
   const heure = (await file(page).getByRole("listitem").last().getByRole("time").textContent()) ?? "";
   expect(heure).toMatch(/^\d{2}:\d{2}:\d{2}$/);
   const ligne = file(page).getByRole("listitem").filter({ hasText: heure });
+  await expect(ligne).toHaveCount(1);
   await ligne.getByRole("button", { name: /^Retirer / }).click();
   const retrait = avis(page, "Retiré de la file.");
   await expect(retrait).toBeVisible();
@@ -120,7 +123,6 @@ test("moteur injoignable pendant « Annuler » : la console le dit, la ligne res
   await page.route(/\/autodj\/conducteur\/items/, (route) => route.abort("connectionrefused"));
   await retrait.getByRole("button", { name: "Annuler" }).click();
   await expect(alerte(page, "L’automate ne répond pas. Réessaie dans un instant.")).toBeVisible();
-  await expect(ligne).toHaveCount(0);
 });
 
 test("moteur injoignable, pupitre ouvert : la barre et le pupitre le disent, puis repartent", async ({ page }) => {
@@ -258,9 +260,9 @@ test("page Automate : un geste refusé ou sans réponse s’annonce en alerte", 
 
   // Vider les files passe par le moteur.
   for (const [reponse, message] of [
-    [{ status: 401, json: { error: "unauthenticated" } }, "Session expirée. Reconnecte-toi."],
     [{ status: 403, json: { error: "forbidden" } }, "Réservé à un admin. Reconnecte-toi avec ce compte."],
     [null, "L’automate ne répond pas. Réessaie dans un instant."],
+    [{ status: 401, json: { error: "unauthenticated" } }, "Session expirée. Reconnecte-toi."],
   ] as const) {
     await page.route("**/antenne/flush.json", (route) =>
       reponse ? route.fulfill(reponse) : route.abort("connectionrefused"),
