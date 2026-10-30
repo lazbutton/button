@@ -245,3 +245,39 @@ test("route absente pendant un geste : la console le dit en français", async ({
   await expect(alerte(page, "Cette action demande un moteur plus récent. Mets à jour le moteur.")).toBeVisible();
   await expect(page.getByText(/requested URL/)).toHaveCount(0);
 });
+
+test("page Automate : un geste refusé ou sans réponse s’annonce en alerte", async ({ page }) => {
+  await seConnecter(page, "admin");
+  await page.getByRole("navigation", { name: "Console" }).getByRole("link", { name: "Réglages" }).click();
+  await page.getByRole("tab", { name: "Automate" }).click();
+  // Les gestes de dépannage se confirment dans une fenêtre.
+  const geste = async (bouton: string, confirmation: string) => {
+    await page.getByRole("button", { name: bouton, exact: true }).click();
+    await page.getByRole("dialog").getByRole("button", { name: confirmation, exact: true }).click();
+  };
+
+  // Vider les files passe par le moteur.
+  for (const [reponse, message] of [
+    [{ status: 401, json: { error: "unauthenticated" } }, "Session expirée. Reconnecte-toi."],
+    [{ status: 403, json: { error: "forbidden" } }, "Réservé à un admin. Reconnecte-toi avec ce compte."],
+    [null, "L’automate ne répond pas. Réessaie dans un instant."],
+  ] as const) {
+    await page.route("**/antenne/flush.json", (route) =>
+      reponse ? route.fulfill(reponse) : route.abort("connectionrefused"),
+    );
+    await geste("Vider les files", "Vider les files");
+    await expect(alerte(page, message)).toBeVisible();
+    await page.unroute("**/antenne/flush.json");
+  }
+
+  // Retirer les titres hors bacs passe par le catalogue.
+  for (const [reponse, message] of [
+    [{ status: 403, json: { error: "forbidden" } }, "Réservé à un admin. Reconnecte-toi avec ce compte."],
+    [null, "Le catalogue ne répond pas. Réessaie dans un instant."],
+  ] as const) {
+    await page.route("**/library/prune", (route) => (reponse ? route.fulfill(reponse) : route.abort("connectionrefused")));
+    await geste("Retirer les titres hors bacs", "Retirer");
+    await expect(alerte(page, message)).toBeVisible();
+    await page.unroute("**/library/prune");
+  }
+});
