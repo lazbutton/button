@@ -11,5 +11,6 @@ Première version publique en préparation.
 - Console : antenne, conducteur, programmation, sons et réglages, avec des rôles (Animateur, Programmateur, Admin).
 - Dépôt de musique par le navigateur, envoi reprenable.
 - Déploiement par Docker Compose, images publiées par la CI.
+- Corrigé : en prod, nginx ne relayait pas `/media/bank.json`. Rattacher un dossier de la banque à un cart ne marchait qu'en dev. Un test de la console vérifie maintenant que chaque route qu'elle appelle passe nginx.
 
 Le détail des changements du moteur par rapport à l'amont : [docs/moteur/changements-radiotomate.md](docs/moteur/changements-radiotomate.md). L'historique de Radiotomate lui-même : [engine/CHANGELOG.md](engine/CHANGELOG.md).
