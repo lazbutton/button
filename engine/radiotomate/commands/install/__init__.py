@@ -39,6 +39,7 @@ def install(ctx, no_revert_on_failure, data_root: click.Path | None = None):
     from .installer import Installer
 
     installer = None
+    created = False
     try:
         click.secho("\nWelcome to the Radiotomate installer!", fg="green", bold=True)
         click.echo(
@@ -65,6 +66,7 @@ def install(ctx, no_revert_on_failure, data_root: click.Path | None = None):
                 fg="red",
             )
         else:
+            created = True
             installer.install()
 
         ctx.params["config_path"] = installer.path_yaml
@@ -72,7 +74,9 @@ def install(ctx, no_revert_on_failure, data_root: click.Path | None = None):
         ctx.invoke(update)
 
     except Exception:
-        if installer and not no_revert_on_failure:
+        # only what this run created: reverting an existing instance would delete
+        # its database
+        if created and not no_revert_on_failure:
             installer.revert()
         raise
 
