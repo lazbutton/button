@@ -1,0 +1,24 @@
+# Les en-têtes de sécurité de la console. nginx.conf.template inclut ce
+# fichier dans chaque bloc location : un bloc qui pose son propre add_header
+# n'hérite plus de ceux du bloc server. Strict-Transport-Security vient du
+# reverse proxy HTTPS, pas d'ici.
+
+# Un bloc change Referrer-Policy par un set placé après l'include : /invitation
+# pose no-referrer. Une valeur vide n'ajoute pas l'en-tête : /public/ garde
+# celui du moteur.
+set $button_referrer_policy "strict-origin-when-cross-origin";
+add_header Referrer-Policy $button_referrer_policy always;
+add_header X-Content-Type-Options "nosniff" always;
+add_header X-Frame-Options "DENY" always;
+add_header Permissions-Policy "camera=(), microphone=()" always;
+
+# La CSP, en rodage : le navigateur signale dans sa console ce qu'elle
+# bloquerait, sans rien bloquer.
+# - CSP_MEDIA_SRC et CSP_CONNECT_SRC : le flux et now.json, quand ils sont sur
+#   une autre origine. Le script de démarrage met une espace devant chaque
+#   liste non vide. Le moniteur lit aussi le flux par fetch : CSP_MEDIA_SRC
+#   entre donc dans connect-src.
+# - wasm-unsafe-eval : le décodeur MP3 du moniteur est en WebAssembly.
+# - unsafe-inline dans style-src : le verrou de défilement des fenêtres et
+#   des menus de Radix écrit une balise <style>.
+add_header Content-Security-Policy-Report-Only "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; media-src 'self' blob:${CSP_MEDIA_SRC}; connect-src 'self'${CSP_MEDIA_SRC}${CSP_CONNECT_SRC}; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'" always;

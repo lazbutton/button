@@ -27,6 +27,7 @@ En dev, Vite relaie `/api` vers le moteur, `/library` vers le catalogue et `/tus
 | `src/lib/` | Hooks et contexte : marque (`brand.ts`), écoute (`useMonitor.ts`), heure de Paris (`parisClock.ts`) |
 | `src/styles/tokens.css` | Les couleurs et tailles, en clair et en sombre |
 | `docker/nginx.conf.template` | Le nginx de prod, avec la liste des routes du moteur |
+| `docker/security-headers.conf.template` | Les en-têtes de sécurité et la CSP, inclus dans chaque bloc de nginx |
 | `e2e/` | Les parcours Playwright, avec le faux catalogue et le faux tusd (`stubs/`) |
 
 ## Les règles de l'interface
@@ -51,6 +52,8 @@ En dev, Vite relaie `/api` vers le moteur, `/library` vers le catalogue et `/tus
 ## Pièges
 
 - **Une nouvelle page de premier niveau**, comme `/antenne`, s'ajoute aussi dans `engine/radiotomate/interface/spa.py`. Le moteur y sert la console quand son build est posé à côté de lui.
+- **Un nouveau bloc `location` de nginx** inclut `/etc/nginx/security-headers.conf`, sinon ses réponses perdent les en-têtes de sécurité. `src/api/nginxRoutes.test.ts` le vérifie.
+- **La CSP** suit ce que la console charge. Une police, une image ou un script d'une autre origine, `eval` ou un worker demandent de la changer, dans `docker/security-headers.conf.template`. Elle est en `Report-Only` : le navigateur signale l'écart dans sa console, sans rien bloquer.
 - En dev, le mode strict de React lance les effets deux fois. Un objet comme une instance Uppy se garde au niveau du module, sans destruction au nettoyage.
 - Une heure de l'Agenda s'affiche à Paris dans la console, et à l'heure locale chez l'invité. Toujours passer par les fonctions du domaine (`agendaView.ts`, `parisClock.ts`), jamais par `Date` brut.
 - Les gros fichiers sont des points de conflit entre agents : `pages/ImporterPage.tsx`, `lib/useMonitor.ts`, `components/agenda/DiffusionDialog.tsx`, `pages/AntennePage.tsx`, `pages/AgendaPage.tsx`, `pages/SemainePage.tsx`, `api/types.ts`. Un seul agent à la fois sur chacun : [docs/travailler-a-plusieurs.md](../docs/travailler-a-plusieurs.md).
