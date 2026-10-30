@@ -106,7 +106,7 @@ test("moteur injoignable pendant un geste : la console le dit", async ({ page })
   await expect(alerte(page, "L’automate ne répond pas. Réessaie dans un instant.")).toBeVisible();
 });
 
-test("moteur injoignable pendant « Annuler » : la console le dit", async ({ page }) => {
+test("moteur injoignable pendant « Annuler » : la console dit que la ligne reste retirée", async ({ page }) => {
   await seConnecter(page, "animateur");
   await tenirLAntenne(page);
   // La dernière ligne visible vient de l'horloge : son heure de passage la désigne.
@@ -119,10 +119,13 @@ test("moteur injoignable pendant « Annuler » : la console le dit", async ({ pa
   await expect(retrait).toBeVisible();
   await expect(ligne).toHaveCount(0);
 
-  // Le retrait est passé. L'annulation, elle, ne trouve plus le moteur.
+  // Le retrait est passé. L'annulation, elle, ne trouve plus le moteur, et
+  // « Annuler » ne revient pas : la console dit comment remettre la ligne.
   await page.route(/\/autodj\/conducteur\/items/, (route) => route.abort("connectionrefused"));
   await retrait.getByRole("button", { name: "Annuler" }).click();
-  await expect(alerte(page, "L’automate ne répond pas. Réessaie dans un instant.")).toBeVisible();
+  await expect(
+    alerte(page, "L’automate ne répond pas. La ligne reste retirée : remets-la depuis la bibliothèque."),
+  ).toBeVisible();
 });
 
 test("moteur injoignable, pupitre ouvert : la barre et le pupitre le disent, puis repartent", async ({ page }) => {
