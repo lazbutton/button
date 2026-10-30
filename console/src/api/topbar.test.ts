@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { audience, initials, listenHint, stateAgeS, topAir, topHealth, type ListenState } from "./topbar.ts";
+import { audience, initials, listenHint, stateAgeS, topAir, topHealth, topNow, type ListenState } from "./topbar.ts";
 import type { AntenneState, LiveSnapshot } from "./types";
 
 const NOW = new Date("2026-10-12T10:19:05Z"); // 12:19:05 à Paris (UTC+2)
@@ -90,6 +90,87 @@ test("an engine that stops answering is not hidden by its last snapshot", () => 
     label: "Automate injoignable",
     detail: "",
   });
+});
+
+const song = { title: "Titre", artist: "Artiste" };
+const clock = { elapsedSec: 30, remainingSec: 150, durationSec: 180 };
+
+test("the title on air counts down to its end", () => {
+  const now = topNow({ live: playing, item: song, clock, stale: false, answeredAt: undefined });
+  assert.equal(now.title, "Titre");
+  assert.equal(now.artist, "Artiste");
+  assert.equal(now.timed, true);
+  assert.equal(now.ratio, 1 / 6);
+  assert.equal(now.remain, "−2:30");
+  assert.equal(now.ending, false);
+  assert.equal(now.note, "");
+  assert.equal(now.label, "À l’antenne : Titre, Artiste, reste 2:30. Ouvrir l’antenne.");
+  const ending = topNow({
+    live: playing,
+    item: song,
+    clock: { elapsedSec: 170, remainingSec: 10, durationSec: 180 },
+    stale: false,
+    answeredAt: undefined,
+  });
+  assert.equal(ending.ending, true);
+  const idle = topNow({ live: { status: "offline" }, item: undefined, clock, stale: false, answeredAt: undefined });
+  assert.equal(idle.idle, true);
+  assert.equal(idle.timed, false);
+  assert.equal(idle.label, "À l’antenne : Rien à l’antenne. Ouvrir l’antenne.");
+});
+
+test("a direct is named after its show, without a countdown", () => {
+  const live: LiveSnapshot = {
+    ...playing,
+    source: "harbor",
+    emission: { id: 2, title: "QG", artist: "", state: "on_air" },
+  };
+  const now = topNow({ live, item: { title: "Direct" }, clock, stale: false, answeredAt: undefined });
+  assert.equal(now.title, "QG");
+  assert.equal(now.timed, false);
+  assert.equal(now.label, "À l’antenne : QG. Ouvrir l’antenne.");
+});
+
+test("an engine that stops answering leaves its last title, without its time", () => {
+  const answeredAt = Date.parse("2026-10-12T10:16:40Z"); // 12:16 à Paris
+  const now = topNow({ live: playing, item: song, clock, stale: true, answeredAt });
+  assert.deepEqual(now, {
+    title: "Titre",
+    artist: "Artiste",
+    idle: false,
+    stale: true,
+    timed: false,
+    ratio: 0,
+    remain: "−2:30",
+    ending: false,
+    note: "Sans nouvelles depuis 12:16",
+    label: "Sans nouvelles depuis 12:16. Dernier titre connu : Titre, Artiste. Ouvrir l’antenne.",
+  });
+  // Hiver : UTC+1.
+  const winter = topNow({ live: playing, item: song, clock, stale: true, answeredAt: Date.parse("2026-12-01T08:05:00Z") });
+  assert.equal(winter.note, "Sans nouvelles depuis 09:05");
+  // Un direct garde le nom de son émission.
+  const direct = topNow({
+    live: { ...playing, source: "harbor", emission: { id: 2, title: "QG", artist: "", state: "on_air" } },
+    item: { title: "Direct" },
+    clock,
+    stale: true,
+    answeredAt,
+  });
+  assert.equal(direct.label, "Sans nouvelles depuis 12:16. Dernier titre connu : QG. Ouvrir l’antenne.");
+});
+
+test("an engine that never answered knows neither title nor time", () => {
+  const now = topNow({ live: null, item: undefined, clock, stale: true, answeredAt: undefined });
+  assert.equal(now.title, "Aucun titre connu");
+  assert.equal(now.idle, false);
+  assert.equal(now.timed, false);
+  assert.equal(now.note, "Sans nouvelles");
+  assert.equal(now.label, "Sans nouvelles. Aucun titre connu. Ouvrir l’antenne.");
+  // Le dernier relevé disait l'antenne vide : rien ne dit qu'elle l'est encore.
+  const offline = topNow({ live: { status: "offline" }, item: undefined, clock, stale: true, answeredAt: Date.parse("2026-10-12T10:16:40Z") });
+  assert.equal(offline.title, "Aucun titre connu");
+  assert.equal(offline.label, "Sans nouvelles depuis 12:16. Aucun titre connu. Ouvrir l’antenne.");
 });
 
 test("audience counts public mounts, never the studio headphones", () => {
