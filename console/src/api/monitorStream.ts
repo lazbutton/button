@@ -72,3 +72,10 @@ export function answerWithin<T>(pending: Promise<T>, ms: number, giveUp?: () => 
     pending.finally(() => clearTimeout(timer)).then(resolve, reject);
   });
 }
+
+/** Ce que l'élément audio a joué depuis son chargement, en secondes : la somme de `audio.played`. */
+export function playedSeconds(played: Pick<TimeRanges, "length" | "start" | "end">): number {
+  let seconds = 0;
+  for (let i = 0; i < played.length; i++) seconds += played.end(i) - played.start(i);
+  return seconds;
+}

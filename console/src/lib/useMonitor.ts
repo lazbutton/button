@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
-import { answerWithin, readStream } from "../api/monitorStream";
+import { answerWithin, playedSeconds, readStream } from "../api/monitorStream";
 import {
   MonitorPcmSink,
   PcmAggregator,
@@ -20,7 +20,10 @@ const STREAM_FALLBACK = "https://radio.lazbutton.xyz/button.mp3";
 const RECONNECT_MIN_MS = 200;
 const RECONNECT_MAX_MS = 3000;
 const STALL_MS = 8000;
-/** Une connexion PCM qui débite depuis ce temps a repris : le backoff repart du bas. */
+/**
+ * Une connexion PCM qui débite depuis ce temps, ou un élément audio qui a joué
+ * ce temps, a repris : le backoff repart du bas.
+ */
 const STEADY_MS = 3000;
 const DROP_MS = 0;
 
@@ -36,6 +39,11 @@ function wait(sb: SourceBuffer) {
   return new Promise<void>((resolve) => {
     sb.addEventListener("updateend", () => resolve(), { once: true });
   });
+}
+
+/** L'élément a joué STEADY_MS depuis son chargement, en MSE comme par sa seule source. */
+function elementHeld(audio: HTMLAudioElement) {
+  return playedSeconds(audio.played) * 1000 >= STEADY_MS;
 }
 
 function audioContextCtor(): typeof AudioContext | null {
@@ -434,9 +442,11 @@ export function useMonitor(
             }
           }
         } catch {
+          // Comme bump : le backoff, et l'alerte si l'élément n'avait pas repris.
           if (playGen.current === gen && wantLiveRef.current) {
+            if (!elementHeld(audio)) setStreamDown(true);
             setLive(false);
-            scheduleReconnect(RECONNECT_MIN_MS);
+            scheduleReconnect();
           }
         }
       })();
@@ -518,12 +528,8 @@ export function useMonitor(
       }
       if (gen !== playGen.current) return;
       setLive(true);
-      // L'élément joue déjà. Le flux PCM, lui, n'a repris qu'une fois qu'il a
-      // débité un moment : pumpPcm le dit.
-      if (usedElement) {
-        backoffRef.current = RECONNECT_MIN_MS;
-        setStreamDown(false);
-      }
+      // Le flux n'a repris qu'une fois tenu STEADY_MS : pumpPcm le dit en PCM,
+      // onProgress pour l'élément.
     } catch {
       if (gen !== playGen.current) return;
       teardownStream();
@@ -636,8 +642,20 @@ export function useMonitor(
     const bump = () => {
       if (!wantLiveRef.current) return;
       if (!audio.getAttribute("src") && !pcmSinkRef.current) return;
+      // Comme un flux PCM, un élément qui n'a pas joué STEADY_MS n'a pas
+      // repris : le bouton le dit, et l'attente continue de monter.
+      if (!elementHeld(audio)) setStreamDown(true);
       setLive(false);
       scheduleReconnect();
+    };
+
+    // L'élément qui a joué STEADY_MS a repris : le backoff repart du bas, et
+    // l'alerte s'efface. Pas pendant l'attente d'une relance : l'élément ne
+    // joue alors que le tampon d'une connexion déjà perdue.
+    const onProgress = () => {
+      if (reconnectTimer.current != null || !elementHeld(audio)) return;
+      backoffRef.current = RECONNECT_MIN_MS;
+      setStreamDown(false);
     };
 
     const onWaiting = () => {
@@ -661,12 +679,14 @@ export function useMonitor(
     audio.addEventListener("waiting", onWaiting);
     audio.addEventListener("playing", onFlow);
     audio.addEventListener("canplay", onFlow);
+    audio.addEventListener("timeupdate", onProgress);
     return () => {
       audio.removeEventListener("ended", bump);
       audio.removeEventListener("error", bump);
       audio.removeEventListener("waiting", onWaiting);
       audio.removeEventListener("playing", onFlow);
       audio.removeEventListener("canplay", onFlow);
+      audio.removeEventListener("timeupdate", onProgress);
     };
   }, [scheduleReconnect]);
 

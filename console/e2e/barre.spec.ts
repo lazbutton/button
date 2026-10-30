@@ -183,6 +183,78 @@ test("l’élément audio sans réponse : le casque le dit aussi", async ({ page
   await expect(casque(page)).toHaveAccessibleName("Arrêter l’écoute. Le flux ne répond pas : le casque réessaie seul");
 });
 
+/**
+ * Sert le flux par un seul chemin, l'élément audio ou le MSE : les autres
+ * échouent tout de suite. Chaque essai demande le flux en PCM, puis en MSE :
+ * des deux demandes fetch d'un essai, la première est celle du PCM. Rend
+ * l'heure de chaque demande servie.
+ */
+async function servirPar(
+  page: Page,
+  flux: URL,
+  chemin: "élément" | "MSE",
+  corps: (demande: number) => Buffer,
+): Promise<number[]> {
+  // Compte les lectures que l'élément mène jusqu'au bout.
+  await page.addInitScript(() => {
+    const w = window as unknown as { finsDeLecture: number };
+    w.finsDeLecture = 0;
+    document.addEventListener("ended", () => {
+      w.finsDeLecture += 1;
+    }, true);
+  });
+  const heures: number[] = [];
+  let fetchs = 0;
+  await page.route(versLeFlux(flux), (route) => {
+    const type = route.request().resourceType();
+    const servie = chemin === "élément" ? type === "media" : type === "fetch" && ++fetchs % 2 === 0;
+    if (!servie) return route.abort();
+    heures.push(Date.now());
+    return route.fulfill({
+      contentType: "audio/mpeg",
+      headers: { "Access-Control-Allow-Origin": "*" },
+      body: corps(heures.length),
+    });
+  });
+  return heures;
+}
+
+const finsDeLecture = (page: Page) =>
+  page.evaluate(() => (window as unknown as { finsDeLecture: number }).finsDeLecture);
+
+for (const chemin of ["élément", "MSE"] as const) {
+  const par = chemin === "MSE" ? "en MSE" : "par l’élément audio";
+  test(`${par}, un flux qui s’arrête : le casque le dit, sans marteler`, async ({ page }) => {
+    // Chaque connexion rend un dixième de seconde, puis se ferme : l'élément
+    // joue jusqu'au bout, mais aucune reprise ne tient 3 s.
+    const servies = await servirPar(page, await adresseDuFlux(page), chemin, () => trames(4));
+    await seConnecter(page, "animateur");
+    await casque(page).click();
+    await expect(casque(page)).toHaveAccessibleName("Arrêter l’écoute. Le flux ne répond pas : le casque réessaie seul");
+    // Chaque reprise ratée allonge l'attente, jusqu'à 3 s. En 5 s, une poignée
+    // de connexions, pas une quinzaine.
+    expect(await enCinqSecondes(page, servies)).toBeLessThanOrEqual(8);
+    expect(await finsDeLecture(page), "connexions jouées jusqu'au bout").toBeGreaterThan(0);
+  });
+}
+
+test("par l’élément audio, la reprise ne compte qu’après 3 s de son", async ({ page }) => {
+  // La première connexion rend un dixième de seconde, puis le flux revient,
+  // pour 8 s.
+  const servies = await servirPar(page, await adresseDuFlux(page), "élément", (demande) =>
+    trames(demande === 1 ? 4 : 38 * 8),
+  );
+  await seConnecter(page, "animateur");
+  await casque(page).click();
+  await expect(casque(page)).toHaveAccessibleName("Arrêter l’écoute. Le flux ne répond pas : le casque réessaie seul");
+  // Le flux revenu joue, mais l'alerte reste tant qu'il n'a pas tenu 3 s…
+  await expect.poll(() => servies.length).toBe(2);
+  await page.waitForTimeout(Math.max(0, servies[1] + 1_000 - Date.now()));
+  await expect(casque(page)).toHaveAccessibleName("Arrêter l’écoute. Le flux ne répond pas : le casque réessaie seul");
+  // … puis elle s'efface, et le bouton redonne le retard du casque.
+  await expect(casque(page)).toHaveAccessibleName(/^Arrêter l’écoute\. Retard du casque : \d+ ms$/, { timeout: 10_000 });
+});
+
 test("l’admin choisit la source de son casque, et la retrouve", async ({ page }) => {
   await seConnecter(page, "admin");
   const source = barre(page).getByRole("button", { name: /^Source du casque/ });

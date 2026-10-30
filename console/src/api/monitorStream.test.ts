@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, mock, test } from "node:test";
-import { answerWithin, readStream, type StreamWatch } from "./monitorStream.ts";
+import { answerWithin, playedSeconds, readStream, type StreamWatch } from "./monitorStream.ts";
 
 beforeEach(() => mock.timers.enable({ apis: ["setTimeout", "Date"] }));
 afterEach(() => mock.timers.reset());
@@ -191,4 +191,15 @@ test("a request cut by the give-up fails late, without surfacing", async () => {
   );
   mock.timers.tick(8000);
   await assert.rejects(wait, /timeout/);
+});
+
+test("what the element played is the sum of its played ranges", () => {
+  const ranges = (...pairs: [number, number][]) => ({
+    length: pairs.length,
+    start: (i: number) => pairs[i][0],
+    end: (i: number) => pairs[i][1],
+  });
+  assert.equal(playedSeconds(ranges()), 0);
+  // Rattraper le direct saute en avant : l'élément a alors deux plages jouées.
+  assert.equal(playedSeconds(ranges([0, 1.5], [4, 6])), 3.5);
 });
