@@ -102,6 +102,8 @@ services:
       RT_NOWPLAYING_SECRET: ${RT_NOWPLAYING_SECRET:?RT_NOWPLAYING_SECRET manquant dans .env}
       RT_ADMIN_USER: ${RT_ADMIN_USER:-button}
       RT_ADMIN_PASSWORD: ${RT_ADMIN_PASSWORD:-}
+      # false seulement pour un accès en HTTP seul : voir docs/deploiement.md.
+      RT_COOKIE_SECURE: ${RT_COOKIE_SECURE:-true}
     volumes:
       - ${RT_DATA:-./data/radiotomate}:/data
       - ${BUTTON_MEDIA:-./media}:/media

@@ -6,6 +6,24 @@ export BEETSDIR="${BEETSDIR:-$DATA/Beets}"
 CONFIG="$DATA/radiotomate.yaml"
 MEDIA="${MEDIA_ROOT:-/media}"
 
+# true : le cookie de session porte Secure, le navigateur ne l'envoie qu'en HTTPS.
+# false : accès en HTTP seul (banc local, réseau privé). Ce script ne tourne
+# jamais en mode démo : l'avertissement vise toujours une vraie station.
+# Vérifié avant tout : une valeur refusée ne laisse pas de schéma migré.
+RT_COOKIE_SECURE="${RT_COOKIE_SECURE:-true}"
+case "$RT_COOKIE_SECURE" in
+  true) ;;
+  false)
+    echo "Attention : RT_COOKIE_SECURE=false, le cookie de session circule aussi en HTTP, en clair." >&2
+    echo "À réserver à un accès en HTTP seul : banc local, réseau privé. Derrière HTTPS, retirer RT_COOKIE_SECURE de .env, puis recréer les trois services du moteur (docs/deploiement.md, « Le cookie de session »)." >&2
+    ;;
+  *)
+    echo "RT_COOKIE_SECURE vaut « $RT_COOKIE_SECURE » : mettre true ou false dans .env, puis recréer les trois services du moteur (docs/deploiement.md, « Le cookie de session »)." >&2
+    exit 1
+    ;;
+esac
+export RT_COOKIE_SECURE
+
 mkdir -p "$DATA/carts" "$BEETSDIR"
 # Compose bind-mount of a missing yaml creates a directory; wipe it so install can write the file.
 if [ -d "$CONFIG" ]; then
@@ -42,7 +60,7 @@ yaml = YAML()
 yaml.preserve_quotes = True
 data = yaml.load(path)
 interface = data.setdefault("interface", {})
-interface["cookie_secure"] = False
+interface["cookie_secure"] = os.environ["RT_COOKIE_SECURE"] == "true"
 ppc = data.setdefault("playout_process_config", {})
 # RT_SKIP_ICECAST_OUTPUTS=1 : une seule sortie, injoignable, pour que Liquidsoap
 # démarre sans envoyer de flux à Icecast.
