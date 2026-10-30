@@ -276,6 +276,38 @@ test("moteur muet pendant une pré-écoute : le bac le dit, puis la pré-écoute
   await expect.poll(async () => (await preEcouteDuBac(page))?.joue).toBe(true);
 });
 
+test("un son resté sans réponse, puis un autre lancé : l’abandon du premier ne coupe pas le second", async ({ page }) => {
+  test.slow();
+  await seConnecter(page, "programmateur");
+  await expect(suivant(page)).toBeEnabled();
+  await page.goto("/sons");
+  await page.getByRole("option", { name: /Musique de démo/ }).click();
+  const bac = page.getByRole("region", { name: "Musique de démo" });
+  // Le premier son demandé ne vient jamais. Les suivants passent.
+  const son = /\/carts\/\d+\/sounds\/\d+$/;
+  let retenu = false;
+  await page.route(son, (route) => {
+    if (retenu) return route.continue();
+    retenu = true;
+  });
+  const abandon = page.waitForEvent("requestfailed", {
+    predicate: (request) => son.test(request.url()),
+    timeout: READ_DEADLINE_MS + 5_000,
+  });
+
+  await bac.getByRole("button", { name: "Pré-écouter Première écoute" }).click();
+  await bac.getByRole("button", { name: "Pré-écouter Nuit claire" }).click();
+  const arreter = bac.getByRole("button", { name: "Arrêter la pré-écoute" });
+  await expect(arreter.first()).toBeVisible();
+  await expect.poll(async () => (await preEcouteDuBac(page))?.joue).toBe(true);
+
+  // La console abandonne le premier son au bout du délai, après avoir réglé son échec.
+  await abandon;
+  await expect(alerte(page, /^Pré-écoute impossible/)).toHaveCount(0);
+  await expect(arreter.first()).toBeVisible();
+  expect((await preEcouteDuBac(page))?.joue).toBe(true);
+});
+
 test("moteur injoignable, pupitre ouvert : la barre et le pupitre le disent, puis repartent", async ({ page }) => {
   await seConnecter(page, "animateur");
   await tenirLAntenne(page);

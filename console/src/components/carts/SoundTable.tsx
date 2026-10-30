@@ -74,6 +74,9 @@ export function SoundTable({
   const objectUrlRef = useRef<string | null>(null);
   const prefetchRef = useRef<{ id: number; url: string } | null>(null);
   const playingIdRef = useRef<number | null>(null);
+  // Seule la dernière demande de pré-écoute compte : un son demandé avant, qui
+  // arrive ou échoue plus tard, n'y touche plus.
+  const playRequestRef = useRef(0);
   const queueRef = useRef<Sound[]>([]);
   const cartIdRef = useRef(cart.id);
   const playRef = useRef<(sound: Sound) => Promise<void>>(async () => undefined);
@@ -99,6 +102,7 @@ export function SoundTable({
 
   useEffect(() => {
     audioRef.current?.pause();
+    playRequestRef.current += 1;
     setPlayingId(null);
     playingIdRef.current = null;
     setSelected(new Set());
@@ -134,6 +138,7 @@ export function SoundTable({
   };
 
   const play = async (sound: Sound) => {
+    const request = ++playRequestRef.current;
     if (playingIdRef.current === sound.id) {
       audioRef.current?.pause();
       playingIdRef.current = null;
@@ -143,7 +148,13 @@ export function SoundTable({
     try {
       let url = prefetchRef.current?.id === sound.id ? prefetchRef.current.url : null;
       if (prefetchRef.current?.id === sound.id) prefetchRef.current = null;
-      if (!url) url = await apiBlob(`/carts/${cartIdRef.current}/sounds/${sound.id}`);
+      if (!url) {
+        url = await apiBlob(`/carts/${cartIdRef.current}/sounds/${sound.id}`);
+        if (request !== playRequestRef.current) {
+          revokeUrl(url);
+          return;
+        }
+      }
       revokeUrl(objectUrlRef.current);
       objectUrlRef.current = url;
       playingIdRef.current = sound.id;
@@ -156,6 +167,7 @@ export function SoundTable({
       void audioRef.current?.play().catch((caught: unknown) => {
         // Un autre son a pris la place : rien à signaler.
         if (caught instanceof DOMException && caught.name === "AbortError") return;
+        if (request !== playRequestRef.current) return;
         fail(caught, "Lecture impossible.");
         playingIdRef.current = null;
         setPlayingId(null);
@@ -176,6 +188,7 @@ export function SoundTable({
         })
         .catch(() => undefined);
     } catch (caught) {
+      if (request !== playRequestRef.current) return;
       if (caught instanceof ApiUnavailableError) {
         notify("Pré-écoute impossible : l’automate ne répond pas.", "error");
       } else {

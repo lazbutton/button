@@ -245,7 +245,7 @@ export async function apiUpload<T>(
 // Un son se lit en entier avant d'être joué : sur un réseau lent, bien plus que
 // le délai des lectures. Ce délai vaut pour la réponse, puis pour chaque
 // morceau du son : seul un son qui n'avance plus est abandonné.
-function apiSound(path: string): Promise<Blob> {
+function apiSound<T>(path: string, read: (body: Response) => Promise<T>): Promise<T> {
   return withBodyDeadline(
     READ_DEADLINE_MS,
     async (signal) => {
@@ -255,22 +255,25 @@ function apiSound(path: string): Promise<Blob> {
       } catch {
         throw new ApiUnavailableError();
       }
-      if (!response.ok) {
-        const payload = await parseJson<{ error?: string }>(response);
-        raiseForStatus(response, payload);
+      if (response.ok) return response;
+      // Le moteur rend lui-même en HTML l'erreur d'un son, introuvable ou absent
+      // du disque : seul le statut dit qu'il est injoignable, comme sur /login.
+      if (response.status === 401 || response.status === 403 || isUnreachableStatus(response.status)) {
+        raiseForStatus(response);
       }
-      return response;
+      throw new ApiRequestError(response.status, "Lecture impossible.");
     },
+    read,
     () => new ApiUnavailableError(),
   );
 }
 
 export async function apiBlob(path: string): Promise<string> {
-  return URL.createObjectURL(await apiSound(path));
+  return URL.createObjectURL(await apiSound(path, (body) => body.blob()));
 }
 
-export async function apiArrayBuffer(path: string): Promise<ArrayBuffer> {
-  return (await apiSound(path)).arrayBuffer();
+export function apiArrayBuffer(path: string): Promise<ArrayBuffer> {
+  return apiSound(path, (body) => body.arrayBuffer());
 }
 
 export async function apiLogin(username: string, password: string): Promise<void> {
