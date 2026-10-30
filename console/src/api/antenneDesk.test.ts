@@ -54,6 +54,19 @@ test("alert only when something is wrong", () => {
   assert.match(icecast?.help ?? "", /flux public/);
 });
 
+test("an unreachable engine comes first: the rest is an old reading", () => {
+  const lost = deskAlert({ tone: "silence", label: "Silence 12 s", cause: "" }, "14:32");
+  assert.equal(lost?.tone, "problem");
+  assert.equal(lost?.title, "Automate injoignable");
+  assert.equal(lost?.live, "");
+  assert.equal(
+    lost?.help,
+    "Le pupitre ne reçoit plus de nouvelles depuis 14:32 : le titre et la file affichés peuvent avoir changé.",
+  );
+  assert.equal(deskAlert({ tone: "on", label: "En onde", cause: "" }, "14:32")?.title, "Automate injoignable");
+  assert.equal(deskAlert({ tone: "on", label: "En onde", cause: "" }, null), null);
+});
+
 test("preview url escapes the id", () => {
   assert.equal(previewUrl("a/b c"), "/library/media/a%2Fb%20c");
 });

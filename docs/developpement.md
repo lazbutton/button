@@ -97,7 +97,7 @@ Les parcours, dans `console/e2e/` :
 | `antenne.spec.ts` | se connecter, puis voir l'antenne |
 | `barre.spec.ts` | la barre du haut : ce qui passe, l'état de l'antenne et son détail, le casque et sa source, le menu du compte, le lien « Code source » |
 | `pupitre.spec.ts` | Espace, `/` et Entrée, la pré-écoute, « Diffuser », déplacer une ligne au clavier et à la souris, retirer puis annuler, le focus rendu à « Passer en direct » |
-| `etats.spec.ts` | session expirée, droit manquant, moteur injoignable, moteur muet et route absente, simulés par `page.route` devant le moteur de démo |
+| `etats.spec.ts` | session expirée, droit manquant, moteur injoignable, moteur muet, moteur arrêté derrière nginx (502 en HTML), envoi trop lourd pour nginx (413 en HTML) et route absente, simulés par `page.route` devant le moteur de démo |
 | `roles.spec.ts` | ce que voient l'animateur, le programmateur et l'admin |
 | `apparence.spec.ts` | le thème clair et le sombre, choisis dans le menu du compte ou suivant l'appareil |
 | `telephone.spec.ts` | la console sur un téléphone de 360 px, au doigt |
@@ -108,7 +108,7 @@ Un parcours s'écrit dans `console/e2e/<sujet>.spec.ts`. Il importe de `e2e/banc
 
 - `test` et `expect`. `test` fait échouer un parcours sur toute erreur JavaScript de la page. Il coupe aussi ce qui sortirait du banc : `brand.json` nomme le flux d'une vraie station, que le casque demande dès l'ouverture. Une requête vers un autre site échoue, et un lien vers un autre site ouvre une page vide à son adresse ;
 - `seConnecter(page, rôle)`, pour entrer avec un compte semé, ou `remplirLaConnexion(page, rôle)` quand l'écran de connexion est déjà affiché ;
-- `antenne`, `file` et `bibliotheque`, les trois régions du pupitre, `avis` pour un message de la console, et `tenirLAntenne`.
+- `antenne`, `file` et `bibliotheque`, les trois régions du pupitre, `avis` pour un message de la console annoncé comme un état, `alerte` pour un message annoncé comme une alerte, et `tenirLAntenne`.
 
 Un parcours trouve les éléments par leur rôle et leur nom accessible, jamais par une classe CSS. Un parcours neuf se vérifie une fois : casser dans la console ce qu'il vérifie, le voir échouer, puis défaire.
 

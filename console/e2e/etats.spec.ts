@@ -1,13 +1,26 @@
 import type { Page, Route } from "@playwright/test";
 import { READ_DEADLINE_MS } from "../src/api/readDeadline.ts";
-import { antenne, avis, bibliotheque, expect, file, remplirLaConnexion, seConnecter, test } from "./banc.ts";
+import {
+  alerte,
+  antenne,
+  avis,
+  bibliotheque,
+  comptes,
+  expect,
+  file,
+  remplirLaConnexion,
+  seConnecter,
+  tenirLAntenne,
+  test,
+} from "./banc.ts";
 import { engineRoutes } from "./routes.ts";
 
 // Ce que la console dit quand le moteur répond mal. Chaque cas est simulé par
 // page.route devant le vrai moteur de démo : session expirée (401), droit
 // manquant (403), moteur injoignable (connexion refusée), moteur muet (une
-// lecture qui ne reçoit jamais de réponse) et route absente, c'est-à-dire un
-// moteur plus ancien que la console (404).
+// lecture qui ne reçoit jamais de réponse), moteur arrêté derrière nginx (502
+// en HTML), envoi trop lourd pour nginx (413 en HTML) et route absente,
+// c'est-à-dire un moteur plus ancien que la console (404).
 
 // Ce que le relais envoie au moteur : le reste vient de la console.
 const MOTEUR = new RegExp(`^/(${engineRoutes})`);
@@ -26,6 +39,22 @@ async function versUneRouteAbsente(route: Route): Promise<number> {
   return reponse.status();
 }
 
+/**
+ * En prod, nginx relaie l'API : moteur arrêté, il répond lui-même 502, avec sa
+ * page HTML. Le banc n'a pas de nginx devant le moteur : le parcours la sert.
+ */
+const PAGE_502 = [
+  "<html>",
+  "<head><title>502 Bad Gateway</title></head>",
+  "<body>",
+  "<center><h1>502 Bad Gateway</h1></center>",
+  "<hr><center>nginx</center>",
+  "</body>",
+  "</html>",
+  "",
+].join("\r\n");
+const moteurArrete = (route: Route) => route.fulfill({ status: 502, contentType: "text/html", body: PAGE_502 });
+
 const suivant = (page: Page) => antenne(page).getByRole("button", { name: /^Suivant/ });
 const passer = (route: Route) => route.request().method() === "DELETE";
 
@@ -36,7 +65,7 @@ test("session expirée pendant un geste : la console le dit", async ({ page }) =
   );
 
   await suivant(page).click();
-  await expect(avis(page, "Session expirée. Reconnecte-toi.")).toBeVisible();
+  await expect(alerte(page, "Session expirée. Reconnecte-toi.")).toBeVisible();
 });
 
 test("session expirée : la console redemande le mot de passe, puis rend le pupitre", async ({ page }) => {
@@ -69,7 +98,7 @@ test("droit manquant : le geste refusé dit quel droit il faut", async ({ page }
   );
 
   await suivant(page).click();
-  await expect(avis(page, "Il faut le droit antenne. Demande à un admin si tu dois pouvoir le faire.")).toBeVisible();
+  await expect(alerte(page, "Il faut le droit antenne. Demande à un admin si tu dois pouvoir le faire.")).toBeVisible();
   await expect(antenne(page)).toBeVisible();
 });
 
@@ -92,22 +121,121 @@ test("moteur injoignable pendant un geste : la console le dit", async ({ page })
   await page.route("**/live.json", (route) => (passer(route) ? route.abort("connectionrefused") : route.continue()));
 
   await suivant(page).click();
-  await expect(avis(page, "L’automate ne répond pas. Réessaie dans un instant.")).toBeVisible();
+  await expect(alerte(page, "L’automate ne répond pas. Réessaie dans un instant.")).toBeVisible();
 });
 
-test("moteur injoignable, pupitre ouvert : la barre le dit, puis repart", async ({ page }) => {
+test("moteur arrêté derrière nginx pendant un geste : la console le dit, sans la page de nginx", async ({ page }) => {
   await seConnecter(page, "animateur");
+  await page.route("**/live.json", (route) => (passer(route) ? moteurArrete(route) : route.continue()));
+
+  await suivant(page).click();
+  await expect(alerte(page, "L’automate ne répond pas. Réessaie dans un instant.")).toBeVisible();
+  await expect(page.getByText(/Bad Gateway/)).toHaveCount(0);
+});
+
+test("moteur arrêté derrière nginx à la connexion : la console ne parle pas de mot de passe", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("button", { name: "Se connecter" })).toBeVisible();
+  // Le moteur s'arrête avant l'envoi : /login.json, puis le repli sur le
+  // formulaire de /login, reçoivent la page de nginx.
+  await page.route(versLeMoteur, moteurArrete);
+
+  await remplirLaConnexion(page, "animateur");
+  await expect(alerte(page, "L’automate ne répond pas. Vérifie qu’il tourne, puis réessaie.")).toBeVisible();
+});
+
+test("connexion par le formulaire de repli : un mot de passe refusé se dit comme tel", async ({ page }) => {
+  await page.goto("/");
+  // /login.json ne répond pas : la console passe par le formulaire de /login,
+  // où le moteur refuse le mot de passe par une page HTML, en 401.
+  await page.route("**/login.json", (route) => route.abort("connectionrefused"));
+
+  await page.getByLabel("Identifiant", { exact: true }).fill(comptes().accounts.animateur);
+  await page.getByLabel("Mot de passe", { exact: true }).fill("pas-le-bon");
+  await page.getByRole("button", { name: "Se connecter" }).click();
+  await expect(alerte(page, /^Identifiant ou mot de passe incorrect\./)).toBeVisible();
+});
+
+test("envoi trop lourd pour nginx : le bac le dit, sans la page de nginx", async ({ page }) => {
+  await seConnecter(page, "programmateur");
   await expect(suivant(page)).toBeEnabled();
+  await page.goto("/sons");
+  // nginx refuse un envoi de plus de 512 Mo (client_max_body_size) par sa page HTML.
+  const page413 = PAGE_502.replaceAll("502 Bad Gateway", "413 Request Entity Too Large");
+  await page.route("**/carts/*/sounds.json*", (route) =>
+    route.request().method() === "POST"
+      ? route.fulfill({ status: 413, contentType: "text/html", body: page413 })
+      : route.continue(),
+  );
+
+  await page
+    .locator('input[type="file"][accept^="audio"]')
+    .setInputFiles({ name: "emission.wav", mimeType: "audio/wav", buffer: Buffer.from("RIFF") });
+  await expect(
+    alerte(page, "Envoi trop lourd pour le serveur. Dépose moins de fichiers à la fois, ou des fichiers plus légers."),
+  ).toBeVisible();
+  await expect(page.getByText(/Request Entity|Le moteur ne répond pas/)).toHaveCount(0);
+});
+
+test("moteur injoignable, pupitre ouvert : la barre et le pupitre le disent, puis repartent", async ({ page }) => {
+  await seConnecter(page, "animateur");
+  await tenirLAntenne(page);
+  await expect(file(page).getByRole("listitem").first()).toBeVisible();
   const etat = page.getByRole("banner").getByRole("button", { name: /^Antenne : / });
+  const reste = antenne(page).getByRole("timer");
+  const avancee = antenne(page).getByText(/^\d+:\d{2} \/ \d+:\d{2}$/);
+  const fin = antenne(page).getByText(/^fin \d{2}:\d{2}$/);
+  const vieillie = "La file ne répond plus : ces lignes peuvent avoir changé.";
+  await expect(avancee).toBeVisible();
+  await expect(fin).toBeVisible();
   await page.route(versLeMoteur, (route) => route.abort("connectionrefused"));
 
   // Le dernier relevé, encore à l'écran, ne fait pas croire que tout va bien.
   await expect(etat).toHaveAccessibleName("Antenne : Automate injoignable. Santé : état indisponible.", {
     timeout: 15_000,
   });
+  // Le pupitre dit depuis quand, et garde le dernier titre connu : aucun des textes de repli
+  // n'est là. Son temps ne se compte plus, et sa file se dit vieillie.
+  await expect(alerte(page, /^Automate injoignable Le pupitre ne reçoit plus de nouvelles depuis \d{2}:\d{2} :/)).toBeVisible();
+  await expect(antenne(page)).toContainText("Sans nouvelles");
+  await expect(antenne(page)).not.toContainText(/Rien à l’antenne|L’antenne ne répond pas|Aucun titre connu/);
+  await expect(reste).toHaveAccessibleName("inconnu —");
+  await expect(avancee).toHaveCount(0);
+  await expect(fin).toHaveCount(0);
+  await expect(avis(page, vieillie)).toBeVisible({ timeout: 10_000 });
+  await expect(file(page).getByRole("listitem").first()).toBeVisible();
+  // Suivant reste actif, et dit en alerte pourquoi rien ne passe.
+  await suivant(page).click();
+  await expect(alerte(page, "L’automate ne répond pas. Réessaie dans un instant.")).toBeVisible();
 
   await page.unroute(versLeMoteur);
   await expect(etat).toHaveAccessibleName(/^Antenne : En onde/, { timeout: 15_000 });
+  await expect(alerte(page, "Automate injoignable")).toHaveCount(0);
+  await expect(antenne(page)).not.toContainText("Sans nouvelles");
+  await expect(reste).toHaveAccessibleName(/^restant \d/);
+  await expect(avis(page, vieillie)).toHaveCount(0, { timeout: 10_000 });
+});
+
+test("moteur injoignable pendant un direct : la carte reste celle du direct", async ({ page }) => {
+  // Le moteur de démo n'a pas de harbor : son relevé dit qu'un encodeur tient l'antenne.
+  await page.route("**/live.json", async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    const reponse = await route.fetch();
+    const releve = await reponse.json();
+    await route.fulfill({ response: reponse, json: { ...releve, source: "harbor", title: "Direct du banc", artist: "Studio" } });
+  });
+  await seConnecter(page, "animateur");
+  const encodeur = antenne(page).getByRole("button", { name: "Infos encodeur" });
+  await expect(encodeur).toBeVisible();
+  await expect(antenne(page)).toContainText("Direct du banc");
+  await page.route(versLeMoteur, (route) => route.abort("connectionrefused"));
+
+  await expect(antenne(page)).toContainText("Sans nouvelles", { timeout: 15_000 });
+  await expect(antenne(page).getByRole("timer")).toHaveAccessibleName("inconnu —");
+  // Le dernier titre connu reste, et les gestes restent ceux du direct.
+  await expect(antenne(page)).toContainText("Direct du banc");
+  await expect(encodeur).toBeVisible();
+  await expect(antenne(page).getByRole("button", { name: /^(Suivant|Passer en direct)/ })).toHaveCount(0);
 });
 
 test("moteur muet, pupitre ouvert : la barre le dit, puis repart", async ({ page }) => {
@@ -143,6 +271,24 @@ test("moteur injoignable pour la file seule : la file ne se dit pas vide", async
   await expect(file(page).getByRole("listitem").first()).toBeVisible({ timeout: 10_000 });
 });
 
+test("moteur injoignable pour la file seule, déjà lue : ses lignes restent, vieillies", async ({ page }) => {
+  await seConnecter(page, "animateur");
+  await expect(file(page).getByRole("listitem").first()).toBeVisible();
+  const conducteur = "**/autodj/conducteur.json*";
+  const vieillie = "La file ne répond plus : ces lignes peuvent avoir changé.";
+  await page.route(conducteur, (route) => route.abort("connectionrefused"));
+
+  await expect(avis(page, vieillie)).toBeVisible({ timeout: 10_000 });
+  await expect(file(page).getByRole("listitem").first()).toBeVisible();
+  // Le reste du pupitre se lit encore : il ne se dit pas sans nouvelles.
+  await expect(alerte(page, "Automate injoignable")).toHaveCount(0);
+  await expect(antenne(page)).not.toContainText("Sans nouvelles");
+
+  await page.unroute(conducteur);
+  await expect(avis(page, vieillie)).toHaveCount(0, { timeout: 10_000 });
+  await expect(file(page).getByRole("listitem").first()).toBeVisible();
+});
+
 test("route absente : sans les émissions ni l’état de l’antenne, le pupitre reste", async ({ page }) => {
   const absentes = new Map<string, number>();
   await page.route(/\/antenne\/(emissions|state)\.json/, async (route) => {
@@ -169,6 +315,6 @@ test("route absente pendant un geste : la console le dit en français", async ({
   await page.route("**/live.json", (route) => (passer(route) ? versUneRouteAbsente(route) : route.continue()));
 
   await suivant(page).click();
-  await expect(avis(page, "Cette action demande un moteur plus récent. Mets à jour le moteur.")).toBeVisible();
-  await expect(avis(page, /requested URL/)).toHaveCount(0);
+  await expect(alerte(page, "Cette action demande un moteur plus récent. Mets à jour le moteur.")).toBeVisible();
+  await expect(page.getByText(/requested URL/)).toHaveCount(0);
 });
