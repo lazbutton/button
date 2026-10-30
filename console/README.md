@@ -45,7 +45,8 @@ Les règles de l'interface et les pièges du code sont dans [`AGENTS.md`](AGENTS
 ## Image Docker
 
 `ghcr.io/lazbutton/button-console`, publiée par la CI à chaque changement de
-`console/` sur `main`. nginx sert l'application et relaie l'API :
+`console/` sur `main`, hors fichiers Markdown. nginx sert l'application et
+relaie l'API :
 
 | Variable | Rôle | Défaut |
 |---|---|---|

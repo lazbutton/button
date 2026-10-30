@@ -8,15 +8,21 @@ on:
     branches: [main]
     paths:
       - "services/**"
+      - "!services/**/*.md"
       - "deploy/scripts/**"
+      - "!deploy/scripts/**/*.md"
       - "deploy/share/**"
+      - "!deploy/share/**/*.md"
       - "deploy/compose.yml"
       - ".github/workflows/services.yml"
   pull_request:
     paths:
       - "services/**"
+      - "!services/**/*.md"
       - "deploy/scripts/**"
+      - "!deploy/scripts/**/*.md"
       - "deploy/share/**"
+      - "!deploy/share/**/*.md"
       - "deploy/compose.yml"
       - ".github/workflows/services.yml"
   workflow_dispatch:
