@@ -28,7 +28,7 @@ from radiotomate.scheduler.rundown import (
     MAX_HORIZON_MIN,
     MIN_HORIZON_MIN,
 )
-from radiotomate.scheduler_api import Scheduler
+from radiotomate.scheduler_api import Scheduler, SchedulerUnavailableError
 from radiotomate.services.autodj import (
     apply_clock,
     clock_payload,
@@ -325,7 +325,11 @@ async def conducteur_fire_now_json():
     deny = _desk_live_forbidden()
     if deny:
         return deny
-    from radiotomate.interface.live import harbor_busy_response, harbor_is_live
+    from radiotomate.interface.live import (
+        harbor_busy_response,
+        harbor_is_live,
+        scheduler_unavailable_response,
+    )
 
     if harbor_is_live():
         return harbor_busy_response()
@@ -337,16 +341,19 @@ async def conducteur_fire_now_json():
 
     sound = await Sound.from_media_path(g.dbsession, path)
     scheduler = Scheduler.get()
-    if sound is not None:
-        await scheduler.push_sound(sound.cart_id, sound.id)
-    else:
-        await insert_desk_item(g.dbsession, data)
-        await scheduler.push_path(
-            path,
-            artist=str(data.get("artist") or ""),
-            title=str(data.get("title") or ""),
-            kind=str(data.get("kind") or "son"),
-        )
+    try:
+        if sound is not None:
+            await scheduler.push_sound(sound.cart_id, sound.id)
+        else:
+            await insert_desk_item(g.dbsession, data)
+            await scheduler.push_path(
+                path,
+                artist=str(data.get("artist") or ""),
+                title=str(data.get("title") or ""),
+                kind=str(data.get("kind") or "son"),
+            )
+    except SchedulerUnavailableError:
+        return scheduler_unavailable_response()
     invalidate_conducteur_cache()
     return jsonify(await _desk_payload())
 

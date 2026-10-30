@@ -12,7 +12,7 @@ from quart_auth import current_user
 from radiotomate.auth import login_required, permission_required
 from radiotomate.interface.autodj import invalidate_conducteur_cache
 from radiotomate.quart import or_shutdown
-from radiotomate.scheduler_api import Scheduler
+from radiotomate.scheduler_api import Scheduler, SchedulerUnavailableError
 from radiotomate.templates import render_macro as general_render_macro
 
 _log = logging.getLogger(__name__)
@@ -48,6 +48,10 @@ def harbor_is_live(snapshot: dict | None = None) -> bool:
 
 def harbor_busy_response():
     return jsonify({"error": "Direct à l'antenne.", "code": "harbor_live"}), 409
+
+
+def scheduler_unavailable_response():
+    return jsonify({"error": "scheduler_unavailable"}), 502
 
 
 def _float_field(value: object, default: float = 0.0) -> float:
@@ -217,7 +221,10 @@ async def skip():
 async def skip_json():
     if not current_user.user.can_live():
         return jsonify({"error": "forbidden"}), 403
-    await Scheduler.get().skip()
+    try:
+        await Scheduler.get().skip()
+    except SchedulerUnavailableError:
+        return scheduler_unavailable_response()
     invalidate_conducteur_cache()
     return jsonify({"ok": True})
 
@@ -228,7 +235,7 @@ async def antenne_state_json():
     """Antenna health for the console (playout, Icecast outputs, incidents…)."""
     state = await Scheduler.get().state()
     if state is None:
-        return jsonify({"error": "scheduler_unavailable"}), 502
+        return scheduler_unavailable_response()
     return jsonify(state)
 
 

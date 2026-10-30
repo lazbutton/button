@@ -2,9 +2,14 @@ import type { Page, Route } from "@playwright/test";
 import { DEFAULT_SOURCE_URL, type Brand } from "../src/lib/brand.ts";
 import { monitorSources, sourceById } from "../src/lib/monitorSource.ts";
 import { antenne, expect, seConnecter, tenirLAntenne, test } from "./banc.ts";
+import { engineRoutes } from "./routes.ts";
 
 // La barre du haut, la même sur toutes les pages : ce qui passe, l'état de
 // l'antenne, le casque et le compte.
+
+// Ce que le relais envoie au moteur : le reste vient de la console.
+const MOTEUR = new RegExp(`^/(${engineRoutes})`);
+const versLeMoteur = (url: URL) => MOTEUR.test(url.pathname);
 
 const barre = (page: Page) => page.getByRole("banner");
 const casque = (page: Page) => barre(page).getByRole("button", { name: /^(Écouter au casque|Arrêter l’écoute)/ });
@@ -72,6 +77,40 @@ test("la barre dit ce qui passe, et l’état de l’antenne s’ouvre en détai
   await enCours.click();
   await expect(page).toHaveURL(/\/antenne$/);
   await expect(antenne(page)).toBeVisible();
+});
+
+test("moteur injoignable : le titre en cours dit qu’il n’a plus de nouvelles, puis repart", async ({ page }) => {
+  // Le moteur de démo change de titre toutes les quatre secondes sur un jingle :
+  // le relevé garde un titre fixe, que la barre doit garder après la panne.
+  await page.route("**/live.json", async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    const reponse = await route.fetch();
+    const releve = await reponse.json();
+    await route.fulfill({ response: reponse, json: { ...releve, title: "Titre du banc", artist: "Studio" } });
+  });
+  await seConnecter(page, "animateur");
+  // Loin du pupitre, la barre seule dit ce qui passe.
+  await page.getByRole("navigation", { name: "Console" }).getByRole("link", { name: "Conducteur" }).click();
+  await expect(page).toHaveURL(/\/conducteur$/);
+  const enCours = barre(page).getByRole("link", { name: /^(À l’antenne|Sans nouvelles)/ });
+  const decompte = /^À l’antenne : Titre du banc, Studio, reste \d+:\d{2}\. Ouvrir l’antenne\.$/;
+  await expect(enCours).toHaveAccessibleName(decompte);
+  await page.route(versLeMoteur, (route) => route.abort("connectionrefused"));
+
+  await expect(barre(page).getByRole("button", { name: /^Antenne : / })).toHaveAccessibleName(
+    "Antenne : Automate injoignable. Santé : état indisponible.",
+    { timeout: 15_000 },
+  );
+  // Le dernier titre connu reste, sans son compte à rebours, et dit depuis quand il n'est plus lu.
+  await expect(enCours).toHaveAccessibleName(
+    /^Sans nouvelles depuis \d{2}:\d{2}\. Dernier titre connu : Titre du banc, Studio\. Ouvrir l’antenne\.$/,
+  );
+  await expect(enCours).toContainText(/Sans nouvelles depuis \d{2}:\d{2}$/);
+  await expect(enCours).not.toContainText(/−\d+:\d{2}/);
+
+  await page.unroute(versLeMoteur);
+  await expect(enCours).toHaveAccessibleName(decompte, { timeout: 15_000 });
+  await expect(enCours).not.toContainText("Sans nouvelles");
 });
 
 test("écouter l’antenne au casque, puis arrêter", async ({ page }) => {
