@@ -163,6 +163,8 @@ export type ListenState = {
   kind: "icecast" | "files" | "harbor";
   fileMissing: boolean;
   fileLoading: boolean;
+  /** Flux : la dernière connexion a échoué, le casque réessaie seul. */
+  streamDown: boolean;
   /** Fichiers : secondes avant que l'horloge lance le titre. */
   startsInS: number | null;
   lagMs: number | null;
@@ -172,6 +174,7 @@ export type ListenState = {
 export function listenHint(state: ListenState, source: string): string {
   if (state.muted) return `Écouter au casque : ${source}`;
   if (state.fileMissing) return "Fichier du conducteur introuvable";
+  if (state.streamDown) return "Le flux ne répond pas : le casque réessaie seul";
   if (state.kind === "harbor") return "Direct plateau : le casque suit l'antenne";
   if (state.kind === "files") {
     if (state.fileLoading) return "Décodage du fichier…";

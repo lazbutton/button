@@ -128,6 +128,7 @@ test("headphone hints", () => {
     kind: "icecast",
     fileMissing: false,
     fileLoading: false,
+    streamDown: false,
     startsInS: null,
     lagMs: 850,
   };
@@ -136,4 +137,20 @@ test("headphone hints", () => {
   assert.equal(listenHint({ ...base, kind: "files", startsInS: 12 }, "x"), "Le titre démarre dans 0:12");
   assert.equal(listenHint({ ...base, kind: "files", lagMs: -40 }, "x"), "Écart avec l'horloge : 40 ms");
   assert.equal(listenHint({ ...base, kind: "files", fileMissing: true }, "x"), "Fichier du conducteur introuvable");
+});
+
+test("a stream that does not answer says so while listening", () => {
+  const down: ListenState = {
+    muted: false,
+    kind: "icecast",
+    fileMissing: false,
+    fileLoading: false,
+    streamDown: true,
+    startsInS: null,
+    lagMs: null,
+  };
+  assert.equal(listenHint(down, "x"), "Le flux ne répond pas : le casque réessaie seul");
+  assert.equal(listenHint({ ...down, kind: "harbor" }, "x"), "Le flux ne répond pas : le casque réessaie seul");
+  // Muet, le bouton propose d'écouter : l'échec se dira à l'écoute.
+  assert.equal(listenHint({ ...down, muted: true }, "Antenne publique"), "Écouter au casque : Antenne publique");
 });
