@@ -29,7 +29,11 @@ from radiotomate.scheduler.rundown import (
     MAX_HORIZON_MIN,
     MIN_HORIZON_MIN,
 )
-from radiotomate.scheduler_api import Scheduler, SchedulerUnavailableError
+from radiotomate.scheduler_api import (
+    PlayoutUnavailableError,
+    Scheduler,
+    SchedulerUnavailableError,
+)
 from radiotomate.services.autodj import (
     apply_clock,
     clock_payload,
@@ -330,6 +334,7 @@ async def conducteur_fire_now_json():
         harbor_busy_response,
         harbor_is_live,
         playout_rejected_response,
+        playout_unavailable_response,
         scheduler_unavailable_response,
     )
 
@@ -357,6 +362,8 @@ async def conducteur_fire_now_json():
             )
     except SchedulerUnavailableError:
         return scheduler_unavailable_response()
+    except PlayoutUnavailableError:
+        return playout_unavailable_response()
     except RuntimeError:
         return playout_rejected_response()
     if sound is None:

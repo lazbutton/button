@@ -42,9 +42,18 @@ if TYPE_CHECKING:
 
 _log = logging.getLogger(__name__)
 
+# An antenna order waits for the scheduler's own attempts on the playout (three
+# of 5 s at most, see PlayoutGateway): giving up sooner, the interface would not
+# know whether the order passed.
+ORDER_TIMEOUT = httpx.Timeout(5.0, read=20.0)
+
 
 class SchedulerUnavailableError(Exception):
     """The scheduler process did not answer: stopped, or too slow."""
+
+
+class PlayoutUnavailableError(RuntimeError):
+    """The scheduler answered, but the playout did not: stopped, or too slow."""
 
 
 class Scheduler:
@@ -107,8 +116,34 @@ class Scheduler:
             _log.warning("scheduler %s %s failed: %r", method, path, exc)
             raise SchedulerUnavailableError(repr(exc)) from exc
 
+    async def _order(self, method: str, path: str, **kwargs) -> httpx.Response:
+        """
+        An antenna order. Raises SchedulerUnavailableError or
+        PlayoutUnavailableError when the scheduler or the playout did not answer,
+        RuntimeError when one of them refused the order.
+        """
+        result = await self._request(method, path, timeout=ORDER_TIMEOUT, **kwargs)
+        if result.status_code == 200:
+            return result
+        _log.error(
+            "scheduler %s %s: HTTP %s %s",
+            method,
+            path,
+            result.status_code,
+            result.text,
+        )
+        try:
+            body = result.json()
+        except ValueError:
+            body = None
+        if not isinstance(body, dict):
+            raise RuntimeError(result.text or f"HTTP {result.status_code}")
+        if body.get("error") == "playout_unavailable":
+            raise PlayoutUnavailableError("Le playout ne répond pas.")
+        raise RuntimeError(body.get("detail") or result.text)
+
     async def skip(self):
-        await self._request("DELETE", "/live")
+        await self._order("DELETE", "/live")
 
     async def state(self) -> dict | None:
         """Antenna state (`/antenne/state.json`) or None when unreachable."""
@@ -140,17 +175,7 @@ class Scheduler:
         return
 
     async def flush_queues(self) -> None:
-        try:
-            result = await self.client.post("/queues/flush")
-        except httpx.HTTPError as exc:
-            _log.warning("flush queues failed: %s", exc)
-            return
-        if result.status_code != 200:
-            _log.warning(
-                "flush queues HTTP %s: %s",
-                result.status_code,
-                result.text,
-            )
+        await self._order("POST", "/queues/flush")
 
     async def live(self) -> AsyncGenerator[dict, None]:
         sleeptime = 10
@@ -197,30 +222,11 @@ class Scheduler:
 
     async def push_cart(self, cart_id: int):
         _log.debug("Pushing cart %d now", cart_id)
-        result = await self._request("POST", f"/schedule/{cart_id}/now")
-        if result.status_code != 200:
-            _log.error(
-                "Error while pushing cart %d: %s %s",
-                cart_id,
-                result.status_code,
-                result.text,
-            )
-            raise RuntimeError(result.text or f"HTTP {result.status_code}")
+        await self._order("POST", f"/schedule/{cart_id}/now")
 
     async def push_sound(self, cart_id: int, sound_id: int):
         _log.debug("Pushing cart %d sound %d now", cart_id, sound_id)
-        result = await self._request(
-            "POST", f"/schedule/{cart_id}/sounds/{sound_id}/now"
-        )
-        if result.status_code != 200:
-            _log.error(
-                "Error while pushing sound %d of cart %d: %s %s",
-                sound_id,
-                cart_id,
-                result.status_code,
-                result.text,
-            )
-            raise RuntimeError(result.text or f"HTTP {result.status_code}")
+        await self._order("POST", f"/schedule/{cart_id}/sounds/{sound_id}/now")
 
     async def push_path(
         self,
@@ -231,19 +237,11 @@ class Scheduler:
         kind: str = "son",
     ):
         _log.debug("Pushing bank path now: %s", path)
-        result = await self._request(
+        await self._order(
             "POST",
             "/schedule/path/now",
             json={"path": path, "artist": artist, "title": title, "kind": kind},
         )
-        if result.status_code != 200:
-            _log.error(
-                "Error while pushing path %s: %s %s",
-                path,
-                result.status_code,
-                result.text,
-            )
-            raise RuntimeError(result.text or f"HTTP {result.status_code}")
 
     async def queue_analysis(self, sound_ids: list[int]):
         _log.debug("Queueing sounds for analysis: %r", sound_ids)

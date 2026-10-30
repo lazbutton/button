@@ -8,6 +8,7 @@ from http.client import HTTPException
 from hypercorn.utils import ShutdownError
 from quart import Blueprint, g, jsonify, make_response, request
 from quart_auth import current_user
+from werkzeug.exceptions import BadRequest
 
 from radiotomate.auth import login_required, permission_required
 from radiotomate.interface.autodj import invalidate_conducteur_cache
@@ -52,6 +53,11 @@ def harbor_busy_response():
 
 def scheduler_unavailable_response():
     return jsonify({"error": "scheduler_unavailable"}), 502
+
+
+def playout_unavailable_response():
+    # The console knows this code, and says the playout did not answer.
+    return jsonify({"error": "playout_unavailable"}), 502
 
 
 def playout_rejected_response():
@@ -218,7 +224,10 @@ async def watch_livedata_task():
 @blueprint.delete("/live")
 @permission_required("live")
 async def skip():
-    await Scheduler.get().skip()
+    try:
+        await Scheduler.get().skip()
+    except RuntimeError as exc:
+        raise BadRequest(str(exc)) from exc
     invalidate_conducteur_cache()
     return "", 200
 
@@ -232,6 +241,10 @@ async def skip_json():
         await Scheduler.get().skip()
     except SchedulerUnavailableError:
         return scheduler_unavailable_response()
+    except RuntimeError:
+        # PlayoutUnavailableError, or an error a skip should never get: the
+        # antenna is to be checked before skipping again.
+        return playout_unavailable_response()
     invalidate_conducteur_cache()
     return jsonify({"ok": True})
 
@@ -252,6 +265,12 @@ async def antenne_flush_json():
     """Empty the Liquidsoap queues (the clock refills them on the next tick)."""
     if not current_user.user.can_live():
         return jsonify({"error": "forbidden"}), 403
-    await Scheduler.get().flush_queues()
+    try:
+        await Scheduler.get().flush_queues()
+    except SchedulerUnavailableError:
+        return scheduler_unavailable_response()
+    except RuntimeError:
+        # As for a skip: PlayoutUnavailableError, or an unexpected error.
+        return playout_unavailable_response()
     invalidate_conducteur_cache()
     return jsonify({"ok": True})

@@ -116,12 +116,12 @@ class PlayoutGateway:
             except httpx.TransportError as exc:
                 last = PlayoutResult(
                     ok=False,
-                    error=str(exc),
+                    error=str(exc) or type(exc).__name__,
                     attempts=attempt,
                     transient=True,
                 )
                 _log.warning(
-                    "Playout %s %s attempt %d/%d failed: %s",
+                    "Playout %s %s attempt %d/%d failed: %r",
                     method,
                     path,
                     attempt,
@@ -188,6 +188,17 @@ class PlayoutGateway:
 
 def _retryable_status(status_code: int) -> bool:
     return status_code in {408, 425, 429} or status_code >= 500
+
+
+def failure_body(result: PlayoutResult) -> dict:
+    """
+    Body of a scheduler route whose order the playout did not carry out:
+    ``playout_unavailable`` when it did not answer, ``playout_rejected`` when it
+    answered an error.
+    """
+    error = "playout_rejected" if result.status_code else "playout_unavailable"
+    said = result.payload.get("error") if isinstance(result.payload, dict) else None
+    return {"ok": False, "error": error, "detail": str(said or result.error or "")}
 
 
 def gateway_for(client: httpx.AsyncClient) -> PlayoutGateway:

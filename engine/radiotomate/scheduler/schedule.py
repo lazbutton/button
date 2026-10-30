@@ -16,7 +16,12 @@ from werkzeug.exceptions import BadRequest
 from radiotomate.auth import token_required
 from radiotomate.enums import CartMode
 from radiotomate.models import Cart, Sound
-from radiotomate.scheduler.playout import PlayoutGateway, gateway_for
+from radiotomate.scheduler.playout import (
+    PlayoutGateway,
+    PlayoutResult,
+    failure_body,
+    gateway_for,
+)
 
 _log = logging.getLogger(__name__)
 
@@ -41,17 +46,21 @@ async def skip_cart(session: ormSession, current_app, sound_id: int | None = Non
         )
 
 
-async def push_cart(session: ormSession, current_app, cart_id: int):
+async def push_cart(
+    session: ormSession,
+    current_app,
+    cart_id: int,
+) -> PlayoutResult | None:
+    """The playout's answer, or None when there was nothing to push."""
     _log.debug("starting push_cart(%d)", cart_id)
     gateway = gateway_for(current_app.config["PLAYOUT_CLIENT"])
     cart = await Cart.from_id(session, cart_id, load_sounds=True)
     if not cart:
         _log.warning(f"Scheduled cart #{cart_id} not found")
-        return
+        return None
     if cart.mode == CartMode.RELAY:
-        await _push_cart_relay(cart, gateway, current_app)
-    else:
-        await _push_cart_sound(cart, gateway, current_app, session)
+        return await _push_cart_relay(cart, gateway, current_app)
+    return await _push_cart_sound(cart, gateway, current_app, session)
 
 
 async def push_named_sound(
@@ -59,20 +68,21 @@ async def push_named_sound(
     current_app,
     cart_id: int,
     sound_id: int,
-):
+) -> PlayoutResult | None:
+    """The playout's answer, or None when the cart or the sound does not exist."""
     _log.debug("starting push_named_sound(%d, %d)", cart_id, sound_id)
     gateway = gateway_for(current_app.config["PLAYOUT_CLIENT"])
     cart = await Cart.from_id(session, cart_id, load_sounds=True)
     if not cart:
         _log.warning("Cart #%d not found", cart_id)
-        return False
+        return None
     sound = next((row for row in cart.sounds if row.id == sound_id), None)
     if not sound:
         _log.warning("Sound #%d not in cart #%d", sound_id, cart_id)
-        return False
-    await _enqueue_sound(cart, sound, gateway, current_app)
+        return None
+    result = await _enqueue_sound(cart, sound, gateway, current_app)
     await session.commit()
-    return True
+    return result
 
 
 async def push_bank_path(  # noqa: PLR0913
@@ -83,7 +93,7 @@ async def push_bank_path(  # noqa: PLR0913
     artist: str,
     title: str,
     kind: str = "son",
-) -> bool:
+) -> PlayoutResult:
     _ = session
     gateway = gateway_for(current_app.config["PLAYOUT_CLIENT"])
     if kind == "jingle":
@@ -102,9 +112,9 @@ async def push_bank_path(  # noqa: PLR0913
     )
     if result.ok:
         _log.info("Pushed bank path %s on %s as RID %s", path, queue, result.payload)
-        return True
-    _log.error("Error while pushing bank path %s: %s", path, result.error)
-    return False
+    else:
+        _log.error("Error while pushing bank path %s: %s", path, result.error)
+    return result
 
 
 async def _push_cart_sound(
@@ -112,18 +122,23 @@ async def _push_cart_sound(
     gateway: PlayoutGateway,
     current_app,
     session: ormSession,
-):
-    pushed = 0
+) -> PlayoutResult | None:
+    """The answer for the first sound: the cart is on air once it is queued."""
+    results: list[PlayoutResult] = []
     for _ in range(2):
         sound = cart.next_sound()
         if not sound:
             break
-        await _enqueue_sound(cart, sound, gateway, current_app)
-        pushed += 1
-    if not pushed:
+        result = await _enqueue_sound(cart, sound, gateway, current_app)
+        results.append(result)
+        if not result.ok:
+            # next_sound() would give the same sound again, its last_played unset
+            break
+    if not results:
         _log.warning("Scheduled cart %d:%s has no next sound", cart.id, cart.title)
-        return
+        return None
     await session.commit()
+    return results[0]
 
 
 async def _enqueue_sound(
@@ -131,7 +146,7 @@ async def _enqueue_sound(
     sound: Sound,
     gateway: PlayoutGateway,
     current_app,
-):
+) -> PlayoutResult:
     queue = cart.playout_queue()
     result = await gateway.queue(
         queue,
@@ -166,6 +181,7 @@ async def _enqueue_sound(
             sound.path,
             result.error,
         )
+    return result
 
 
 def _timer_key(cart: Cart) -> str:
@@ -185,7 +201,11 @@ def arm_max_duration(app, cart: Cart, *, sound_id: int | None = None) -> datetim
     return when
 
 
-async def _push_cart_relay(cart: Cart, gateway: PlayoutGateway, current_app):
+async def _push_cart_relay(
+    cart: Cart,
+    gateway: PlayoutGateway,
+    current_app,
+) -> PlayoutResult:
     result = await gateway.relay_start(cart.url)
     if result.ok:
         _log.info(
@@ -201,7 +221,8 @@ async def _push_cart_relay(cart: Cart, gateway: PlayoutGateway, current_app):
                 "relay cart %d has no maximum duration! might play forever.", cart.id
             )
     else:
-        _log.error("Error while pushing relay cart %d:%s: %s", cart.id, result.error)
+        _log.error("Error while pushing relay cart %d: %s", cart.id, result.error)
+    return result
 
 
 @blueprint.put("/schedule/<cart_id>")
@@ -249,7 +270,9 @@ async def push_now(cart_id: str):
     cart = await Cart.from_id(g.dbsession, cid)
     if not cart:
         return f"cart #{cart_id} not found", 404
-    await push_cart(g.dbsession, current_app, cid)
+    result = await push_cart(g.dbsession, current_app, cid)
+    if result is not None and not result.ok:
+        return failure_body(result), 502
     return "", 200
 
 
@@ -261,9 +284,11 @@ async def push_sound_now(cart_id: str, sound_id: str):
         sid = int(sound_id)
     except ValueError:
         return "cart or sound not found", 404
-    ok = await push_named_sound(g.dbsession, current_app, cid, sid)
-    if not ok:
+    result = await push_named_sound(g.dbsession, current_app, cid, sid)
+    if result is None:
         return "cart or sound not found", 404
+    if not result.ok:
+        return failure_body(result), 502
     return "", 200
 
 
@@ -272,9 +297,9 @@ async def push_sound_now(cart_id: str, sound_id: str):
 async def flush_playout_queues():
     gateway = gateway_for(current_app.config["PLAYOUT_CLIENT"])
     result = await gateway.flush_queues()
-    payload = result.payload if isinstance(result.payload, dict) else {}
     if not result.ok:
-        return {"ok": False, "error": result.error or "playout_unavailable"}, 502
+        return failure_body(result), 502
+    payload = result.payload if isinstance(result.payload, dict) else {}
     return {"ok": True, "queues": payload}
 
 
@@ -287,7 +312,7 @@ async def push_path_now():
     path = str(data.get("path") or "").strip()
     if not path:
         raise BadRequest("path required")
-    ok = await push_bank_path(
+    result = await push_bank_path(
         g.dbsession,
         current_app,
         path,
@@ -295,6 +320,6 @@ async def push_path_now():
         title=str(data.get("title") or ""),
         kind=str(data.get("kind") or "son"),
     )
-    if not ok:
-        return "playout rejected path", 502
+    if not result.ok:
+        return failure_body(result), 502
     return "", 200
