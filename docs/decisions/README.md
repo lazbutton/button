@@ -18,6 +18,7 @@ Une décision s'écrit quand un choix coûte cher à défaire, ou quand quelqu'u
 | [0010](0010-moteur-et-console-se-deploient-a-part.md) | Le moteur et la console se déploient à part |
 | [0011](0011-liste-des-routes-dans-nginx.md) | Les routes du moteur passent par une liste dans nginx |
 | [0012](0012-l-interface-est-en-francais.md) | L'interface est en français |
+| [0013](0013-bloquer-l-adresse-jamais-le-compte.md) | Un échec de connexion bloque l'adresse, jamais le compte |
 
 ## Le gabarit
 

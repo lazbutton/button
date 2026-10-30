@@ -105,14 +105,14 @@ M · dépend de rien · conflits : `engine/radiotomate/interface/login.py`, `con
 
 - **Pourquoi** : rien ne freine qui essaie des mots de passe sur une console exposée.
 - **Aujourd'hui** : `interface/login.py` sert `POST /login`, le formulaire des pages HTMX, et `POST /login.json`, pour la console, sans aucune limite.
-- **À trancher avant de coder** : un blocage par identifiant seul permet à un inconnu de bloquer le compte d'un animateur juste avant son direct. Proposition : bloquer par adresse IP et par couple adresse et identifiant ; pour l'identifiant seul, un seuil plus haut, par exemple 20 échecs, et un blocage court.
+- **Décidé** : on bloque l'adresse, jamais l'identifiant. Sinon, un inconnu bloquerait le compte d'un animateur juste avant son direct. Voir la décision [0013](../decisions/0013-bloquer-l-adresse-jamais-le-compte.md).
 - **À faire** :
-  1. Un module pur, `domain/login_guard.py`. Les échecs comptent sur 15 minutes. Au cinquième, blocage de 15 minutes, doublé à chaque récidive, 24 heures au plus. En mémoire : un redémarrage remet à zéro.
+  1. Un module pur, `domain/login_guard.py`. Les échecs se comptent par adresse, sur 15 minutes. Au cinquième, l'adresse est bloquée 15 minutes, puis le double à chaque récidive, 24 heures au plus. En mémoire : un redémarrage remet à zéro.
   2. `/login.json` répond `429 {"error": "too_many_attempts", "retry_in": N}`, en secondes. `/login` affiche un message.
   3. nginx : `limit_req` sur des blocs exacts `= /login` et `= /login.json`, 5 par minute, rafale de 5. nginx pose l'adresse réelle du client, derrière un reverse proxy de confiance réglable (module `real_ip`), et la transmet au moteur. Le moteur ne croit cet en-tête que venant de nginx.
   4. Console : « Trop d'essais. Réessaie dans N minutes. » dans `SessionGate.tsx`.
 - **Tests** : `engine/tests/scheduler/test_login_guard.py` pour le domaine, avec une horloge simulée ; le 429 dans un test des routes JSON ; le message dans un test de la console.
-- **Accepté quand** : six mauvais mots de passe de suite donnent un 429 avec `retry_in`. Le bon mot de passe passe après le délai. Une autre adresse n'est pas bloquée.
+- **Accepté quand** : six mauvais mots de passe de suite depuis une adresse donnent un 429 avec `retry_in`, quel que soit l'identifiant tapé. Le bon mot de passe passe après le délai. Depuis une autre adresse, le même identifiant se connecte.
 
 #### SEC-04 · Identifiants d'encodeur dédiés
 
