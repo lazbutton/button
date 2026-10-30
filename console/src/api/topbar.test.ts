@@ -84,6 +84,14 @@ test("before the first answer, loading or unreachable", () => {
   });
 });
 
+test("an engine that stops answering is not hidden by its last snapshot", () => {
+  assert.deepEqual(topAir({ live: playing, antenne: state(), loading: false, unreachable: true }), {
+    tone: "alert",
+    label: "Automate injoignable",
+    detail: "",
+  });
+});
+
 test("audience counts public mounts, never the studio headphones", () => {
   assert.equal(audience(state()), 12);
   const local = state({ listeners: state().listeners.filter((row) => row.host === "icecast") });

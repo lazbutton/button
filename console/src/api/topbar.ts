@@ -54,10 +54,9 @@ export function topAir(input: {
   unreachable: boolean;
 }): TopAir {
   const { live, antenne } = input;
-  if (!live) {
-    if (input.unreachable) return { tone: "alert", label: "Automate injoignable", detail: "" };
-    if (input.loading) return { tone: "off", label: "Connexion…", detail: "" };
-  }
+  // Le dernier relevé ne vaut plus rien quand l'automate ne répond plus.
+  if (input.unreachable) return { tone: "alert", label: "Automate injoignable", detail: "" };
+  if (!live && input.loading) return { tone: "off", label: "Connexion…", detail: "" };
   const offline = !live || live.status === "offline";
   const harbor = !offline && isHarborSource(live?.source);
   const banner = airBanner({

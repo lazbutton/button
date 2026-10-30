@@ -93,18 +93,19 @@ test("moteur injoignable pendant un geste : la console le dit", async ({ page })
   await expect(avis(page, "L’automate ne répond pas. Réessaie dans un instant.")).toBeVisible();
 });
 
-test.fixme("moteur injoignable, pupitre ouvert : la barre le dit", async ({ page }) => {
-  // Défaut de la console : useApiJson ne signale un moteur injoignable que s'il
-  // n'a encore rien lu. Pupitre chargé, la barre garde « En onde, Santé : tout va
-  // bien », et le compte à rebours s'arrête à 0:00 sans un mot.
+test("moteur injoignable, pupitre ouvert : la barre le dit, puis repart", async ({ page }) => {
   await seConnecter(page, "animateur");
   await expect(suivant(page)).toBeEnabled();
+  const etat = page.getByRole("banner").getByRole("button", { name: /^Antenne : / });
   await page.route(versLeMoteur, (route) => route.abort("connectionrefused"));
 
-  await expect(page.getByRole("banner").getByRole("button", { name: /^Antenne : / })).toHaveAccessibleName(
-    /injoignable/,
-    { timeout: 15_000 },
-  );
+  // Le dernier relevé, encore à l'écran, ne fait pas croire que tout va bien.
+  await expect(etat).toHaveAccessibleName("Antenne : Automate injoignable. Santé : état indisponible.", {
+    timeout: 15_000,
+  });
+
+  await page.unroute(versLeMoteur);
+  await expect(etat).toHaveAccessibleName(/^Antenne : En onde/, { timeout: 15_000 });
 });
 
 test.fixme("moteur injoignable pour la file seule : la file ne se dit pas vide", async ({ page }) => {
