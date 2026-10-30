@@ -17,6 +17,9 @@ deploy/data/
 deploy/media/
 deploy/compose.override.yml
 deploy/local/data/
+# Parcours de la console (scripts/e2e.sh) : un dossier par lancement, avec sa
+# base, ses comptes et leur mot de passe tiré au sort, ses journaux et ses traces
+/.e2e/
 # Added by code-review-graph
 .code-review-graph/
 

@@ -76,6 +76,8 @@ Le scheduler surveille l’antenne (`scheduler/alerts.py`) : silence, playout in
 
 `/health/live` et `/health/ready` existent sur l’interface et le scheduler. L’installateur Podman ajoute les sondes correspondantes, et peut monter la banque (`MEDIA_HOST`, `MEDIA_ROOT`) dans les conteneurs.
 
+`radiotomate interface --port` et `radiotomate scheduler --port` changent le port d’écoute, 6811 et 6822 par défaut. En démo, l’interface tient lieu de scheduler sur son propre port : deux bancs tournent sur une machine.
+
 `beets/compat.py` corrige l’import de Beets 2.5 sous Python 3.14 : l’ioctl de taille de terminal demandait 4 octets, le noyau en écrit 8.
 
 ## Marque et interface
