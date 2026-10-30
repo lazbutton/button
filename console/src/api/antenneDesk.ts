@@ -73,8 +73,24 @@ export type DeskAlert = {
   help: string;
 };
 
-/** Bandeau du pupitre : seulement quand quelque chose ne va pas. */
-export function deskAlert(status: { tone: string; label: string; cause: string }): DeskAlert | null {
+/**
+ * Bandeau du pupitre : seulement quand quelque chose ne va pas. `lastAnswer`,
+ * l'heure de la dernière réponse d'un moteur qui ne répond plus, passe avant le
+ * reste : il date de ce moment-là.
+ */
+export function deskAlert(
+  status: { tone: string; label: string; cause: string },
+  lastAnswer: string | null = null,
+): DeskAlert | null {
+  if (lastAnswer != null) {
+    // L'heure va dans l'aide, annoncée : elle ne change pas tant que dure la panne.
+    return {
+      tone: "problem",
+      title: "Automate injoignable",
+      live: "",
+      help: `Le pupitre ne reçoit plus de nouvelles depuis ${lastAnswer} : le titre et la file affichés peuvent avoir changé.`,
+    };
+  }
   if (status.tone === "silence") {
     return {
       tone: "silence",
