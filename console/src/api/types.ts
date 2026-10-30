@@ -118,6 +118,12 @@ export type User = {
 
 export type UsersResponse = { users: User[] };
 
+/** Le jeton d'encodeur d'un compte : sa date de création, jamais le jeton lui-même. */
+export type StreamTokenState = { created_at: string | null };
+
+/** Un jeton neuf : la seule fois où le moteur le donne. */
+export type NewStreamToken = { token: string; created_at: string };
+
 export type RundownItem = {
   id?: string;
   at: string;

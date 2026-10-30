@@ -38,7 +38,7 @@ La CI lance `pytest` avec `TZ=Europe/Paris`, sans `tests/interface` ni `tests/e2
 
 ## Migrations
 
-- Une migration est `radiotomate/commands/update/vNN.py`, avec `async def upgrade(conn)` et `async def downgrade(conn)`. La dernière est v17. Prendre le numéro libre au moment d'écrire, et le vérifier encore avant de fusionner : deux branches peuvent prendre le même.
+- Une migration est `radiotomate/commands/update/vNN.py`, avec `async def upgrade(conn)` et `async def downgrade(conn)`. La dernière est v18. Prendre le numéro libre au moment d'écrire, et le vérifier encore avant de fusionner : deux branches peuvent prendre le même.
 - Une migration publiée ne se modifie jamais, même pour un nom ou un commentaire.
 - `radiotomate update` applique les migrations, et `--target-version N` redescend. `radiotomate-init` lance `update` à chaque démarrage de la station. La version du schéma est la clé `SCHEMA_VERSION` de la table `settings`.
 - Chaque version passe dans sa propre transaction, avec la mise à jour de `SCHEMA_VERSION` : celle qui échoue ne laisse rien. Une migration ne termine donc jamais la transaction : ni `commit`, ni `rollback`, ni `VACUUM`, ni changement de `journal_mode`. `tests/test_update_atomic.py` le vérifie pour chaque version.

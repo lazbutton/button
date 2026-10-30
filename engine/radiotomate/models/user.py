@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import logging
-from datetime import datetime
+import secrets
+from datetime import UTC, datetime
 
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
@@ -39,6 +42,13 @@ class User(Base):
         MutableDict.as_mutable(JSON),
         default={},
     )  # https://docs.sqlalchemy.org/en/20/dialects/sqlite.html#sqlalchemy.dialects.sqlite.JSON
+    # the encoder's password for the harbor, instead of the account's: only its hash
+    # is kept. Naive UTC, like the new tables
+    stream_token_hash: Mapped[str | None] = mapped_column(String, nullable=True)
+    stream_token_created_at: Mapped[datetime | None] = mapped_column(
+        DATETIME,
+        nullable=True,
+    )
 
     sessions: Mapped[list[Session]] = relationship(  # noqa: F821
         lazy=True,
@@ -88,6 +98,21 @@ class User(Base):
         ph = PasswordHasher()
         self.password = ph.hash(new_password)
 
+    def renew_stream_token(self) -> str:
+        """
+        Make a new encoder token, which replaces the previous one at once, and return
+        it: it can't be read again.
+        """
+        token = secrets.token_hex(16)
+        self.stream_token_hash = _stream_token_hash(token)
+        self.stream_token_created_at = datetime.now(UTC).replace(tzinfo=None)
+        return token
+
+    def check_stream_token(self, token: str) -> bool:
+        if not self.stream_token_hash or not token:
+            return False
+        return hmac.compare_digest(self.stream_token_hash, _stream_token_hash(token))
+
     def update_permissions(self, form: MultiDict):
         permissions = {}
         for perm in PERMISSION_NAMES:
@@ -124,6 +149,11 @@ class User(Base):
 
     def can_autodj(self) -> bool:
         return self.can_admin() or self.permissions.get("autodj", False)
+
+
+def _stream_token_hash(token: str) -> str:
+    # 128 random bits, unlike a password, need no slow hash
+    return hashlib.sha256(token.encode()).hexdigest()
 
 
 class LoggedOutUser:
