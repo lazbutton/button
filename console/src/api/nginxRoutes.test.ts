@@ -117,6 +117,17 @@ test("les fichiers de /assets/ gardent leur cache d'un an", () => {
   assert.match(body, /^\s*add_header Cache-Control "public, max-age=31536000, immutable";$/m);
 });
 
+// Sans Cache-Control, le navigateur devine une durée d'après Last-Modified, et
+// garde un moment l'ancienne console après une mise à jour. Hors de /assets/,
+// un fichier garde son nom d'un build à l'autre : il se revalide à chaque fois.
+test("la page et les fichiers de public/ se revalident à chaque chargement", () => {
+  const files = locationBlocks().filter(([path, body]) => path !== "/assets/" && /^\s*try_files\s/m.test(body));
+  const paths = files.map(([path]) => path);
+  assert.ok(paths.includes("/") && paths.includes("/invitation"), `blocs trouvés : ${paths.join(", ")}`);
+  const stale = files.filter(([, body]) => !/^\s*add_header Cache-Control "no-cache";$/m.test(body)).map(([path]) => path);
+  assert.deepEqual(stale, [], 'add_header Cache-Control "no-cache"; manquant dans console/docker/nginx.conf.template');
+});
+
 test("le fichier inclus pose les en-têtes attendus, aussi sur les erreurs", () => {
   const text = readFileSync(HEADERS, "utf8");
   const lines = text.match(/^add_header .*$/gm) ?? [];
