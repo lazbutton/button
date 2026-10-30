@@ -52,6 +52,7 @@ jobs:
       - run: python test_volume_api.py
       - run: python test_session.py
       - run: python test_init_secrets.py
+      - run: python test_icecast_config.py
 
   docker:
     name: build & push images
