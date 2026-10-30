@@ -65,6 +65,17 @@ async function seDeconnecter(page: Page): Promise<void> {
   await page.getByRole("menuitem", { name: "Se déconnecter" }).click();
 }
 
+/**
+ * La pré-écoute d'un bac. L'élément audio n'a pas de rôle : il se reconnaît au
+ * son reçu, qu'il lit par une adresse blob:. Sa durée dit que le son est
+ * lisible, `joue` qu'il part vraiment.
+ */
+const preEcouteDuBac = (page: Page) =>
+  page.evaluate(() => {
+    const audio = [...document.querySelectorAll("audio")].find((element) => element.src.startsWith("blob:"));
+    return audio ? { duree: audio.duration, joue: !audio.paused } : null;
+  });
+
 test("session expirée pendant un geste : la console le dit", async ({ page }) => {
   await seConnecter(page, "animateur");
   await page.route("**/live.json", (route) =>
@@ -261,10 +272,8 @@ test("moteur muet pendant une pré-écoute : le bac le dit, puis la pré-écoute
   await page.unroute(son);
   await preEcoute.click();
   await expect(page.getByRole("button", { name: "Arrêter la pré-écoute" }).first()).toBeVisible();
-  // L'élément audio n'a pas de rôle : il se reconnaît au son reçu, qu'il lit par une adresse blob:.
-  const duree = () =>
-    page.evaluate(() => [...document.querySelectorAll("audio")].find((audio) => audio.src.startsWith("blob:"))?.duration);
-  await expect.poll(duree).toBeGreaterThan(0);
+  await expect.poll(async () => (await preEcouteDuBac(page))?.duree).toBeGreaterThan(0);
+  await expect.poll(async () => (await preEcouteDuBac(page))?.joue).toBe(true);
 });
 
 test("moteur injoignable, pupitre ouvert : la barre et le pupitre le disent, puis repartent", async ({ page }) => {

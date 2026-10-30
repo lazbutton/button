@@ -26,6 +26,7 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type MouseEvent, type RefObject } from "react";
+import { flushSync } from "react-dom";
 import { audioFilesFromList, filesFromDataTransfer, isFileDrag } from "../../api/audioDrop";
 import { lastPlayedLabel, splitSoundTitle } from "../../api/cartMeta";
 import { deleteCartSounds, type CartImportProgress } from "../../api/cartSounds";
@@ -145,11 +146,19 @@ export function SoundTable({
       if (!url) url = await apiBlob(`/carts/${cartIdRef.current}/sounds/${sound.id}`);
       revokeUrl(objectUrlRef.current);
       objectUrlRef.current = url;
-      setObjectUrl(url);
       playingIdRef.current = sound.id;
-      setPlayingId(sound.id);
-      requestAnimationFrame(() => {
-        void audioRef.current?.play();
+      // L'élément audio prend sa nouvelle source avant play() : après l'attente
+      // du son, React ne la poserait qu'après coup, et play() serait annulé.
+      flushSync(() => {
+        setObjectUrl(url);
+        setPlayingId(sound.id);
+      });
+      void audioRef.current?.play().catch((caught: unknown) => {
+        // Un autre son a pris la place : rien à signaler.
+        if (caught instanceof DOMException && caught.name === "AbortError") return;
+        fail(caught, "Lecture impossible.");
+        playingIdRef.current = null;
+        setPlayingId(null);
       });
       const list = queueRef.current;
       const index = list.findIndex((item) => item.id === sound.id);
