@@ -1,12 +1,13 @@
 import { isEngineUnreachable, isUnreachableStatus } from "./engineUnreachable";
 import { apiCacheClear, apiSharedGet } from "./jsonCache";
 import { isPlayoutUnavailable, PLAYOUT_UNAVAILABLE_MESSAGE } from "./playoutUnavailable";
+import { READ_DEADLINE_MS, withDeadline } from "./readDeadline";
+import { NO_ANSWER_MESSAGE, SEND_DEADLINE_MS, UPLOAD_IDLE_MS, withUploadDeadline } from "./sendDeadline";
 import { isUnknownRoute, UNKNOWN_ROUTE_MESSAGE } from "./unknownRoute";
 
 export const API_PREFIX = import.meta.env.DEV ? "/api" : "";
 
 let csrfToken: string | null = null;
-let csrfPromise: Promise<string> | null = null;
 
 export class ApiAuthError extends Error {
   constructor() {
@@ -38,10 +39,21 @@ export class ApiRequestError extends Error {
   }
 }
 
-function raiseForStatus(response: Response, body?: { error?: string }): never {
+/**
+ * Un geste resté sans réponse dans son délai (`sendDeadline.ts`) : le moteur
+ * l'a peut-être fait. Une ApiRequestError, pour que chaque écran montre son
+ * message tel quel. Sans réponse, pas de statut HTTP : 0.
+ */
+export class ApiNoAnswerError extends ApiRequestError {
+  constructor() {
+    super(0, NO_ANSWER_MESSAGE);
+    this.name = "ApiNoAnswerError";
+  }
+}
+
+function raiseForStatus(response: Pick<Response, "status">, body?: { error?: string }): never {
   if (response.status === 401) {
     csrfToken = null;
-    csrfPromise = null;
     apiCacheClear();
     throw new ApiAuthError();
   }
@@ -61,7 +73,10 @@ function raiseForStatus(response: Response, body?: { error?: string }): never {
 }
 
 async function parseJson<T>(response: Response): Promise<T> {
-  const text = await response.text();
+  return parseJsonText<T>(await response.text());
+}
+
+function parseJsonText<T>(text: string): T {
   if (!text) return undefined as T;
   const trimmed = text.trimStart();
   if (trimmed.startsWith("<") || trimmed.startsWith("<!")) {
@@ -74,39 +89,26 @@ async function parseJson<T>(response: Response): Promise<T> {
   }
 }
 
+// Le jeton se lit comme le reste : avec le délai des lectures, et une seule
+// demande à la fois, que les gestes qui l'attendent partagent. Une demande
+// restée sans réponse ne retient pas le geste suivant.
 async function ensureCsrfToken(): Promise<string> {
   if (csrfToken) return csrfToken;
-  if (!csrfPromise) {
-    csrfPromise = (async () => {
-      let response: Response;
-      try {
-        response = await fetch(`${API_PREFIX}/csrf.json`, {
-          credentials: "include",
-          cache: "no-store",
-        });
-      } catch {
-        throw new ApiUnavailableError();
-      }
-      const payload = await parseJson<{ csrf_token?: string; error?: string }>(response);
-      if (!response.ok) raiseForStatus(response, payload);
-      if (!payload.csrf_token) {
-        throw new ApiRequestError(500, "Jeton CSRF manquant.");
-      }
-      csrfToken = payload.csrf_token;
-      return csrfToken;
-    })().finally(() => {
-      csrfPromise = null;
-    });
+  const payload = await apiGet<{ csrf_token?: string }>("/csrf.json");
+  if (!payload?.csrf_token) {
+    throw new ApiRequestError(500, "Jeton CSRF manquant.");
   }
-  return csrfPromise;
+  csrfToken = payload.csrf_token;
+  return csrfToken;
 }
 
-async function apiGetOnce<T>(path: string): Promise<T> {
+async function apiGetOnce<T>(path: string, signal: AbortSignal): Promise<T> {
   let response: Response;
   try {
     response = await fetch(`${API_PREFIX}${path}`, {
       credentials: "include",
       cache: "no-store",
+      signal,
     });
   } catch {
     throw new ApiUnavailableError();
@@ -117,21 +119,22 @@ async function apiGetOnce<T>(path: string): Promise<T> {
 }
 
 export function apiGet<T>(path: string): Promise<T> {
-  return apiSharedGet(path, () => apiGetOnce<T>(path));
+  return apiSharedGet(path, () =>
+    withDeadline(READ_DEADLINE_MS, (signal) => apiGetOnce<T>(path, signal), () => new ApiUnavailableError()),
+  );
 }
 
 export function apiProbeSession(): Promise<{ csrf_token?: string }> {
   return apiGet("/csrf.json");
 }
 
-async function apiSendJson<T>(
+async function apiSendOnce<T>(
   method: "POST" | "PUT" | "PATCH" | "DELETE",
   path: string,
-  body?: unknown,
+  headers: Record<string, string>,
+  body: unknown,
+  signal: AbortSignal,
 ): Promise<T> {
-  const headers: Record<string, string> = {};
-  if (body !== undefined) headers["Content-Type"] = "application/json";
-  if (path !== "/login.json") headers["X-CSRF-Token"] = await ensureCsrfToken();
   let response: Response;
   try {
     response = await fetch(`${API_PREFIX}${path}`, {
@@ -139,6 +142,7 @@ async function apiSendJson<T>(
       credentials: "include",
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
+      signal,
     });
   } catch {
     throw new ApiUnavailableError();
@@ -146,6 +150,22 @@ async function apiSendJson<T>(
   const payload = await parseJson<{ error?: string } & T>(response);
   if (!response.ok) raiseForStatus(response, payload);
   return payload as T;
+}
+
+async function apiSendJson<T>(
+  method: "POST" | "PUT" | "PATCH" | "DELETE",
+  path: string,
+  body?: unknown,
+  deadline = SEND_DEADLINE_MS,
+): Promise<T> {
+  const headers: Record<string, string> = {};
+  if (body !== undefined) headers["Content-Type"] = "application/json";
+  if (path !== "/login.json") headers["X-CSRF-Token"] = await ensureCsrfToken();
+  return withDeadline(
+    deadline,
+    (signal) => apiSendOnce<T>(method, path, headers, body, signal),
+    () => new ApiNoAnswerError(),
+  );
 }
 
 export async function apiSend(method: "POST" | "DELETE", path: string): Promise<void> {
@@ -164,8 +184,9 @@ export function apiDeleteJson<T>(path: string): Promise<T> {
   return apiSendJson<T>("DELETE", path);
 }
 
-export function apiPostJson<T>(path: string, body: unknown): Promise<T> {
-  return apiSendJson<T>("POST", path, body);
+/** `deadline` : le temps qu'a ce geste, s'il en demande plus qu'un autre (`sendDeadline.ts`). */
+export function apiPostJson<T>(path: string, body: unknown, deadline?: number): Promise<T> {
+  return apiSendJson<T>("POST", path, body, deadline);
 }
 
 export function apiPut<T>(path: string, body: unknown): Promise<T> {
@@ -174,6 +195,37 @@ export function apiPut<T>(path: string, body: unknown): Promise<T> {
 
 export function apiPatch<T>(path: string, body: unknown): Promise<T> {
   return apiSendJson<T>("PATCH", path, body);
+}
+
+type FormAnswer = { ok: boolean; status: number; text: string };
+
+// Par XMLHttpRequest : fetch ne dit pas où en est l'envoi du corps. Chaque
+// octet parti est un signe de vie, et le dernier ouvre l'attente de la réponse.
+function postForm(path: string, form: FormData, token: string): Promise<FormAnswer> {
+  return withUploadDeadline(
+    UPLOAD_IDLE_MS,
+    (signal, alive, sent) =>
+      new Promise<FormAnswer>((resolve, reject) => {
+        const request = new XMLHttpRequest();
+        request.open("POST", `${API_PREFIX}${path}`);
+        request.withCredentials = true;
+        request.setRequestHeader("X-CSRF-Token", token);
+        request.upload.onprogress = alive;
+        request.upload.onload = sent;
+        request.onload = () =>
+          resolve({
+            ok: request.status >= 200 && request.status < 300,
+            status: request.status,
+            text: request.responseText,
+          });
+        request.onerror = () => reject(new ApiUnavailableError());
+        request.onabort = () => reject(new ApiUnavailableError());
+        signal.addEventListener("abort", () => request.abort());
+        request.send(form);
+      }),
+    () => new ApiUnavailableError(),
+    () => new ApiNoAnswerError(),
+  );
 }
 
 export async function apiUpload<T>(
@@ -185,18 +237,8 @@ export async function apiUpload<T>(
   const list = Array.isArray(files) ? files : [files];
   for (const file of list) form.append(field, file);
   const token = await ensureCsrfToken();
-  let response: Response;
-  try {
-    response = await fetch(`${API_PREFIX}${path}`, {
-      method: "POST",
-      credentials: "include",
-      headers: { "X-CSRF-Token": token },
-      body: form,
-    });
-  } catch {
-    throw new ApiUnavailableError();
-  }
-  const payload = await parseJson<{ error?: string } & T>(response);
+  const response = await postForm(path, form, token);
+  const payload = parseJsonText<{ error?: string } & T>(response.text);
   if (!response.ok) raiseForStatus(response, payload);
   return payload as T;
 }
@@ -237,10 +279,12 @@ export async function apiLogin(username: string, password: string): Promise<void
       { username, password },
     );
     csrfToken = null;
-    csrfPromise = null;
     apiCacheClear();
     return;
   } catch (caught) {
+    // Sans réponse, la session n'est pas venue : un moteur injoignable. Le
+    // formulaire de repli attendrait le même moteur muet.
+    if (caught instanceof ApiNoAnswerError) throw new ApiUnavailableError();
     if (caught instanceof ApiUnavailableError) {
       /* form fallback below */
     } else {
@@ -268,7 +312,6 @@ export async function apiLogin(username: string, password: string): Promise<void
   }
   if (response.status === 302 || response.status === 0 || response.type === "opaqueredirect") {
     csrfToken = null;
-    csrfPromise = null;
     apiCacheClear();
     return;
   }
@@ -288,6 +331,5 @@ export async function apiLogout(): Promise<void> {
     /* la session locale est abandonnée même si le moteur ne répond pas */
   }
   csrfToken = null;
-  csrfPromise = null;
   apiCacheClear();
 }

@@ -180,6 +180,17 @@ function AntenneDesk({
     [show],
   );
 
+  // « Annuler » part avec son message et ne revient pas : son échec dit que la
+  // ligne reste retirée, et comment la remettre, plutôt que de faire réessayer.
+  const undoFailed = useCallback(
+    (caught: unknown) => {
+      const back = "La ligne reste retirée : remets-la depuis la bibliothèque.";
+      if (caught instanceof ApiUnavailableError) show(`L’automate ne répond pas. ${back}`, "error");
+      else fail(caught, `Annulation impossible. ${back}`);
+    },
+    [fail, show],
+  );
+
   const datedSet =
     currentShow && currentShow.scope === "dated" && currentShow.kind === "set" && currentShow.state === "on_air"
       ? currentShow
@@ -335,7 +346,7 @@ function AntenneDesk({
                 onClick: () => {
                   const undo = undoRef.current;
                   undoRef.current = null;
-                  if (undo) void undo();
+                  if (undo) void undo().catch(undoFailed);
                 },
               }
             : undefined,
@@ -344,7 +355,7 @@ function AntenneDesk({
         fail(caught, "Retrait impossible. Réessaie.");
       }
     },
-    [fail, setRundown, show],
+    [fail, setRundown, show, undoFailed],
   );
 
   const reorder = useCallback(

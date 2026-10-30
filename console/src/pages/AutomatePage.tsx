@@ -12,6 +12,7 @@ import {
   sourceLabelFr,
 } from "../api/antenneState";
 import {
+  ApiAuthError,
   ApiForbiddenError,
   ApiRequestError,
   ApiUnavailableError,
@@ -40,11 +41,14 @@ export function AutomatePage() {
     Date.now() - Date.parse(state.at) > 20_000;
   const updatedAt = state ? state.at.slice(11, 16) : null;
 
+  // Un échec s'annonce en alerte : deviné d'après le texte, le ton ferait
+  // passer un refus ou un moteur muet pour une information.
   const fail = (caught: unknown, fallback: string) => {
-    if (caught instanceof ApiForbiddenError) show("Réservé à un admin. Reconnecte-toi avec ce compte.");
-    else if (caught instanceof ApiRequestError) show(caught.message);
-    else if (caught instanceof ApiUnavailableError) show("L’automate ne répond pas. Réessaie dans un instant.");
-    else show(fallback);
+    if (caught instanceof ApiAuthError) show("Session expirée. Reconnecte-toi.", "error");
+    else if (caught instanceof ApiForbiddenError) show("Réservé à un admin. Reconnecte-toi avec ce compte.", "error");
+    else if (caught instanceof ApiRequestError) show(caught.message, "error");
+    else if (caught instanceof ApiUnavailableError) show("L’automate ne répond pas. Réessaie dans un instant.", "error");
+    else show(fallback, "error");
   };
 
   const reload = async () => {
@@ -99,21 +103,21 @@ export function AutomatePage() {
         removed?: number;
       };
       if (response.status === 401) {
-        show("Session expirée. Reconnecte-toi.");
+        show("Session expirée. Reconnecte-toi.", "error");
         return;
       }
       if (response.status === 403) {
-        show("Réservé à un admin. Reconnecte-toi avec ce compte.");
+        show("Réservé à un admin. Reconnecte-toi avec ce compte.", "error");
         return;
       }
       if (!response.ok) {
-        show(payload.error?.trim() || "Retrait impossible.");
+        show(payload.error?.trim() || "Retrait impossible.", "error");
         return;
       }
       const removed = Number(payload.removed) || 0;
       show(removed > 0 ? `${removed} titres retirés de la bibliothèque` : "Aucun titre hors bac.");
     } catch {
-      show("Le catalogue ne répond pas. Réessaie dans un instant.");
+      show("Le catalogue ne répond pas. Réessaie dans un instant.", "error");
     } finally {
       setBusy(null);
     }
