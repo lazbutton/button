@@ -108,16 +108,18 @@ test("moteur injoignable, pupitre ouvert : la barre le dit, puis repart", async 
   await expect(etat).toHaveAccessibleName(/^Antenne : En onde/, { timeout: 15_000 });
 });
 
-test.fixme("moteur injoignable pour la file seule : la file ne se dit pas vide", async ({ page }) => {
-  // Défaut de la console : une file illisible s'affiche comme une file vide,
-  // « Rien à la suite. Choisis un titre dans la bibliothèque », sans dire que
-  // le moteur ne l'a pas donnée.
-  await page.route("**/autodj/conducteur.json*", (route) => route.abort("connectionrefused"));
+test("moteur injoignable pour la file seule : la file ne se dit pas vide", async ({ page }) => {
+  const conducteur = "**/autodj/conducteur.json*";
+  await page.route(conducteur, (route) => route.abort("connectionrefused"));
   await seConnecter(page, "animateur");
   await expect(suivant(page)).toBeEnabled();
 
-  await expect(file(page)).toContainText(/ne répond pas|injoignable|impossible/);
+  await expect(file(page)).toContainText("La file ne répond pas.");
   await expect(file(page)).not.toContainText("Rien à la suite.");
+
+  // La file revient d'elle-même avec le moteur.
+  await page.unroute(conducteur);
+  await expect(file(page).getByRole("listitem").first()).toBeVisible({ timeout: 10_000 });
 });
 
 test("route absente : sans les émissions ni l’état de l’antenne, le pupitre reste", async ({ page }) => {
