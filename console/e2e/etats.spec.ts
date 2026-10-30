@@ -1,5 +1,5 @@
 import type { Page, Route } from "@playwright/test";
-import { antenne, avis, bibliotheque, expect, file, remplirLaConnexion, seConnecter, test } from "./banc.ts";
+import { alerte, antenne, bibliotheque, expect, file, remplirLaConnexion, seConnecter, test } from "./banc.ts";
 import { engineRoutes } from "./routes.ts";
 
 // Ce que la console dit quand le moteur répond mal. Chaque cas est simulé par
@@ -34,7 +34,7 @@ test("session expirée pendant un geste : la console le dit", async ({ page }) =
   );
 
   await suivant(page).click();
-  await expect(avis(page, "Session expirée. Reconnecte-toi.")).toBeVisible();
+  await expect(alerte(page, "Session expirée. Reconnecte-toi.")).toBeVisible();
 });
 
 test("session expirée : la console redemande le mot de passe, puis rend le pupitre", async ({ page }) => {
@@ -67,7 +67,7 @@ test("droit manquant : le geste refusé dit quel droit il faut", async ({ page }
   );
 
   await suivant(page).click();
-  await expect(avis(page, "Il faut le droit antenne. Demande à un admin si tu dois pouvoir le faire.")).toBeVisible();
+  await expect(alerte(page, "Il faut le droit antenne. Demande à un admin si tu dois pouvoir le faire.")).toBeVisible();
   await expect(antenne(page)).toBeVisible();
 });
 
@@ -90,7 +90,7 @@ test("moteur injoignable pendant un geste : la console le dit", async ({ page })
   await page.route("**/live.json", (route) => (passer(route) ? route.abort("connectionrefused") : route.continue()));
 
   await suivant(page).click();
-  await expect(avis(page, "L’automate ne répond pas. Réessaie dans un instant.")).toBeVisible();
+  await expect(alerte(page, "L’automate ne répond pas. Réessaie dans un instant.")).toBeVisible();
 });
 
 test("moteur injoignable, pupitre ouvert : la barre le dit, puis repart", async ({ page }) => {
@@ -148,6 +148,6 @@ test("route absente pendant un geste : la console le dit en français", async ({
   await page.route("**/live.json", (route) => (passer(route) ? versUneRouteAbsente(route) : route.continue()));
 
   await suivant(page).click();
-  await expect(avis(page, "Cette action demande un moteur plus récent. Mets à jour le moteur.")).toBeVisible();
-  await expect(avis(page, /requested URL/)).toHaveCount(0);
+  await expect(alerte(page, "Cette action demande un moteur plus récent. Mets à jour le moteur.")).toBeVisible();
+  await expect(page.getByText(/requested URL/)).toHaveCount(0);
 });

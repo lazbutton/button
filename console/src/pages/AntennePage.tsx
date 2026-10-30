@@ -159,13 +159,15 @@ function AntenneDesk({
   const renameTitleRef = useRef<HTMLInputElement>(null);
   const undoRef = useRef<(() => Promise<void>) | null>(null);
 
+  // Un geste qui échoue s'annonce en alerte : deviné d'après le texte, le ton
+  // ferait passer un refus ou un moteur muet pour une information.
   const fail = useCallback(
     (caught: unknown, fallback: string, forbidden = "Il faut le droit antenne. Demande à un admin si tu dois pouvoir le faire.") => {
-      if (caught instanceof ApiAuthError) show("Session expirée. Reconnecte-toi.");
-      else if (caught instanceof ApiForbiddenError) show(forbidden);
-      else if (caught instanceof ApiRequestError) show(caught.message);
-      else if (caught instanceof ApiUnavailableError) show("L’automate ne répond pas. Réessaie dans un instant.");
-      else show(fallback);
+      if (caught instanceof ApiAuthError) show("Session expirée. Reconnecte-toi.", "error");
+      else if (caught instanceof ApiForbiddenError) show(forbidden, "error");
+      else if (caught instanceof ApiRequestError) show(caught.message, "error");
+      else if (caught instanceof ApiUnavailableError) show("L’automate ne répond pas. Réessaie dans un instant.", "error");
+      else show(fallback, "error");
     },
     [show],
   );
