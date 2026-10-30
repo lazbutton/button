@@ -50,6 +50,7 @@ jobs:
       - run: python test_promote_inplace.py
       - run: python test_share.py
       - run: python test_volume_api.py
+      - run: python test_session.py
 
   docker:
     name: build & push images

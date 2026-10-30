@@ -18,11 +18,11 @@ Index de la banque de sons dans Meilisearch, recherche pour la console, récepti
 | `POST /tus-hook` | Hook de tusd : accepte ou refuse un envoi, puis range le fichier. Un envoi d'équipe va dans `00-inbox` ; un set d'invité va dans `40-emissions`, après accord du moteur |
 | `GET /health`, `/health/live` | Sondes |
 
-La console joint le catalogue sous `/library/` : voir [docs/api.md](../docs/api.md#catalogue-service-à-part-du-moteur). Le catalogue demande au moteur qui est connecté, par `/account.json` avec le cookie du navigateur.
+La console joint le catalogue sous `/library/` : voir [docs/api.md](../docs/api.md#catalogue-service-à-part-du-moteur). Le catalogue demande au moteur qui est connecté, par `/account.json` avec le cookie du navigateur. Toutes ses routes demandent une session, sauf les sondes et `/tus-hook`, qu'appelle tusd.
 
 Variables : `MEDIA_ROOT`, `MEILI_URL`, `MEILI_MASTER_KEY`, `MEILI_INDEX`, `CATALOG_PORT`, `AUTOMATE_URL`, `TUSD_DIR`, `INBOX_QUOTA_BYTES`, `STATION_NAME`, `SMB_HOST`, `SHARE_PRIVATE`.
 
-Tests : `./scripts/verifier.sh services` lance les six fichiers de test de la CI. Un seul : `cd services/catalog && .venv/bin/python test_inbox_api.py`. Ils couvrent aussi les scripts du dossier partagé, rangés dans `deploy/`.
+Tests : `./scripts/verifier.sh services` lance les sept fichiers de test de la CI. Un seul : `cd services/catalog && .venv/bin/python test_inbox_api.py`. Ils couvrent aussi les scripts du dossier partagé, rangés dans `deploy/`.
 
 ## nowplaying
 
