@@ -335,7 +335,7 @@ function AntenneDesk({
                 onClick: () => {
                   const undo = undoRef.current;
                   undoRef.current = null;
-                  if (undo) void undo();
+                  if (undo) void undo().catch((caught: unknown) => fail(caught, "Annulation impossible. La ligne reste retirée."));
                 },
               }
             : undefined,
