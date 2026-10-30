@@ -30,11 +30,11 @@ function engineAllowlist(): RegExp {
   return new RegExp(`^/(${match[1]})`);
 }
 
-/** Les blocs `location` du gabarit : leur chemin, puis leur contenu. */
-function locationBlocks(): [string, string][] {
+/** Les blocs `location` du gabarit : leur chemin, leur contenu, puis leur modificateur (`=`, `~`, `^~`…). */
+function locationBlocks(): [string, string, string][] {
   const template = readFileSync(TEMPLATE, "utf8");
-  return [...template.matchAll(/^\s*location\s+(?:\S+\s+)?(\S+)\s*\{\n([\s\S]*?)\n\s*\}$/gm)].map(
-    (match) => [match[1], match[2]],
+  return [...template.matchAll(/^\s*location\s+(?:(\S+)\s+)?(\S+)\s*\{\n([\s\S]*?)\n\s*\}$/gm)].map(
+    (match) => [match[2], match[3], match[1] ?? ""],
   );
 }
 
@@ -105,6 +105,16 @@ test("un bloc change Referrer-Policy après l'include, et l'invité garde no-ref
   }
   const invitation = blocks.find(([path]) => path === "/invitation")?.[1] ?? "";
   assert.match(invitation, /^\s*set \$button_referrer_policy "no-referrer";$/m);
+});
+
+// Un bloc regex qui correspond l'emporte sur un préfixe sans ^~ : le bloc des
+// extensions prendrait les .js et .css du build, sans leur cache d'un an.
+test("les fichiers de /assets/ gardent leur cache d'un an", () => {
+  const assets = locationBlocks().find(([path]) => path === "/assets/");
+  assert.ok(assets, "bloc /assets/ introuvable dans console/docker/nginx.conf.template");
+  const [, body, modifier] = assets;
+  assert.equal(modifier, "^~", "^~ manquant devant /assets/ dans console/docker/nginx.conf.template");
+  assert.match(body, /^\s*add_header Cache-Control "public, max-age=31536000, immutable";$/m);
 });
 
 test("le fichier inclus pose les en-têtes attendus, aussi sur les erreurs", () => {
