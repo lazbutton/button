@@ -8,10 +8,12 @@ on:
     branches: [main]
     paths:
       - "engine/**"
+      - "!engine/**/*.md"
       - ".github/workflows/engine.yml"
   pull_request:
     paths:
       - "engine/**"
+      - "!engine/**/*.md"
       - ".github/workflows/engine.yml"
   workflow_dispatch:
 
