@@ -148,6 +148,16 @@ async def test_skip_json_ok_with_scheduler_mock(
     mock.skip.assert_awaited_once()
 
 
+def _scheduler_facing(handler) -> Scheduler:
+    """The real client, in front of a fake scheduler: `handler` answers each order."""
+    scheduler = Scheduler.__new__(Scheduler)
+    scheduler.client = httpx.AsyncClient(
+        base_url="http://127.0.0.1:6822",
+        transport=httpx.MockTransport(handler),
+    )
+    return scheduler
+
+
 def _scheduler_down(error: type[httpx.TransportError], sent: list[str]) -> Scheduler:
     """The real client, facing a scheduler that does not answer. `sent` logs orders."""
 
@@ -155,12 +165,7 @@ def _scheduler_down(error: type[httpx.TransportError], sent: list[str]) -> Sched
         sent.append(f"{request.method} {request.url.path}")
         raise error("no answer", request=request)
 
-    scheduler = Scheduler.__new__(Scheduler)
-    scheduler.client = httpx.AsyncClient(
-        base_url="http://127.0.0.1:6822",
-        transport=httpx.MockTransport(no_answer),
-    )
-    return scheduler
+    return _scheduler_facing(no_answer)
 
 
 @pytest.mark.parametrize("error", [httpx.ConnectError, httpx.ReadTimeout])
@@ -340,16 +345,6 @@ async def test_now_json_502_when_scheduler_down(  # noqa: PLR0913
     ]
 
 
-def _scheduler_facing(handler) -> Scheduler:
-    """The real client, in front of a fake scheduler: `handler` answers each order."""
-    scheduler = Scheduler.__new__(Scheduler)
-    scheduler.client = httpx.AsyncClient(
-        base_url="http://127.0.0.1:6822",
-        transport=httpx.MockTransport(handler),
-    )
-    return scheduler
-
-
 def _scheduler_refusing(status: int, text: str, sent: list[str]) -> Scheduler:
     """A scheduler that answers every order with an error. `sent` logs orders."""
 
@@ -483,12 +478,20 @@ async def test_now_json_failed_order_leaves_no_desk_line(  # noqa: PLR0913
     assert await _desk_lines(dbsession) == []
 
 
-async def test_now_json_posts_desk_line_after_order(
+# A placement field means nothing for a title already sent: even a bad one is
+# ignored, and cannot fail the route once the title is on air.
+@pytest.mark.parametrize(
+    "placement",
+    [{}, {"replace_at": "x"}, {"suppress_at": "x"}],
+    ids=["plain", "replace_at", "suppress_at"],
+)
+async def test_now_json_posts_desk_line_after_order(  # noqa: PLR0913
     raw_app,
     app_configration: dict,
     beets_integration: BeetsIntegration,
     dbsession: ormSession,
     users_password: str,
+    placement: dict,
 ):
     client = await _live_client(
         app_configration,
@@ -514,6 +517,7 @@ async def test_now_json_posts_desk_line_after_order(
                 "artist": "Y",
                 "kind": "jingle",
                 "duration": 9,
+                **placement,
             },
         )
     assert response.status_code == 200, await response.get_data(as_text=True)

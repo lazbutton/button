@@ -344,6 +344,8 @@ async def conducteur_fire_now_json():
     sound = await Sound.from_media_path(g.dbsession, path)
     # A bank path gets a desk line, checked before the order and posted after
     # it: a refused order leaves none behind, and a retry does not stack them.
+    # The line takes the checked fields only: a bad placement field (replace_at,
+    # suppress_at…) would otherwise fail the route once the title is on air.
     pin = read_desk_pin(data) if sound is None else None
     scheduler = Scheduler.get()
     try:
@@ -358,7 +360,7 @@ async def conducteur_fire_now_json():
     except RuntimeError:
         return playout_rejected_response()
     if sound is None:
-        await insert_desk_item(g.dbsession, data)
+        await insert_desk_item(g.dbsession, pin._asdict())
     invalidate_conducteur_cache()
     return jsonify(await _desk_payload())
 
