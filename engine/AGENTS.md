@@ -41,6 +41,9 @@ La CI lance `pytest` avec `TZ=Europe/Paris`, sans `tests/interface` ni `tests/e2
 - Une migration est `radiotomate/commands/update/vNN.py`, avec `async def upgrade(conn)` et `async def downgrade(conn)`. La dernière est v17. Prendre le numéro libre au moment d'écrire, et le vérifier encore avant de fusionner : deux branches peuvent prendre le même.
 - Une migration publiée ne se modifie jamais, même pour un nom ou un commentaire.
 - `radiotomate update` applique les migrations, et `--target-version N` redescend. `radiotomate-init` lance `update` à chaque démarrage de la station. La version du schéma est la clé `SCHEMA_VERSION` de la table `settings`.
+- Chaque version passe dans sa propre transaction, avec la mise à jour de `SCHEMA_VERSION` : celle qui échoue ne laisse rien. Une migration ne termine donc jamais la transaction : ni `commit`, ni `rollback`, ni `VACUUM`, ni changement de `journal_mode`. `tests/test_update_atomic.py` le vérifie pour chaque version.
+- Les clés étrangères sont coupées pendant la migration, puis vérifiées par `PRAGMA foreign_key_check` avant la validation : la version échoue si elle laisse plus de violations qu'elle n'en a trouvé. Effacer une ligne parente ne touche donc plus ses lignes filles : les traiter d'abord.
+- Ce qu'`ALTER TABLE` ne sait pas faire passe par une reconstruction, comme le dit SQLite : créer la nouvelle table sous un autre nom, copier les lignes, supprimer l'ancienne, renommer la nouvelle, recréer les index. Ne jamais renommer l'ancienne : SQLite ferait pointer vers elle les clés étrangères des tables filles. Un exemple est dans `tests/test_update_atomic.py`.
 - `tests/test_migrations.py` monte une base vide jusqu'à la dernière version, puis vérifie qu'on peut relancer. Une nouvelle migration y ajoute son propre test : une base de la version d'avant, avec des données, qui monte puis redescend sans rien perdre de ce qui existait.
 - Le modèle SQLAlchemy suit la migration dans le même commit.
 
