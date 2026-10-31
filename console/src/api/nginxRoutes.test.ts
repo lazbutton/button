@@ -3,6 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { isTooManyAttempts } from "./tooManyAttempts.ts";
 
 // En prod, nginx ne relaie vers le moteur qu'une liste de chemins. Une route
 // absente de cette liste marche en dev (proxy de Vite) et rend la page HTML
@@ -12,6 +13,7 @@ const SRC = fileURLToPath(new URL("..", import.meta.url));
 const TEMPLATE = fileURLToPath(new URL("../../docker/nginx.conf.template", import.meta.url));
 const HEADERS = fileURLToPath(new URL("../../docker/security-headers.conf.template", import.meta.url));
 const ENTRYPOINT = fileURLToPath(new URL("../../docker/docker-entrypoint.sh", import.meta.url));
+const DOCKERFILE = fileURLToPath(new URL("../../Dockerfile", import.meta.url));
 
 /** Les chemins servis par d'autres blocs de nginx que la liste du moteur. */
 const OTHER_LOCATIONS = /^\/(library|tus|public)\//;
@@ -81,6 +83,46 @@ test("le catalogue et les envois demandent une session à nginx", () => {
   assert.ok(paths.includes("/library/") && paths.includes("/tus/"), `blocs trouvés : ${paths.join(", ")}`);
   const open = blocks.filter(([, body]) => !/^\s*auth_request\s+\/\S*;/m.test(body)).map(([path]) => path);
   assert.deepEqual(open, [], "auth_request manquant dans console/docker/nginx.conf.template");
+});
+
+test("nginx freine la connexion par adresse, et passe l'adresse du client au moteur", () => {
+  assert.match(
+    readFileSync(TEMPLATE, "utf8"),
+    /^limit_req_zone \$binary_remote_addr zone=button_login:\S+ rate=5r\/m;$/m,
+  );
+  const blocks = locationBlocks();
+  for (const path of ["/login", "/login.json"]) {
+    const body = blocks.find(([found, , modifier]) => found === path && modifier === "=")?.[1];
+    assert.ok(body, `bloc = ${path} introuvable dans console/docker/nginx.conf.template`);
+    assert.match(body, /^\s*limit_req zone=button_login burst=5 nodelay;$/m);
+    // Un 503 dirait à la console que le moteur ne répond pas.
+    assert.match(body, /^\s*limit_req_status 429;$/m);
+    assert.match(body, /^\s*error_page 429 @too_many_attempts;$/m);
+    assert.match(body, /^\s*proxy_set_header X-Real-IP \$remote_addr;$/m);
+  }
+  // Le refus de nginx se lit comme celui du moteur.
+  const refusal = blocks.find(([path]) => path === "@too_many_attempts")?.[1] ?? "";
+  const answer = refusal.match(/^\s*return 429 '(\{.*\})';$/m)?.[1];
+  assert.ok(answer, "return 429 manquant dans le bloc @too_many_attempts");
+  const { error, retry_in } = JSON.parse(answer) as { error: string; retry_in: number };
+  assert.ok(isTooManyAttempts(429, error));
+  assert.match(refusal, /^\s*default_type application\/json;$/m);
+  assert.match(refusal, new RegExp(`^\\s*add_header Retry-After ${retry_in} always;$`, "m"));
+});
+
+test("nginx ne croit l'adresse du client que venant des reverse proxies de confiance", () => {
+  const template = readFileSync(TEMPLATE, "utf8");
+  assert.match(template, /^include \/etc\/nginx\/real-ip\.conf;$/m);
+  assert.match(template, /^real_ip_header X-Forwarded-For;$/m);
+  assert.match(template, /^real_ip_recursive on;$/m);
+  const entrypoint = readFileSync(ENTRYPOINT, "utf8");
+  assert.ok(entrypoint.includes("> /etc/nginx/real-ip.conf"), "real-ip.conf n'est pas écrit");
+  // verifier.sh lance le script sans la variable de l'image : les deux
+  // valeurs par défaut doivent dire la même chose.
+  const image = readFileSync(DOCKERFILE, "utf8").match(/^ENV TRUSTED_PROXIES="([^"]+)"$/m)?.[1];
+  const script = entrypoint.match(/^: "\$\{TRUSTED_PROXIES:=([^}]+)\}"$/m)?.[1];
+  assert.ok(image && script, "TRUSTED_PROXIES sans valeur par défaut");
+  assert.equal(image, script);
 });
 
 // Un bloc qui pose son propre add_header n'hérite plus de ceux du bloc server :

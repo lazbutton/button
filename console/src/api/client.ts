@@ -4,6 +4,7 @@ import { isPlayoutUnavailable, PLAYOUT_UNAVAILABLE_MESSAGE } from "./playoutUnav
 import { READ_DEADLINE_MS, withBodyDeadline, withDeadline } from "./readDeadline";
 import { NO_ANSWER_MESSAGE, SEND_DEADLINE_MS, UPLOAD_IDLE_MS, withUploadDeadline } from "./sendDeadline";
 import { closeSession } from "./sessionLogout";
+import { isTooManyAttempts, tooManyAttemptsMessage } from "./tooManyAttempts";
 import { isUnknownRoute, UNKNOWN_ROUTE_MESSAGE } from "./unknownRoute";
 
 // `?.` : ce module se lit aussi en node, où les parcours importent lib/brand.ts.
@@ -56,7 +57,7 @@ export class ApiNoAnswerError extends ApiRequestError {
   }
 }
 
-function raiseForStatus(response: Pick<Response, "status">, body?: { error?: string; field?: unknown }): never {
+function raiseForStatus(response: Pick<Response, "status">, body?: { error?: string; field?: unknown; retry_in?: unknown }): never {
   if (response.status === 401) {
     csrfToken = null;
     apiCacheClear();
@@ -70,6 +71,7 @@ function raiseForStatus(response: Pick<Response, "status">, body?: { error?: str
     throw new ApiRequestError(413, "Envoi trop lourd pour le serveur. Dépose moins de fichiers à la fois, ou des fichiers plus légers.");
   }
   const detail = body?.error?.trim();
+  if (isTooManyAttempts(response.status, detail)) throw new ApiRequestError(429, tooManyAttemptsMessage(body?.retry_in));
   if (isPlayoutUnavailable(response.status, detail)) throw new ApiRequestError(502, PLAYOUT_UNAVAILABLE_MESSAGE);
   if (isEngineUnreachable(response.status, detail)) throw new ApiUnavailableError();
   if (isUnknownRoute(response.status, detail)) throw new ApiRequestError(404, UNKNOWN_ROUTE_MESSAGE);
@@ -329,6 +331,10 @@ export async function apiLogin(username: string, password: string): Promise<void
   }
   // La page de nginx devant un moteur arrêté n'est pas un mot de passe refusé.
   if (isUnreachableStatus(response.status)) throw new ApiUnavailableError();
+  // Trop d'essais depuis cette adresse : le moteur ou nginx la bloque.
+  if (response.status === 429) {
+    throw new ApiRequestError(429, tooManyAttemptsMessage(response.headers.get("Retry-After")));
+  }
   throw new ApiAuthError();
 }
 
