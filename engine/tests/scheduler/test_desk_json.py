@@ -249,6 +249,114 @@ async def test_reorder_behind_a_started_line_keeps_its_start(dbsession: ormSessi
     assert second.planned_at == now + timedelta(seconds=24)
 
 
+async def test_insert_above_a_started_head_starts_now(dbsession: ormSession):
+    """Placed above a line still to come, a line starts half a second before it.
+    Above the head of the file, already started, it starts now: half a second
+    before the head, it would end before now, leave the antenna file, and the
+    expiry of past desk lines would drop it."""
+    await _reorder_version(dbsession, "pv-insert-above")
+    now = datetime.now()
+    dbsession.add_all(
+        [
+            _reorder_row("ri-head", "pv-insert-above", now - timedelta(seconds=10), 60),
+            _reorder_row(
+                "ri-later", "pv-insert-above", now + timedelta(seconds=50), 60
+            ),
+        ]
+    )
+    await dbsession.commit()
+    above_later = await insert_desk_item(
+        dbsession,
+        {"path": "/media/10-rotation/above-later.mp3", "before_id": "ri-later"},
+    )
+    assert above_later.planned_at == now + timedelta(seconds=49.5)
+    before = datetime.now()
+    above_head = await insert_desk_item(
+        dbsession,
+        {"path": "/media/10-rotation/above-head.mp3", "before_id": "ri-head"},
+    )
+    assert above_head.planned_at >= before
+
+
+async def test_insert_above_the_next_line_keeps_its_lead(dbsession: ormSession):
+    """The title on air started 2 s late, too little for realign_rundown: the next
+    line is still planned 2 s before its end. A line placed above that next line
+    stays above it. Placed above the title on air, it waits for its end."""
+    await _reorder_version(dbsession, "pv-insert-next")
+    now = datetime.now().replace(microsecond=0)
+    on_air = _reorder_row(
+        "ri-on-air",
+        "pv-insert-next",
+        now - timedelta(seconds=12),
+        60,
+        status=RundownStatus.ON_AIR.value,
+        origin="clock",
+    )
+    on_air.started_at = now - timedelta(seconds=10)
+    dbsession.add_all(
+        [
+            on_air,
+            _reorder_row(
+                "ri-next",
+                "pv-insert-next",
+                now + timedelta(seconds=48),
+                180,
+                origin="clock",
+            ),
+        ]
+    )
+    await dbsession.commit()
+    above_next = await insert_desk_item(
+        dbsession,
+        {"path": "/media/10-rotation/above-next.mp3", "before_id": "ri-next"},
+    )
+    assert above_next.planned_at == now + timedelta(seconds=47.5)
+    above_air = await insert_desk_item(
+        dbsession,
+        {"path": "/media/10-rotation/above-air.mp3", "before_id": "ri-on-air"},
+    )
+    assert above_air.planned_at == now + timedelta(seconds=50)
+
+
+async def test_insert_waits_for_the_title_on_air(dbsession: ormSession):
+    await _reorder_version(dbsession, "pv-insert-air")
+    now = datetime.now().replace(microsecond=0)
+    on_air = _reorder_row(
+        "ri-on-air",
+        "pv-insert-air",
+        now - timedelta(seconds=10),
+        180,
+        status=RundownStatus.ON_AIR.value,
+        origin="clock",
+    )
+    on_air.started_at = now - timedelta(seconds=10)
+    dbsession.add(on_air)
+    await dbsession.commit()
+    line = await insert_desk_item(dbsession, {"path": "/media/10-rotation/next.mp3"})
+    assert line.planned_at == now + timedelta(seconds=170)
+
+
+async def test_insert_after_an_overrun_starts_now(dbsession: ormSession):
+    """The title on air has outlasted its planned length: a line put after it
+    starts now, not at the end that has already passed."""
+    await _reorder_version(dbsession, "pv-insert-overrun")
+    now = datetime.now()
+    on_air = _reorder_row(
+        "ri-overrun",
+        "pv-insert-overrun",
+        now - timedelta(seconds=200),
+        180,
+        status=RundownStatus.ON_AIR.value,
+        origin="clock",
+    )
+    on_air.started_at = now - timedelta(seconds=200)
+    dbsession.add(on_air)
+    await dbsession.commit()
+    before = datetime.now()
+    line = await insert_desk_item(dbsession, {"path": "/media/10-rotation/next.mp3"})
+    assert line.planned_at >= before
+
+
 async def test_desk_insert_survives_preview_refresh(  # noqa: PLR0913
     raw_app,
     app_configration: dict,

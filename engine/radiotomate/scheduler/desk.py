@@ -167,6 +167,16 @@ async def _on_air_end(session: ormSession) -> datetime | None:
     return start + timedelta(seconds=float(row.duration or 0))
 
 
+async def _earliest_start(session: ormSession) -> datetime:
+    """Now, or the end of the title on air when it is later.
+
+    A line dated earlier can end before now: it leaves the antenna file, and a
+    desk pin is then dropped by ``expire_past_desk_items``.
+    """
+    now = datetime.now()
+    return max(now, naive_datetime(await _on_air_end(session)) or now)
+
+
 async def _planned_at_for_insert(
     session: ormSession,
     *,
@@ -176,19 +186,20 @@ async def _planned_at_for_insert(
 ) -> datetime:
     if replace_at:
         return _parse_iso(replace_at)
+    floor = await _earliest_start(session)
     if before_id:
         target = await RundownItem.from_id(session, before_id)
         if target is not None and target.planned_at is not None:
-            return target.planned_at - timedelta(milliseconds=500)
+            # Above a line still to come, half a second ahead of it: the floor
+            # could put it below, as realign_rundown leaves under 5 s of drift.
+            start = target.planned_at - timedelta(milliseconds=500)
+            return start if start > datetime.now() else floor
     if after_id:
         after = await RundownItem.from_id(session, after_id)
         if after is not None:
             start = after.started_at or after.planned_at
-            return start + timedelta(seconds=float(after.duration or 0))
-    on_air_end = await _on_air_end(session)
-    if on_air_end is not None:
-        return on_air_end
-    return datetime.now()
+            return max(start + timedelta(seconds=float(after.duration or 0)), floor)
+    return floor
 
 
 class DeskPin(NamedTuple):
@@ -378,8 +389,7 @@ async def reorder_desk_items(session: ormSession, ids: list[str]) -> None:
     first = min(starts) if starts else None
     cursor = naive_datetime(first)
     if cursor is None or ordered[0].planned_at != first:
-        now = datetime.now()
-        floor = max(now, naive_datetime(await _on_air_end(session)) or now)
+        floor = await _earliest_start(session)
         cursor = floor if cursor is None else max(cursor, floor)
     for index, row in enumerate(ordered):
         row.planned_at = naive_datetime(cursor) or datetime.now()
