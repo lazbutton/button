@@ -13,7 +13,11 @@ from werkzeug.exceptions import BadRequest
 from radiotomate.auth import login_required, permission_required
 from radiotomate.interface.autodj import invalidate_conducteur_cache
 from radiotomate.quart import or_shutdown
-from radiotomate.scheduler_api import Scheduler, SchedulerUnavailableError
+from radiotomate.scheduler_api import (
+    CartEmptyError,
+    Scheduler,
+    SchedulerUnavailableError,
+)
 from radiotomate.templates import render_macro as general_render_macro
 
 _log = logging.getLogger(__name__)
@@ -65,6 +69,11 @@ def playout_rejected_response():
     # unreachable engine, and would not show this text.
     message = "Le playout a refusé ce son : rien n'est parti à l'antenne."
     return jsonify({"error": message, "code": "playout_rejected"}), 400
+
+
+def cart_empty_response():
+    # The cart had no sound ready: the console shows the text as is.
+    return jsonify({"error": CartEmptyError.message, "code": "cart_empty"}), 409
 
 
 def _float_field(value: object, default: float = 0.0) -> float:

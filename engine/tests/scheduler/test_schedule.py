@@ -1,4 +1,5 @@
 from asyncio import sleep
+from datetime import datetime, timedelta
 from unittest.mock import patch
 
 import httpx
@@ -310,6 +311,22 @@ async def test_timed_playlist_enqueues_two_sounds(  # noqa: PLR0913
         assert titles == [fake_sound.title, fake_sound2.title]
 
 
+async def _pushes_nothing(client: QuartClient, cart: Cart, auth: dict) -> None:
+    """The cart has no sound ready: a 409, and the playout hears nothing."""
+    with patch(
+        "httpx.AsyncClient.post",
+        return_value=httpx.Response(200, json={"OK": 1}),
+    ) as mock_client:
+        result = await client.post(f"/schedule/{cart.id}/now", headers=auth)
+        assert result.status_code == 409, (await result.data).decode()
+        assert await result.get_json() == {
+            "ok": False,
+            "error": "cart_empty",
+            "detail": f"cart #{cart.id} has no sound ready",
+        }
+        mock_client.assert_not_called()
+
+
 async def test_schedule_no_sound_enabled(
     client: QuartClient,
     dbsession: ormSession,
@@ -319,14 +336,7 @@ async def test_schedule_no_sound_enabled(
 ):
     fake_sound.active = False
     await dbsession.commit()
-
-    with patch(
-        "httpx.AsyncClient.post",
-        return_value=httpx.Response(200, json={"OK": 1}),
-    ) as mock_client:
-        result = await client.post(f"/schedule/{fake_cart.id}/now", headers=auth)
-        assert result.status_code == 200, (await result.data).decode()
-        mock_client.assert_not_called()
+    await _pushes_nothing(client, fake_cart, auth)
 
 
 async def test_schedule_no_sound_analyzed(
@@ -338,14 +348,79 @@ async def test_schedule_no_sound_analyzed(
 ):
     fake_sound.gain = None
     await dbsession.commit()
+    await _pushes_nothing(client, fake_cart, auth)
 
+
+def _one_shot(*played: datetime | None) -> Cart:
+    """A one-shot playlist: one ready sound per rank, last played at that time."""
+    cart = Cart(mode=CartMode.PLAYLIST)
+    cart.sounds = [
+        Sound(title=str(rank), rank=rank, active=True, gain=-1.0, last_played=when)
+        for rank, when in enumerate(played, start=1)
+    ]
+    return cart
+
+
+def test_one_shot_playlist_next_sound():
+    """Sounds never played first, in order. Then it starts again, as a loop."""
+    nine, ten, eleven = (datetime(2026, 10, 31, hour) for hour in (9, 10, 11))
+    assert _one_shot(nine, None, None).next_sound().title == "2"
+    # Played through: from the start, as the clock does.
+    assert _one_shot(nine, ten, eleven).next_sound().title == "1"
+    # Started again: on with the next one.
+    assert _one_shot(eleven, nine, ten).next_sound().title == "2"
+    # A sound added since goes first.
+    assert _one_shot(eleven, nine, ten, None).next_sound().title == "4"
+    assert _one_shot().next_sound() is None
+
+
+async def test_schedule_playlist_played_through_starts_again(  # noqa: PLR0913
+    client: QuartClient,
+    dbsession: ormSession,
+    fake_cart: Cart,
+    fake_sound: Sound,
+    fake_sound2: Sound,
+    auth: dict,
+):
+    """As the clock: a one-shot playlist played through starts again."""
+    fake_sound.rank = 1
+    fake_sound2.rank = 2
+    fake_sound2.gain = -1.0
+    fake_sound2.peak = -0.5
+    fake_sound.last_played = datetime.now() - timedelta(hours=1)
+    await dbsession.commit()
     with patch(
         "httpx.AsyncClient.post",
         return_value=httpx.Response(200, json={"OK": 1}),
     ) as mock_client:
-        result = await client.post(f"/schedule/{fake_cart.id}/now", headers=auth)
-        assert result.status_code == 200, (await result.data).decode()
-        mock_client.assert_not_called()
+        for _ in range(3):
+            result = await client.post(f"/schedule/{fake_cart.id}/now", headers=auth)
+            assert result.status_code == 200, (await result.data).decode()
+        titles = [call.kwargs["json"]["title"] for call in mock_client.call_args_list]
+    # The last sound never played goes alone, then the playlist starts again.
+    assert titles == [fake_sound2.title, fake_sound.title, fake_sound2.title]
+
+
+async def test_schedule_random_no_sound_ready(
+    client: QuartClient,
+    dbsession: ormSession,
+    fake_cart: Cart,
+    fake_sound: Sound,
+    auth: dict,
+):
+    """next_sound_random() chose among no sound: an IndexError, a 500."""
+    fake_cart.mode = CartMode.RANDOM
+    fake_sound.active = False
+    await dbsession.commit()
+    await _pushes_nothing(client, fake_cart, auth)
+
+
+async def test_schedule_no_sound(
+    client: QuartClient,
+    fake_cart: Cart,
+    auth: dict,
+):
+    await _pushes_nothing(client, fake_cart, auth)
 
 
 async def test_sound_max_duration(

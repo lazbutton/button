@@ -23,6 +23,7 @@ import httpx
 from radiotomate.beets import BeetsIntegration
 from radiotomate.db import QuartAlchemy
 from radiotomate.domain.execution import rundown_summary
+from radiotomate.enums import CartMode
 from radiotomate.models import Cart, Sound
 from radiotomate.quart import ShutdownError, or_shutdown
 from radiotomate.scheduler.clock import (
@@ -55,6 +56,15 @@ class SchedulerUnavailableError(Exception):
 
 class PlayoutUnavailableError(RuntimeError):
     """The scheduler answered, but the playout did not: stopped, or too slow."""
+
+
+class CartEmptyError(RuntimeError):
+    """The cart has no sound ready: nothing was sent to the playout."""
+
+    message = "Ce bac n'a aucun son prêt : rien n'est parti à l'antenne."
+
+    def __init__(self) -> None:
+        super().__init__(self.message)
 
 
 class Scheduler:
@@ -121,7 +131,8 @@ class Scheduler:
         """
         An antenna order. Raises SchedulerUnavailableError or
         PlayoutUnavailableError when the scheduler or the playout did not answer,
-        RuntimeError when one of them refused the order.
+        CartEmptyError when a cart had no sound to send, RuntimeError when one of
+        them refused the order.
         """
         result = await self._request(method, path, timeout=ORDER_TIMEOUT, **kwargs)
         if result.status_code == 200:
@@ -141,6 +152,8 @@ class Scheduler:
             raise RuntimeError(result.text or f"HTTP {result.status_code}")
         if body.get("error") == "playout_unavailable":
             raise PlayoutUnavailableError("Le playout ne répond pas.")
+        if body.get("error") == "cart_empty":
+            raise CartEmptyError
         raise RuntimeError(body.get("detail") or result.text)
 
     async def skip(self):
@@ -746,6 +759,28 @@ class SchedulerDemo(Scheduler):
         }
         self._apply_current()
 
+    def _set_now_from_relay(self, cart: Cart):
+        """
+        No stream in the demo: the relay shows as its cart, until max_duration as
+        with the scheduler's timer.
+        """
+        duration = float(cart.max_duration or 0)
+        self._on_air = datetime.now().replace(microsecond=0)
+        self._track_length = duration if duration > 0 else float(self.TRACK_LENGTH)
+        self._override = {
+            "artist": "",
+            "title": cart.title,
+            "source": "relay",
+            "kind": "",
+            "status": "simulating",
+            "initial_uri": "",
+            "album": cart.title,
+            "editor": "demo",
+            "uptime": self.uptime(),
+            "on_air": self._on_air.isoformat(),
+        }
+        self._apply_current()
+
     def _set_now_from_path(
         self,
         path: str,
@@ -786,14 +821,16 @@ class SchedulerDemo(Scheduler):
             cart = await Cart.from_id(session, cart_id, load_sounds=True)
             if not cart:
                 raise RuntimeError(f"cart #{cart_id} not found")
-            try:
-                sound = cart.next_sound()
-            except IndexError:
-                sound = None
-            if sound is None and cart.sounds:
-                sound = cart.sounds[0]
+            if cart.mode is CartMode.RELAY:
+                # As the scheduler: a relay cart starts its stream, it has no sound.
+                async with self._lock:
+                    self._archive_current()
+                    self._set_now_from_relay(cart)
+                return
+            # As the scheduler: no sound ready, nothing plays.
+            sound = cart.next_sound()
             if sound is None:
-                raise RuntimeError(f"cart #{cart_id} has no sound")
+                raise CartEmptyError
             async with self._lock:
                 self._archive_current()
                 await self._set_now_from_sound(cart, sound)

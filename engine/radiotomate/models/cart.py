@@ -300,9 +300,15 @@ class Cart(Base):
         return implem()
 
     def next_sound_playlist(self) -> Sound | None:
+        """
+        Sounds never played first, in order. Once all have played, the playlist
+        starts again as a looping one: the clock, « Diffuser maintenant » and the
+        next sound shown all agree.
+        """
         for sound in self.sounds:
             if sound.available and not sound.last_played:
                 return sound
+        return self.next_sound_playlist_loop()
 
     def next_sound_playlist_loop(self) -> Sound | None:
         last_played = datetime(2000, 1, 1)
@@ -325,4 +331,6 @@ class Cart(Base):
 
     def next_sound_random(self) -> Sound | None:
         available_sounds = [s for s in self.sounds if s.available]
+        if not available_sounds:
+            return None
         return choice(available_sounds)

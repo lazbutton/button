@@ -130,6 +130,10 @@ async def _push_cart_sound(
         sound = cart.next_sound()
         if not sound:
             break
+        if results and cart.mode is CartMode.PLAYLIST and sound.last_played:
+            # One-shot playlist: the order's second sound is one never played.
+            # Starting the playlist again is for the first sound only.
+            break
         result = await _enqueue_sound(cart, sound, gateway, current_app)
         results.append(result)
         if not result.ok:
@@ -272,7 +276,12 @@ async def push_now(cart_id: str):
     if not cart:
         return f"cart #{cart_id} not found", 404
     result = await push_cart(g.dbsession, current_app, cid)
-    if result is not None and not result.ok:
+    if result is None:
+        # No sound ready: none at all, all disabled, or not analysed yet.
+        # Nothing went to the playout.
+        detail = f"cart #{cid} has no sound ready"
+        return {"ok": False, "error": "cart_empty", "detail": detail}, 409
+    if not result.ok:
         return failure_body(result), 502
     return "", 200
 

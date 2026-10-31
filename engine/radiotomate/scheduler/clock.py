@@ -1138,16 +1138,11 @@ async def _load_cart(
 
 
 def _next_available_sound(cart: Cart | None) -> Sound | None:
+    # A one-shot playlist played through starts again (Cart.next_sound_playlist):
+    # clock jingle and pub carts keep filling.
     if cart is None:
         return None
-    try:
-        sound = cart.next_sound()
-    except IndexError:
-        sound = None
-    if sound is not None:
-        return sound
-    # Playlist one-shot is exhausted: wrap so clock jingl/pub carts keep filling.
-    return cart.next_sound_playlist_loop()
+    return cart.next_sound()
 
 
 async def _push_autodj_item(
