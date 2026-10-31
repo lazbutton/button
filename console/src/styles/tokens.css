@@ -9,12 +9,13 @@
   --app-surface-1: #ffffff;
   --app-surface-2: #f0f0f0;
   --app-surface-3: #e8e8e8;
-  --app-surface-hover: color-mix(in srgb, var(--app-ink) 6%, var(--app-surface-2));
+  --app-surface-hover: color-mix(in srgb, var(--app-ink) 4%, var(--app-surface-2));
   --app-border: rgb(10 10 10 / 0.10);
   --app-border-strong: rgb(10 10 10 / 0.16);
   --app-text: #0a0a0a;
   --app-text-muted: #525252;
-  /* Le texte le plus pâle : 4,5:1 au moins sur le fond et les surfaces 1 à 3 (WCAG AA). */
+  /* Le texte le plus pâle : 4,5:1 au moins sur le fond, les surfaces 1 à 3 et le fond de
+     survol (WCAG AA). Le survol reste assez clair pour l'encre orange aussi. */
   --app-text-faint: #666666;
   --app-accent: #0a0a0a;
   --app-accent-hover: #000000;
@@ -33,7 +34,7 @@
   --app-focus: color-mix(in srgb, var(--app-accent) 55%, var(--app-bg));
   /* Encres lisibles des couleurs d'état, sur fond clair comme sombre : le texte en
      rouge ou en orange les prend, jamais la couleur pure. */
-  --app-ok-ink: color-mix(in srgb, var(--app-ok) 62%, var(--app-text));
+  --app-ok-ink: color-mix(in srgb, var(--app-ok) 54%, var(--app-text));
   --app-live-ink: color-mix(in srgb, var(--app-live) 74%, var(--app-text));
   --app-danger-ink: color-mix(in srgb, var(--app-danger) 74%, var(--app-text));
   --app-warn-ink: color-mix(in srgb, var(--app-vu-hot) 62%, var(--app-text));
@@ -58,7 +59,7 @@
   --app-surface-1: #121212;
   --app-surface-2: #1a1a1a;
   --app-surface-3: #242424;
-  --app-surface-hover: #2e2e2e;
+  --app-surface-hover: #282828;
   --app-border: color-mix(in srgb, white 10%, transparent);
   --app-border-strong: color-mix(in srgb, white 16%, transparent);
   --app-text: #f5f5f5;

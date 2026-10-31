@@ -210,6 +210,7 @@ export function EmissionDialog({
                   size="2"
                   variant={confirming ? "solid" : "ghost"}
                   color="red"
+                  highContrast={confirming}
                   disabled={busy != null}
                   onClick={() => (confirming ? void remove() : setConfirming(true))}
                 >

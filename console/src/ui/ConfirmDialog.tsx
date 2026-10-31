@@ -50,6 +50,7 @@ export function ConfirmDialog({
           </Button>
           <Button
             color="red"
+            highContrast
             disabled={busy}
             onClick={() => {
               void Promise.resolve(onConfirm()).then(() => {

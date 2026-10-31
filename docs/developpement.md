@@ -48,6 +48,7 @@ Le script lance les mêmes commandes que la CI ([`.github/workflows/`](../.githu
 | Partie | Ce qui tourne | Il faut |
 |---|---|---|
 | `donnees` | `git grep` des adresses IP privées, des noms en `.ts.net`, des clés privées et des jetons, puis des motifs de la station ([plus bas](#aucune-donnée-de-station)) | git |
+| `licences` | les tests de `scripts/licences.py`, puis les licences des paquets npm, du moteur et du catalogue ([plus bas](#les-licences)) | Python 3.11 ou plus et Poetry, `poetry install` fait, `services/catalog/.venv` |
 | `moteur` | `ruff check`, `ruff format --check`, puis `pytest` avec `TZ=Europe/Paris`, sans `tests/interface` ni `tests/e2e` | Poetry |
 | `liquidsoap` | `liquidsoap --check engine/playout/radiotomate.liq`, avec un `RTCONFIG` minimal | Docker |
 | `console` | `npm test`, puis `tsc` et `vite build` | Node 22, `npm install` fait |
@@ -111,7 +112,7 @@ Les parcours, dans `console/e2e/` :
 | Fichier | Ce qu'il vérifie |
 |---|---|
 | `antenne.spec.ts` | se connecter, puis voir l'antenne |
-| `accessibilite.spec.ts` | chaque écran et chaque onglet passés à axe-core, avec les menus et les panneaux de l'antenne : en clair et en sombre avec le compte admin, puis sur un téléphone avec l'animateur |
+| `accessibilite.spec.ts` | chaque écran et chaque onglet passés à axe-core, avec les menus et les panneaux de l'antenne, une confirmation rouge et deux incidents ouverts simulés par `page.route` : en clair et en sombre avec le compte admin, puis la barre latérale repliée et la largeur d'une tablette, et sur un téléphone avec l'animateur |
 | `barre.spec.ts` | la barre du haut : ce qui passe, et le dernier titre connu quand le moteur ne répond plus, l'état de l'antenne et son détail, le casque et sa source, un flux muet, qui s'arrête ou qui ne répond jamais, en PCM comme par l'élément audio, le menu du compte, le lien « Code source » |
 | `pupitre.spec.ts` | Espace, `/` et Entrée, la pré-écoute, « Diffuser », déplacer une ligne au clavier et à la souris, retirer puis annuler, le focus rendu à « Passer en direct » |
 | `etats.spec.ts` | session expirée, droit manquant, moteur injoignable, moteur muet, moteur arrêté derrière nginx (502 en HTML), envoi trop lourd pour nginx (413 en HTML) et route absente, puis les gestes refusés ou sans réponse de la page Automate, simulés par `page.route` devant le moteur de démo et le faux catalogue |
@@ -123,7 +124,7 @@ Les parcours, dans `console/e2e/` :
 
 Un défaut connu de la console garde son parcours en `test.fixme`, avec la raison en commentaire : Playwright le saute. Pour le voir échouer, remplacer `test.fixme` par `test` le temps d'un lancement.
 
-Un parcours échoue aussi sur un défaut d'accessibilité grave ou critique, au sens d'[axe-core](https://github.com/dequelabs/axe-core) : `banc.ts` passe axe sur la page où finit chaque parcours, et `accessibilite.spec.ts` passe chaque écran. Le rapport donne, pour chaque élément en défaut, la règle d'axe, son sélecteur et ce qui ne va pas. L'analyse se fait sans animation, une fois finies celles en cours : un menu qui s'ouvre encore fausserait les contrastes. Un défaut se corrige dans la console. `e2e/accessibilite.ts` peut en excuser un gardé en connaissance de cause, avec sa raison en commentaire : `DEFAUTS_CONNUS` par règle d'axe et par sélecteur, `TEXTES_PALES` par couleur de texte. Les deux listes sont vides : les défauts relevés à l'arrivée d'axe sont corrigés. Attention : une couleur de texte listée est excusée partout, même sur un écran neuf. Un défaut qui ne se voit qu'une fois, le temps que le moteur de démo fasse bouger la page, n'est pas rapporté : chaque page en défaut est analysée deux fois.
+Un parcours échoue aussi sur un défaut d'accessibilité grave ou critique, au sens d'[axe-core](https://github.com/dequelabs/axe-core) : `banc.ts` passe axe sur la page où finit chaque parcours, et `accessibilite.spec.ts` passe chaque écran. Le rapport donne, pour chaque élément en défaut, la règle d'axe, son sélecteur et ce qui ne va pas. L'analyse se fait sans animation, une fois finies celles en cours : un menu qui s'ouvre encore fausserait les contrastes. Un défaut se corrige dans la console. `e2e/accessibilite.ts` peut en excuser un gardé en connaissance de cause, avec sa raison en commentaire : `DEFAUTS_CONNUS` par règle d'axe et par sélecteur, `TEXTES_PALES` par couleur de texte. Les deux listes sont vides : les défauts relevés à l'arrivée d'axe sont corrigés. Attention : une couleur de texte listée est excusée partout, même sur un écran neuf. Un défaut qui ne se voit qu'une fois, le temps que le moteur de démo fasse bouger la page, n'est pas rapporté : chaque page en défaut est analysée deux fois. axe ne voit pas un texte écrit par le CSS (`content`), comme le badge du nombre d'incidents : `contraste(élément)`, de `e2e/accessibilite.ts`, mesure son rapport de contraste avec son fond.
 
 Un parcours s'écrit dans `console/e2e/<sujet>.spec.ts`. Il importe de `e2e/banc.ts` :
 
@@ -147,15 +148,9 @@ Dependabot propose chaque mois les mises à jour ([`.github/dependabot.yml`](../
 
 Chaque dépendance npm ou Python livrée avec BUTTON, dans le build de la console ou dans une image, a une licence compatible avec l'AGPL. Les licences acceptées, et pourquoi, sont dans [`scripts/licences.toml`](../scripts/licences.toml). La CI les contrôle sur chaque pull request qui touche un fichier de dépendances ([`licences.yml`](../.github/workflows/licences.yml)). Les outils de développement ne sont pas livrés : ils ne sont pas contrôlés.
 
-`scripts/verifier.sh` ne le lance pas encore. Le même contrôle, sur cette machine :
+Sur cette machine, `./scripts/verifier.sh licences` lance le même contrôle, après les tests de `scripts/licences.py`. Sans Poetry, ou sans l'environnement du catalogue ([plus haut](#vérifier-avant-de-proposer-un-changement)), la partie contrôle le reste, puis se dit sautée ; nommée, elle échoue.
 
-```bash
-python3 scripts/licences.py npm console/package-lock.json engine/sass/package-lock.json
-(cd engine && poetry run python ../scripts/licences.py poetry poetry.lock)
-services/catalog/.venv/bin/python scripts/licences.py pip
-```
-
-Il échoue sur une licence refusée, et sur une licence inconnue ou qui ne se lit pas. Une licence inconnue se vérifie, puis entre dans `licences.toml`, acceptée ou refusée, avec sa raison. Une exception ajoutée par `WITH` aussi : seules celles qui donnent des droits en plus sont acceptées. Un paquet dont les métadonnées ne disent pas la licence entre dans `[paquets]`, à sa version, une fois sa licence vérifiée à la main.
+Le contrôle échoue sur une licence refusée, et sur une licence inconnue ou qui ne se lit pas. Une licence inconnue se vérifie, puis entre dans `licences.toml`, acceptée ou refusée, avec sa raison. Une exception ajoutée par `WITH` aussi : seules celles qui donnent des droits en plus sont acceptées. Un paquet dont les métadonnées ne disent pas la licence entre dans `[paquets]`, à sa version, une fois sa licence vérifiée à la main.
 
 Le moteur se contrôle dans son environnement Poetry. Un paquet que `poetry.lock` réserve à une autre plateforme, ou à une autre version de Python, n'y est pas installé : le contrôle le saute, et le dit. La CI, elle, prend le Python de l'image, 3.13.
 

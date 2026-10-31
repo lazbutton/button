@@ -302,6 +302,7 @@ export function ChangeDialog({
                     size="2"
                     variant={confirming ? "solid" : "ghost"}
                     color="red"
+                    highContrast={confirming}
                     disabled={busy != null}
                     title={`La plage d'avant s'étendra jusqu'à ${hhmm(run.end)}.`}
                     onClick={() => (confirming ? void remove() : setConfirming(true))}
