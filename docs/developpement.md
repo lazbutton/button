@@ -53,8 +53,11 @@ Le script lance les mêmes commandes que la CI ([`.github/workflows/`](../.githu
 | `services` | les neuf tests du catalogue listés dans `services.yml` | `services/catalog/.venv`, voir plus bas |
 | `nginx` | `nginx -t` sur `console/docker/nginx.conf.template` et ses en-têtes de sécurité, rendus par le script de démarrage de l'image | Docker |
 | `deploy` | `docker compose config` avec `.env.example`, puis ShellCheck s'il est installé | Docker |
+| `e2e` | les parcours dans un navigateur, par `scripts/e2e.sh` ([plus bas](#les-parcours-dans-un-navigateur)) | Node 22 et Poetry, `npm install` et `poetry install` faits |
 
 Sans argument, une partie à qui il manque un outil est sautée, et le résumé le dit. Nommée, elle échoue.
+
+Sans argument, les parcours tournent aussi : la CI les lance sur chaque pull request qui touche la console ou le moteur, et un parcours cassé doit se voir avant elle. Ils prennent quelques minutes. Pour vérifier vite une partie, la nommer : `./scripts/verifier.sh moteur console`.
 
 Les dépendances du catalogue vont dans un environnement à part, une fois :
 
@@ -75,7 +78,7 @@ Les parcours de la console passent par un vrai navigateur, avec [Playwright](htt
 ./scripts/e2e.sh --headed                 # en voyant le navigateur
 ```
 
-Il faut `poetry install` dans `engine/` et `npm install` dans `console/`, rien d'autre. Au premier lancement, Playwright télécharge Chromium, une fois par machine, hors du dépôt (`~/Library/Caches/ms-playwright` sur macOS). Sous Linux, les bibliothèques dont il a besoin s'installent avec `cd console && npx playwright install-deps chromium`, qui demande les droits d'administration. Ni `verifier.sh` ni la CI ne lancent encore les parcours : c'est la fiche TST-03.
+Il faut `poetry install` dans `engine/` et `npm install` dans `console/`, rien d'autre. Au premier lancement, Playwright télécharge Chromium, une fois par machine, hors du dépôt (`~/Library/Caches/ms-playwright` sur macOS). Sous Linux, les bibliothèques dont il a besoin s'installent avec `cd console && npx playwright install-deps chromium`, qui demande les droits d'administration. `./scripts/verifier.sh` les lance aussi, partie `e2e`, et la CI sur chaque pull request qui touche `console/` ou `engine/` ([`e2e.yml`](../.github/workflows/e2e.yml)).
 
 Le script monte un banc à part, dans `.e2e/<date>-<pid>/`, ignoré par git :
 
@@ -90,13 +93,15 @@ Chaque pièce prend un port libre, jamais ceux du banc de dev : deux lancements 
 
 Tout s'arrête à la fin, même après un échec ou un `Ctrl-C`. Si tout passe, le dossier du lancement est effacé. Sinon il reste, avec le journal de chaque pièce (`moteur.log`, `console.log`…) et, dans `resultats/`, les captures et les traces d'un parcours raté. Pour rejouer une trace : `cd console && npx playwright show-trace ../.e2e/<lancement>/resultats/<parcours>/trace.zip`. Rien ne purge ces dossiers : `rm -rf .e2e` les efface tous, quand aucun lancement ne tourne.
 
+En CI, un lancement raté garde les mêmes journaux, captures et traces dans un artefact du job, `parcours-1`, en bas du résumé de l'exécution ; le chiffre est celui de la tentative. Il reste 14 jours. Il contient le dossier du lancement. Pour rejouer une trace : décompresser l'artefact, puis `cd console && npx playwright show-trace <artefact>/<lancement>/resultats/<parcours>/trace.zip`.
+
 Les parcours, dans `console/e2e/` :
 
 | Fichier | Ce qu'il vérifie |
 |---|---|
 | `antenne.spec.ts` | se connecter, puis voir l'antenne |
-| `barre.spec.ts` | la barre du haut : ce qui passe, l'état de l'antenne et son détail, le casque et sa source, un flux muet, qui s'arrête ou qui ne répond jamais, en PCM comme par l'élément audio, le menu du compte, le lien « Code source » |
-| `barre.spec.ts` | la barre du haut : ce qui passe, et le dernier titre connu quand le moteur ne répond plus, l'état de l'antenne et son détail, le casque et sa source, un flux muet ou qui s'arrête, le menu du compte, le lien « Code source » |
+| `accessibilite.spec.ts` | chaque écran et chaque onglet passés à axe-core, avec les menus et les panneaux de l'antenne : en clair et en sombre avec le compte admin, puis sur un téléphone avec l'animateur |
+| `barre.spec.ts` | la barre du haut : ce qui passe, et le dernier titre connu quand le moteur ne répond plus, l'état de l'antenne et son détail, le casque et sa source, un flux muet, qui s'arrête ou qui ne répond jamais, en PCM comme par l'élément audio, le menu du compte, le lien « Code source » |
 | `pupitre.spec.ts` | Espace, `/` et Entrée, la pré-écoute, « Diffuser », déplacer une ligne au clavier et à la souris, retirer puis annuler, le focus rendu à « Passer en direct » |
 | `etats.spec.ts` | session expirée, droit manquant, moteur injoignable, moteur muet, moteur arrêté derrière nginx (502 en HTML), envoi trop lourd pour nginx (413 en HTML) et route absente, puis les gestes refusés ou sans réponse de la page Automate, simulés par `page.route` devant le moteur de démo et le faux catalogue |
 | `bacs.spec.ts` | « Diffuser maintenant » sur un bac sans son prêt : la console dit que rien n'est parti |
@@ -106,9 +111,11 @@ Les parcours, dans `console/e2e/` :
 
 Un défaut connu de la console garde son parcours en `test.fixme`, avec la raison en commentaire : Playwright le saute. Pour le voir échouer, remplacer `test.fixme` par `test` le temps d'un lancement.
 
+Un parcours échoue aussi sur un défaut d'accessibilité grave ou critique, au sens d'[axe-core](https://github.com/dequelabs/axe-core) : `banc.ts` passe axe sur la page où finit chaque parcours, et `accessibilite.spec.ts` passe chaque écran. Le rapport donne, pour chaque élément en défaut, la règle d'axe, son sélecteur et ce qui ne va pas. L'analyse se fait sans animation, une fois finies celles en cours : un menu qui s'ouvre encore fausserait les contrastes. Les défauts que la console avait déjà sont listés dans `e2e/accessibilite.ts` : des textes trop pâles, comme ceux de `--app-text-faint`, des `aria-label` qui ne reprennent pas le texte affiché, les grilles de la Semaine et de l'Agenda, entre autres. Ils restent à corriger, et chacun corrigé sort de la liste. Un défaut nouveau se corrige dans la console, il n'entre pas dans la liste. Attention : une couleur de texte listée, comme `--app-text-faint`, est excusée partout, même sur un écran neuf, tant que le jeton n'est pas corrigé. Un défaut qui ne se voit qu'une fois, le temps que le moteur de démo fasse bouger la page, n'est pas rapporté : chaque page en défaut est analysée deux fois.
+
 Un parcours s'écrit dans `console/e2e/<sujet>.spec.ts`. Il importe de `e2e/banc.ts` :
 
-- `test` et `expect`. `test` fait échouer un parcours sur toute erreur JavaScript de la page. Il coupe aussi ce qui sortirait du banc : `brand.json` nomme le flux d'une vraie station, que le casque demande dès l'ouverture. Une requête vers un autre site échoue, et un lien vers un autre site ouvre une page vide à son adresse. Un parcours qui a besoin du flux le sert lui-même par `page.route`, qui passe avant le banc, comme dans `barre.spec.ts` ;
+- `test` et `expect`. `test` fait échouer un parcours sur toute erreur JavaScript de la page, et sur un défaut d'accessibilité grave ou critique de la page où il finit. Pour vérifier un état en cours de route, un menu ouvert par exemple : `verifierAccessibilite(page, écran)`, de `e2e/accessibilite.ts`. `test` coupe aussi ce qui sortirait du banc : `brand.json` nomme le flux d'une vraie station, que le casque demande dès l'ouverture. Une requête vers un autre site échoue, et un lien vers un autre site ouvre une page vide à son adresse. Un parcours qui a besoin du flux le sert lui-même par `page.route`, qui passe avant le banc, comme dans `barre.spec.ts` ;
 - `seConnecter(page, rôle)`, pour entrer avec un compte semé, ou `remplirLaConnexion(page, rôle)` quand l'écran de connexion est déjà affiché ;
 - `antenne`, `file` et `bibliotheque`, les trois régions du pupitre, `avis` pour un message de la console annoncé comme un état, `alerte` pour un message annoncé comme une alerte, et `tenirLAntenne`.
 
