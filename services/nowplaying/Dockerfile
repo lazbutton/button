@@ -1,4 +1,4 @@
-FROM python:3.13-slim-bookworm
+FROM python:3.15-slim-bookworm
 WORKDIR /app
 COPY nowplaying.py /app/nowplaying.py
 ENV RT_NOWPLAYING_PORT=6820
