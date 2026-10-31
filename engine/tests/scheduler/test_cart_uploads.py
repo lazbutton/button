@@ -1,6 +1,7 @@
 from io import BytesIO
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from sqlalchemy.orm import Session as ormSession
 from werkzeug.datastructures import FileStorage, MultiDict
 from werkzeug.test import encode_multipart
@@ -15,6 +16,7 @@ UNREADABLE = (
     "Un fichier n'a pas de nom lisible : son nom finit peut-être par « \\ ». "
     "Renomme-le, puis envoie-le à nouveau."
 )
+MALFORMED = "L'envoi est arrivé incomplet ou mal formé. Envoie les fichiers à nouveau."
 
 
 async def _new_cart(client, title: str) -> int:
@@ -75,12 +77,27 @@ async def test_cart_sounds_htmx_upload(
         )
         assert second.status_code == 200, await second.get_data(as_text=True)
         assert "two.mp3" in await second.get_data(as_text=True)
+        # Un sélecteur de fichiers vidé envoie un nom vide, sans contenu : rien à
+        # ajouter. Le corps est écrit comme par un navigateur : les encodeurs de
+        # test oublient la ligne vide qui précède un contenu vide.
+        empty = await client.post(
+            f"/carts/{cart_id}/sounds",
+            data=(
+                b"--vide\r\n"
+                b'Content-Disposition: form-data; name="sounds"; filename=""\r\n'
+                b"Content-Type: application/octet-stream\r\n"
+                b"\r\n"
+                b"\r\n--vide--\r\n"
+            ),
+            headers={"Content-Type": "multipart/form-data; boundary=vide"},
+        )
+        assert empty.status_code == 200, await empty.get_data(as_text=True)
     sounds = await _cart_sounds(client, cart_id)
     assert [row["title"] for row in sounds] == ["ohradiotomateoh.mp3", "two.mp3"]
     assert all(row["duration"] > 0 for row in sounds)
     assert await _cart_files(dbsession, cart_id) == ["ohradiotomateoh.mp3", "two.mp3"]
     queued = [call.args[0] for call in scheduler.queue_analysis.await_args_list]
-    assert queued == [[row["id"]] for row in sounds]
+    assert queued == [[sounds[0]["id"]], [sounds[1]["id"]], []]
 
 
 async def test_cart_sounds_unreadable_name_refused(
@@ -130,4 +147,69 @@ async def test_cart_sounds_unreadable_name_refused(
     assert htmx.status_code == 400, await htmx.get_data(as_text=True)
     assert await htmx.get_data(as_text=True) == UNREADABLE
     assert await _cart_files(dbsession, cart_id) == []
+    assert await _cart_sounds(client, cart_id) == []
+
+
+def _mp3(name: str | None) -> FileStorage:
+    payload = (ASSETS / "ohradiotomateoh.mp3").read_bytes()
+    return FileStorage(BytesIO(payload), name, "audio/mpeg")
+
+
+async def _refusal(client, path: str, body: bytes, content_type: str) -> str:
+    """Le message d'un refus 400, en JSON pour la console ou en texte pour HTMX."""
+    response = await client.post(
+        path,
+        data=body,
+        headers={"Content-Type": content_type, "HX-Request": "true"},
+    )
+    assert response.status_code == 400, await response.get_data(as_text=True)
+    if path.endswith(".json"):
+        return (await response.get_json())["error"]
+    return await response.get_data(as_text=True)
+
+
+@pytest.mark.parametrize("route", ["sounds.json", "sounds"], ids=["console", "htmx"])
+async def test_cart_sounds_malformed_upload_refused(  # noqa: PLR0913
+    raw_app,
+    app_configration: dict,
+    beets_integration: BeetsIntegration,
+    dbsession: ormSession,
+    users_password: str,
+    route: str,
+):
+    client = await _admin_client(
+        app_configration,
+        beets_integration,
+        dbsession,
+        users_password,
+        "cart-malformed",
+    )
+    cart_id = await _new_cart(client, "Malformed Cart")
+    path = f"/carts/{cart_id}/{route}"
+
+    # Un champ de texte à la place d'un son, après un bon son.
+    boundary, body = encode_multipart(
+        MultiDict([("sounds", _mp3("one.mp3")), ("sounds", "bonjour")]),
+    )
+    form = f"multipart/form-data; boundary={boundary}"
+    assert await _refusal(client, path, body, form) == UNREADABLE
+    assert await _cart_files(dbsession, cart_id) == []
+
+    # Un son sans nom de fichier, sous un autre nom : ce n'est pas du texte.
+    boundary, body = encode_multipart(
+        MultiDict([("sounds", _mp3("one.mp3")), ("notes", _mp3(None))]),
+    )
+    form = f"multipart/form-data; boundary={boundary}"
+    assert await _refusal(client, path, body, form) == UNREADABLE
+    assert await _cart_files(dbsession, cart_id) == []
+
+    # Un envoi coupé au milieu du son.
+    boundary, body = encode_multipart(MultiDict([("sounds", _mp3("one.mp3"))]))
+    form = f"multipart/form-data; boundary={boundary}"
+    assert await _refusal(client, path, body[: len(body) // 2], form) == MALFORMED
+    assert await _cart_files(dbsession, cart_id) == []
+
+    # Un formulaire sans boundary.
+    assert await _refusal(client, path, b"x", "multipart/form-data") == MALFORMED
+
     assert await _cart_sounds(client, cart_id) == []

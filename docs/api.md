@@ -145,7 +145,7 @@ Créer un relais : `POST /carts.json` avec `mode:"relay"`, une URL HTTP complèt
 Écritures, droit `carts` :
 
 - `POST /carts.json` → `201 {cart}`, `PUT /carts/{id}.json` avec la `version` lue → `{cart}`, `DELETE /carts/{id}.json`.
-- `POST /carts/{id}/sounds.json` : des fichiers envoyés (multipart, `?delta=1` pour répondre seulement le cart), ou `{folders:[…]}` pour rattacher des dossiers de la banque. Un fichier dont le nom ne se lit pas, comme un nom qui finit par `\`, fait refuser tout l’envoi : `400 {error}`, avec `error` en français, et aucun fichier de l’envoi ne reste.
+- `POST /carts/{id}/sounds.json` : des fichiers envoyés (multipart, `?delta=1` pour répondre seulement le cart), ou `{folders:[…]}` pour rattacher des dossiers de la banque. Un envoi coupé ou mal formé, ou un fichier dont le nom ne se lit pas, comme un nom qui finit par `\`, fait refuser tout l’envoi : `400 {error}`, avec `error` en français, et aucun fichier de l’envoi ne reste.
 - `POST /carts/{id}/sounds/delete.json` `{ids}` → `{cart}`.
 - `PUT /carts/{id}/sounds/{son}.json`, par exemple `{title}` ou `{active}` → `{cart, sound}` ; `DELETE` → `{cart}`.
 - `PUT /carts/{id}/sounds/ranks.json` `{ranks:[ids]}` → `{cart}`.

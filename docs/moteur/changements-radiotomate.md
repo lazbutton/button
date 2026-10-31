@@ -65,7 +65,7 @@ Le détail de chaque route est dans [`docs/api.md`](../api.md).
 
 `/antenne`, `/conducteur`, `/programmation`, `/sons` et `/reglages` renvoient la page d’accueil de la console quand son build est posé à côté du moteur (`interface.console_dist`). En production, le nginx de la console sert ces pages lui-même : la console est une application à part, le moteur sert les données.
 
-`stream_form()` lit les sons envoyés en multipart, pour `POST /carts/<id>/sounds` et `POST /carts/<id>/sounds.json`. Elle décodait en UTF-8 toute partie sans nom de fichier, et levait une `UnicodeDecodeError` sur autre chose que du texte : une erreur 500. Depuis multipart 1.3.1, c’est le cas d’un son dont le nom finit par `\`, car ce nom ne se lit plus. L’envoi entier est maintenant refusé en 400, et les fichiers qu’il avait déjà écrits sont effacés.
+`stream_form()` lit les sons envoyés en multipart, pour `POST /carts/<id>/sounds` et `POST /carts/<id>/sounds.json`. Un envoi mal formé y répondait 500 : sans `boundary` (`KeyError`), coupé avant la fin (`ParserError` de multipart), avec un champ de texte à la place d’un son (`TypeError` dans la route), ou avec une partie sans nom de fichier qui n’était pas du texte (`UnicodeDecodeError`). Depuis multipart 1.3.1, ce dernier cas est celui d’un son dont le nom finit par `\`, car ce nom ne se lit plus. Ces envois sont maintenant refusés en entier, en 400 : une partie au nom d’un champ de fichiers (`file_fields`) doit être un fichier. Un envoi refusé ou interrompu ne garde aucun des fichiers qu’il avait écrits.
 
 ## Agenda
 
