@@ -1,5 +1,5 @@
 import AxeBuilder from "@axe-core/playwright";
-import { expect, type Page } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
 
 // L'accessibilité vue par axe-core : un défaut grave ou critique fait échouer
 // le parcours. banc.ts vérifie la page où finit chaque parcours, et
@@ -97,4 +97,30 @@ async function analyser(page: Page): Promise<string[]> {
 /** Fait échouer le parcours sur un défaut d'accessibilité grave ou critique de la page, hors défauts connus. */
 export async function verifierAccessibilite(page: Page, ecran = "la page"): Promise<void> {
   expect(await defautsGraves(page), `défauts d’accessibilité graves ou critiques : ${ecran}`).toEqual([]);
+}
+
+/**
+ * Le rapport de contraste entre la couleur du texte d'un élément et son propre
+ * fond, opaque, au sens du WCAG : pour un texte qu'axe ne voit pas, comme celui
+ * qu'écrit le CSS (`content`). Une toile ramène chaque couleur calculée, même
+ * mélangée (`color-mix`), à ses trois octets sRGB.
+ */
+export async function contraste(element: Locator): Promise<number> {
+  return element.evaluate((noeud) => {
+    const style = getComputedStyle(noeud);
+    const toile = document.createElement("canvas").getContext("2d", { willReadFrequently: true });
+    if (!toile) throw new Error("pas de toile 2D pour mesurer le contraste");
+    const luminance = (couleur: string) => {
+      toile.clearRect(0, 0, 1, 1);
+      toile.fillStyle = couleur;
+      toile.fillRect(0, 0, 1, 1);
+      const [r, v, b] = Array.from(toile.getImageData(0, 0, 1, 1).data.subarray(0, 3), (octet) => {
+        const canal = octet / 255;
+        return canal <= 0.04045 ? canal / 12.92 : ((canal + 0.055) / 1.055) ** 2.4;
+      });
+      return 0.2126 * r + 0.7152 * v + 0.0722 * b;
+    };
+    const [claire, sombre] = [luminance(style.color), luminance(style.backgroundColor)].sort((a, b) => b - a);
+    return (claire + 0.05) / (sombre + 0.05);
+  });
 }

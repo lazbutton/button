@@ -47,8 +47,9 @@ function readCollapsed(preferCollapsed: boolean): boolean {
 
 function Brand({ onNavigate }: { onNavigate?: MouseEventHandler<HTMLAnchorElement> }) {
   const brand = useBrand();
+  // La barre latérale repliée cache le texte : le lien garde un nom, qui le reprend.
   return (
-    <Link className="app-brand" to="/antenne" onClick={onNavigate}>
+    <Link className="app-brand" to="/antenne" aria-label={brand.suite.name} onClick={onNavigate}>
       <img src="/logo.svg" alt="" width={28} height={28} />
       <span className="app-brand-text">{brand.suite.name}</span>
     </Link>

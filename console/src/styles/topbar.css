@@ -108,8 +108,9 @@
   height: 1.125rem;
   padding: 0 0.3rem;
   border-radius: 999px;
-  background: var(--app-danger);
-  color: #fff;
+  /* L'encre rouge et la couleur du fond : 4,5:1 au moins, en clair comme en sombre. */
+  background: var(--app-danger-ink);
+  color: var(--app-bg);
   font-size: 0.6875rem;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
