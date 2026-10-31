@@ -65,6 +65,8 @@ Le détail de chaque route est dans [`docs/api.md`](../api.md).
 
 `/antenne`, `/conducteur`, `/programmation`, `/sons` et `/reglages` renvoient la page d’accueil de la console quand son build est posé à côté du moteur (`interface.console_dist`). En production, le nginx de la console sert ces pages lui-même : la console est une application à part, le moteur sert les données.
 
+`stream_form()` lit les sons envoyés en multipart, pour `POST /carts/<id>/sounds` et `POST /carts/<id>/sounds.json`. Elle décodait en UTF-8 toute partie sans nom de fichier, et levait une `UnicodeDecodeError` sur autre chose que du texte : une erreur 500. Depuis multipart 1.3.1, c’est le cas d’un son dont le nom finit par `\`, car ce nom ne se lit plus. L’envoi entier est maintenant refusé en 400, et les fichiers qu’il avait déjà écrits sont effacés.
+
 ## Agenda
 
 L’Agenda (migration v17) ajoute des émissions à une date précise : un set enregistré, souvent déposé par un invité par un lien privé, ou un direct daté. Les tables `agenda_*` stockent de l’UTC naïf, alors que les tables historiques gardent l’heure locale du conteneur ; les conversions passent par `domain/agenda.py`. Le scheduler fait passer les sets à leur heure (`scheduler/agenda.py`). Les routes de l’invité sont publiques (`interface/public.py`), et le catalogue déclare les fichiers reçus par des routes internes protégées par jeton. Le réglage `agenda_enabled` coupe tout l’Agenda.
