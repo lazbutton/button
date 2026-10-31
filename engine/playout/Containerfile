@@ -11,6 +11,13 @@ ENV RADIOTOMATE_HOME=/app
 ENV RADIOTOMATE_USER=rtuser
 
 USER root
+# The Liquidsoap image is not rebuilt when Debian publishes a fix: Debian's
+# fixes come in here. CI keeps this layer in its build cache: clear the cache
+# to take the fixes published since. Liquidsoap keeps this tag's version: its
+# own package is newer than Debian's.
+RUN apt-get update \
+    && apt-get upgrade -y \
+    && rm -rf /var/lib/apt/lists/*
 RUN useradd -md $RADIOTOMATE_HOME -s /bin/bash $RADIOTOMATE_USER
 USER $RADIOTOMATE_USER
 

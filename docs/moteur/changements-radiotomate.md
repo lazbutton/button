@@ -97,6 +97,8 @@ Le scheduler surveille l’antenne (`scheduler/alerts.py`) : silence, playout in
 
 `beets/compat.py` corrige l’import de Beets 2.5 sous Python 3.14 : l’ioctl de taille de terminal demandait 4 octets, le noyau en écrit 8.
 
+L’image du playout passe `apt-get upgrade` sur celle de Liquidsoap, que ses auteurs ne reconstruisent pas quand Debian publie un correctif. Liquidsoap garde la version de son tag.
+
 ## Marque et interface
 
 `brand.json` et `brand.py` portent le nom affiché (`INTERFACE_NAME`), le logo et les libellés. Le nom de la station, les adresses de son flux et de son direct, et le lien de son code source se règlent aussi dans la console : des clés `station.*` de la table `settings` (`services/station.py`), sans migration. La console les pose sur son `brand.json`, qui reste le repli. Les pages HTMX gardent le nom de `brand.json`. `layout.jinja` est en `lang=fr`, avec `suite.css`. La feuille `sass/_suite.scss` est la charte noir et blanc du pupitre. Les pages HTMX d’origine (live, carts, auto-DJ, utilisateurs) restent servies par le même processus.
