@@ -79,6 +79,8 @@ Chaque personne a une page de compte. Les utilisateurs se créent et se modifien
 
 Chaque compte a un jeton d’encodeur (v18, `services/stream_token.py`). L’encodeur l’envoie au harbor à la place du mot de passe du compte. `/can_stream` accepte encore ce mot de passe tant que le réglage `features.allow_account_password` n’est pas faux. Le moteur ne garde du jeton qu’une empreinte SHA-256.
 
+Les échecs de connexion se comptent par adresse, jamais par compte (`domain/login_guard.py`, en mémoire). Au cinquième en quinze minutes, `/login` et `/login.json` refusent l’adresse en 429 pendant quinze minutes, puis le double à chaque nouveau blocage, vingt-quatre heures au plus. Derrière nginx, l’adresse est celle de l’en-tête `X-Real-IP`, que le moteur ne croit que venant de la boucle locale ou d’un réseau privé.
+
 ## Exploitation
 
 Le scheduler surveille l’antenne (`scheduler/alerts.py`) : silence, playout injoignable, heartbeat perdu, sortie Icecast coupée, créneau live sans encodeur. Une alerte part une fois, puis une note de retour, vers un webhook JSON ou une tâche Vikunja. Le bloc YAML est `alerts:`.

@@ -4,7 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, ty
 import { ErrorState, LoadingState } from "../ui/DataState";
 import { FormField } from "../ui/FormField";
 import { AccountProvider } from "./AccountContext";
-import { ApiAuthError, ApiUnavailableError, apiLogin, apiLogout, apiProbeSession } from "./client";
+import { ApiAuthError, ApiRequestError, ApiUnavailableError, apiLogin, apiLogout, apiProbeSession } from "./client";
 import { cookieRefused, cookieRefusedMessage } from "./sessionCookie";
 import { LOGOUT_UNREACHED_MESSAGE } from "./sessionLogout";
 import { forgetUsername, rememberUsername } from "./sessionUser";
@@ -139,6 +139,9 @@ function StudioLogin({ onLoggedIn, notice }: { onLoggedIn: () => void; notice: s
         setFail("L’automate ne répond pas. Vérifie qu’il tourne, puis réessaie.");
       } else if (caught instanceof ApiAuthError) {
         setFail("Identifiant ou mot de passe incorrect. Réessaie, ou demande à un admin de le réinitialiser.");
+      } else if (caught instanceof ApiRequestError && caught.status === 429) {
+        // Trop d'essais (tooManyAttempts.ts) : le message dit combien de minutes attendre.
+        setFail(caught.message);
       } else {
         setFail("Connexion impossible. Réessaie.");
       }
