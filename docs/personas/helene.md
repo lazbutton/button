@@ -32,7 +32,7 @@ Hélène accueille une dizaine de bénévoles à chaque rentrée, et en voit par
 
 ## Son parcours
 
-1. **Un nouveau bénévole.** **Réglages → Comptes**, **Nouveau compte** : un identifiant, un mot de passe, un rôle (Animateur, Programmateur ou Admin), et **Peut passer en direct** s'il a une émission en direct. Elle choisit ensuite ce compte dans son émission, en **Compte du plateau** (**Programmation → Semaine**) : le champ ne liste les comptes que pour un admin.
+1. **Un nouveau bénévole.** **Réglages → Comptes**, **Nouveau compte** : un identifiant, un mot de passe, un rôle (Animateur, Programmateur ou Admin), et **Peut passer en direct** s'il a une émission en direct. Nadia pourra alors le choisir comme animateur de son émission.
 2. **Sa fiche.** Elle y voit les créneaux qui le nomment. Elle crée son jeton d'encodeur s'il n'y arrive pas seul, et règle le mot de passe du dossier de la station pour une programmatrice.
 3. **Un départ.** Elle supprime le compte, après confirmation.
 4. **La station.** **Réglages → Station** : le nom, le nom court, l'accroche, la langue, les adresses publiques du flux et de `now.json`. Un enregistrement change tout de suite le nom affiché.
