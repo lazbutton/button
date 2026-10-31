@@ -1,6 +1,6 @@
 # Radiotomate — ce qui a changé
 
-28 septembre 2026, complété le 30 octobre 2026.
+28 septembre 2026, complété le 31 octobre 2026.
 
 Ce texte décrit le moteur dans `engine/` par rapport à l’amont [Radiotomate](https://radiotomate.org/) de Martin Kirchgessner, commit `130030bb` (`https://git.sr.ht/~martink/radiotomate`). Licence inchangée : AGPL-3.0-or-later. Le `README.md` et le `CHANGELOG.md` du dossier restent ceux de l’amont.
 
@@ -33,6 +33,8 @@ Liquidsoap 2.4.5 annote chaque push avec `radiotomate_queue`. Le journal d’ant
 `DELETE /live`, `POST /schedule/<id>/now` et `POST /schedule/<id>/sounds/<id>/now` répondaient 200, que le playout ait fait l’ordre ou non. Ces routes d’ordres du scheduler, avec `POST /schedule/path/now` et `POST /queues/flush`, répondent maintenant 502 `{ok:false, error, detail}` quand il ne l’a pas fait : `playout_unavailable` s’il n’a pas répondu, `playout_rejected` s’il a répondu une erreur. Ces gestes passent par `gesture_gateway_for` : l’ordre part une fois, et ne repart que si la connexion a été refusée. Après un délai, le playout a pu le faire, et le renvoyer passerait deux titres. L’horloge, la boîte d’envoi et l’Agenda gardent leurs essais.
 
 `POST /schedule/<id>/now` répondait aussi 200 quand le cart n’avait aucun son prêt, sans rien pousser. Il répond maintenant 409 `{ok:false, error:"cart_empty", detail}`. Un cart aléatoire dans ce cas levait une `IndexError` : `next_sound_random` rend maintenant `None`, comme les autres modes.
+
+Une playlist simple (`playlist`) passée en entier reprend au début, comme une boucle : `Cart.next_sound_playlist` se replie sur `next_sound_playlist_loop`, et un son prêt jamais passé reste prioritaire. L’amont n’en tirait plus aucun son. L’horloge le faisait déjà de son côté ; `POST /schedule/<id>/now` et le son suivant affiché suivent maintenant la même règle. Le second son que cet ordre met en file n’est jamais un son déjà passé d’une playlist simple : l’ordre ne met pas deux fois de suite en file un cart d’un seul son jamais passé. Pour un cart de la file `carts`, la suite vient ensuite de l’horloge (`_refill_active_cart`), qui reprend la playlist au début.
 
 Un titre Beets sans `rg_track_gain` est analysé à la prévision (`analyze_item_soon`), puis au push si le gain manque encore (`ensure_item_gain`). Rien n’est poussé sans gain.
 
@@ -127,4 +129,4 @@ Les tests nouveaux couvrent l’horloge, le conducteur, les alertes, le harbor, 
 
 ## Ce qui n’a pas bougé
 
-Le choix d’un son dans un cart (playlist, boucle, aléatoire, relais), les filtres Beets de l’auto-DJ, le harbor et les droits des comptes, à part le jeton d’encodeur, les sorties Icecast, PulseAudio et ALSA, et le rendu serveur HTMX. L’installateur Podman et les quadlets restent le chemin d’installation de l’amont, avec les sondes et le montage de banque en plus.
+Le choix d’un son dans un cart (playlist, boucle, aléatoire, relais), à part une playlist simple passée en entier, les filtres Beets de l’auto-DJ, le harbor et les droits des comptes, à part le jeton d’encodeur, les sorties Icecast, PulseAudio et ALSA, et le rendu serveur HTMX. L’installateur Podman et les quadlets restent le chemin d’installation de l’amont, avec les sondes et le montage de banque en plus.
