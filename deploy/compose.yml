@@ -6,6 +6,11 @@ name: button
 #
 # Docker rotates stdout/stderr; the interface and scheduler rotate their own
 # log files. playout.log needs a logrotate rule on the host.
+#
+# Console, Icecast, nowplaying et catalogue publient leur port sur BIND_ADDRESS :
+# 127.0.0.1 sur un VPS, où seul le reverse proxy les joint. Vide, le port n'a
+# pas d'adresse et écoute sur toutes les interfaces, en IPv4 et en IPv6 :
+# 0.0.0.0 n'écouterait qu'en IPv4.
 x-logging: &logging
   driver: json-file
   options:
@@ -49,7 +54,7 @@ services:
       CSP_MEDIA_SRC: ${CSP_MEDIA_SRC:-}
       CSP_CONNECT_SRC: ${CSP_CONNECT_SRC:-}
     ports:
-      - "${CONSOLE_PORT:-30126}:80"
+      - "${BIND_ADDRESS:-}${BIND_ADDRESS:+:}${CONSOLE_PORT:-30126}:80"
     depends_on:
       - radiotomate-playout
       - tusd
@@ -65,7 +70,7 @@ services:
       ICECAST_ADMIN_PASSWORD: ${ICECAST_ADMIN_PASSWORD:?ICECAST_ADMIN_PASSWORD manquant dans .env}
       ICECAST_ADMIN_EMAIL: ${ICECAST_ADMIN_EMAIL:-admin@localhost}
     ports:
-      - "${ICECAST_PORT:-18000}:8000"
+      - "${BIND_ADDRESS:-}${BIND_ADDRESS:+:}${ICECAST_PORT:-18000}:8000"
     # Avec les secrets de .env.example, Icecast ne démarre pas non plus : sinon,
     # n'importe qui diffuserait sur le mount laissé libre par le playout.
     depends_on:
@@ -92,7 +97,7 @@ services:
       - ${RT_DATA:-./data/radiotomate}/radiotomate.yaml:/config/radiotomate.yaml:ro
       - ${BUTTON_MEDIA:-./media}:/media:ro
     ports:
-      - "${NOWPLAYING_PORT:-6820}:6820"
+      - "${BIND_ADDRESS:-}${BIND_ADDRESS:+:}${NOWPLAYING_PORT:-6820}:6820"
     # Comme Icecast : pas de /hook ouvert avec un secret d'exemple.
     depends_on:
       radiotomate-init:
@@ -242,7 +247,7 @@ services:
       # Read-only: the engine's token for the Agenda deposit routes.
       - ${RT_DATA:-./data/radiotomate}/radiotomate.yaml:/config/radiotomate.yaml:ro
     ports:
-      - "${CATALOG_PORT:-30127}:30127"
+      - "${BIND_ADDRESS:-}${BIND_ADDRESS:+:}${CATALOG_PORT:-30127}:30127"
     depends_on:
       - meilisearch
 
