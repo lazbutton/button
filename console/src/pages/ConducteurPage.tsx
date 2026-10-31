@@ -135,7 +135,8 @@ export function ConducteurPage() {
       <PageHeader
         title="Conducteur"
         status={
-          <Badge color={onAir.color} variant="soft">
+          // En couleur douce, le texte vert ou ambre du badge manque de contraste.
+          <Badge color={onAir.color} variant="soft" highContrast>
             <Radio size={12} aria-hidden="true" />
             {onAir.label}
           </Badge>

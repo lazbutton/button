@@ -151,7 +151,7 @@ export function RepairClockCartDialog({
         </Dialog.Description>
         <Flex direction="column" gap="3" mt="3">
           {title ? (
-            <Button disabled={saving} onClick={() => void createOrOpen()}>
+            <Button highContrast disabled={saving} onClick={() => void createOrOpen()}>
               {saving ? <Spinner size="1" /> : existing ? <Library className="ui-button-icon" /> : <Plus className="ui-button-icon" />}
               {existing ? "Ouvrir le cart" : `Créer « ${title} »`}
             </Button>

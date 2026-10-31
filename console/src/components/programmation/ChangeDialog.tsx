@@ -195,7 +195,7 @@ export function ChangeDialog({
               <span className="ui-field-label">Heure type</span>
               <Select.Root size="2" value={clockId} onValueChange={setClockId}>
                 <Select.Trigger className="ui-field-control" placeholder="Choisir" aria-label="Heure type" />
-                <Select.Content position="popper">
+                <Select.Content variant="soft" position="popper">
                   {clocks.map((row) => (
                     <Select.Item key={row.id} value={String(row.id)}>
                       <span className="prog-clock-option">
@@ -216,7 +216,7 @@ export function ChangeDialog({
                 onValueChange={(value) => setMinute(Number(value))}
               >
                 <Select.Trigger className="ui-field-control prog-time" aria-label="Heure du changement" />
-                <Select.Content position="popper" className="prog-time-menu">
+                <Select.Content variant="soft" position="popper" className="prog-time-menu">
                   {times.map((value) => (
                     <Select.Item key={value} value={String(value)}>
                       {hhmm(value)}

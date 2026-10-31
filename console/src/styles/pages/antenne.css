@@ -68,7 +68,6 @@
   font-size: 0.65rem;
   font-weight: 600;
   line-height: 1;
-  opacity: 0.55;
 }
 
 /* ---- Boutons ------------------------------------------------------------- */
@@ -118,8 +117,10 @@
   background: color-mix(in srgb, var(--app-text) 84%, var(--app-bg));
 }
 
+/* Ailleurs, la touche prend le gris du texte qui l'entoure ; ici, celui du bouton, en retrait. */
 .ant-btn--primary kbd {
   margin-left: 0.35rem;
+  opacity: 0.7;
 }
 
 .ant-btn--small {

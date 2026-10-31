@@ -105,8 +105,10 @@ test("moteur injoignable : le titre en cours dit qu’il n’a plus de nouvelles
   await expect(enCours).toHaveAccessibleName(
     /^Sans nouvelles depuis \d{2}:\d{2}\. Dernier titre connu : Titre du banc, Studio\. Ouvrir l’antenne\.$/,
   );
-  await expect(enCours).toContainText(/Sans nouvelles depuis \d{2}:\d{2}$/);
-  await expect(enCours).not.toContainText(/−\d+:\d{2}/);
+  // La mention et le temps s'affichent sous le titre, dans le cadre du lien.
+  const cadre = enCours.locator("..");
+  await expect(cadre).toContainText(/Sans nouvelles depuis \d{2}:\d{2}$/);
+  await expect(cadre).not.toContainText(/−\d+:\d{2}/);
 
   await page.unroute(versLeMoteur);
   await expect(enCours).toHaveAccessibleName(decompte, { timeout: 15_000 });
@@ -300,26 +302,28 @@ test("l’admin choisit la source de son casque, et la retrouve", async ({ page 
   await expect(source).toHaveAccessibleName("Source du casque : Antenne publique. Changer.");
 
   await source.click();
-  await page.getByRole("menuitemradio", { name: /^Conducteur \(fichiers\)/ }).click();
-  await expect(source).toHaveAccessibleName("Source du casque : Conducteur (fichiers). Changer.");
-  await expect(casque(page)).toHaveAccessibleName("Écouter au casque : Conducteur (fichiers)");
+  await page.getByRole("menuitemradio", { name: /^Fichiers du conducteur/ }).click();
+  await expect(source).toHaveAccessibleName("Source du casque : Fichiers du conducteur. Changer.");
+  await expect(casque(page)).toHaveAccessibleName("Écouter au casque : Fichiers du conducteur");
 
   await page.reload();
-  await expect(source).toHaveAccessibleName("Source du casque : Conducteur (fichiers). Changer.");
+  await expect(source).toHaveAccessibleName("Source du casque : Fichiers du conducteur. Changer.");
 });
 
 test("le menu du compte : qui est connecté, « Mon compte », puis la déconnexion", async ({ page }) => {
   await seConnecter(page, "programmateur");
-  await barre(page).getByRole("button", { name: "Compte programmateur : menu" }).click();
-  const menu = page.getByRole("menu", { name: "Compte programmateur : menu" });
+  await barre(page).getByRole("button", { name: "PR, compte programmateur : menu" }).click();
+  const menu = page.getByRole("menu", { name: "PR, compte programmateur : menu" });
   await expect(menu.getByText("programmateur", { exact: true })).toBeVisible();
   await expect(menu.getByText("Programmateur", { exact: true })).toBeVisible();
 
   await menu.getByRole("menuitem", { name: "Mon compte" }).click();
+  // Le menu se ferme. Rouvert avant la fin de sa fermeture, il se refermerait aussitôt.
+  await expect(menu).toBeHidden();
   await expect(page).toHaveURL(/\/reglages\?onglet=compte$/);
   await expect(page.getByRole("tabpanel", { name: "Mon compte" })).toBeVisible();
 
-  await barre(page).getByRole("button", { name: "Compte programmateur : menu" }).click();
+  await barre(page).getByRole("button", { name: "PR, compte programmateur : menu" }).click();
   await page.getByRole("menuitem", { name: "Se déconnecter" }).click();
   await expect(page.getByRole("button", { name: "Se connecter" })).toBeVisible();
   // La session est close chez le moteur aussi : recharger ne la rend pas.
@@ -329,7 +333,7 @@ test("le menu du compte : qui est connecté, « Mon compte », puis la déconnex
 
 test("le lien « Code source » ouvre les sources dans un nouvel onglet", async ({ page, context }) => {
   await seConnecter(page, "animateur");
-  await barre(page).getByRole("button", { name: "Compte animateur : menu" }).click();
+  await barre(page).getByRole("button", { name: "AN, compte animateur : menu" }).click();
   const lien = page.getByRole("menuitem", { name: "Code source AGPL" });
   // L'adresse vient de la marque, sinon du dépôt de BUTTON.
   const marque = (await (await page.request.get("/brand.json")).json()) as { suite?: { sourceUrl?: string } };

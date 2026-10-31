@@ -466,7 +466,7 @@ export function DiffusionDialog({
                 <span className="ui-field-label">Animateur</span>
                 <Select.Root size="2" value={host} onValueChange={setHost} disabled={!canEditWhen}>
                   <Select.Trigger className="ui-field-control" aria-label="Animateur" />
-                  <Select.Content position="popper">
+                  <Select.Content variant="soft" position="popper">
                     <Select.Item value={NOBODY}>À choisir</Select.Item>
                     {hosts.length ? <Select.Separator /> : null}
                     {hosts.map((name) => (
@@ -490,7 +490,7 @@ export function DiffusionDialog({
                     <span className="ui-field-label">Répéter</span>
                     <Select.Root size="2" value={rule} onValueChange={setRule}>
                       <Select.Trigger className="ui-field-control" aria-label="Répéter" />
-                      <Select.Content position="popper">
+                      <Select.Content variant="soft" position="popper">
                         <Select.Item value={NO_REPEAT}>Une seule fois</Select.Item>
                         <Select.Item value="weekly">{repeatLabel("weekly", nth, weekday)}</Select.Item>
                         <Select.Item value="biweekly">{repeatLabel("biweekly", nth, weekday)}</Select.Item>
@@ -632,7 +632,7 @@ export function DiffusionDialog({
                           onValueChange={(value) => setConfirmDelete(value as "one" | "following")}
                         >
                           <Select.Trigger aria-label="Quelles dates" />
-                          <Select.Content position="popper">
+                          <Select.Content variant="soft" position="popper">
                             <Select.Item value="one">Cette date</Select.Item>
                             <Select.Item value="following">Celle-ci et les suivantes</Select.Item>
                           </Select.Content>

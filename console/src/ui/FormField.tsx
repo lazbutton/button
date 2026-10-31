@@ -51,7 +51,7 @@ export function SelectField({
     <FormField label={label} hint={hint}>
       <Select.Root value={value} onValueChange={onValueChange} disabled={disabled}>
         <Select.Trigger className="ui-field-control" placeholder={placeholder} />
-        <Select.Content position="popper">
+        <Select.Content variant="soft" position="popper">
           {options.map((option) => (
             <Select.Item
               key={option.value}

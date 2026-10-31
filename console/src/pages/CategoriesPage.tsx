@@ -186,13 +186,13 @@ export function CategoriesPage() {
                           )}
                         </td>
                         <td className="c-more">
-                          <DropdownMenu.Root>
+                          <DropdownMenu.Root modal={false}>
                             <DropdownMenu.Trigger>
                               <IconButton size="2" variant="ghost" color="gray" aria-label={`Actions pour ${row.name}`}>
                                 <MoreHorizontal size={16} />
                               </IconButton>
                             </DropdownMenu.Trigger>
-                            <DropdownMenu.Content align="end" className="prog-menu">
+                            <DropdownMenu.Content variant="soft" align="end" className="prog-menu">
                               <DropdownMenu.Item onSelect={() => setEditing(row)}>
                                 <Pencil size={15} aria-hidden="true" />
                                 Modifier et tester

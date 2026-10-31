@@ -88,7 +88,8 @@ export function monitorSources(brand: Brand): MonitorSource[] {
     },
     {
       id: "files",
-      label: "Conducteur (fichiers)",
+      // Commence par la pastille du casque, « Fichiers » : le nom du bouton reprend ce qu'il affiche.
+      label: "Fichiers du conducteur",
       chip: "Fichiers",
       hint: "MP3 du conducteur, collés à l’horloge. Ancre dure = coupe. Live plateau → l’antenne.",
       stream: publicStream,

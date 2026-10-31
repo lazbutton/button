@@ -220,6 +220,11 @@ export function initials(username: string): string {
   return `${words[0][0]}${words[words.length - 1][0]}`.toUpperCase();
 }
 
+/** Nom du bouton du compte : il commence par les initiales que montre l'avatar. */
+export function accountLabel(username: string): string {
+  return username ? `${initials(username)}, compte ${username} : menu` : "Compte : menu";
+}
+
 export type ListenState = {
   muted: boolean;
   kind: "icecast" | "files" | "harbor";

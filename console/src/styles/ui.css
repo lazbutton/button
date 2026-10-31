@@ -10,6 +10,11 @@
   border: 0 !important;
 }
 
+/* Le titre d'une section de menu : le gris de Radix (--gray-a10) manque de contraste. */
+.rt-BaseMenuLabel {
+  color: var(--app-text-faint);
+}
+
 .ui-page {
   display: flex;
   flex-direction: column;
@@ -177,7 +182,7 @@
 }
 
 .ui-field-error {
-  color: var(--app-danger);
+  color: var(--app-danger-ink);
 }
 
 .ui-field-control,

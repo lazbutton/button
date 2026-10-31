@@ -1,6 +1,6 @@
 import { Popover } from "@radix-ui/themes";
 import { ArrowRight, ChevronDown } from "lucide-react";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { Link } from "react-router-dom";
 import { formatDuration, incidentLabel, type PillarTone } from "../../api/antenneState";
 import type { TopAir, TopHealth } from "../../api/topbar";
@@ -30,6 +30,7 @@ export function AirStatus({
   isAdmin: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const titleId = useId();
   const incidents = health.stale ? [] : antenne?.incidents ?? [];
   // Le point orange ne sert que si la pastille elle-même ne signale rien.
   const calm = air.tone === "on" || air.tone === "direct";
@@ -45,13 +46,14 @@ export function AirStatus({
           data-tone={air.tone}
           aria-label={`Antenne : ${air.label}${air.detail ? `, ${air.detail}` : ""}. Santé : ${HEALTH_WORD[health.tone]}${health.open ? `, ${health.open} incident${health.open > 1 ? "s" : ""} ouvert${health.open > 1 ? "s" : ""}` : ""}.`}
         >
+          {/* L'espace sépare les mots du texte affiché, que le nom reprend. Le compteur est un badge
+              dessiné par le CSS : le nom dit déjà le nombre d'incidents, et la barre cache le détail
+              quand elle se resserre. */}
           <span className="tb-air-dot" aria-hidden="true" />
-          <span className="tb-air-label">{air.label}</span>
+          <span className="tb-air-label">{air.label}</span>{" "}
           {air.detail ? <span className="tb-air-detail">{air.detail}</span> : null}
           {flag === "count" ? (
-            <span className="tb-air-count" aria-hidden="true">
-              {health.open}
-            </span>
+            <span className="tb-air-count" data-count={health.open} aria-hidden="true" />
           ) : flag === "dot" ? (
             <span className="tb-air-flag" aria-hidden="true" />
           ) : null}
@@ -61,9 +63,16 @@ export function AirStatus({
       <span className="ui-visually-hidden" role="status">
         {spoken(air)}
       </span>
-      <Popover.Content className="tb-pop" align="start" sideOffset={6} size="1" maxWidth="22rem">
+      <Popover.Content
+        className="tb-pop"
+        align="start"
+        sideOffset={6}
+        size="1"
+        maxWidth="22rem"
+        aria-labelledby={titleId}
+      >
         <div className="tb-pop-head">
-          <strong>État de l’antenne</strong>
+          <strong id={titleId}>État de l’antenne</strong>
           <span>
             {health.stale ? "État périmé" : antenne ? `Relevé à ${antenne.at.slice(11, 19)}` : ""}
           </span>

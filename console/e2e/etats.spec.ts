@@ -63,7 +63,7 @@ const suivant = (page: Page) => antenne(page).getByRole("button", { name: /^Suiv
 const passer = (route: Route) => route.request().method() === "DELETE";
 
 async function seDeconnecter(page: Page): Promise<void> {
-  await page.getByRole("banner").getByRole("button", { name: /^Compte .* : menu$/ }).click();
+  await page.getByRole("banner").getByRole("button", { name: /, compte .+ : menu$/ }).click();
   await page.getByRole("menuitem", { name: "Se déconnecter" }).click();
 }
 

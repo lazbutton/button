@@ -71,14 +71,20 @@ export function DestinationPicker({
   };
 
   const optionId = (index: number) => `${baseId}-option-${index}`;
+  const kind = value.group === "rotation" ? "Musique" : "Archives";
   let index = -1;
 
   return (
     <Popover.Root open={open} onOpenChange={setOpen}>
       <Popover.Trigger>
-        <button type="button" className="banque-dest-trigger" aria-label={`Destination : ${value.label}`}>
-          <span className="banque-dest-kind">{value.group === "rotation" ? "Musique" : "Archives"}</span>
-          <span className="banque-dest-name">{value.label}</span>
+        <button
+          type="button"
+          className="banque-dest-trigger"
+          aria-label={`Destination : ${kind}, ${value.label}, ${value.folder}`}
+        >
+          {/* Les espaces séparent les mots du texte affiché, que le nom reprend. */}
+          <span className="banque-dest-kind">{kind}</span>{" "}
+          <span className="banque-dest-name">{value.label}</span>{" "}
           <code className="banque-dest-path">{value.folder}</code>
           <ChevronsUpDown size={15} aria-hidden="true" className="banque-dest-chevron" />
         </button>
