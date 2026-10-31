@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { expect, test as base, type Page } from "@playwright/test";
 import type { Role } from "../src/api/roles.ts";
+import { verifierAccessibilite } from "./accessibilite.ts";
 
 // Ce que engine/tests/e2e/seed.py a semé pour ce lancement : un compte par
 // rôle, avec un mot de passe tiré pour ce lancement seulement.
@@ -26,7 +27,11 @@ export async function remplirLaConnexion(page: Page, role: Role): Promise<void> 
   await page.getByRole("button", { name: "Se connecter" }).click();
 }
 
-/** Un parcours échoue aussi sur une erreur JavaScript de la page, même sans effet visible. */
+/**
+ * Un parcours échoue aussi sur une erreur JavaScript de la page, même sans effet
+ * visible, et sur un défaut d'accessibilité grave ou critique de la page où il
+ * finit (accessibilite.ts).
+ */
 export const test = base.extend({
   // Le banc ne sort pas de la machine. brand.json nomme le flux et le now.json
   // d'une vraie station, que le casque de la console demande dès l'ouverture :
@@ -43,11 +48,13 @@ export const test = base.extend({
     );
     await use(context);
   },
-  page: async ({ page }, use) => {
+  page: async ({ page }, use, testInfo) => {
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
     await use(page);
     expect(errors, "erreurs JavaScript dans la page").toEqual([]);
+    // Un parcours déjà en échec garde son erreur, seule.
+    if (testInfo.status === "passed" && !page.isClosed()) await verifierAccessibilite(page, "fin du parcours");
   },
 });
 

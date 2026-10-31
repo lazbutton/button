@@ -2,7 +2,7 @@
 # Les vérifications de la CI, sur cette machine.
 #   ./scripts/verifier.sh                  tout ce qui peut tourner ici
 #   ./scripts/verifier.sh moteur console   seulement ces parties
-# Parties : moteur, liquidsoap, console, services, nginx, deploy.
+# Parties : moteur, liquidsoap, console, services, nginx, deploy, e2e.
 # Sans argument, une partie qui manque d'un outil (Docker…) est sautée.
 # Nommée, elle échoue.
 set -euo pipefail
@@ -11,7 +11,7 @@ root=$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd)
 # Homebrew (macOS) : Poetry, Node et Docker y sont souvent installés.
 [ -d /opt/homebrew/bin ] && export PATH="/opt/homebrew/bin:$PATH"
 
-all=(moteur liquidsoap console services nginx deploy)
+all=(moteur liquidsoap console services nginx deploy e2e)
 # Code de sortie d'une partie à qui il manque un outil.
 absent=75
 
@@ -114,6 +114,16 @@ check_deploy() {
   fi
 }
 
+check_e2e() {
+  command -v node >/dev/null 2>&1 || missing "Node absent : installer Node 22." || return
+  command -v poetry >/dev/null 2>&1 ||
+    missing "Poetry absent : https://python-poetry.org/docs/#installation" || return
+  command -v curl >/dev/null 2>&1 || missing "curl absent : l'installer." || return
+  # Les parcours sur leur propre banc, comme le job e2e de la CI. Il prend des
+  # ports libres : scripts/dev.sh peut tourner à côté.
+  "$root/scripts/e2e.sh"
+}
+
 # Une partie tourne dans son propre processus : set -e l'y arrête au premier
 # échec. Dans un « || » du même processus, bash ignorerait set -e.
 if [ "${1:-}" = "--partie" ]; then
@@ -134,7 +144,7 @@ skipped=""
 failed=""
 for part in "${parts[@]}"; do
   case $part in
-    moteur | liquidsoap | console | services | nginx | deploy) ;;
+    moteur | liquidsoap | console | services | nginx | deploy | e2e) ;;
     *)
       echo "Partie inconnue : $part. Parties : ${all[*]}." >&2
       exit 64

@@ -1,0 +1,65 @@
+name: e2e
+
+# The console journeys in a real browser, on the bench of scripts/e2e.sh: the
+# demo engine, the stub catalogue and tusd, the console's production build.
+# A journey also fails on a serious or critical accessibility defect (axe-core).
+# When one fails, its logs, traces and screenshots are uploaded as an artifact.
+
+on:
+  pull_request:
+    paths:
+      - "console/**"
+      - "!console/**/*.md"
+      - "engine/**"
+      - "!engine/**/*.md"
+      - "scripts/e2e.sh"
+      - ".github/workflows/e2e.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  journeys:
+    name: Playwright journeys
+    runs-on: ubuntu-latest
+    # A browser that hangs must not hold the runner for the default 6 hours.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          # Same interpreter as engine.yml and the Containerfile
+          python-version: "3.13"
+      - name: Install poetry
+        run: pipx install poetry
+      - name: Install engine dependencies
+        working-directory: engine
+        run: poetry install --no-interaction
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: console/package-lock.json
+      - name: Install console dependencies
+        working-directory: console
+        run: npm ci
+      - name: Install Chromium and its system libraries
+        working-directory: console
+        run: npx playwright install --with-deps chromium
+      - name: Journeys
+        # Well under the job's limit: a run that hangs fails here, and its
+        # artifact is still uploaded.
+        timeout-minutes: 15
+        run: ./scripts/e2e.sh
+      # scripts/e2e.sh keeps the run folder of a failed run: .e2e/<run>/.
+      - name: Upload logs, traces and screenshots
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@v7
+        with:
+          name: parcours-${{ github.run_attempt }}
+          path: |
+            .e2e/*/*.log
+            .e2e/*/resultats/
+          include-hidden-files: true
+          retention-days: 14
