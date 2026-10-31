@@ -35,11 +35,12 @@ import {
   weekDays,
   weekLabel,
 } from "../api/agendaView";
+import { hostChoices } from "../api/hosts";
 import { errorText } from "../api/programmationErrors";
 import { clockTints, weekRuns } from "../api/programmationView";
-import { roleAtLeast, listedAsHost } from "../api/roles";
+import { roleAtLeast } from "../api/roles";
 import { SessionGate } from "../api/SessionGate";
-import type { ClocksResponse, SlotsResponse, UsersResponse } from "../api/types";
+import type { ClocksResponse, SlotsResponse } from "../api/types";
 import { useApiJson } from "../api/useApiJson";
 import { AgendaList } from "../components/agenda/AgendaList";
 import { AgendaWeek } from "../components/agenda/AgendaWeek";
@@ -47,6 +48,7 @@ import { DiffusionDialog, type DiffusionTarget } from "../components/agenda/Diff
 import { ProtoToast, useProtoToast } from "../components/ProtoToast";
 import { useBrand } from "../lib/BrandContext";
 import { useParisNow } from "../lib/parisClock";
+import { useHosts } from "../lib/useHosts";
 import "../styles/pages/programmation.css";
 import "../styles/pages/agenda.css";
 
@@ -77,7 +79,7 @@ export function AgendaPage() {
   const slotsRes = useApiJson<SlotsResponse>("/autodj/slots.json", 60_000);
   const clocksRes = useApiJson<ClocksResponse>("/autodj/clocks.json", 60_000);
   const guestsRes = useGuests(editable);
-  const usersRes = useApiJson<UsersResponse>("/users.json");
+  const hostList = useHosts(editable && target != null);
 
   const data = agendaRes.data;
   const diffusions = useMemo(() => data?.diffusions ?? [], [data]);
@@ -87,14 +89,7 @@ export function AgendaPage() {
   const runs = useMemo(() => weekRuns(slotsRes.data?.slots ?? []), [slotsRes.data]);
   const tints = useMemo(() => clockTints(clocksRes.data?.clocks ?? []), [clocksRes.data]);
   const guests = guestsRes.guests;
-  const hosts = useMemo(
-    () =>
-      (usersRes.data?.users ?? [])
-        .filter((user) => listedAsHost(user.permissions))
-        .map((user) => user.username)
-        .sort((a, b) => a.localeCompare(b, "fr")),
-    [usersRes.data],
-  );
+  const hosts = useMemo(() => hostChoices(hostList.names), [hostList.names]);
   const titles = useMemo(() => {
     const names = new Set<string>();
     for (const row of diffusions) names.add(row.title);
@@ -345,6 +340,7 @@ export function AgendaPage() {
         target={target}
         guests={guests}
         hosts={hosts}
+        hostsNote={hostList.note}
         titles={titles}
         station={station}
         editable={editable}
