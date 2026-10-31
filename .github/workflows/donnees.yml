@@ -1,0 +1,36 @@
+name: donnees
+
+# No station data in the repository: a private IP address, a .ts.net name, a
+# private key or a GitHub or GitLab token fails the check. It runs on every
+# change, whatever the paths: data can land in any file. The exceptions are
+# in scripts/verifier.sh; a station's own patterns never leave its machines.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: no station data
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Private addresses, .ts.net names, keys, tokens
+        run: ./scripts/verifier.sh donnees
+      # The check must still catch what it is for: a private address added to
+      # a tracked file, reported as such. The address is built here, so this
+      # file holds none.
+      - name: An added private address fails the check
+        run: |
+          printf 'Essai : %s.%s.%s.%s\n' 192 168 0 1 >> README.md
+          if sortie=$(./scripts/verifier.sh donnees 2>&1); then
+            echo "A private address got through the check." >&2
+            exit 1
+          fi
+          echo "$sortie"
+          grep -q 'README.md:[0-9]* : adresse IP privée' <<<"$sortie"
