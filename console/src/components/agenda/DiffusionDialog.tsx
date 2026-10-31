@@ -63,6 +63,7 @@ export function DiffusionDialog({
   target,
   guests,
   hosts,
+  hostsNote,
   titles,
   station,
   editable,
@@ -75,6 +76,8 @@ export function DiffusionDialog({
   target: DiffusionTarget | null;
   guests: AgendaGuest[];
   hosts: string[];
+  /** Why the host list is missing, when it is. */
+  hostsNote: string;
   titles: string[];
   station: string;
   editable: boolean;
@@ -480,6 +483,7 @@ export function DiffusionDialog({
                   Son compte peut se brancher de 15 min avant le début jusqu'à la fin. Nommer un animateur ferme le direct
                   aux autres comptes hors de leurs créneaux.
                 </span>
+                {hostsNote ? <span className="ui-field-error">{hostsNote}</span> : null}
               </div>
             )}
 

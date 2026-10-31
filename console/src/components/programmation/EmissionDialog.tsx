@@ -2,11 +2,11 @@ import { Button, Dialog, Select, TextField } from "@radix-ui/themes";
 import { Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { apiDelete, apiPostJson, apiPut } from "../../api/client";
+import { hostChoices } from "../../api/hosts";
 import { errorText } from "../../api/programmationErrors";
 import { DAY_LONG, hhmm, parseHhmm } from "../../api/programmationView";
-import { listedAsHost } from "../../api/roles";
-import type { Emission, UsersResponse } from "../../api/types";
-import { useApiJson } from "../../api/useApiJson";
+import type { Emission } from "../../api/types";
+import { useHosts } from "../../lib/useHosts";
 import { FormField } from "../../ui/FormField";
 
 export type EmissionTarget = { day: number; row?: Emission; start?: number };
@@ -33,7 +33,7 @@ export function EmissionDialog({
   const [busy, setBusy] = useState<"save" | "delete" | null>(null);
   const [failure, setFailure] = useState("");
   const [confirming, setConfirming] = useState(false);
-  const usersRes = useApiJson<UsersResponse>("/users.json");
+  const hostList = useHosts(target != null);
 
   useEffect(() => {
     if (!target) return;
@@ -49,14 +49,7 @@ export function EmissionDialog({
     setEnd(hhmm(target.row?.end_minute ?? Math.min(from + 120, 1440)));
   }, [target]);
 
-  const hosts = useMemo(() => {
-    const names = new Set<string>();
-    for (const user of usersRes.data?.users ?? []) {
-      if (listedAsHost(user.permissions)) names.add(user.username);
-    }
-    if (host !== NOBODY) names.add(host);
-    return [...names].sort((a, b) => a.localeCompare(b, "fr"));
-  }, [host, usersRes.data]);
+  const hosts = useMemo(() => hostChoices(hostList.names, host === NOBODY ? "" : host), [host, hostList.names]);
 
   const startMinute = parseHhmm(start);
   const endMinute = parseHhmm(end);
@@ -202,6 +195,7 @@ export function EmissionDialog({
               Tant qu'aucune émission ne nomme un compte, tout compte qui peut passer en direct se branche. Dès qu'une
               émission en nomme un, chacun passe sur son créneau. Un admin passe toujours.
             </span>
+            {hostList.note ? <span className="ui-field-error">{hostList.note}</span> : null}
           </div>
           {failure ? (
             <p className="prog-dialog-error" role="alert">
