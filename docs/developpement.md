@@ -158,3 +158,5 @@ Elles sont dans le [AGENTS.md](../AGENTS.md) de la racine, communes aux personne
 4. Vérifier l'aller-retour sur une copie de base : `radiotomate update --target-version N-1`, puis `radiotomate update`.
 
 `radiotomate-init` applique les migrations à chaque démarrage. Revenir à une image plus ancienne demande donc de redescendre d'abord le schéma : voir [`deploiement.md`](deploiement.md#revenir-en-arrière).
+
+Essai GEN-03, à ne pas fusionner : 10.11.12.13
