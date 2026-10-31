@@ -4,6 +4,7 @@
 |---|---|
 | [`compose.yml`](compose.yml) | La station complète : moteur, console, Icecast, titre en cours, catalogue, envoi reprenable |
 | [`.env.example`](.env.example) | Modèle des variables : à copier en `.env`, qui reste hors de git |
+| [`Caddyfile`](Caddyfile) | HTTPS sur Internet : Caddy devant la console, le flux et `now.json`, avec `--profile vps` |
 | [`scripts/`](scripts/) | Initialisation de la station, banque de sons, dossier partagé, sauvegarde et restauration |
 | [`share/`](share/) | Image du dossier partagé (Samba), lancée seulement avec `--profile share` |
 | [`local/`](local/README.md) | Banc audio de test : Icecast et titre en cours seuls |
