@@ -118,6 +118,9 @@ export type User = {
 
 export type UsersResponse = { users: User[] };
 
+/** Les comptes qu'on peut nommer animateur, par leur seul identifiant : un programmateur les lit. */
+export type HostsResponse = { hosts: string[] };
+
 /** Le jeton d'encodeur d'un compte : sa date de création, jamais le jeton lui-même. */
 export type StreamTokenState = { created_at: string | null };
 

@@ -201,7 +201,7 @@ check_nginx() {
     -e AUTOMATE_BACKEND=http://127.0.0.1:6811 \
     -e CATALOG_UPSTREAM=http://127.0.0.1:30127 \
     -e TUSD_UPSTREAM=http://127.0.0.1:8080 \
-    nginx:1.27-alpine sh -c '
+    nginx:1.30-alpine sh -c '
       cp /button/nginx.conf.template /etc/nginx/nginx-default.conf.template &&
       cp /button/security-headers.conf.template /etc/nginx/security-headers.conf.template &&
       sh /button/docker-entrypoint.sh && nginx -t'

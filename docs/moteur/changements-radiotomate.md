@@ -49,7 +49,7 @@ L’interface HTMX reste. À côté, les mêmes objets ont une forme JSON, avec 
 | Domaine | Chemins |
 | --- | --- |
 | Compte | `/account.json`, `/login.json` |
-| Utilisateurs | `/users.json`, `/users/…/stream-token.json` |
+| Utilisateurs | `/users.json`, `/users/hosts.json`, `/users/…/stream-token.json` |
 | Carts et sons | `/carts.json`, sons, rangs, lecture immédiate |
 | Banque | `/media/bank.json` |
 | Horloges | `/autodj/clocks.json`, `/slots.json`, `/categories.json` |

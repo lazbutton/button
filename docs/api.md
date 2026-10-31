@@ -164,6 +164,8 @@ Jouer tout de suite, droit `live` : `POST /carts/{id}/now.json` et `POST /carts/
 
 `GET/POST /users.json`, `PUT/DELETE /users/{id}.json`, admin seulement. Un compte : `{id, username, notes, permissions}`. `PUT` accepte `notes`, `password`, `permissions`, `username`.
 
+`GET /users/hosts.json`, droit `autodj` → `{hosts}` : les identifiants des comptes qui peuvent passer en direct, admins compris, sans le reste de leur fiche. C'est la liste où un programmateur choisit l'animateur d'une émission hebdomadaire, « Compte du plateau », ou d'un direct daté de l'Agenda. Un moteur plus ancien n'a pas la route : la console reprend `/users.json`, que seul un admin lit, et dit à un programmateur de mettre à jour le moteur.
+
 Le jeton d'encodeur, un par compte :
 
 - `GET /users/me/stream-token.json` → `{created_at}` pour le compte connecté, quel que soit son rôle. `created_at` est l'heure de Paris à la minute, ou `null` sans jeton.
