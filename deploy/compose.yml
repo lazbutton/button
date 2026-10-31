@@ -53,6 +53,9 @@ services:
       # CSP : le flux et now.json, quand ils sont sur une autre origine.
       CSP_MEDIA_SRC: ${CSP_MEDIA_SRC:-}
       CSP_CONNECT_SRC: ${CSP_CONNECT_SRC:-}
+      # Les reverse proxies que nginx croit pour l'adresse du client. Vide : la
+      # boucle locale et les réseaux privés, où est Caddy.
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
     ports:
       - "${BIND_ADDRESS:-}${BIND_ADDRESS:+:}${CONSOLE_PORT:-30126}:80"
     depends_on:
@@ -145,8 +148,12 @@ services:
       RTCONFIG: /data/radiotomate.yaml
       TZ: ${TZ:-Europe/Paris}
     volumes: *radiotomate-data
-    # Harbor (live input, :6800) is not published here: add it in a
-    # compose.override.yml when the encoder connects to this machine.
+    # Le harbor, l'entrée du direct : un port ouvert au public, comme 80 et 443,
+    # donc sans BIND_ADDRESS. Sur Internet, il ne doit accepter que les jetons
+    # d'encodeur : features.allow_account_password à faux, voir
+    # docs/deploiement.md.
+    ports:
+      - "${HARBOR_PORT:-6800}:6800"
     # No curl in the Liquidsoap image: bash /dev/tcp against the harbor API.
     healthcheck:
       test:
@@ -289,6 +296,42 @@ services:
       - share-private:/share-private
     ports:
       - "${SMB_BIND:-127.0.0.1}:445:445"
+
+  # HTTPS sur Internet. Absent de `docker compose up` : `--profile vps`, ou
+  # COMPOSE_PROFILES=vps dans .env. Caddy joint les services par le réseau de
+  # Docker : BIND_ADDRESS=127.0.0.1 ferme leurs ports sans le gêner.
+  # Voir deploy/Caddyfile et docs/deploiement.md, « HTTPS ».
+  caddy:
+    profiles: ["vps"]
+    image: caddy:2.11-alpine
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      DOMAIN: ${DOMAIN:-}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+      # acme : Let's Encrypt. internal : un certificat de Caddy, pour un essai.
+      CADDY_TLS: ${CADDY_TLS:-acme}
+    # Sans domaine, Caddy ne démarre pas, et dit quoi régler.
+    command:
+      - sh
+      - -c
+      - |
+        if [ -z "$$DOMAIN" ]; then
+          echo "DOMAIN manquant dans .env : le domaine de la station, qui pointe sur cette machine." >&2
+          exit 1
+        fi
+        exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Les certificats et le compte Let's Encrypt : à garder d'une version à
+      # l'autre, sinon Caddy redemande un certificat à chaque démarrage, et
+      # Let's Encrypt en limite le nombre.
+      - ${CADDY_DATA:-./data/caddy}:/data/caddy
+    ports:
+      - "80:80"
+      - "443:443"
+      # HTTP/3.
+      - "443:443/udp"
 
 volumes:
   tusd-data:
