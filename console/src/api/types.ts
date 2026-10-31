@@ -124,6 +124,26 @@ export type StreamTokenState = { created_at: string | null };
 /** Un jeton neuf : la seule fois où le moteur le donne. */
 export type NewStreamToken = { token: string; created_at: string };
 
+/** `GET /public/station.json`, sans session : ce qu'un auditeur voit de la station. `null` : non réglé. */
+export type PublicStation = {
+  name: string | null;
+  short: string | null;
+  tagline: string | null;
+  locale: string | null;
+  public_stream_url: string | null;
+  now_url: string | null;
+  status_url: string | null;
+  source_url: string | null;
+};
+
+/** `GET` et `PUT /station.json` : tous les réglages, et le fuseau, en lecture seule. */
+export type StationSettings = PublicStation & {
+  harbor_host: string | null;
+  harbor_port: number | null;
+  harbor_mount: string | null;
+  timezone: string;
+};
+
 export type RundownItem = {
   id?: string;
   at: string;

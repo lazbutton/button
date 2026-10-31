@@ -21,7 +21,7 @@ const ROLES = {
   admin: {
     libelle: "Admin",
     pages: ["Antenne", "Conducteur", "Programmation", "Sons", "Réglages"],
-    reglages: ["Comptes", "Mon compte", "Automate"],
+    reglages: ["Comptes", "Station", "Mon compte", "Automate"],
     programme: true,
     admin: true,
   },

@@ -58,6 +58,7 @@ L’interface HTMX reste. À côté, les mêmes objets ont une forme JSON, avec 
 | Antenne | `/live.json`, `/antenne/state.json`, `/antenne/flush.json` |
 | Agenda | `/agenda.json`, `/agenda/…`, et sans session `/public/guest/…` |
 | Système | `/system/disk.json` |
+| Station | `/station.json`, et sans session `/public/station.json` |
 | Santé | `/health/live`, `/health/ready` |
 
 Le détail de chaque route est dans [`docs/api.md`](../api.md).
@@ -96,7 +97,7 @@ Le scheduler surveille l’antenne (`scheduler/alerts.py`) : silence, playout in
 
 ## Marque et interface
 
-`brand.json` et `brand.py` portent le nom affiché (`INTERFACE_NAME`), le logo et les libellés. `layout.jinja` est en `lang=fr`, avec `suite.css`. La feuille `sass/_suite.scss` est la charte noir et blanc du pupitre. Les pages HTMX d’origine (live, carts, auto-DJ, utilisateurs) restent servies par le même processus.
+`brand.json` et `brand.py` portent le nom affiché (`INTERFACE_NAME`), le logo et les libellés. Le nom de la station, les adresses de son flux et de son direct, et le lien de son code source se règlent aussi dans la console : des clés `station.*` de la table `settings` (`services/station.py`), sans migration. La console les pose sur son `brand.json`, qui reste le repli. Les pages HTMX gardent le nom de `brand.json`. `layout.jinja` est en `lang=fr`, avec `suite.css`. La feuille `sass/_suite.scss` est la charte noir et blanc du pupitre. Les pages HTMX d’origine (live, carts, auto-DJ, utilisateurs) restent servies par le même processus.
 
 ## Schéma, de v7 à v18
 

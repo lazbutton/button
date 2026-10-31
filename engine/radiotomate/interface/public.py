@@ -1,5 +1,7 @@
 """Routes without a console session.
 
+* ``/public/station.json``: what a listener may see of the station's settings.
+  The console reads it before anyone logs in.
 * ``/public/guest/<token>…``: a guest's page (Agenda), reached by a private
   link. The token is the only key; it opens nothing but that guest's dates.
 * ``/internal/agenda/…``: the catalog asks whether a guest may drop a file
@@ -18,7 +20,7 @@ from quart import Blueprint, current_app, g, jsonify
 from radiotomate.auth import token_required
 from radiotomate.domain.errors import DomainNotFound
 from radiotomate.interface.json_util import read_json_object
-from radiotomate.services import agenda
+from radiotomate.services import agenda, station
 
 blueprint = Blueprint("public", __name__)
 
@@ -47,6 +49,11 @@ async def private_headers(response):
     return response
 
 
+@blueprint.get("/public/station.json")
+async def station_json():
+    return jsonify(await station.public_payload(g.dbsession))
+
+
 async def _guest(token: str):
     guest = await agenda.guest_from_token(g.dbsession, token)
     if guest is None:
@@ -59,7 +66,11 @@ async def guest_json(token: str):
     guest = await _guest(token)
     payload = await agenda.public_payload(g.dbsession, guest)
     await g.dbsession.commit()
-    payload["station"] = current_app.config.get("INTERFACE_NAME") or "BUTTON"
+    payload["station"] = (
+        await station.station_name(g.dbsession)
+        or current_app.config.get("INTERFACE_NAME")
+        or "BUTTON"
+    )
     return jsonify(payload)
 
 

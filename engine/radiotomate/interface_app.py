@@ -31,6 +31,7 @@ from radiotomate.interface import (
     login,
     public,
     spa,
+    station,
     system,
     users,
 )
@@ -125,6 +126,7 @@ def app_factory(config: dict, reload: bool, beets: BeetsIntegration):
     app.register_blueprint(public.blueprint)
     app.register_blueprint(library.blueprint)
     app.register_blueprint(csrf.blueprint)
+    app.register_blueprint(station.blueprint)
     spa.register(app)
 
     app.jinja_env.globals.update(
