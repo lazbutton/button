@@ -8,6 +8,7 @@ La documentation est en français. Le [README](../README.en.md) existe aussi en 
 |---|---|
 | [architecture.md](architecture.md) | Les composants, comment l'antenne est tenue, les données |
 | [glossaire.md](glossaire.md) | Les mots de la radio et ceux du code |
+| [personas/](personas/README.md) | Pour qui BUTTON est fait : qui s'en sert, pour quoi faire, ce qui le freine encore |
 | [decisions/](decisions/README.md) | Les décisions d'architecture, et leur raison |
 | [moteur/changements-radiotomate.md](moteur/changements-radiotomate.md) | Ce que ce fork change par rapport à Radiotomate |
 
