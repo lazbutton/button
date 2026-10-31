@@ -1,0 +1,29 @@
+name: essai-appel
+
+# Essai jetable de LEG-01 : failles.yml appelé par un autre workflow, comme
+# console.yml, engine.yml et services.yml après leur poussée. À supprimer.
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  propre:
+    name: Trivy, image sans faille critique
+    permissions:
+      contents: read
+      packages: read
+    uses: ./.github/workflows/failles.yml
+    with:
+      images: cgr.dev/chainguard/static:latest
+  console:
+    name: Trivy, console :main
+    permissions:
+      contents: read
+      packages: read
+    uses: ./.github/workflows/failles.yml
+    with:
+      images: ghcr.io/${{ github.repository_owner }}/button-console:main
