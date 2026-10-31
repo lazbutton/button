@@ -283,7 +283,8 @@ export function ConducteurBoard({
         <span>Durée</span>
       </div>
 
-      <ol ref={listRef} className="engine-rundown-list" aria-label="Déroulé du conducteur">
+      {/* La liste défile : elle prend le focus, pour défiler au clavier quand aucune ligne n'a de bouton. */}
+      <ol ref={listRef} className="engine-rundown-list" aria-label="Déroulé du conducteur" tabIndex={0}>
         {past.length ? (
           <li className="engine-rundown-divider" aria-hidden="true">
             <span>Déjà passé</span>

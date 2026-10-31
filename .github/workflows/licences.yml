@@ -1,0 +1,84 @@
+name: licences
+
+# Each dependency shipped with BUTTON (the console build, the engine and
+# catalogue images, the engine stylesheet) must have a license compatible with
+# the AGPL. The accepted licenses, and why, are in scripts/licences.toml.
+# Development tools are not shipped, and not checked.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "console/package-lock.json"
+      - "engine/sass/package-lock.json"
+      - "engine/poetry.lock"
+      - "services/catalog/requirements.txt"
+      - "scripts/licences.py"
+      - "scripts/licences.toml"
+      - "scripts/test_licences.py"
+      - ".github/workflows/licences.yml"
+  pull_request:
+    paths:
+      - "console/package-lock.json"
+      - "engine/sass/package-lock.json"
+      - "engine/poetry.lock"
+      - "services/catalog/requirements.txt"
+      - "scripts/licences.py"
+      - "scripts/licences.toml"
+      - "scripts/test_licences.py"
+      - ".github/workflows/licences.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  npm:
+    name: npm (console, engine stylesheet)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - name: Checker tests
+        run: python scripts/test_licences.py
+      # The lockfiles carry each package's license: no npm install.
+      - name: Licenses
+        run: python scripts/licences.py npm console/package-lock.json engine/sass/package-lock.json
+
+  engine:
+    name: Python (engine)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: engine
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          # Same interpreter as the Containerfile: the markers of poetry.lock
+          # pick the same packages as the image.
+          python-version: "3.13"
+      - name: Install poetry
+        run: pipx install poetry
+      - name: Install the shipped dependencies
+        run: poetry install --only main --no-root --no-interaction
+      - name: Licenses
+        run: poetry run python ../scripts/licences.py poetry poetry.lock
+
+  catalog:
+    name: Python (catalogue)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      # A fresh environment: everything in it ships in the image.
+      - name: Install the dependencies
+        run: |
+          python -m venv "$RUNNER_TEMP/catalog"
+          "$RUNNER_TEMP/catalog/bin/pip" install -r services/catalog/requirements.txt
+      - name: Licenses
+        run: '"$RUNNER_TEMP/catalog/bin/python" scripts/licences.py pip'

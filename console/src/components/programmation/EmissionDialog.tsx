@@ -148,7 +148,7 @@ export function EmissionDialog({
               <span className="ui-field-label">Jour</span>
               <Select.Root size="2" value={String(day)} onValueChange={(value) => setDay(Number(value))}>
                 <Select.Trigger className="ui-field-control" aria-label="Jour" />
-                <Select.Content position="popper">
+                <Select.Content variant="soft" position="popper">
                   {DAY_LONG.map((name, index) => (
                     <Select.Item key={name} value={String(index)}>
                       {name}
@@ -181,7 +181,7 @@ export function EmissionDialog({
             <span className="ui-field-label">Compte du plateau</span>
             <Select.Root size="2" value={host} onValueChange={setHost}>
               <Select.Trigger className="ui-field-control" aria-label="Compte du plateau" />
-              <Select.Content position="popper">
+              <Select.Content variant="soft" position="popper">
                 <Select.Item value={NOBODY}>Pas encore nominatif</Select.Item>
                 {hosts.length ? <Select.Separator /> : null}
                 {hosts.map((name) => (

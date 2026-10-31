@@ -44,7 +44,7 @@ async function attendreLeTheme(page: Page, theme: "clair" | "sombre") {
 }
 
 async function choisir(page: Page, apparence: "Machine" | "Clair" | "Sombre") {
-  await page.getByRole("banner").getByRole("button", { name: /^Compte / }).click();
+  await page.getByRole("banner").getByRole("button", { name: /, compte .+ : menu$/ }).click();
   const choix = page.getByRole("menuitemradio", { name: apparence });
   await choix.click();
   // Le menu reste ouvert : on voit le thème changer.

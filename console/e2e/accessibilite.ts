@@ -7,59 +7,21 @@ import { expect, type Page } from "@playwright/test";
 // téléphone.
 
 /**
- * Les défauts que la console avait déjà quand axe-core est entré dans les
- * parcours (TST-03), par règle d'axe : les éléments en cause, ou ce qui les
- * contient. Ils restent à corriger dans console/src, et un défaut corrigé sort
- * de cette liste. Tout autre défaut grave ou critique fait échouer le parcours.
+ * Les défauts graves ou critiques que la console garde en connaissance de cause,
+ * par règle d'axe : les éléments en cause, ou ce qui les contient, chacun avec sa
+ * raison en commentaire. Tout autre défaut grave ou critique fait échouer le
+ * parcours. Ceux relevés quand axe-core est entré dans les parcours (TST-03) sont
+ * corrigés : la liste est vide.
  */
-const DEFAUTS_CONNUS: Record<string, string[]> = {
-  // Des textes trop pâles pour leur fond, estompés par une opacité ou d'une
-  // couleur de Radix Themes. Les couleurs de tokens.css sont dans TEXTES_PALES.
-  "color-contrast": [
-    "kbd", // les touches, à 55 %
-    ".tb-menu-tag", // l'étiquette AGPL du menu du compte, à 60 %
-    ".engine-rundown-row.is-past", // les lignes passées du conducteur, à 62 %
-    ".conducteur-strip-remain", // le temps qui reste au conducteur, rouge éclairci de blanc
-    ".rt-BaseMenuLabel", // le titre d'une section de menu
-    '.rt-Badge[data-accent-color="amber"]',
-    // Un bouton plein du gris de l'accent : blanc sur gris.
-    '.rt-variant-solid:is([data-accent-color=""], [data-accent-color="gray"])',
-  ],
-  // Un aria-label qui ne reprend pas le texte affiché (WCAG 2.5.3) : la commande
-  // vocale ne trouve pas l'élément par ce qu'elle lit.
-  "label-content-name-mismatch": [
-    ".tb-account",
-    ".tb-air",
-    ".tb-now",
-    ".tb-listen-source",
-    ".banque-dest-trigger",
-    ".health-pill",
-    ".ant-hit",
-    ".prog-run",
-    ".prog-day",
-  ],
-  // Les grilles de la Semaine et de l'Agenda n'ont pas de lignes (role="row").
-  "aria-required-children": [".prog-week-grid", ".ag-week-grid"],
-  "aria-required-parent": [".prog-week-grid", ".ag-week-grid"],
-  // Une zone qui défile, sans rien pour y entrer au clavier.
-  "scrollable-region-focusable": [".ag-week-frame", ".engine-rundown-list"],
-  // Le détail de l'état de l'antenne s'ouvre en dialogue sans nom.
-  "aria-dialog-name": [".tb-pop"],
-  // Un menu ouvert cache le reste de la page (data-aria-hidden, posé par Radix)
-  // sans en retirer les éléments qui prennent le focus.
-  "aria-hidden-focus": ["[data-aria-hidden]"],
-};
+const DEFAUTS_CONNUS: Record<string, string[]> = {};
 
 /**
  * Les couleurs de texte de tokens.css trop pâles pour les fonds de la console,
- * telles qu'axe les mesure. Un jeton corrigé change de couleur : cette liste ne
- * l'excuse plus, et sa nouvelle couleur est vérifiée.
+ * telles qu'axe les mesure, excusées en connaissance de cause. Un jeton corrigé
+ * change de couleur : cette liste ne l'excuse plus, et sa nouvelle couleur est
+ * vérifiée.
  */
-const TEXTES_PALES = [
-  "#737373", // --app-text-faint, en clair comme en sombre
-  "#ff4d4d", // --app-live et --app-danger, sur fond clair
-  "#bf5d36", // --app-warn-ink en clair : le temps qui reste d'un titre qui finit
-];
+const TEXTES_PALES: string[] = [];
 
 type Noeud = Awaited<ReturnType<AxeBuilder["analyze"]>>["violations"][number]["nodes"][number];
 

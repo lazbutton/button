@@ -220,7 +220,7 @@ export function StationPage() {
     <div className="admin-page admin-page--embedded">
       <Panel>
         <SectionHeader title="Station" />
-        {/* Pas la description de SectionHeader : son gris pâle manque de contraste en sombre. */}
+        {/* Le même texte que la description de chaque groupe, plus bas. */}
         <p className="station-group-description">
           Un champ vide garde la valeur grisée : celle de l’image de la console (brand.json).
         </p>
@@ -280,7 +280,7 @@ export function StationPage() {
           </p>
           <div className="admin-account-actions">
             {/* Pas de disabled pendant l'envoi : un bouton désactivé perd le focus du clavier. */}
-            <Button type="submit" aria-busy={busy}>
+            <Button type="submit" highContrast aria-busy={busy}>
               {busy ? <Spinner size="1" /> : null}
               Enregistrer
             </Button>

@@ -166,7 +166,7 @@ export function MonComptePage() {
             </Text>
           ) : null}
           <div className="admin-account-actions">
-            <Button type="submit" disabled={busy || !password || !confirm}>
+            <Button type="submit" highContrast disabled={busy || !password || !confirm}>
               {busy ? "Enregistrement…" : "Changer le mot de passe"}
             </Button>
             <Button type="button" variant="soft" color="gray" onClick={logout}>

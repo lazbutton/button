@@ -123,7 +123,7 @@ Les parcours, dans `console/e2e/` :
 
 Un défaut connu de la console garde son parcours en `test.fixme`, avec la raison en commentaire : Playwright le saute. Pour le voir échouer, remplacer `test.fixme` par `test` le temps d'un lancement.
 
-Un parcours échoue aussi sur un défaut d'accessibilité grave ou critique, au sens d'[axe-core](https://github.com/dequelabs/axe-core) : `banc.ts` passe axe sur la page où finit chaque parcours, et `accessibilite.spec.ts` passe chaque écran. Le rapport donne, pour chaque élément en défaut, la règle d'axe, son sélecteur et ce qui ne va pas. L'analyse se fait sans animation, une fois finies celles en cours : un menu qui s'ouvre encore fausserait les contrastes. Les défauts que la console avait déjà sont listés dans `e2e/accessibilite.ts` : des textes trop pâles, comme ceux de `--app-text-faint`, des `aria-label` qui ne reprennent pas le texte affiché, les grilles de la Semaine et de l'Agenda, entre autres. Ils restent à corriger, et chacun corrigé sort de la liste. Un défaut nouveau se corrige dans la console, il n'entre pas dans la liste. Attention : une couleur de texte listée, comme `--app-text-faint`, est excusée partout, même sur un écran neuf, tant que le jeton n'est pas corrigé. Un défaut qui ne se voit qu'une fois, le temps que le moteur de démo fasse bouger la page, n'est pas rapporté : chaque page en défaut est analysée deux fois.
+Un parcours échoue aussi sur un défaut d'accessibilité grave ou critique, au sens d'[axe-core](https://github.com/dequelabs/axe-core) : `banc.ts` passe axe sur la page où finit chaque parcours, et `accessibilite.spec.ts` passe chaque écran. Le rapport donne, pour chaque élément en défaut, la règle d'axe, son sélecteur et ce qui ne va pas. L'analyse se fait sans animation, une fois finies celles en cours : un menu qui s'ouvre encore fausserait les contrastes. Un défaut se corrige dans la console. `e2e/accessibilite.ts` peut en excuser un gardé en connaissance de cause, avec sa raison en commentaire : `DEFAUTS_CONNUS` par règle d'axe et par sélecteur, `TEXTES_PALES` par couleur de texte. Les deux listes sont vides : les défauts relevés à l'arrivée d'axe sont corrigés. Attention : une couleur de texte listée est excusée partout, même sur un écran neuf. Un défaut qui ne se voit qu'une fois, le temps que le moteur de démo fasse bouger la page, n'est pas rapporté : chaque page en défaut est analysée deux fois.
 
 Un parcours s'écrit dans `console/e2e/<sujet>.spec.ts`. Il importe de `e2e/banc.ts` :
 
@@ -138,6 +138,37 @@ Un parcours n'attend pas pour de vrai une minuterie de la console, comme les 8 s
 Le moteur de démo est partagé par tous les parcours d'un lancement, et il enchaîne seul les titres de son horloge. Un jingle n'y dure que 4 s : la file bouge à chaque fin de titre. Un parcours qui touche à la file appelle d'abord `tenirLAntenne(page)`, qui passe au titre suivant jusqu'à en trouver un qui tient l'antenne une minute. Après un « Suivant », le moteur de démo est en avance sur son horloge, et il date une ligne mise à la suite de l'heure de l'appui : la file la range parmi ce qui est passé. Pour ce geste, un parcours lit la demande envoyée au moteur, pas la file.
 
 Sur `main`, la CI publie aussi les images Docker, seulement si tout est vert.
+
+## Dépendances, licences et failles
+
+Dependabot propose chaque mois les mises à jour ([`.github/dependabot.yml`](../.github/dependabot.yml)) : les actions GitHub, les dépendances de la console, du catalogue et du moteur, et les images de base des sept images. Pour le moteur, il ne déplace que `poetry.lock` : les contraintes de `pyproject.toml` suivent Radiotomate et Liquidsoap, et changent à la main. Quand il monte la version de Python d'une image de base, `python-version` des workflows suit à la main ; pour Liquidsoap, le job `liquidsoap-check` d'`engine.yml` et `scripts/verifier.sh`.
+
+### Les licences
+
+Chaque dépendance npm ou Python livrée avec BUTTON, dans le build de la console ou dans une image, a une licence compatible avec l'AGPL. Les licences acceptées, et pourquoi, sont dans [`scripts/licences.toml`](../scripts/licences.toml). La CI les contrôle sur chaque pull request qui touche un fichier de dépendances ([`licences.yml`](../.github/workflows/licences.yml)). Les outils de développement ne sont pas livrés : ils ne sont pas contrôlés.
+
+`scripts/verifier.sh` ne le lance pas encore. Le même contrôle, sur cette machine :
+
+```bash
+python3 scripts/licences.py npm console/package-lock.json engine/sass/package-lock.json
+(cd engine && poetry run python ../scripts/licences.py poetry poetry.lock)
+services/catalog/.venv/bin/python scripts/licences.py pip
+```
+
+Il échoue sur une licence refusée, et sur une licence inconnue ou qui ne se lit pas. Une licence inconnue se vérifie, puis entre dans `licences.toml`, acceptée ou refusée, avec sa raison. Une exception ajoutée par `WITH` aussi : seules celles qui donnent des droits en plus sont acceptées. Un paquet dont les métadonnées ne disent pas la licence entre dans `[paquets]`, à sa version, une fois sa licence vérifiée à la main.
+
+Le moteur se contrôle dans son environnement Poetry. Un paquet que `poetry.lock` réserve à une autre plateforme, ou à une autre version de Python, n'y est pas installé : le contrôle le saute, et le dit. La CI, elle, prend le Python de l'image, 3.13.
+
+### Les failles des images
+
+Trivy analyse chaque image juste après sa publication depuis `main`, et les sept images `:main` chaque lundi ([`failles.yml`](../.github/workflows/failles.yml)). Le job échoue sur toute faille critique. Il passe après la publication, jamais avant : une station qui suit `main` reçoit ses correctifs, même quand une faille reste ouverte.
+
+Devant un job rouge :
+
+- **Un correctif existe** : prendre la mise à jour qui l'apporte, une image de base plus récente ou un `poetry.lock` à jour. Quand l'image de base a déjà le correctif, relancer le workflow de l'image sur `main` (« Run workflow ») la reconstruit. Un paquet installé par le Dockerfile, comme ffmpeg et ce qu'il tire, garde en revanche sa version du cache de build tant que l'image de base ne change pas : vider d'abord le cache des Actions (`gh cache delete --all`), puis relancer.
+- **Aucun correctif** : accepter la faille dans [`.trivyignore.yaml`](../.trivyignore.yaml), pour les seuls paquets touchés (`purls`), avec sa raison (`statement`) et une expiration à 90 jours au plus (`expired_at`). Passé cette date, le job échoue de nouveau : revoir la faille, puis repousser la date ou corriger.
+
+Le job vérifie aussi que chaque faille acceptée a ses paquets, sa raison et une expiration à 90 jours au plus. Pour analyser une image à la main : « Run workflow » sur `failles`, avec sa référence complète (`ghcr.io/lazbutton/button-console:main`) ; sans référence, les sept images `:main`. Trivy est épinglé dans `failles.yml`, version et empreinte, et Dependabot ne le suit pas : le monter à la main, avec l'empreinte de `trivy_<version>_checksums.txt`.
 
 ## Règles du projet
 
