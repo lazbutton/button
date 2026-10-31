@@ -42,16 +42,15 @@ Au premier démarrage, `radiotomate-init` prépare tout, et peut être relancé 
 | Titre en cours | `http://<machine>:6820/now.json` |
 | Catalogue | `http://<machine>:30127` |
 
-**Docker contourne le pare-feu.** Ces ports sont publiés sur toutes les interfaces, et un port publié par Docker reste joignable même si ufw le ferme. Sur une machine exposée à Internet, les lier à `127.0.0.1` dans `.env`, puis placer un reverse proxy HTTPS devant :
+**Docker contourne le pare-feu.** Par défaut, ces ports sont publiés sur toutes les interfaces, en IPv4 et en IPv6, et un port publié par Docker reste joignable même si ufw le ferme. Sur un réseau privé, où l'on ouvre la console par l'adresse de la machine, c'est ce qu'il faut. Sur un VPS exposé à Internet, derrière un reverse proxy HTTPS installé sur la machine, les lier à `127.0.0.1` dans `.env` :
 
 ```bash
-CONSOLE_PORT=127.0.0.1:30126
-ICECAST_PORT=127.0.0.1:18000
-NOWPLAYING_PORT=127.0.0.1:6820
-CATALOG_PORT=127.0.0.1:30127
+BIND_ADDRESS=127.0.0.1
 ```
 
-Vérifier ensuite depuis une autre machine, par exemple avec `nc -zv <machine> 30126`, et non avec `ufw status`.
+Puis `docker compose up -d`. Sur une station en service, il recrée la console, Icecast, nowplaying et le catalogue : les auditeurs d'Icecast sont déconnectés. Ces quatre ports ne répondent plus qu'à la machine elle-même. Le reverse proxy les joint par `127.0.0.1`, par exemple `127.0.0.1:30126` pour la console, et non par `localhost`, qui peut viser d'abord `::1`, où rien n'écoute alors. La console, le flux et `now.json` ne s'ouvrent plus que par lui. Vérifier ensuite depuis une autre machine, par exemple avec `nc -zv <machine> 30126`, et non avec `ufw status`.
+
+`BIND_ADDRESS` vide garde l'écoute sur toutes les interfaces. `0.0.0.0` n'est pas pareil : il n'écoute qu'en IPv4. Une station qui suit l'ancienne consigne, une adresse dans chaque port (`CONSOLE_PORT=127.0.0.1:30126`), marche encore. Pour passer à `BIND_ADDRESS`, retirer ces adresses des quatre ports : avec les deux, `docker compose` refuse de démarrer, sur « invalid IP address ».
 
 Le harbor (l'entrée du direct, port 6800) n'est pas publié par défaut. Pour qu'un encodeur se branche sur cette machine, ajouter un `compose.override.yml` :
 
@@ -106,7 +105,7 @@ Derrière un reverse proxy, le journal de `radiotomate-interface` peut afficher 
 
 ## Avant d'exposer une station à Internet
 
-Une installation sur une machine exposée reste un essai tant que les fiches [P1](feuille-de-route/P1-mise-en-prod.md) ne sont pas faites, en particulier celles de sécurité : catalogue protégé, essais de connexion limités, identifiants d'encodeur, en-têtes, ports fermés.
+Une installation sur une machine exposée reste un essai tant que les fiches [P1](feuille-de-route/P1-mise-en-prod.md) ne sont pas faites, en particulier celles de sécurité : catalogue protégé, essais de connexion limités, identifiants d'encodeur, en-têtes. Sur une telle machine, fermer aussi les ports avec `BIND_ADDRESS=127.0.0.1`, derrière un reverse proxy : voir [Installer](#installer).
 
 ## Régler le moteur
 
