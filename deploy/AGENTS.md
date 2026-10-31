@@ -15,7 +15,7 @@ Rien de ce dossier ne se lance contre une station en service. Les essais se font
 - Le projet Compose s'appelle `button` (`name: button`). Le renommer recrée vides les volumes nommés `button_tusd-data` et `button_share-private`, et change le nom des conteneurs que citent des scripts et des docs.
 - L'interface et le scheduler partagent le réseau du playout (`network_mode: service:radiotomate-playout`). **On ne redémarre jamais `radiotomate-playout` seul** : on recrée les trois services du moteur ensemble.
 - `RT_TAG` épingle seulement le moteur et le playout. Les autres images suivent `:main` tant que la fiche MAJ-01 n'est pas faite.
-- **Docker contourne le pare-feu.** Un port publié sur toutes les interfaces reste joignable même si ufw le ferme. Sur une machine exposée, lier les ports à `127.0.0.1` (par exemple `CONSOLE_PORT=127.0.0.1:30126`) et vérifier depuis une autre machine, pas avec `ufw status`.
+- **Docker contourne le pare-feu.** Un port publié sur toutes les interfaces reste joignable même si ufw le ferme. Les ports de la console, d'Icecast, de nowplaying et du catalogue écoutent donc sur `BIND_ADDRESS` : vide, sur toutes les interfaces, en IPv4 et en IPv6 (`0.0.0.0` n'écouterait qu'en IPv4) ; `127.0.0.1` sur une machine exposée, derrière le reverse proxy. Un port nouveau que seul le reverse proxy doit joindre prend le même préfixe, `${BIND_ADDRESS:-}${BIND_ADDRESS:+:}` ; un port ouvert au public, comme le harbor, n'en a pas. Vérifier depuis une autre machine, pas avec `ufw status`.
 - Une variable nouvelle a une valeur par défaut dans `compose.yml` (`${NOM:-défaut}`) et une ligne commentée dans `.env.example`. Un secret vaut `change-me` dans l'exemple, jamais une vraie valeur. Un secret nouveau passe aussi par `radiotomate-init`, qui le vérifie avec `check_secret`, avant tout le reste. Le service qui s'en sert attend `radiotomate-init` (`depends_on`, `service_completed_successfully`), comme le playout, Icecast et nowplaying.
 - Le service `share` ne démarre qu'avec `--profile share`. `SMB_BIND` n'est jamais `0.0.0.0` : `share/entrypoint.sh` le refuse, sauf avec `SMB_ALLOW_PUBLIC=1`, qui n'a pas sa place sur une machine exposée.
 - Les images sont construites pour `linux/amd64` seulement : une machine ARM ne les lance pas.
@@ -25,7 +25,7 @@ Rien de ce dossier ne se lance contre une station en service. Les essais se font
 | Où tourne le script | Forme |
 |---|---|
 | Dans un conteneur : `init-radiotomate.sh`, `beets-import-loop.sh`, `promote-inbox.sh`, `setup-media-tree.sh`, `share/entrypoint.sh` | `#!/bin/sh` et `set -eu` : POSIX, sans bash |
-| Sur l'hôte : `backup-radiotomate.sh`, `restore-radiotomate.sh` | `#!/usr/bin/env bash` et `set -euo pipefail` |
+| Sur l'hôte : `backup-radiotomate.sh`, `restore-radiotomate.sh`, `smoke.sh` | `#!/usr/bin/env bash` et `set -euo pipefail` |
 
 - Un script se relance sans danger : il ne refait que ce qui manque, et n'écrase rien.
 - Un nouveau script de l'hôte n'a besoin que de Docker, de curl et d'openssl. Les deux scripts de sauvegarde demandent aussi `sqlite3` et `tar` sur l'hôte.
@@ -34,6 +34,7 @@ Rien de ce dossier ne se lance contre une station en service. Les essais se font
 - Les tests de `restore-radiotomate.sh` sont dans `engine/tests/test_update_backup.py`, avec la copie qu'il remet : après une modification du script, lancer aussi `../scripts/verifier.sh moteur`. La CI du moteur ne se déclenche pas pour `deploy/`.
 - Les scripts Python (`export_share_roles.py`, `refresh_volume.py`, `share/apply_share.py`) n'utilisent que la bibliothèque standard. Leurs tests sont dans `services/catalog/` (`test_share.py`, `test_refresh_volume.py`).
 - Les tests du contrôle des secrets d'`init-radiotomate.sh` sont aussi dans `services/catalog/` (`test_init_secrets.py`), comme ceux de `promote-inbox.sh` : la CI des services les lance à chaque changement de `deploy/scripts/` ou de `compose.yml`. Le passage complet du script, avec ses blocs Python et l'avertissement sur le compte admin, est dans `engine/tests/test_init_admin.py` : après une modification du script, lancer aussi `../scripts/verifier.sh moteur`.
+- Les tests de `smoke.sh`, le contrôle après déploiement, sont aussi dans `services/catalog/` (`test_smoke.py`) : un faux `docker` et un petit serveur HTTP y jouent la station.
 
 ## Pièges
 

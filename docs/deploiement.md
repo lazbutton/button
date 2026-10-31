@@ -42,16 +42,15 @@ Au premier démarrage, `radiotomate-init` prépare tout, et peut être relancé 
 | Titre en cours | `http://<machine>:6820/now.json` |
 | Catalogue | `http://<machine>:30127` |
 
-**Docker contourne le pare-feu.** Ces ports sont publiés sur toutes les interfaces, et un port publié par Docker reste joignable même si ufw le ferme. Sur une machine exposée à Internet, les lier à `127.0.0.1` dans `.env`, puis placer un reverse proxy HTTPS devant :
+**Docker contourne le pare-feu.** Par défaut, ces ports sont publiés sur toutes les interfaces, en IPv4 et en IPv6, et un port publié par Docker reste joignable même si ufw le ferme. Sur un réseau privé, où l'on ouvre la console par l'adresse de la machine, c'est ce qu'il faut. Sur un VPS exposé à Internet, derrière un reverse proxy HTTPS installé sur la machine, les lier à `127.0.0.1` dans `.env` :
 
 ```bash
-CONSOLE_PORT=127.0.0.1:30126
-ICECAST_PORT=127.0.0.1:18000
-NOWPLAYING_PORT=127.0.0.1:6820
-CATALOG_PORT=127.0.0.1:30127
+BIND_ADDRESS=127.0.0.1
 ```
 
-Vérifier ensuite depuis une autre machine, par exemple avec `nc -zv <machine> 30126`, et non avec `ufw status`.
+Puis `docker compose up -d`. Sur une station en service, il recrée la console, Icecast, nowplaying et le catalogue : les auditeurs d'Icecast sont déconnectés. Ces quatre ports ne répondent plus qu'à la machine elle-même. Le reverse proxy les joint par `127.0.0.1`, par exemple `127.0.0.1:30126` pour la console, et non par `localhost`, qui peut viser d'abord `::1`, où rien n'écoute alors. La console, le flux et `now.json` ne s'ouvrent plus que par lui. Vérifier ensuite depuis une autre machine, par exemple avec `nc -zv <machine> 30126`, et non avec `ufw status`.
+
+`BIND_ADDRESS` vide garde l'écoute sur toutes les interfaces. `0.0.0.0` n'est pas pareil : il n'écoute qu'en IPv4. Une station qui suit l'ancienne consigne, une adresse dans chaque port (`CONSOLE_PORT=127.0.0.1:30126`), marche encore. Pour passer à `BIND_ADDRESS`, retirer ces adresses des quatre ports : avec les deux, `docker compose` refuse de démarrer, sur « invalid IP address ».
 
 Le harbor (l'entrée du direct, port 6800) n'est pas publié par défaut. Pour qu'un encodeur se branche sur cette machine, ajouter un `compose.override.yml` :
 
@@ -106,7 +105,7 @@ Derrière un reverse proxy, le journal de `radiotomate-interface` peut afficher 
 
 ## Avant d'exposer une station à Internet
 
-Une installation sur une machine exposée reste un essai tant que les fiches [P1](feuille-de-route/P1-mise-en-prod.md) ne sont pas faites, en particulier celles de sécurité : catalogue protégé, essais de connexion limités, identifiants d'encodeur, en-têtes, ports fermés.
+Une installation sur une machine exposée reste un essai tant que les fiches [P1](feuille-de-route/P1-mise-en-prod.md) ne sont pas faites, en particulier celles de sécurité : catalogue protégé, essais de connexion limités, identifiants d'encodeur, en-têtes. Sur une telle machine, fermer aussi les ports avec `BIND_ADDRESS=127.0.0.1`, derrière un reverse proxy : voir [Installer](#installer).
 
 ## Régler le moteur
 
@@ -162,6 +161,22 @@ docker compose up -d
 Sans `RT_TAG`, la station suit `main`. Pour geler une version, mettre un tag daté dans `.env` : `RT_TAG=AAAAMMJJ-sha7`. Les tags existants sont listés sur la page des packages GitHub.
 
 `RT_TAG` ne gèle que le moteur et le playout. La console, Icecast, nowplaying, le catalogue et le partage suivent `main` tant que les versions publiées n'existent pas : voir MAJ-01 dans la [feuille de route](feuille-de-route/P1-mise-en-prod.md).
+
+Ensuite, vérifier que l'antenne tourne, sans compte, depuis le dossier de la station :
+
+```bash
+scripts/smoke.sh http://127.0.0.1:30126 http://127.0.0.1:18000/button.mp3
+```
+
+Le contrôle prend l'adresse de la console, puis celle du flux public. Sur la machine, avec les ports par défaut, ce sont celles de l'exemple. Derrière un reverse proxy, donner plutôt leurs adresses publiques, en `https://`, pour le vérifier lui aussi : le contrôle ne suit pas les redirections. Il vérifie, dans l'ordre :
+
+1. le playout, l'interface et le scheduler sont `healthy`, en attendant deux minutes au plus ;
+2. la console répond et relaie le moteur : `/` et `/health/ready` répondent 200 ;
+3. le scheduler est prêt : son `/health/ready`, lu dans son conteneur, répond 200 ;
+4. sans cookie, la recherche de la médiathèque répond 401 ;
+5. le flux envoie de l'audio, et `now.json`, lu dans le conteneur de nowplaying, répond.
+
+Au premier point qui échoue, il s'arrête en erreur, nomme le point et ce qui ne va pas, et dit quel journal lire. Un service du moteur arrêté le fait échouer tout de suite, sans attendre. Le point 4 ne voit pas un catalogue arrêté : sans cookie, nginx répond 401 sans le joindre. Sur une machine lente, `SMOKE_WAIT=300 scripts/smoke.sh …` attend la santé du moteur cinq minutes. Le contrôle appelle `docker compose` sans option : une station lancée avec `-p <station>` ou `--env-file <fichier>` se contrôle avec `COMPOSE_PROJECT_NAME=<station>` ou `COMPOSE_ENV_FILES=<fichier>` devant la commande. Le contrôle ne change rien à la station : il sert aussi après une installation, ou à tout moment.
 
 ## Revenir en arrière
 

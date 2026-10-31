@@ -50,7 +50,7 @@ Le script lance les mêmes commandes que la CI ([`.github/workflows/`](../.githu
 | `moteur` | `ruff check`, `ruff format --check`, puis `pytest` avec `TZ=Europe/Paris`, sans `tests/interface` ni `tests/e2e` | Poetry |
 | `liquidsoap` | `liquidsoap --check engine/playout/radiotomate.liq`, avec un `RTCONFIG` minimal | Docker |
 | `console` | `npm test`, puis `tsc` et `vite build` | Node 22, `npm install` fait |
-| `services` | les neuf tests du catalogue listés dans `services.yml` | `services/catalog/.venv`, voir plus bas |
+| `services` | les dix tests du catalogue listés dans `services.yml` | `services/catalog/.venv`, voir plus bas |
 | `nginx` | `nginx -t` sur `console/docker/nginx.conf.template` et ses en-têtes de sécurité, rendus par le script de démarrage de l'image | Docker |
 | `deploy` | `docker compose config` avec `.env.example`, puis ShellCheck s'il est installé | Docker |
 | `e2e` | les parcours dans un navigateur, par `scripts/e2e.sh` ([plus bas](#les-parcours-dans-un-navigateur)) | Node 22 et Poetry, `npm install` et `poetry install` faits |
