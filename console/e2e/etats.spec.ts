@@ -1,6 +1,7 @@
 import type { Page, Route } from "@playwright/test";
 import { READ_DEADLINE_MS } from "../src/api/readDeadline.ts";
 import { SEND_DEADLINE_MS } from "../src/api/sendDeadline.ts";
+import { LOGOUT_UNREACHED_MESSAGE } from "../src/api/sessionLogout.ts";
 import {
   alerte,
   antenne,
@@ -60,6 +61,22 @@ const moteurArrete = (route: Route) => route.fulfill({ status: 502, contentType:
 
 const suivant = (page: Page) => antenne(page).getByRole("button", { name: /^Suivant/ });
 const passer = (route: Route) => route.request().method() === "DELETE";
+
+async function seDeconnecter(page: Page): Promise<void> {
+  await page.getByRole("banner").getByRole("button", { name: /^Compte .* : menu$/ }).click();
+  await page.getByRole("menuitem", { name: "Se déconnecter" }).click();
+}
+
+/**
+ * La pré-écoute d'un bac. L'élément audio n'a pas de rôle : il se reconnaît au
+ * son reçu, qu'il lit par une adresse blob:. Sa durée dit que le son est
+ * lisible, `joue` qu'il part vraiment.
+ */
+const preEcouteDuBac = (page: Page) =>
+  page.evaluate(() => {
+    const audio = [...document.querySelectorAll("audio")].find((element) => element.src.startsWith("blob:"));
+    return audio ? { duree: audio.duration, joue: !audio.paused } : null;
+  });
 
 test("session expirée pendant un geste : la console le dit", async ({ page }) => {
   await seConnecter(page, "animateur");
@@ -213,6 +230,29 @@ test("moteur muet à la connexion : la console le dit, sans attendre le formulai
   expect(repli).toEqual([]);
 });
 
+test("moteur muet à la déconnexion : la console la lâche, et dit que la session est peut-être restée ouverte", async ({
+  page,
+}) => {
+  test.slow();
+  await seConnecter(page, "animateur");
+  await expect(suivant(page)).toBeEnabled();
+  // /logout part, puis ne reçoit jamais de réponse.
+  await page.route("**/logout", () => {});
+
+  await seDeconnecter(page);
+  await expect(page.getByRole("button", { name: "Se connecter" })).toBeVisible({ timeout: READ_DEADLINE_MS + 5_000 });
+  await expect(alerte(page, LOGOUT_UNREACHED_MESSAGE)).toBeVisible();
+
+  // Le moteur n'a pas fermé la session : recharger la page la rouvre…
+  await page.unroute("**/logout");
+  await page.reload();
+  await expect(suivant(page)).toBeEnabled();
+  // … et une déconnexion qui l'atteint ne dit rien de plus.
+  await seDeconnecter(page);
+  await expect(page.getByRole("button", { name: "Se connecter" })).toBeVisible();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+});
+
 test("connexion par le formulaire de repli : un mot de passe refusé se dit comme tel", async ({ page }) => {
   await page.goto("/");
   // /login.json ne répond pas : la console passe par le formulaire de /login,
@@ -244,6 +284,64 @@ test("envoi trop lourd pour nginx : le bac le dit, sans la page de nginx", async
     alerte(page, "Envoi trop lourd pour le serveur. Dépose moins de fichiers à la fois, ou des fichiers plus légers."),
   ).toBeVisible();
   await expect(page.getByText(/Request Entity|Le moteur ne répond pas/)).toHaveCount(0);
+});
+
+test("moteur muet pendant une pré-écoute : le bac le dit, puis la pré-écoute repart", async ({ page }) => {
+  test.slow();
+  await seConnecter(page, "programmateur");
+  await expect(suivant(page)).toBeEnabled();
+  await page.goto("/sons");
+  await page.getByRole("option", { name: /Musique de démo/ }).click();
+  const preEcoute = page
+    .getByRole("region", { name: "Musique de démo" })
+    .getByRole("button", { name: "Pré-écouter le bac" });
+  // Le son est demandé, puis ne vient jamais.
+  const son = /\/carts\/\d+\/sounds\/\d+$/;
+  await page.route(son, () => {});
+
+  await preEcoute.click();
+  await expect(alerte(page, "Pré-écoute impossible : l’automate ne répond pas.")).toBeVisible({
+    timeout: READ_DEADLINE_MS + 5_000,
+  });
+
+  // L'automate répond de nouveau : le son vient, et l'élément audio le lit.
+  await page.unroute(son);
+  await preEcoute.click();
+  await expect(page.getByRole("button", { name: "Arrêter la pré-écoute" }).first()).toBeVisible();
+  await expect.poll(async () => (await preEcouteDuBac(page))?.duree).toBeGreaterThan(0);
+  await expect.poll(async () => (await preEcouteDuBac(page))?.joue).toBe(true);
+});
+
+test("un son resté sans réponse, puis un autre lancé : l’abandon du premier ne coupe pas le second", async ({ page }) => {
+  test.slow();
+  await seConnecter(page, "programmateur");
+  await expect(suivant(page)).toBeEnabled();
+  await page.goto("/sons");
+  await page.getByRole("option", { name: /Musique de démo/ }).click();
+  const bac = page.getByRole("region", { name: "Musique de démo" });
+  // Le premier son demandé ne vient jamais. Les suivants passent.
+  const son = /\/carts\/\d+\/sounds\/\d+$/;
+  let retenu = false;
+  await page.route(son, (route) => {
+    if (retenu) return route.continue();
+    retenu = true;
+  });
+  const abandon = page.waitForEvent("requestfailed", {
+    predicate: (request) => son.test(request.url()),
+    timeout: READ_DEADLINE_MS + 5_000,
+  });
+
+  await bac.getByRole("button", { name: "Pré-écouter Première écoute" }).click();
+  await bac.getByRole("button", { name: "Pré-écouter Nuit claire" }).click();
+  const arreter = bac.getByRole("button", { name: "Arrêter la pré-écoute" });
+  await expect(arreter.first()).toBeVisible();
+  await expect.poll(async () => (await preEcouteDuBac(page))?.joue).toBe(true);
+
+  // La console abandonne le premier son au bout du délai, après avoir réglé son échec.
+  await abandon;
+  await expect(alerte(page, /^Pré-écoute impossible/)).toHaveCount(0);
+  await expect(arreter.first()).toBeVisible();
+  expect((await preEcouteDuBac(page))?.joue).toBe(true);
 });
 
 test("moteur injoignable, pupitre ouvert : la barre et le pupitre le disent, puis repartent", async ({ page }) => {

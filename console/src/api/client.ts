@@ -1,8 +1,9 @@
 import { isEngineUnreachable, isUnreachableStatus } from "./engineUnreachable";
 import { apiCacheClear, apiSharedGet } from "./jsonCache";
 import { isPlayoutUnavailable, PLAYOUT_UNAVAILABLE_MESSAGE } from "./playoutUnavailable";
-import { READ_DEADLINE_MS, withDeadline } from "./readDeadline";
+import { READ_DEADLINE_MS, withBodyDeadline, withDeadline } from "./readDeadline";
 import { NO_ANSWER_MESSAGE, SEND_DEADLINE_MS, UPLOAD_IDLE_MS, withUploadDeadline } from "./sendDeadline";
+import { closeSession } from "./sessionLogout";
 import { isUnknownRoute, UNKNOWN_ROUTE_MESSAGE } from "./unknownRoute";
 
 export const API_PREFIX = import.meta.env.DEV ? "/api" : "";
@@ -243,33 +244,38 @@ export async function apiUpload<T>(
   return payload as T;
 }
 
-export async function apiBlob(path: string): Promise<string> {
-  let response: Response;
-  try {
-    response = await fetch(`${API_PREFIX}${path}`, { credentials: "include" });
-  } catch {
-    throw new ApiUnavailableError();
-  }
-  if (!response.ok) {
-    const payload = await parseJson<{ error?: string }>(response);
-    raiseForStatus(response, payload);
-  }
-  const blob = await response.blob();
-  return URL.createObjectURL(blob);
+// Un son se lit en entier avant d'être joué : sur un réseau lent, bien plus que
+// le délai des lectures. Ce délai vaut pour la réponse, puis pour chaque
+// morceau du son : seul un son qui n'avance plus est abandonné.
+function apiSound<T>(path: string, read: (body: Response) => Promise<T>): Promise<T> {
+  return withBodyDeadline(
+    READ_DEADLINE_MS,
+    async (signal) => {
+      let response: Response;
+      try {
+        response = await fetch(`${API_PREFIX}${path}`, { credentials: "include", signal });
+      } catch {
+        throw new ApiUnavailableError();
+      }
+      if (response.ok) return response;
+      // Le moteur rend lui-même en HTML l'erreur d'un son, introuvable ou absent
+      // du disque : seul le statut dit qu'il est injoignable, comme sur /login.
+      if (response.status === 401 || response.status === 403 || isUnreachableStatus(response.status)) {
+        raiseForStatus(response);
+      }
+      throw new ApiRequestError(response.status, "Lecture impossible.");
+    },
+    read,
+    () => new ApiUnavailableError(),
+  );
 }
 
-export async function apiArrayBuffer(path: string): Promise<ArrayBuffer> {
-  let response: Response;
-  try {
-    response = await fetch(`${API_PREFIX}${path}`, { credentials: "include" });
-  } catch {
-    throw new ApiUnavailableError();
-  }
-  if (!response.ok) {
-    const payload = await parseJson<{ error?: string }>(response);
-    raiseForStatus(response, payload);
-  }
-  return response.arrayBuffer();
+export async function apiBlob(path: string): Promise<string> {
+  return URL.createObjectURL(await apiSound(path, (body) => body.blob()));
+}
+
+export function apiArrayBuffer(path: string): Promise<ArrayBuffer> {
+  return apiSound(path, (body) => body.arrayBuffer());
 }
 
 export async function apiLogin(username: string, password: string): Promise<void> {
@@ -320,16 +326,21 @@ export async function apiLogin(username: string, password: string): Promise<void
   throw new ApiAuthError();
 }
 
-export async function apiLogout(): Promise<void> {
-  try {
-    await fetch(`${API_PREFIX}/logout`, {
+/**
+ * La session locale est abandonnée même si le moteur ne répond pas, au plus
+ * tard au bout du délai des lectures. Rend false si rien ne dit que le moteur
+ * a reçu la déconnexion : la session y est peut-être encore ouverte.
+ */
+export async function apiLogout(): Promise<boolean> {
+  const reached = await closeSession((signal) =>
+    fetch(`${API_PREFIX}/logout`, {
       method: "GET",
       credentials: "include",
       redirect: "manual",
-    });
-  } catch {
-    /* la session locale est abandonnée même si le moteur ne répond pas */
-  }
+      signal,
+    }),
+  );
   csrfToken = null;
   apiCacheClear();
+  return reached;
 }

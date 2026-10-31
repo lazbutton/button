@@ -31,6 +31,8 @@ Moteur arrêté, nginx répond lui-même 502, ou 504 si le moteur tarde, avec sa
 
 La console abandonne une lecture JSON (`GET`) restée sans réponse au bout de 10 s, corps compris, et la traite comme un moteur injoignable (`console/src/api/readDeadline.ts`). nginx, lui, attend le moteur une heure. Une route que la console lit répond donc en moins de 10 s : le moteur attend lui-même le scheduler jusqu'à 8 s, sur `/antenne/state.json`.
 
+Un son se lit en entier avant d'être joué, pour la pré-écoute d'un bac ou le casque sur les fichiers du conducteur (`GET /carts/{id}/sounds/{son}`, `GET /autodj/beets/{id}`). Sur un réseau lent, c'est bien plus long que 10 s : le délai vaut pour la réponse, puis pour chaque morceau du son (`withBodyDeadline`). Seul un son qui n'avance plus pendant 10 s est abandonné, et compte comme un moteur injoignable. Le moteur rend lui-même en HTML l'erreur d'un son, introuvable ou absent du disque : comme sur `/login`, seul le statut compte, et seuls 502, 503 et 504 y disent le moteur injoignable.
+
 Un geste (`POST`, `PUT`, `PATCH` ou `DELETE`) a 10 s pour répondre, corps compris, et lier un dossier de la banque à un bac 60 s : le moteur y lit jusqu'à 2000 fichiers (`console/src/api/sendDeadline.ts`). Le jeton CSRF qu'un geste demande d'abord se lit comme une lecture, avec son délai. Passé ce délai, le moteur a peut-être fait le geste : la console l'abandonne et dit « L’automate ne répond pas. Le geste a peut-être été fait : vérifie avant de réessayer. » L'aperçu d'une série de l'Agenda (`POST /agenda/diffusions/preview.json`) ne crée rien : sans réponse, la console le traite comme un moteur injoignable. Une route qui reçoit un geste répond donc en moins de 10 s : pour un geste, le moteur attend lui-même le scheduler 5 s au plus.
 
 Un dépôt de sons en multipart (`POST /carts/<id>/sounds.json`) dure le temps de l'envoi. Tant que le corps part, il n'est coupé que si aucun octet ne part pendant 30 s : nginx garde le corps entier avant de le relayer, le moteur n'a donc rien reçu, et la console dit que l'automate ne répond pas. Après le dernier octet, la console attend la réponse 30 s, puis dit que le geste a peut-être été fait, sans couper le dépôt : le moteur écrit les fichiers sous leur nom dans le dossier du bac, et un dépôt coupé y laisserait un son tronqué, que le scheduler rattacherait au bac.
@@ -44,7 +46,7 @@ La forme exacte des objets est dans `console/src/api/types.ts`, et côté moteur
 ### Session
 
 - `POST /login.json` `{username, password}` → `{ok:true, username, permissions}`. Pas besoin de jeton CSRF.
-- `GET /logout` : ce n’est pas du JSON, c’est une redirection HTML.
+- `GET /logout` : ce n’est pas du JSON, c’est une redirection HTML. La console l'attend 10 s au plus, puis oublie sa session quoi qu'il arrive (`console/src/api/sessionLogout.ts`). Sans réponse dans ce délai, sur une connexion refusée, ou sur un 502, 503 ou 504 de nginx, rien ne dit que le moteur a reçu la demande. La session y est peut-être encore ouverte, et son cookie valable : un rechargement la rouvre une fois le moteur revenu. L'écran de connexion le dit.
 - `GET /account.json` → `{username, permissions:{admin, stream, live, carts, not_audio, autodj}}`, tous des booléens.
 - `PUT /account.json` `{password}` → la même forme. Mot de passe vide → 400.
 

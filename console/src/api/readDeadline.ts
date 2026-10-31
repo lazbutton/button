@@ -1,3 +1,5 @@
+import { withIdleDeadline } from "./sendDeadline.ts";
+
 /**
  * Le temps qu'a une lecture du moteur, corps compris. Un moteur qui accepte la
  * connexion sans répondre, boucle Quart bloquée ou réseau qui perd les
@@ -32,4 +34,43 @@ export function withDeadline<T>(ms: number, read: (signal: AbortSignal) => Promi
       },
     );
   });
+}
+
+/**
+ * Comme withDeadline, pour une lecture dont le corps peut être long à venir,
+ * comme un son lu en entier avant d'être joué. Le délai vaut pour la réponse,
+ * puis repart à chaque morceau du corps (withIdleDeadline, `sendDeadline.ts`) :
+ * un son lent qui avance n'est jamais coupé. `read` lit le corps, par `blob()`
+ * ou `arrayBuffer()` : le navigateur l'assemble lui-même, sans copie de plus,
+ * ce qui compte pour une émission d'une heure. Un corps qui n'avance plus, ou
+ * qui se coupe en route, rejette avec `late()`. Une erreur de `answer`, comme
+ * celle d'un statut, garde la sienne.
+ */
+export function withBodyDeadline<T>(
+  ms: number,
+  answer: (signal: AbortSignal) => Promise<Response>,
+  read: (body: Response) => Promise<T>,
+  late: () => Error,
+): Promise<T> {
+  return withIdleDeadline(
+    ms,
+    async (signal, alive) => {
+      const response = await answer(signal);
+      alive();
+      const counted = response.body?.pipeThrough(
+        new TransformStream<Uint8Array, Uint8Array>({
+          transform(chunk, controller) {
+            alive();
+            controller.enqueue(chunk);
+          },
+        }),
+      );
+      try {
+        return await read(new Response(counted, { headers: response.headers }));
+      } catch {
+        throw late();
+      }
+    },
+    late,
+  );
 }

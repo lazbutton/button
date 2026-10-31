@@ -6,6 +6,7 @@ import { FormField } from "../ui/FormField";
 import { AccountProvider } from "./AccountContext";
 import { ApiAuthError, ApiUnavailableError, apiLogin, apiLogout, apiProbeSession } from "./client";
 import { cookieRefused, cookieRefusedMessage } from "./sessionCookie";
+import { LOGOUT_UNREACHED_MESSAGE } from "./sessionLogout";
 import { forgetUsername, rememberUsername } from "./sessionUser";
 import type { ApiLoadError } from "./useApiJson";
 import { label } from "../lib/brand";
@@ -18,6 +19,8 @@ type SessionGateProps = {
   children: ReactNode;
   cover?: boolean;
   ready?: boolean;
+  /** Ce que dit d'abord le formulaire de connexion, comme une déconnexion qui n'a pas abouti. */
+  notice?: string | null;
 };
 
 export function SessionGate({
@@ -27,8 +30,9 @@ export function SessionGate({
   children,
   cover = false,
   ready = false,
+  notice = null,
 }: SessionGateProps) {
-  if (error === "auth") return <StudioLogin onLoggedIn={onRetry} />;
+  if (error === "auth") return <StudioLogin onLoggedIn={onRetry} notice={notice} />;
   if (error === "down" && !ready) {
     return (
       <ErrorState
@@ -59,10 +63,15 @@ export function useLogout(): () => void {
 export function ApiSession({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiLoadError | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const readyRef = useRef(false);
+  // Une déconnexion à la fois : une seconde, réglée plus tard, rendrait l'écran
+  // de connexion à une session rouverte entre-temps.
+  const leavingRef = useRef(false);
 
   const retry = useCallback(() => {
     setError(null);
+    setNotice(null);
     if (!readyRef.current) setLoading(true);
     void apiProbeSession()
       .then(() => {
@@ -78,9 +87,13 @@ export function ApiSession({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(() => {
-    void apiLogout().finally(() => {
+    if (leavingRef.current) return;
+    leavingRef.current = true;
+    void apiLogout().then((reached) => {
+      leavingRef.current = false;
       forgetUsername();
       readyRef.current = false;
+      setNotice(reached ? null : LOGOUT_UNREACHED_MESSAGE);
       setError("auth");
       setLoading(false);
     });
@@ -92,20 +105,21 @@ export function ApiSession({ children }: { children: ReactNode }) {
 
   return (
     <LogoutContext.Provider value={logout}>
-      <SessionGate cover loading={loading} error={error} onRetry={retry}>
+      <SessionGate cover loading={loading} error={error} onRetry={retry} notice={notice}>
         <AccountProvider>{children}</AccountProvider>
       </SessionGate>
     </LogoutContext.Provider>
   );
 }
 
-function StudioLogin({ onLoggedIn }: { onLoggedIn: () => void }) {
+function StudioLogin({ onLoggedIn, notice }: { onLoggedIn: () => void; notice: string | null }) {
   const brand = useBrand();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [fail, setFail] = useState<string | null>(null);
+  // L'avis tient jusqu'au premier envoi du formulaire.
+  const [fail, setFail] = useState<string | null>(notice);
   const subtitle = label(brand, "automate", "subtitle") || "Console d’antenne";
 
   async function submit(event: FormEvent) {
