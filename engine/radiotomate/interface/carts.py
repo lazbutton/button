@@ -628,7 +628,7 @@ async def add_sounds_json(cart_id: int):
         added_sounds = await _ingest_json_uploads(cart_id, uploads)
     else:
         dest = media_bank.cart_upload_dir(cart)
-        form = await stream_form(dest)
+        form = await stream_form(dest, file_fields=("sounds", "file"))
         uploads = form.getall("sounds") or form.getall("file")
         if not uploads:
             raise BadRequest("No sound file uploaded")
@@ -1086,7 +1086,7 @@ async def add_sounds(cart_id: int):
         raise NotFound(f"Cart {cart_id} not found")
     media_bank.bind_cart_bank(cart)
     await g.dbsession.commit()
-    form = await stream_form(media_bank.cart_upload_dir(cart))
+    form = await stream_form(media_bank.cart_upload_dir(cart), file_fields=("sounds",))
     added_sounds = []
     rank = await Sound.next_rank(g.dbsession, cart_id)
     for uploaded_file in form.getall("sounds"):
