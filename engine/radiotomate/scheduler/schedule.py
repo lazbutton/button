@@ -16,6 +16,7 @@ from werkzeug.exceptions import BadRequest
 from radiotomate.auth import token_required
 from radiotomate.enums import CartMode
 from radiotomate.models import Cart, Sound
+from radiotomate.models.cart import CARTS_QUEUE
 from radiotomate.scheduler.playout import (
     PlayoutGateway,
     PlayoutResult,
@@ -124,9 +125,19 @@ async def _push_cart_sound(
     current_app,
     session: ormSession,
 ) -> PlayoutResult | None:
-    """The answer for the first sound: the cart is on air once it is queued."""
+    """
+    The answer for the first sound: the cart is on air once it is queued.
+
+    Only a playlist of the carts queue goes on with the clock
+    (``clock._refill_active_cart``): its second sound goes too. Any other cart
+    plays one sound.
+    """
+    chains = (
+        cart.mode in {CartMode.PLAYLIST, CartMode.PLAYLIST_LOOP}
+        and cart.playout_queue() == CARTS_QUEUE
+    )
     results: list[PlayoutResult] = []
-    for _ in range(2):
+    for _ in range(2 if chains else 1):
         sound = cart.next_sound()
         if not sound:
             break

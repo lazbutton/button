@@ -36,6 +36,8 @@ Liquidsoap 2.4.5 annote chaque push avec `radiotomate_queue`. Le journal d’ant
 
 Une playlist simple (`playlist`) passée en entier reprend au début, comme une boucle : `Cart.next_sound_playlist` se replie sur `next_sound_playlist_loop`, et un son prêt jamais passé reste prioritaire. L’amont n’en tirait plus aucun son. L’horloge le faisait déjà de son côté ; `POST /schedule/<id>/now` et le son suivant affiché suivent maintenant la même règle. Le second son que cet ordre met en file n’est jamais un son déjà passé d’une playlist simple : l’ordre ne met pas deux fois de suite en file un cart d’un seul son jamais passé. Pour un cart de la file `carts`, la suite vient ensuite de l’horloge (`_refill_active_cart`), qui reprend la playlist au début.
 
+`POST /schedule/<id>/now` sur un cart sans suite à l’horloge, aléatoire ou d’une autre file que `carts`, ne met plus qu’un son en file. Il en mettait deux, tirés au hasard pour un cart aléatoire.
+
 Un titre Beets sans `rg_track_gain` est analysé à la prévision (`analyze_item_soon`), puis au push si le gain manque encore (`ensure_item_gain`). Rien n’est poussé sans gain.
 
 ## API pour la console
