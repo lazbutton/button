@@ -35,8 +35,9 @@ Le format des fiches, les tailles et la façon de prendre une fiche sont dans le
 | [DOC-01](#doc-01--guide-dinstallation-sur-vps) | Guide d'installation sur VPS | M | INS-04, MAJ-05, SAV-01 | à faire |
 | [LEG-01](#leg-01--dépendances-images-et-licences) | Dépendances, images et licences | S | — | à faire |
 | [LEG-02](#leg-02--le-code-source-pour-chaque-utilisateur) | Le code source pour chaque utilisateur | S | MAJ-01 | à faire |
+| [FON-14](#fon-14--les-lignes-mises-à-la-suite-passent-à-lantenne) | Les lignes mises à la suite passent à l'antenne | M | — | à faire |
 
-En tout : 27 fiches, 12 de taille S, 12 de taille M et 3 de taille L.
+En tout : 28 fiches, 12 de taille S, 13 de taille M et 3 de taille L.
 
 ## L'ordre
 
@@ -53,6 +54,7 @@ Les fiches d'une même vague peuvent avancer en même temps, une par agent, à c
 | garde-fou | GEN-03 | `scripts/verifier.sh` |
 | CI | LEG-01 | `.github/` |
 | alertes | SUR-01 | `engine/radiotomate/scheduler/alerts.py` |
+| scheduler | FON-14 | `engine/radiotomate/scheduler/clock.py`, `engine/radiotomate/scheduler/execution.py` |
 
 **Vague 2, dès qu'une file se libère :** SEC-04, GEN-01, TST-02, MAJ-01, MAJ-03, LEG-02. SEC-04 et GEN-01 n'attendent rien, mais elles touchent les mêmes fichiers : `console/src/api/types.ts` et `docs/api.md`. Fusionner l'une, puis rebaser l'autre. SEC-04 prend la migration v18.
 
@@ -454,3 +456,30 @@ S · dépend de MAJ-01 · conflits : `console/src/lib/brand.ts`, `.github/workfl
   2. Le lien mène au code de la version en service, joignable par toute personne qui a un compte, même si le dépôt n'est pas public.
   3. Le réglage `source_url` de GEN-01 le change par station, pour une version modifiée.
 - **Accepté quand** : depuis un compte d'animateur, le lien « Code source » ouvre ou télécharge le code de la version en service.
+
+### FON · Fonctions
+
+#### FON-14 · Les lignes mises à la suite passent à l'antenne
+
+M · dépend de rien · conflits : `engine/radiotomate/scheduler/clock.py`, `engine/radiotomate/scheduler/execution.py`, `engine/radiotomate/scheduler/desk.py`
+
+- **Pourquoi** : au pupitre, « Mettre à la suite » répond « Mis à la suite. » et montre la ligne dans la file, mais le scheduler ne la passe jamais.
+- **Aujourd'hui** :
+  - `insert_desk_item` (`engine/radiotomate/scheduler/desk.py`) crée une ligne `origin = "desk"`, datée de la fin du titre à l'antenne, sans rien envoyer au playout.
+  - Le scheduler ne pousse que par `_load_pushable_sequential` et `_planned_anchor_item` (`engine/radiotomate/scheduler/clock.py`), qui excluent tous deux `origin = "desk"`. `realign_rundown` (`execution.py`) laisse aussi ces lignes à leur heure. L'exclusion date de l'import initial, sans raison écrite, et aucun test ne l'attend.
+  - Seul « Jouer tout de suite » (`POST /autodj/conducteur/now.json`) fait passer une ligne du pupitre.
+  - La ligne reste donc dans la file jusqu'à son heure de fin, puis en sort, et `expire_past_desk_items` l'efface : un échec silencieux. Le moteur de démo ne joue que sa propre liste, et les parcours de la console ne peuvent pas le voir.
+  - Constaté en lisant le code, pas encore sur une station en service.
+- **À trancher avant de coder** :
+  - Quand la ligne passe-t-elle ? Proposition : à sa place dans la file, comme une ligne de l'horloge, dans la file du playout de son type (`desk_queue_for` : `autodj`, `carts` ou `jingles`).
+  - La ligne de l'horloge qu'elle précède attend-elle ? Proposition : oui, et les suivantes glissent, comme le fait déjà `realign_rundown`.
+  - Une ancre dure garde son heure. Proposition : une ligne du pupitre ne la retarde jamais, comme une ligne de l'horloge (`track_would_overflow_anchor`).
+  - L'interrupteur de l'[ADR 0009](../decisions/0009-interrupteurs.md). Proposition : `features.desk_lines_air`, absent = la ligne passe.
+- **À faire** :
+  1. Sur une station de test, avec le scheduler et Liquidsoap réels, mettre une ligne à la suite et vérifier qu'elle ne passe pas. Si elle passe, noter par où, et fermer la fiche.
+  2. Le scheduler pousse les lignes du pupitre à leur tour, selon les règles tranchées : chacune dans sa file, par son son si elle vient d'un cart, par son chemin si elle vient de la banque.
+  3. Le conducteur suit la ligne comme une autre, envoyée puis à l'antenne puis jouée. `expire_past_desk_items` n'efface plus une ligne déjà envoyée, qui attend son tour.
+  4. L'interrupteur, avec un test fonction coupée et un test fonction allumée.
+- **Mise en service** : à la mise à jour, les lignes du pupitre encore à venir passeront. Pour revenir en arrière sans redéployer : couper l'interrupteur.
+- **Tests** : dans `engine/tests/scheduler/`, une ligne mise à la suite est poussée une fois, à son tour, dans la bonne file ; une ligne retirée ne l'est pas ; une ancre n'est pas retardée ; l'interrupteur coupé garde le comportement d'avant.
+- **Accepté quand** : sur une station de test, une ligne mise à la suite au pupitre passe à l'antenne après le titre en cours, sans autre geste, et le conducteur la marque jouée.
