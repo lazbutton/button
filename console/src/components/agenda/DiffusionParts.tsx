@@ -80,6 +80,7 @@ export function InviteBox({
           size="1"
           variant={confirm ? "solid" : "ghost"}
           color={confirm ? "red" : "gray"}
+          highContrast={confirm}
           disabled={busy}
           onClick={async () => {
             if (!confirm) {
@@ -190,6 +191,7 @@ export function FileSection({
             size="1"
             variant={confirm ? "solid" : "ghost"}
             color="red"
+            highContrast={confirm}
             onClick={async () => {
               if (!confirm) {
                 setConfirm(true);

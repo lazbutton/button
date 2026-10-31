@@ -121,6 +121,7 @@ export function StreamToken({ owner }: { owner: StreamTokenOwner }) {
           type="button"
           variant={confirming ? "solid" : "soft"}
           color={confirming ? "red" : undefined}
+          highContrast={confirming}
           aria-busy={busy}
           onClick={() => void renew()}
         >

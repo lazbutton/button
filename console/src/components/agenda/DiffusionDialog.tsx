@@ -595,6 +595,7 @@ export function DiffusionDialog({
                   size="2"
                   color="red"
                   variant={confirmStop ? "solid" : "soft"}
+                  highContrast={confirmStop}
                   disabled={busy != null}
                   onClick={() => (confirmStop ? void stop() : setConfirmStop(true))}
                 >
@@ -619,6 +620,7 @@ export function DiffusionDialog({
                         type="button"
                         size="2"
                         color="red"
+                        highContrast
                         disabled={busy != null}
                         onClick={() => void remove(confirmDelete === "following")}
                       >

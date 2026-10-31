@@ -474,7 +474,7 @@ export function AgendaPage() {
                 Annuler
               </Button>
             </Dialog.Close>
-            <Button size="2" color="red" onClick={() => void toggleAgenda(false)}>
+            <Button size="2" color="red" highContrast onClick={() => void toggleAgenda(false)}>
               Couper l'agenda
             </Button>
           </div>
