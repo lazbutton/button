@@ -109,6 +109,8 @@ docker compose up -d --force-recreate caddy
 
 Pour un essai sans Let's Encrypt, sur une machine sans domaine public ou en CI, poser `CADDY_TLS=internal`. Caddy signe alors lui-même son certificat. Les navigateurs le refusent ; `curl` l'accepte avec `--cacert data/caddy/pki/authorities/local/root.crt`.
 
+La console voit l'adresse de chaque client, pour limiter les essais de connexion : nginx croit celle que Caddy lui transmet, car Caddy est dans un réseau privé, celui de Docker. C'est le réglage par défaut de `TRUSTED_PROXIES` : voir [l'API](api.md#session).
+
 Icecast voit l'adresse de Caddy pour chaque auditeur. Il compte toujours les auditeurs, mais ne connaît plus leurs adresses. Caddy ne tient pas de journal des accès, et retire l'adresse du client de ses messages, comme celui qui note le départ d'un auditeur : aucune adresse d'auditeur n'est gardée.
 
 ## Le direct

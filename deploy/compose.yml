@@ -53,6 +53,9 @@ services:
       # CSP : le flux et now.json, quand ils sont sur une autre origine.
       CSP_MEDIA_SRC: ${CSP_MEDIA_SRC:-}
       CSP_CONNECT_SRC: ${CSP_CONNECT_SRC:-}
+      # Les reverse proxies que nginx croit pour l'adresse du client. Vide : la
+      # boucle locale et les réseaux privés, où est Caddy.
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
     ports:
       - "${BIND_ADDRESS:-}${BIND_ADDRESS:+:}${CONSOLE_PORT:-30126}:80"
     depends_on:
