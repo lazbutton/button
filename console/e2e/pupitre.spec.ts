@@ -1,5 +1,5 @@
 import type { Page } from "@playwright/test";
-import { antenne, avis, bibliotheque, expect, file, secondes, seConnecter, tenirLAntenne, test } from "./banc.ts";
+import { antenne, avis, bibliotheque, expect, file, secondes, seConnecter, tenirLAntenne, tenirLaFile, test } from "./banc.ts";
 
 // Le pupitre au quotidien, avec le compte qui s'en sert le plus : l'animateur.
 // Les gestes qui changent l'antenne passent par le moteur de démo, partagé par
@@ -21,16 +21,26 @@ async function ecoule(page: Page): Promise<number> {
   return secondes(avancee?.split(" / ")[0] ?? null);
 }
 
+/** Le titre de chaque ligne mobile de la file, lu dans le nom de sa poignée. */
+async function titresDesLignes(page: Page): Promise<string[]> {
+  const noms = await poignees(page).evaluateAll((boutons) => boutons.map((bouton) => bouton.getAttribute("aria-label") ?? ""));
+  return noms.map((nom) => nom.replace(/^Déplacer /, "").replace(/ : flèches haut et bas$/, ""));
+}
+
 /**
  * Deux lignes voisines de la file aux titres différents : l'horloge de démo
  * repasse les mêmes titres, et un échange entre deux titres pareils ne se
- * verrait pas. Le titre d'une ligne se lit dans le nom de sa poignée.
+ * verrait pas.
+ *
+ * La première ligne reste en place, tant que le moteur range les lignes
+ * déplacées à partir du plus tôt de leurs départs, même passé : voir le
+ * parcours en attente plus bas. Derrière la première ligne, chaque ligne
+ * déplacée finit après elle.
  */
 async function voisines(page: Page): Promise<{ rang: number; haut: string; bas: string }> {
-  const noms = await poignees(page).evaluateAll((boutons) => boutons.map((bouton) => bouton.getAttribute("aria-label") ?? ""));
-  const titres = noms.map((nom) => nom.replace(/^Déplacer /, "").replace(/ : flèches haut et bas$/, ""));
-  const rang = titres.findIndex((titre, index) => index > 0 && titre !== titres[index - 1]);
-  if (rang < 1) throw new Error(`Aucune paire de titres voisins différents dans la file : ${titres.join(", ")}.`);
+  const titres = await titresDesLignes(page);
+  const rang = titres.findIndex((titre, index) => index > 1 && titre !== titres[index - 1]);
+  if (rang < 0) throw new Error(`Aucune paire de titres voisins différents après la première ligne : ${titres.join(", ")}.`);
   return { rang, haut: titres[rang - 1], bas: titres[rang] };
 }
 
@@ -118,26 +128,66 @@ test("Diffuser met le titre à l’antenne tout de suite", async ({ page }) => {
 });
 
 test("une ligne de la file se déplace au clavier", async ({ page }) => {
-  await tenirLAntenne(page);
-  const { rang, haut, bas } = await voisines(page);
+  await tenirLaFile(page, async () => {
+    const { rang, haut, bas } = await voisines(page);
 
-  await poignees(page).nth(rang).focus();
-  await page.keyboard.press("ArrowUp");
+    await poignees(page).nth(rang).focus();
+    await page.keyboard.press("ArrowUp");
 
-  await expect(poignees(page).nth(rang - 1)).toHaveAccessibleName(poignee(bas));
-  await expect(poignees(page).nth(rang)).toHaveAccessibleName(poignee(haut));
-  // Le focus suit la ligne : elle peut monter encore.
-  await expect(poignees(page).nth(rang - 1)).toBeFocused();
+    await expect(poignees(page).nth(rang - 1)).toHaveAccessibleName(poignee(bas));
+    await expect(poignees(page).nth(rang)).toHaveAccessibleName(poignee(haut));
+    // Le focus suit la ligne : elle peut monter encore.
+    await expect(poignees(page).nth(rang - 1)).toBeFocused();
+  });
 });
 
 test("une ligne de la file se déplace à la souris", async ({ page }) => {
-  await tenirLAntenne(page);
-  const { rang, haut, bas } = await voisines(page);
+  await tenirLaFile(page, async () => {
+    const { rang, haut, bas } = await voisines(page);
 
-  await poignees(page).nth(rang).dragTo(poignees(page).nth(rang - 1));
+    await poignees(page).nth(rang).dragTo(poignees(page).nth(rang - 1));
 
-  await expect(poignees(page).nth(rang - 1)).toHaveAccessibleName(poignee(bas));
-  await expect(poignees(page).nth(rang)).toHaveAccessibleName(poignee(haut));
+    await expect(poignees(page).nth(rang - 1)).toHaveAccessibleName(poignee(bas));
+    await expect(poignees(page).nth(rang)).toHaveAccessibleName(poignee(haut));
+  });
+});
+
+// Défaut connu du moteur : reorder_desk_items (engine/radiotomate/scheduler/desk.py)
+// range les lignes déplacées à partir du plus tôt de leurs départs, même passé.
+// Une ligne de 4 s montée devant une ligne commencée depuis plus de 4 s finit
+// donc avant maintenant : la file la range parmi ce qui est passé, au lieu de
+// la montrer en tête, et le moteur l'efface au bout de 30 s. Le dernier appui
+// échoue ici.
+test.fixme("une ligne montée en tête de la file y reste, même devant une ligne déjà commencée", async ({ page }) => {
+  // Le moteur de démo date de l'appui une ligne mise à la suite. Derrière le
+  // titre lancé par « Diffuser », elle prend la tête de la file, déjà commencée.
+  await bibliotheque(page).getByRole("button", { name: "Diffuser Grande distance maintenant" }).click();
+  await expect(avis(page, /^Envoyé|^À l’antenne/)).toBeVisible();
+  await bibliotheque(page).getByRole("button", { name: /^Mettre à la suite : Annonce locale,/ }).click();
+  await expect(avis(page, "Mis à la suite.")).toBeVisible();
+  // La tête de la file doit avoir commencé depuis plus que la durée de la
+  // ligne montée : le temps du moteur passe pour de vrai.
+  await page.waitForTimeout(5_000);
+
+  await tenirLaFile(page, async () => {
+    const tete = lignes(page).filter({ has: page.getByRole("button", { name: /^Déplacer / }) }).first();
+    const depart = Date.parse((await tete.getByRole("time").getAttribute("datetime")) ?? "");
+    expect(Date.now() - depart, "la tête de la file a commencé depuis plus de 4 s").toBeGreaterThan(4_000);
+    // La ligne à monter, mise à la suite pendant que la file est tenue : la
+    // sienne ne finit pas avant le geste.
+    await bibliotheque(page).getByRole("button", { name: /^Mettre à la suite : Jingle station,/ }).click();
+    await expect(avis(page, "Mis à la suite.")).toBeVisible();
+    const rang = (await titresDesLignes(page)).lastIndexOf("Jingle station");
+    expect(rang, "« Jingle station » sous la tête de la file").toBeGreaterThan(0);
+
+    // Elle monte d'un cran à chaque appui, jusqu'en tête. Chaque appui attend
+    // que la file montre le précédent.
+    for (let place = rang; place > 0; place -= 1) {
+      await poignees(page).nth(place).focus();
+      await page.keyboard.press("ArrowUp");
+      await expect(poignees(page).nth(place - 1)).toHaveAccessibleName(poignee("Jingle station"));
+    }
+  });
 });
 
 test("une ligne retirée de la file revient avec « Annuler »", async ({ page }) => {

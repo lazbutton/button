@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { expect, test as base, type Page } from "@playwright/test";
+import { expect, test as base, type Page, type Request } from "@playwright/test";
 import type { Role } from "../src/api/roles.ts";
 import { verifierAccessibilite } from "./accessibilite.ts";
 
@@ -93,4 +93,52 @@ export async function tenirLAntenne(page: Page): Promise<void> {
     if (restant < 60) await suivant.click();
     expect(restant, "secondes restantes du titre à l’antenne").toBeGreaterThanOrEqual(60);
   }).toPass({ intervals: [1_600], timeout: 20_000 });
+}
+
+/**
+ * La file bouge aussi quand l'antenne tient : une ligne en sort quand son heure
+ * de fin passe, et la page la relit toutes les 3 s. Un geste qui réordonne la
+ * file se fait sur une file tenue. L'antenne tenue, la page se recharge avec
+ * une horloge factice et lit la file. Puis son horloge s'arrête : plus aucune
+ * lecture ne part, et le parcours attend celles encore en route. L'horloge
+ * repart après le geste, même s'il échoue : l'analyse d'accessibilité de la fin
+ * du parcours en a besoin.
+ */
+export async function tenirLaFile(page: Page, geste: () => Promise<void>): Promise<void> {
+  await tenirLAntenne(page);
+  // L'horloge factice se pose avant le chargement de la page. Rechargée, la
+  // page lit la file après que l'antenne a été tenue.
+  await page.clock.install();
+  await page.reload();
+  // La barre du haut lit aussi la file, toutes les 2 s : chaque lecture compte.
+  const enRoute = new Set<Request>();
+  let parties = 0;
+  page.on("request", (request) => {
+    if (request.method() !== "GET" || new URL(request.url()).pathname !== "/autodj/conducteur.json") return;
+    parties += 1;
+    enRoute.add(request);
+  });
+  page.on("requestfinished", (request) => enRoute.delete(request));
+  page.on("requestfailed", (request) => enRoute.delete(request));
+  await expect(file(page).getByRole("listitem").first()).toBeVisible();
+  try {
+    // Un peu plus loin que l'heure de la page : son horloge ne recule jamais.
+    // Le saut peut lancer une dernière lecture.
+    await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1_000);
+    // Calme : aucune lecture en route, et aucune partie depuis le sondage d'avant.
+    let avant = -1;
+    await expect
+      .poll(
+        () => {
+          const calme = enRoute.size === 0 && parties === avant;
+          avant = parties;
+          return calme;
+        },
+        { message: "lectures de la file encore en route" },
+      )
+      .toBe(true);
+    await geste();
+  } finally {
+    await page.clock.resume();
+  }
 }
