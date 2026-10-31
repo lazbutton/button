@@ -47,6 +47,7 @@ Le script lance les mêmes commandes que la CI ([`.github/workflows/`](../.githu
 
 | Partie | Ce qui tourne | Il faut |
 |---|---|---|
+| `donnees` | `git grep` des adresses IP privées, des noms en `.ts.net`, des clés privées et des jetons, puis des motifs de la station ([plus bas](#aucune-donnée-de-station)) | git |
 | `moteur` | `ruff check`, `ruff format --check`, puis `pytest` avec `TZ=Europe/Paris`, sans `tests/interface` ni `tests/e2e` | Poetry |
 | `liquidsoap` | `liquidsoap --check engine/playout/radiotomate.liq`, avec un `RTCONFIG` minimal | Docker |
 | `console` | `npm test`, puis `tsc` et `vite build` | Node 22, `npm install` fait |
@@ -67,6 +68,16 @@ services/catalog/.venv/bin/pip install -r services/catalog/requirements.txt
 ```
 
 Les tests Playwright des pages HTMX de l'amont ne tournent pas en CI : `cd engine && poetry run playwright install chromium`, une fois, puis `poetry run pytest tests/interface`.
+
+## Aucune donnée de station
+
+La partie `donnees` cherche ce qui ne doit jamais entrer dans le dépôt : une adresse IP privée, un nom en `.ts.net`, une clé privée, un jeton GitHub ou GitLab. Les adresses privées sont celles de la RFC 1918, et celles de Tailscale, en IPv4 dans la plage de la RFC 6598 comme en IPv6. Elle lit les fichiers suivis par git, et les nouveaux fichiers qu'il n'ignore pas, sans tenir compte de la casse. Un fichier que git tient pour binaire n'est pas lu. La CI la lance sur chaque pull request et sur `main`, quels que soient les fichiers touchés ([`donnees.yml`](../.github/workflows/donnees.yml)).
+
+Le rapport donne le fichier, la ligne et ce qui est trouvé, jamais la donnée : le journal de la CI est public. Pour un exemple : `radio.example`, `change-me`, ou une adresse de `192.0.2.0/24`, réservée à la documentation (RFC 5737). Un test qui a besoin d'une adresse privée la construit au moment de tourner.
+
+Ce qui est propre à une station, comme son domaine, le nom de ses machines ou de ses comptes, va dans `.motifs-station`, à la racine du dépôt. Git l'ignore : la liste de ces motifs est elle-même une donnée de la station. Un motif par ligne, en expression étendue comme pour `git grep -E`, sans tenir compte de la casse. Une ligne qui commence par `#` est un commentaire. Un worktree sans motif à lui prend ceux de la copie principale.
+
+Les exceptions sont dans `scripts/verifier.sh`, dans `exceptions_donnees`, chacune avec un commentaire qui dit pourquoi : un fichier, jamais un dossier, ce qu'elle y laisse passer, comme `adresse IP privée`, puis le motif des lignes concernées, jamais la donnée. Les motifs de la station n'ont pas d'exception. Une exception qui ne laisse plus rien passer fait échouer la partie : elle se retire.
 
 ## Les parcours dans un navigateur
 
@@ -135,7 +146,7 @@ Elles sont dans le [AGENTS.md](../AGENTS.md) de la racine, communes aux personne
 - **L'API JSON est un contrat.** Une route du moteur ne change de forme qu'avec la console, dans la même branche, et [`docs/api.md`](api.md) suit. Une route nouvelle entre dans la liste de nginx : un test le vérifie.
 - **Le moteur reste un fork mince.** Les changements y sont minimaux et rétro-compatibles. Le script Liquidsoap s'amende, il ne se réécrit pas. Voir [`engine/FORK.md`](../engine/FORK.md).
 - **Le schéma de la base ne recule jamais.** Toute évolution est une nouvelle migration, et une migration publiée ne se modifie plus.
-- **Aucune donnée de station dans le dépôt** : ni secret, ni adresse, ni compte réel.
+- **Aucune donnée de station dans le dépôt** : ni secret, ni adresse, ni compte réel. La partie `donnees` le vérifie, en CI aussi.
 - **L'interface est en français**, en thème clair et sombre, utilisable au clavier et sur téléphone.
 - **Un commit par sujet.** Le message dit ce qui change, puis pourquoi.
 

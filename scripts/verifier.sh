@@ -2,7 +2,7 @@
 # Les vérifications de la CI, sur cette machine.
 #   ./scripts/verifier.sh                  tout ce qui peut tourner ici
 #   ./scripts/verifier.sh moteur console   seulement ces parties
-# Parties : moteur, liquidsoap, console, services, nginx, deploy, e2e.
+# Parties : donnees, moteur, liquidsoap, console, services, nginx, deploy, e2e.
 # Sans argument, une partie qui manque d'un outil (Docker…) est sautée.
 # Nommée, elle échoue.
 set -euo pipefail
@@ -11,7 +11,7 @@ root=$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd)
 # Homebrew (macOS) : Poetry, Node et Docker y sont souvent installés.
 [ -d /opt/homebrew/bin ] && export PATH="/opt/homebrew/bin:$PATH"
 
-all=(moteur liquidsoap console services nginx deploy e2e)
+all=(donnees moteur liquidsoap console services nginx deploy e2e)
 # Code de sortie d'une partie à qui il manque un outil.
 absent=75
 
@@ -23,6 +23,99 @@ missing() {
 need_docker() {
   command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 ||
     missing "Docker absent ou arrêté : lancer Docker, puis relancer."
+}
+
+# Les exceptions de la partie donnees : un fichier, ce qu'elle y laisse passer
+# (un nom de motif de check_donnees), puis le motif (-E) des lignes concernées.
+# Jamais un dossier, jamais la donnée : le motif décrit la ligne. Une exception
+# qui ne laisse plus rien passer fait échouer la partie.
+exceptions_donnees=(
+  # À retirer avec GEN-02 : le partage SMB de la station d'origine.
+  console/public/brand.json 'adresse IP privée' '"smbHost": "'
+  # À retirer avec GEN-02 : les adresses Tailscale de la station d'origine.
+  console/public/brand.json 'nom en .ts.net' '"(url|stream|status|nowUrl|tailscaleBase)": "http://'
+  # À retirer avec GEN-02 : le partage SMB et les adresses de la station
+  # d'origine, sur son réseau local.
+  engine/radiotomate/brand.json 'adresse IP privée' '"(smbHost|url|stream|status)": "'
+  # À retirer avec GEN-02 : l'adresse Tailscale de la station d'origine.
+  engine/radiotomate/brand.json 'nom en .ts.net' '"tailscaleBase": "'
+  # À retirer avec GEN-02 : le NAS de la station d'origine, écouté sans tampon.
+  console/src/lib/monitorPcm.ts 'adresse IP privée' 'host === "'
+)
+
+check_donnees() {
+  git -C "$root" rev-parse --git-dir >/dev/null 2>&1 ||
+    missing "git absent, ou pas de dépôt git : aucun fichier suivi à lire." || return
+  cd "$root"
+  # Ce qui n'entre jamais dans le dépôt : un nom, puis un motif étendu, sans
+  # tenir compte de la casse. Les adresses privées : celles de la RFC 1918, et
+  # celles de Tailscale, dans la plage de la RFC 6598 ou sous son préfixe IPv6.
+  # Pas de \b, que git grep -E ignore sur macOS : ce qui borde le motif est
+  # écrit. Une adresse ne prolonge pas un nombre pointé, comme une version,
+  # mais peut finir un nom, comme chez nip.io. Aucun motif ne doit se trouver
+  # lui-même dans ce fichier.
+  local motifs=(
+    'adresse IP privée' '(^\.?|[^0-9.]|[^0-9]\.)(10\.[0-9]{1,3}|172\.(1[6-9]|2[0-9]|3[01])|192\.168|100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7]))\.[0-9]{1,3}\.[0-9]{1,3}([^0-9]|$)|fd7a:115c:a1e0:[0-9a-f:]'
+    'nom en .ts.net' '[a-z0-9-]\.ts\.net([^a-z0-9-]|$)'
+    'clé privée' '-----BEGIN [A-Z ]*PRIVATE KEY'
+    'jeton GitHub' 'gh[pousr]_[a-z0-9]{36}|github_pat_[a-z0-9_]{22,}'
+    'jeton GitLab' 'glpat-[a-z0-9_-]{20,}'
+  )
+  # Ceux d'une station sont dans .motifs-station, ignoré par git : leur liste
+  # est elle-même une donnée de la station. Un motif par ligne, # commente.
+  # Un worktree sans motif à lui prend ceux de la copie principale.
+  local station lus=""
+  for station in "$root/.motifs-station" \
+    "$(git worktree list --porcelain | sed -n '1s/^worktree //p')/.motifs-station"; do
+    [ -f "$station" ] || continue
+    lus=$(sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//; /^(#|$)/d; s/.*/(&)/' "$station" |
+      paste -sd '|' -)
+    [ -z "$lus" ] || break
+  done
+  if [ -n "$lus" ]; then
+    motifs+=('motif de la station' "$lus")
+    echo "Motifs de la station : $station"
+  else
+    echo "Aucun motif propre à la station : voir docs/developpement.md."
+  fi
+
+  # Les fichiers suivis, et ceux que git n'ignore pas mais ne suit pas encore,
+  # sauf ceux qu'il tient pour binaires. Le rapport donne le fichier, la ligne
+  # et ce qui est trouvé, jamais la donnée : le journal de la CI est public.
+  local trouvees=0 servie=" " lignes ligne chemin reste i j
+  for ((i = 0; i < ${#motifs[@]}; i += 2)); do
+    lignes=$(git -c core.quotePath=false grep --no-color --no-column -n -I -i -E \
+      --untracked -e "${motifs[i + 1]}") || [ $? -eq 1 ] || return
+    while IFS= read -r ligne; do
+      [ -n "$ligne" ] || continue
+      chemin=${ligne%%:*}
+      reste=${ligne#*:}
+      for ((j = 0; j < ${#exceptions_donnees[@]}; j += 3)); do
+        if [ "$chemin" = "${exceptions_donnees[j]}" ] &&
+          [ "${motifs[i]}" = "${exceptions_donnees[j + 1]}" ] &&
+          [[ ${reste#*:} =~ ${exceptions_donnees[j + 2]} ]]; then
+          servie="$servie$j "
+          continue 2
+        fi
+      done
+      [ "$trouvees" -gt 0 ] || echo "Données de station dans les fichiers du dépôt :" >&2
+      echo "  $chemin:${reste%%:*} : ${motifs[i]}" >&2
+      trouvees=$((trouvees + 1))
+    done <<<"$lignes"
+  done
+  [ "$trouvees" -eq 0 ] ||
+    echo "Les retirer. Pour un exemple : radio.example, change-me, ou une adresse de 192.0.2.0/24 (RFC 5737)." >&2
+  local perimees=0
+  for ((j = 0; j < ${#exceptions_donnees[@]}; j += 3)); do
+    case $servie in
+      *" $j "*) continue ;;
+    esac
+    [ "$perimees" -gt 0 ] || echo "Exceptions sans objet, à retirer de scripts/verifier.sh :" >&2
+    echo "  ${exceptions_donnees[j]} (${exceptions_donnees[j + 1]}) : ${exceptions_donnees[j + 2]}" >&2
+    perimees=$((perimees + 1))
+  done
+  [ $((trouvees + perimees)) -eq 0 ] || return 1
+  echo "Rien d'une station dans les fichiers du dépôt. Exceptions : $((${#exceptions_donnees[@]} / 3))."
 }
 
 check_moteur() {
@@ -144,7 +237,7 @@ skipped=""
 failed=""
 for part in "${parts[@]}"; do
   case $part in
-    moteur | liquidsoap | console | services | nginx | deploy | e2e) ;;
+    donnees | moteur | liquidsoap | console | services | nginx | deploy | e2e) ;;
     *)
       echo "Partie inconnue : $part. Parties : ${all[*]}." >&2
       exit 64

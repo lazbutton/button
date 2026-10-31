@@ -17,6 +17,9 @@ deploy/data/
 deploy/media/
 deploy/compose.override.yml
 deploy/local/data/
+# Motifs propres à une station, pour scripts/verifier.sh donnees : leur liste
+# est elle-même une donnée de la station
+.motifs-station
 # Parcours de la console (scripts/e2e.sh) : un dossier par lancement, avec sa
 # base, ses comptes et leur mot de passe tiré au sort, ses journaux et ses traces
 /.e2e/
