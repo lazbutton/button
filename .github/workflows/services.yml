@@ -53,6 +53,7 @@ jobs:
       - run: python test_session.py
       - run: python test_init_secrets.py
       - run: python test_icecast_config.py
+      - run: python test_smoke.py
 
   docker:
     name: build & push images

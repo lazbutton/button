@@ -22,7 +22,7 @@ La console joint le catalogue sous `/library/` : voir [docs/api.md](../docs/api.
 
 Variables : `MEDIA_ROOT`, `MEILI_URL`, `MEILI_MASTER_KEY`, `MEILI_INDEX`, `CATALOG_PORT`, `AUTOMATE_URL`, `TUSD_DIR`, `INBOX_QUOTA_BYTES`, `STATION_NAME`, `SMB_HOST`, `SHARE_PRIVATE`.
 
-Tests : `./scripts/verifier.sh services` lance les sept fichiers de test de la CI. Un seul : `cd services/catalog && .venv/bin/python test_inbox_api.py`. Ils couvrent aussi les scripts du dossier partagé, rangés dans `deploy/`.
+Tests : `./scripts/verifier.sh services` lance les dix fichiers de test de la CI. Un seul : `cd services/catalog && .venv/bin/python test_inbox_api.py`. Ils couvrent aussi les scripts du dossier partagé, rangés dans `deploy/`.
 
 ## nowplaying
 

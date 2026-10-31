@@ -25,7 +25,7 @@ Rien de ce dossier ne se lance contre une station en service. Les essais se font
 | Où tourne le script | Forme |
 |---|---|
 | Dans un conteneur : `init-radiotomate.sh`, `beets-import-loop.sh`, `promote-inbox.sh`, `setup-media-tree.sh`, `share/entrypoint.sh` | `#!/bin/sh` et `set -eu` : POSIX, sans bash |
-| Sur l'hôte : `backup-radiotomate.sh`, `restore-radiotomate.sh` | `#!/usr/bin/env bash` et `set -euo pipefail` |
+| Sur l'hôte : `backup-radiotomate.sh`, `restore-radiotomate.sh`, `smoke.sh` | `#!/usr/bin/env bash` et `set -euo pipefail` |
 
 - Un script se relance sans danger : il ne refait que ce qui manque, et n'écrase rien.
 - Un nouveau script de l'hôte n'a besoin que de Docker, de curl et d'openssl. Les deux scripts de sauvegarde demandent aussi `sqlite3` et `tar` sur l'hôte.
@@ -34,6 +34,7 @@ Rien de ce dossier ne se lance contre une station en service. Les essais se font
 - Les tests de `restore-radiotomate.sh` sont dans `engine/tests/test_update_backup.py`, avec la copie qu'il remet : après une modification du script, lancer aussi `../scripts/verifier.sh moteur`. La CI du moteur ne se déclenche pas pour `deploy/`.
 - Les scripts Python (`export_share_roles.py`, `refresh_volume.py`, `share/apply_share.py`) n'utilisent que la bibliothèque standard. Leurs tests sont dans `services/catalog/` (`test_share.py`, `test_refresh_volume.py`).
 - Les tests du contrôle des secrets d'`init-radiotomate.sh` sont aussi dans `services/catalog/` (`test_init_secrets.py`), comme ceux de `promote-inbox.sh` : la CI des services les lance à chaque changement de `deploy/scripts/` ou de `compose.yml`. Le passage complet du script, avec ses blocs Python et l'avertissement sur le compte admin, est dans `engine/tests/test_init_admin.py` : après une modification du script, lancer aussi `../scripts/verifier.sh moteur`.
+- Les tests de `smoke.sh`, le contrôle après déploiement, sont aussi dans `services/catalog/` (`test_smoke.py`) : un faux `docker` et un petit serveur HTTP y jouent la station.
 
 ## Pièges
 
