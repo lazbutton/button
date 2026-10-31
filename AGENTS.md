@@ -63,6 +63,7 @@ Un commit par sujet. Le message est en français, `Zone : résumé`, puis le pou
 | Comment tout tient ensemble | [docs/architecture.md](docs/architecture.md) |
 | Ce que veut dire un mot | [docs/glossaire.md](docs/glossaire.md) |
 | Pourquoi c'est fait ainsi | [docs/decisions/](docs/decisions/README.md) |
+| Pour qui c'est fait, et ce qui les freine | [docs/personas/](docs/personas/README.md) |
 | Ce qui reste à faire, et dans quel ordre | [docs/feuille-de-route/](docs/feuille-de-route/README.md) |
 | Travailler à plusieurs, les pièges déjà rencontrés | [docs/travailler-a-plusieurs.md](docs/travailler-a-plusieurs.md) |
 | Lancer le banc et vérifier | [docs/developpement.md](docs/developpement.md) |
