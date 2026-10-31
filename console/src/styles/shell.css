@@ -152,7 +152,7 @@
 }
 
 .app-disk.is-alert .app-disk-copy {
-  color: var(--app-danger);
+  color: var(--app-danger-ink);
 }
 
 .app-shell.is-nav-collapsed .app-sidebar .app-disk-kicker,

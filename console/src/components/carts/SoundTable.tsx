@@ -370,7 +370,7 @@ export function SoundTable({
             </span>
           ) : null}
           <span className="bacs-spacer" />
-          <DropdownMenu.Root>
+          <DropdownMenu.Root modal={false}>
             <DropdownMenu.Trigger disabled={importing}>
               <Button size="1" highContrast>
                 <Plus className="ui-button-icon" />
@@ -378,7 +378,7 @@ export function SoundTable({
                 <ChevronDown size={13} aria-hidden="true" />
               </Button>
             </DropdownMenu.Trigger>
-            <DropdownMenu.Content align="end" className="bacs-menu">
+            <DropdownMenu.Content variant="soft" align="end" className="bacs-menu">
               <DropdownMenu.Item onSelect={() => inputRef.current?.click()}>
                 <Upload size={15} aria-hidden="true" />
                 <span className="bacs-menu-copy">
@@ -895,13 +895,13 @@ function SoundRow({
         </Tooltip>
       </td>
       <td className="c-more">
-        <DropdownMenu.Root>
+        <DropdownMenu.Root modal={false}>
           <DropdownMenu.Trigger>
             <IconButton size="1" variant="ghost" color="gray" aria-label={`Actions pour ${parsed.title}`}>
               <MoreHorizontal size={15} />
             </IconButton>
           </DropdownMenu.Trigger>
-          <DropdownMenu.Content align="end" className="bacs-menu">
+          <DropdownMenu.Content variant="soft" align="end" className="bacs-menu">
             <DropdownMenu.Item onSelect={onPlay}>
               {playing ? <Pause size={15} aria-hidden="true" /> : <Play size={15} aria-hidden="true" />}
               {playing ? "Arrêter la pré-écoute" : "Pré-écouter"}

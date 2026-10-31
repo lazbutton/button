@@ -1,6 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { audience, initials, listenHint, stateAgeS, topAir, topHealth, topNow, type ListenState } from "./topbar.ts";
+import {
+  accountLabel,
+  audience,
+  initials,
+  listenHint,
+  stateAgeS,
+  topAir,
+  topHealth,
+  topNow,
+  type ListenState,
+} from "./topbar.ts";
 import type { AntenneState, LiveSnapshot } from "./types";
 
 const NOW = new Date("2026-10-12T10:19:05Z"); // 12:19:05 à Paris (UTC+2)
@@ -209,6 +219,11 @@ test("initials", () => {
   assert.equal(initials("atelier"), "AT");
   assert.equal(initials("jean-luc m"), "JM");
   assert.equal(initials("  "), "?");
+});
+
+test("the account button is named after the initials it shows", () => {
+  assert.equal(accountLabel("atelier"), "AT, compte atelier : menu");
+  assert.equal(accountLabel(""), "Compte : menu");
 });
 
 test("headphone hints", () => {

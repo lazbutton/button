@@ -118,13 +118,13 @@ export function SemainePage() {
   const otherClock = (clockId: number | null) => clocks.find((clock) => clock.id !== clockId)?.id ?? clockId;
 
   const dayMenu = (day: number) => (
-    <DropdownMenu.Root>
+    <DropdownMenu.Root modal={false}>
       <DropdownMenu.Trigger>
         <IconButton size="1" variant="ghost" color="gray" aria-label={`Ajouter le ${DAY_LONG[day].toLowerCase()}`}>
           <Plus size={15} />
         </IconButton>
       </DropdownMenu.Trigger>
-      <DropdownMenu.Content align="end" className="prog-menu">
+      <DropdownMenu.Content variant="soft" align="end" className="prog-menu">
         <DropdownMenu.Item onSelect={() => setChange({ mode: "create", day })}>
           <Clock3 size={15} aria-hidden="true" />
           Changement d'horloge…
@@ -213,64 +213,66 @@ export function SemainePage() {
           {runs.length ? (
             <>
               <div className="prog-week-frame">
-                <div className="prog-week-grid" role="grid" aria-label="Semaine">
-                  <div className="prog-week-corner" aria-hidden="true" />
-                  {DAY_LONG.map((name, day) => (
-                    <div key={name} className={`prog-day-head${day === today ? " is-today" : ""}`} role="columnheader">
-                      <span className="prog-day-name">
-                        {DAY_SHORT[day]} <span className="prog-day-date">{dates[day]}</span>
-                      </span>
-                      {dayMenu(day)}
-                    </div>
-                  ))}
-                  <div className="prog-week-gutter" aria-hidden="true">
-                    {HOURS.map((hour) => (
-                      <span key={hour} style={{ top: pct(hour * 60) }}>
-                        {String(hour).padStart(2, "0")}:00
-                      </span>
+                {/* Un tableau, pas une grille : rien ne s'y parcourt aux flèches. Chaque jour
+                    se lit sous son en-tête de colonne. */}
+                <div className="prog-week-grid" role="table" aria-label="Semaine">
+                  <div className="prog-week-row" role="row">
+                    <div className="prog-week-corner" aria-hidden="true" />
+                    {DAY_LONG.map((name, day) => (
+                      <div key={name} className={`prog-day-head${day === today ? " is-today" : ""}`} role="columnheader">
+                        <span className="prog-day-name">
+                          {DAY_SHORT[day]} <span className="prog-day-date">{dates[day]}</span>
+                        </span>
+                        {dayMenu(day)}
+                      </div>
                     ))}
                   </div>
-                  {DAY_LONG.map((name, day) => (
-                    <div
-                      key={name}
-                      className={`prog-day${day === today ? " is-today" : ""}`}
-                      role="gridcell"
-                      aria-label={name}
-                    >
-                      {runs
-                        .filter((run) => run.day === day)
-                        .map((run) => {
-                          const live = day === today && run.start <= minuteOfDay && minuteOfDay < run.end;
-                          return (
-                            <button
-                              key={`${run.day}-${run.start}`}
-                              type="button"
-                              className={`prog-run tint-${run.clockId != null ? (tints.get(run.clockId) ?? "gray") : "gray"}${live ? " is-live" : ""}${run.end - run.start < 90 ? " is-short" : ""}`}
-                              style={{ top: pct(run.start), height: pct(run.end - run.start) }}
-                              aria-label={`${name}, ${hhmm(run.start)} à ${hhmm(run.end)} : ${run.clockName || "sans heure type"}`}
-                              title={`${run.clockName || "Sans heure type"} · ${hhmm(run.start)} → ${hhmm(run.end)} (Alt+clic pour couper ici)`}
-                              onClick={(event) => openRun(run, event)}
-                            >
-                              <span className="prog-run-name">{run.clockName || "Sans heure type"}</span>
-                              <span className="prog-run-time">
-                                {hhmm(run.start)} → {hhmm(run.end)}
-                              </span>
-                            </button>
-                          );
-                        })}
-                      {dayEmissions(day).map((row) => (
-                        <EmissionBlock
-                          key={row.id}
-                          row={row}
-                          live={liveShow?.id === row.id}
-                          onOpen={() => setEmission({ day, row })}
-                        />
+                  <div className="prog-week-row" role="row">
+                    <div className="prog-week-gutter" aria-hidden="true">
+                      {HOURS.map((hour) => (
+                        <span key={hour} style={{ top: pct(hour * 60) }}>
+                          {String(hour).padStart(2, "0")}:00
+                        </span>
                       ))}
-                      {day === today ? (
-                        <span className="prog-now-line" style={{ top: pct(minuteOfDay) }} aria-hidden="true" />
-                      ) : null}
                     </div>
-                  ))}
+                    {DAY_LONG.map((name, day) => (
+                      <div key={name} className={`prog-day${day === today ? " is-today" : ""}`} role="cell">
+                        {runs
+                          .filter((run) => run.day === day)
+                          .map((run) => {
+                            const live = day === today && run.start <= minuteOfDay && minuteOfDay < run.end;
+                            return (
+                              <button
+                                key={`${run.day}-${run.start}`}
+                                type="button"
+                                className={`prog-run tint-${run.clockId != null ? (tints.get(run.clockId) ?? "gray") : "gray"}${live ? " is-live" : ""}${run.end - run.start < 90 ? " is-short" : ""}`}
+                                style={{ top: pct(run.start), height: pct(run.end - run.start) }}
+                                // Le nom reprend ce que le bloc affiche, dans l'ordre, après le jour.
+                                aria-label={`${name} : ${run.clockName || "Sans heure type"}, ${hhmm(run.start)} → ${hhmm(run.end)}`}
+                                title={`${run.clockName || "Sans heure type"} · ${hhmm(run.start)} → ${hhmm(run.end)} (Alt+clic pour couper ici)`}
+                                onClick={(event) => openRun(run, event)}
+                              >
+                                <span className="prog-run-name">{run.clockName || "Sans heure type"}</span>{" "}
+                                <span className="prog-run-time">
+                                  {hhmm(run.start)} → {hhmm(run.end)}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        {dayEmissions(day).map((row) => (
+                          <EmissionBlock
+                            key={row.id}
+                            row={row}
+                            live={liveShow?.id === row.id}
+                            onOpen={() => setEmission({ day, row })}
+                          />
+                        ))}
+                        {day === today ? (
+                          <span className="prog-now-line" style={{ top: pct(minuteOfDay) }} aria-hidden="true" />
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
 
@@ -426,11 +428,11 @@ function EmissionBlock({ row, live, onOpen }: { row: Emission; live: boolean; on
       type="button"
       className={`prog-show${live ? " is-live" : ""}`}
       style={{ top: pct(start), height: pct(end - start) }}
-      aria-label={`Émission en direct ${row.title}, ${hhmm(start)} à ${hhmm(row.end_minute ?? start)}`}
+      aria-label={`Émission en direct ${row.title}, ${hhmm(start)} → ${hhmm(row.end_minute ?? start)}`}
       title={`${row.title} · ${row.artist}${row.host_username ? ` · ${row.host_username}` : ""}`}
       onClick={onOpen}
     >
-      <span className="prog-run-name">{row.title}</span>
+      <span className="prog-run-name">{row.title}</span>{" "}
       <span className="prog-run-time">
         {hhmm(start)} → {hhmm(row.end_minute ?? start)}
       </span>

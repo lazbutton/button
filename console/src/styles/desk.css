@@ -428,7 +428,7 @@
 }
 
 .live-panel-phase.is-connected {
-  color: var(--app-live);
+  color: var(--app-live-ink);
 }
 
 .live-panel-phase.is-connected .live-panel-dot {

@@ -230,141 +230,158 @@ export function AgendaWeek({
   };
 
   return (
-    <div className="ag-week-frame" ref={frameRef}>
-      <div className={`ag-week-grid${drag ? " is-dragging" : ""}`} role="grid" aria-label="Semaine de l'agenda">
-        <div className="ag-week-corner" aria-hidden="true" />
-        {days.map((day) => (
-          <div key={day} className={`ag-day-head${day === today ? " is-today" : ""}`} role="columnheader">
-            {dayShortLabel(day)}
-          </div>
-        ))}
-        <div className="ag-gutter" aria-hidden="true" style={{ height: DAY_PX }}>
-          {Array.from({ length: 24 }, (_, hour) => (
-            <span key={hour} style={{ top: hour * HOUR_PX }}>
-              {String(hour).padStart(2, "0")}:00
-            </span>
+    // Le cadre défile : il prend le focus, pour défiler au clavier même sans bloc à atteindre.
+    <div className="ag-week-frame" ref={frameRef} role="region" aria-label="Semaine de l'agenda" tabIndex={0}>
+      {/* Un tableau, pas une grille : rien ne s'y parcourt aux flèches. Chaque jour
+          se lit sous son en-tête de colonne. */}
+      <div className={`ag-week-grid${drag ? " is-dragging" : ""}`} role="table" aria-label="Semaine de l'agenda">
+        <div className="ag-week-row" role="row">
+          <div className="ag-week-corner" aria-hidden="true" />
+          {days.map((day) => (
+            <div key={day} className={`ag-day-head${day === today ? " is-today" : ""}`} role="columnheader">
+              {dayShortLabel(day)}
+            </div>
           ))}
         </div>
-        {days.map((day, index) => {
-          const weekday = index;
-          const dayRuns = runs.filter((run) => run.day === weekday);
-          const blocks = pieces.get(day) ?? [];
-          const shows = weeklyByDay.get(day) ?? [];
-          const preview =
-            drag && drag.day === day
-              ? drag.mode === "create" && drag.moved
-                ? { start: Math.min(drag.anchor, drag.current), end: Math.max(drag.anchor, drag.current) }
-                : drag.mode === "move" && drag.moved
-                  ? { start: drag.start, end: Math.min(1440, drag.start + drag.row.duration_min) }
-                  : drag.mode === "resize"
-                    ? { start: drag.start, end: drag.end }
-                    : null
-              : null;
-          return (
-            <div
-              key={day}
-              ref={(element) => {
-                if (element) columns.current.set(day, element);
-                else columns.current.delete(day);
-              }}
-              className={`ag-day${day === today ? " is-today" : ""}${day < today ? " is-past" : ""}`}
-              style={{ height: DAY_PX }}
-              role="gridcell"
-              aria-label={dayShortLabel(day)}
-              onPointerDown={(event) => startCreate(day, event)}
-            >
-              {dayRuns.map((run) => (
-                <div
-                  key={`run-${run.start}`}
-                  data-under="1"
-                  className={`ag-run tint-${run.clockId != null ? (tints.get(run.clockId) ?? "gray") : "gray"}`}
-                  style={{ top: px(run.start), height: px(run.end - run.start) }}
-                  aria-hidden="true"
-                >
-                  {run.end - run.start >= 90 ? <span data-under="1">{run.clockName}</span> : null}
-                </div>
-              ))}
-              {shows.map(({ row, start, end }) => (
-                <button
-                  key={`weekly-${row.emission_id}-${start}`}
-                  type="button"
-                  className={`ag-weekly${row.cancelled ? " is-cancelled" : ""}${row.replaced_by != null ? " is-replaced" : ""}`}
-                  style={{ top: px(start), height: px(Math.max(end - start, 20)) }}
-                  title={`${row.title} · émission hebdo${row.cancelled ? " · annulée ce jour" : ""}${
-                    row.replaced_by != null ? " · remplacée ce jour" : ""
-                  }`}
-                  aria-label={`Émission hebdo ${row.title}, ${hhmm(start)} à ${hhmm(end)}${
-                    row.cancelled ? ", annulée ce jour" : row.replaced_by != null ? ", remplacée ce jour" : ""
-                  }`}
-                  onPointerDown={(event) => event.stopPropagation()}
-                  onClick={(event) => onOpenWeekly(row, event.currentTarget)}
-                >
-                  <span className="ag-block-name">
-                    {row.cancelled ? <CalendarOff size={12} aria-hidden="true" /> : null}
-                    {row.title}
-                  </span>
-                  <span className="ag-block-time">
-                    {hhmm(start)} → {hhmm(end)} · {row.cancelled ? "annulée" : row.replaced_by != null ? "remplacée" : "hebdo"}
-                  </span>
-                </button>
-              ))}
-              {blocks.map(({ row, start, end, first, last }) => {
-                const status = statusOf(row);
-                const dragging = drag && drag.mode !== "create" && drag.row.id === row.id && drag.moved;
-                const span = end - start;
-                // Three layouts by height: one line, two lines, the full card.
-                const size = span < 40 ? "is-xs" : span < 80 ? "is-sm" : "is-lg";
-                return (
+        <div className="ag-week-row" role="row">
+          <div className="ag-gutter" aria-hidden="true" style={{ height: DAY_PX }}>
+            {Array.from({ length: 24 }, (_, hour) => (
+              <span key={hour} style={{ top: hour * HOUR_PX }}>
+                {String(hour).padStart(2, "0")}:00
+              </span>
+            ))}
+          </div>
+          {days.map((day, index) => {
+            const weekday = index;
+            const dayRuns = runs.filter((run) => run.day === weekday);
+            const blocks = pieces.get(day) ?? [];
+            const shows = weeklyByDay.get(day) ?? [];
+            const preview =
+              drag && drag.day === day
+                ? drag.mode === "create" && drag.moved
+                  ? { start: Math.min(drag.anchor, drag.current), end: Math.max(drag.anchor, drag.current) }
+                  : drag.mode === "move" && drag.moved
+                    ? { start: drag.start, end: Math.min(1440, drag.start + drag.row.duration_min) }
+                    : drag.mode === "resize"
+                      ? { start: drag.start, end: drag.end }
+                      : null
+                : null;
+            return (
+              <div
+                key={day}
+                ref={(element) => {
+                  if (element) columns.current.set(day, element);
+                  else columns.current.delete(day);
+                }}
+                className={`ag-day${day === today ? " is-today" : ""}${day < today ? " is-past" : ""}`}
+                style={{ height: DAY_PX }}
+                role="cell"
+                onPointerDown={(event) => startCreate(day, event)}
+              >
+                {dayRuns.map((run) => (
+                  <div
+                    key={`run-${run.start}`}
+                    data-under="1"
+                    className={`ag-run tint-${run.clockId != null ? (tints.get(run.clockId) ?? "gray") : "gray"}`}
+                    style={{ top: px(run.start), height: px(run.end - run.start) }}
+                    aria-hidden="true"
+                  >
+                    {run.end - run.start >= 90 ? <span data-under="1">{run.clockName}</span> : null}
+                  </div>
+                ))}
+                {shows.map(({ row, start, end }) => (
                   <button
-                    key={`d-${row.id}-${day}`}
+                    key={`weekly-${row.emission_id}-${start}`}
                     type="button"
-                    className={`ag-block is-${row.kind} ${size} tone-${status.tone}${
-                      dragging ? " is-ghosted" : ""
-                    }${todoIds.has(row.id) ? " is-todo" : ""}${row.air_status !== "upcoming" ? " is-past" : ""}`}
-                    style={{ top: px(start), height: px(Math.max(end - start, 18)) }}
-                    aria-label={`${row.kind === "live" ? "Direct" : "Set"} ${row.title}, ${hhmm(start)} à ${hhmm(end)}, ${status.label}`}
-                    title={[row.title, row.guest?.name || row.host_username, status.label, status.detail]
-                      .filter(Boolean)
-                      .join(" · ")}
-                    onPointerDown={(event) => startMove(row, day, start, first, event)}
-                    onClick={() => {
-                      if (!suppressClick.current) onOpen(row);
-                    }}
+                    className={`ag-weekly${row.cancelled ? " is-cancelled" : ""}${row.replaced_by != null ? " is-replaced" : ""}`}
+                    style={{ top: px(start), height: px(Math.max(end - start, 20)) }}
+                    title={`${row.title} · émission hebdo${row.cancelled ? " · annulée ce jour" : ""}${
+                      row.replaced_by != null ? " · remplacée ce jour" : ""
+                    }`}
+                    // Le nom reprend ce que le bloc affiche, dans l'ordre.
+                    aria-label={`Émission ${row.title}, ${hhmm(start)} → ${hhmm(end)}, ${
+                      row.cancelled ? "annulée ce jour" : row.replaced_by != null ? "remplacée ce jour" : "hebdo"
+                    }`}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={(event) => onOpenWeekly(row, event.currentTarget)}
                   >
                     <span className="ag-block-name">
-                      {row.kind === "live" ? <Mic size={12} aria-hidden="true" /> : <Disc3 size={12} aria-hidden="true" />}
-                      <span className="ag-block-text">
-                        {row.title}
-                        {!first ? " (suite)" : ""}
-                      </span>
+                      {row.cancelled ? <CalendarOff size={12} aria-hidden="true" /> : null}
+                      {row.title}
+                    </span>{" "}
+                    <span className="ag-block-time">
+                      {hhmm(start)} → {hhmm(end)} · {row.cancelled ? "annulée" : row.replaced_by != null ? "remplacée" : "hebdo"}
                     </span>
-                    <span className="ag-block-meta">
-                      <span className={`ag-chip tone-${status.tone}`}>{status.label}</span>
-                      <span className="ag-block-who">{row.guest?.name || row.host_username || ""}</span>
-                    </span>
-                    {editable && last && row.air_status === "upcoming" ? (
-                      <span
-                        className="ag-block-resize"
-                        aria-hidden="true"
-                        onPointerDown={(event) => startResize(row, day, end, event)}
-                      />
-                    ) : null}
                   </button>
-                );
-              })}
-              {preview ? (
-                <div
-                  className={`ag-preview${drag?.mode === "create" ? " is-create" : ""}`}
-                  style={{ top: px(preview.start), height: px(Math.max(preview.end - preview.start, STEP_MINUTES)) }}
-                  aria-hidden="true"
-                >
-                  {hhmm(preview.start)} → {hhmm(preview.end)}
-                </div>
-              ) : null}
-              {day === today ? <span className="ag-now-line" style={{ top: px(nowMinute) }} aria-hidden="true" /> : null}
-            </div>
-          );
-        })}
+                ))}
+                {blocks.map(({ row, start, end, first, last }) => {
+                  const status = statusOf(row);
+                  const dragging = drag && drag.mode !== "create" && drag.row.id === row.id && drag.moved;
+                  const span = end - start;
+                  // Three layouts by height: one line, two lines, the full card.
+                  const size = span < 40 ? "is-xs" : span < 80 ? "is-sm" : "is-lg";
+                  const who = row.guest?.name || row.host_username || "";
+                  // Le nom reprend ce que le bloc affiche, dans l'ordre, puis l'heure.
+                  const named = [
+                    `${row.kind === "live" ? "Direct" : "Set"} ${row.title}${!first ? " (suite)" : ""}`,
+                    status.label,
+                    who,
+                    `${hhmm(start)} à ${hhmm(end)}`,
+                  ]
+                    .filter(Boolean)
+                    .join(", ");
+                  return (
+                    <button
+                      key={`d-${row.id}-${day}`}
+                      type="button"
+                      className={`ag-block is-${row.kind} ${size} tone-${status.tone}${
+                        dragging ? " is-ghosted" : ""
+                      }${todoIds.has(row.id) ? " is-todo" : ""}${row.air_status !== "upcoming" ? " is-past" : ""}`}
+                      style={{ top: px(start), height: px(Math.max(end - start, 18)) }}
+                      aria-label={named}
+                      title={[row.title, who, status.label, status.detail]
+                        .filter(Boolean)
+                        .join(" · ")}
+                      onPointerDown={(event) => startMove(row, day, start, first, event)}
+                      onClick={() => {
+                        if (!suppressClick.current) onOpen(row);
+                      }}
+                    >
+                      <span className="ag-block-name">
+                        {row.kind === "live" ? <Mic size={12} aria-hidden="true" /> : <Disc3 size={12} aria-hidden="true" />}
+                        <span className="ag-block-text">
+                          {row.title}
+                          {!first ? " (suite)" : ""}
+                        </span>
+                      </span>{" "}
+                      <span className="ag-block-meta">
+                        <span className={`ag-chip tone-${status.tone}`}>{status.label}</span>{" "}
+                        <span className="ag-block-who">{who}</span>
+                      </span>
+                      {editable && last && row.air_status === "upcoming" ? (
+                        <span
+                          className="ag-block-resize"
+                          aria-hidden="true"
+                          onPointerDown={(event) => startResize(row, day, end, event)}
+                        />
+                      ) : null}
+                    </button>
+                  );
+                })}
+                {preview ? (
+                  <div
+                    className={`ag-preview${drag?.mode === "create" ? " is-create" : ""}`}
+                    style={{ top: px(preview.start), height: px(Math.max(preview.end - preview.start, STEP_MINUTES)) }}
+                    aria-hidden="true"
+                  >
+                    {hhmm(preview.start)} → {hhmm(preview.end)}
+                  </div>
+                ) : null}
+                {day === today ? <span className="ag-now-line" style={{ top: px(nowMinute) }} aria-hidden="true" /> : null}
+              </div>
+            );
+          })}
+        </div>
       </div>
     </div>
   );

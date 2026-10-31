@@ -123,7 +123,7 @@ export function CreateClockDialog({
               <span className="ui-field-label">Copie de</span>
               <Select.Root size="2" value={sourceId} onValueChange={setSourceId}>
                 <Select.Trigger className="ui-field-control" aria-label="Heure type à copier" />
-                <Select.Content position="popper">
+                <Select.Content variant="soft" position="popper">
                   {clocks.map((clock) => (
                     <Select.Item key={clock.id} value={String(clock.id)}>
                       {clock.name}
