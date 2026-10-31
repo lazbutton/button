@@ -6,7 +6,7 @@ Une station complète tient dans [`deploy/compose.yml`](../deploy/compose.yml) :
 
 - Une machine Linux x86-64 avec Docker et Compose v2. Les images ne sont construites que pour `linux/amd64`.
 - De la place pour la banque de sons.
-- Pour un accès public, un reverse proxy HTTPS devant la console et le flux, par exemple Caddy.
+- Pour un accès public, un domaine qui pointe sur la machine, et ses ports 80 et 443 libres. Caddy, dans `compose.yml`, s'occupe du HTTPS : voir [HTTPS](#https).
 
 ## Installer
 
@@ -41,27 +41,85 @@ Au premier démarrage, `radiotomate-init` prépare tout, et peut être relancé 
 | Flux Icecast | `http://<machine>:18000/button.mp3` |
 | Titre en cours | `http://<machine>:6820/now.json` |
 | Catalogue | `http://<machine>:30127` |
+| Direct, pour l'encodeur | `<machine>:6800` |
 
-**Docker contourne le pare-feu.** Par défaut, ces ports sont publiés sur toutes les interfaces, en IPv4 et en IPv6, et un port publié par Docker reste joignable même si ufw le ferme. Sur un réseau privé, où l'on ouvre la console par l'adresse de la machine, c'est ce qu'il faut. Sur un VPS exposé à Internet, derrière un reverse proxy HTTPS installé sur la machine, les lier à `127.0.0.1` dans `.env` :
+**Docker contourne le pare-feu.** Par défaut, ces ports sont publiés sur toutes les interfaces, en IPv4 et en IPv6, et un port publié par Docker reste joignable même si ufw le ferme. Sur un réseau privé, où l'on ouvre la console par l'adresse de la machine, c'est ce qu'il faut. Sur un VPS exposé à Internet, derrière [Caddy](#https) ou un autre reverse proxy HTTPS installé sur la machine, les lier à `127.0.0.1` dans `.env` :
 
 ```bash
 BIND_ADDRESS=127.0.0.1
 ```
 
-Puis `docker compose up -d`. Sur une station en service, il recrée la console, Icecast, nowplaying et le catalogue : les auditeurs d'Icecast sont déconnectés. Ces quatre ports ne répondent plus qu'à la machine elle-même. Le reverse proxy les joint par `127.0.0.1`, par exemple `127.0.0.1:30126` pour la console, et non par `localhost`, qui peut viser d'abord `::1`, où rien n'écoute alors. La console, le flux et `now.json` ne s'ouvrent plus que par lui. Vérifier ensuite depuis une autre machine, par exemple avec `nc -zv <machine> 30126`, et non avec `ufw status`.
+Puis `docker compose up -d`. Sur une station en service, il recrée la console, Icecast, nowplaying et le catalogue : les auditeurs d'Icecast sont déconnectés. Ces quatre ports ne répondent plus qu'à la machine elle-même. Caddy n'en a pas besoin : il joint les services par le réseau de Docker. Un autre reverse proxy les joint par `127.0.0.1`, par exemple `127.0.0.1:30126` pour la console, et non par `localhost`, qui peut viser d'abord `::1`, où rien n'écoute alors. La console, le flux et `now.json` ne s'ouvrent plus que par le reverse proxy. Vérifier ensuite depuis une autre machine, par exemple avec `nc -zv <machine> 30126`, et non avec `ufw status`.
 
 `BIND_ADDRESS` vide garde l'écoute sur toutes les interfaces. `0.0.0.0` n'est pas pareil : il n'écoute qu'en IPv4. Une station qui suit l'ancienne consigne, une adresse dans chaque port (`CONSOLE_PORT=127.0.0.1:30126`), marche encore. Pour passer à `BIND_ADDRESS`, retirer ces adresses des quatre ports : avec les deux, `docker compose` refuse de démarrer, sur « invalid IP address ».
 
-Le harbor (l'entrée du direct, port 6800) n'est pas publié par défaut. Pour qu'un encodeur se branche sur cette machine, ajouter un `compose.override.yml` :
+Le direct a son propre port, ouvert au public : voir [le direct](#le-direct).
 
-```yaml
-services:
-  radiotomate-playout:
-    ports:
-      - "6800:6800"
+## HTTPS
+
+Sur Internet, Caddy se place devant la station. Il obtient un certificat Let's Encrypt pour le domaine, le renouvelle sans personne, redirige `http://` vers `https://`, et pose l'en-tête `Strict-Transport-Security`. Il fait partie de `compose.yml`, derrière le profil Compose `vps`, et lit le modèle [`deploy/Caddyfile`](../deploy/Caddyfile). Sur le domaine :
+
+| Adresse | Service |
+|---|---|
+| `https://radio.example/` | la console |
+| `https://radio.example/button.mp3` | le flux : chaque mount d'Icecast à la racine, en MP3, AAC ou Ogg |
+| `https://radio.example/status-json.xsl` | le statut d'Icecast |
+| `https://radio.example/now.json` | le titre en cours |
+
+L'administration d'Icecast et le mount WAV du moniteur n'y passent pas. Le direct non plus : il a son propre port. Pourquoi le flux passe par Caddy : voir la décision [0015](decisions/0015-le-flux-passe-par-caddy.md).
+
+Avant de commencer, le domaine pointe sur la machine : un enregistrement A, et AAAA si elle a une adresse IPv6. Ses ports 80 et 443 sont libres, et le pare-feu de l'hébergeur les laisse passer : Let's Encrypt vérifie le domaine par eux, et refuse le domaine un moment après quelques échecs. Docker publie ces ports sans passer par ufw : rien à y ouvrir. Dans `.env` :
+
+```bash
+COMPOSE_PROFILES=vps
+DOMAIN=radio.example
+ACME_EMAIL=admin@radio.example
+BIND_ADDRESS=127.0.0.1
 ```
 
-Le harbor accepte aujourd'hui l'identifiant et le mot de passe du compte de l'animateur. Avant de l'ouvrir à Internet, lire la fiche SEC-04 de la [feuille de route](feuille-de-route/P1-mise-en-prod.md).
+`COMPOSE_PROFILES=vps` ajoute Caddy à chaque commande `docker compose` lancée dans ce dossier. `ACME_EMAIL`, facultatif, est l'e-mail du compte Let's Encrypt. Puis :
+
+```bash
+docker compose up -d
+docker compose logs caddy        # attendre « certificate obtained successfully »
+```
+
+Sans `DOMAIN`, Caddy ne démarre pas, et son journal le dit. Il garde ses certificats et son compte Let's Encrypt dans `data/caddy`, ou dans `CADDY_DATA`. Ce dossier se garde d'une version à l'autre : sans lui, Caddy redemande un certificat à chaque démarrage, et Let's Encrypt en limite le nombre.
+
+Ensuite, dans la console, **Réglages → Station**, donner les adresses publiques : le flux `https://radio.example/button.mp3`, le titre en cours `https://radio.example/now.json`, le statut `https://radio.example/status-json.xsl`, et l'hôte du direct, `radio.example`. Le flux et `now.json` sont alors sur le domaine de la console : sa CSP n'a rien à déclarer, `CSP_MEDIA_SRC` et `CSP_CONNECT_SRC` restent vides. Un flux sur un autre domaine ou un autre port s'y déclare : voir [les en-têtes de sécurité](#les-en-têtes-de-sécurité).
+
+Vérifier depuis une autre machine. Seuls répondent 22 pour SSH, 80, 443, en TCP et en UDP pour HTTP/3, et le port du direct :
+
+```bash
+nc -zv radio.example 80 443 6800              # ouverts
+nc -zv radio.example 30126 18000 6820 30127   # fermés
+```
+
+Puis le contrôle après déploiement, sur les adresses publiques. Il est décrit dans [mettre à jour](#mettre-à-jour) :
+
+```bash
+scripts/smoke.sh https://radio.example https://radio.example/button.mp3
+```
+
+Caddy lit le `Caddyfile` à son démarrage. Un `Caddyfile` changé, à la main ou par une mise à jour, ne compte qu'une fois Caddy recréé. L'écoute à travers Caddy se coupe un instant :
+
+```bash
+docker compose up -d --force-recreate caddy
+```
+
+Pour un essai sans Let's Encrypt, sur une machine sans domaine public ou en CI, poser `CADDY_TLS=internal`. Caddy signe alors lui-même son certificat. Les navigateurs le refusent ; `curl` l'accepte avec `--cacert data/caddy/pki/authorities/local/root.crt`.
+
+La console voit l'adresse de chaque client, pour limiter les essais de connexion : nginx croit celle que Caddy lui transmet, car Caddy est dans un réseau privé, celui de Docker. C'est le réglage par défaut de `TRUSTED_PROXIES` : voir [l'API](api.md#session).
+
+Icecast voit l'adresse de Caddy pour chaque auditeur. Il compte toujours les auditeurs, mais ne connaît plus leurs adresses. Caddy ne tient pas de journal des accès, et retire l'adresse du client de ses messages, comme celui qui note le départ d'un auditeur : aucune adresse d'auditeur n'est gardée.
+
+## Le direct
+
+Le harbor, l'entrée du direct, est publié sur le port 6800 de la machine, ou sur `HARBOR_PORT`, et sur toutes ses interfaces : un encodeur s'y branche de n'importe où. `BIND_ADDRESS` ne le ferme pas, et il ne passe pas par Caddy. Avec un autre port que 6800, le donner aux animateurs : le panneau « Passer en direct » de la console affiche encore 6800.
+
+Pour l'écouter sur une seule adresse, la mettre devant le port : `HARBOR_PORT=127.0.0.1:6800` le ferme aux autres machines. Un ancien `compose.override.yml` qui publiait le harbor se retire **avant** la mise à jour : s'il le publiait sur une adresse précise, le port est pris deux fois, et le playout ne démarre plus.
+
+Le harbor ne chiffre rien : l'identifiant et le mot de passe de l'encodeur passent en clair. Sur une machine exposée à Internet, il ne doit donc accepter que les jetons d'encodeur, qui n'ouvrent que le harbor, et refuser le mot de passe du compte : `features.allow_account_password` à faux. Une station neuve le règle tout de suite, une station en service quand chaque encodeur a son jeton. La marche à suivre : [refuser le mot de passe du compte](exploitation/passer-en-direct.md#refuser-le-mot-de-passe-du-compte).
 
 ## Les secrets
 
@@ -105,7 +163,7 @@ Derrière un reverse proxy, le journal de `radiotomate-interface` peut afficher 
 
 ## Avant d'exposer une station à Internet
 
-Une installation sur une machine exposée reste un essai tant que les fiches [P1](feuille-de-route/P1-mise-en-prod.md) ne sont pas faites, en particulier celles de sécurité : catalogue protégé, essais de connexion limités, identifiants d'encodeur, en-têtes. Sur une telle machine, fermer aussi les ports avec `BIND_ADDRESS=127.0.0.1`, derrière un reverse proxy : voir [Installer](#installer).
+Une installation sur une machine exposée reste un essai tant que les fiches [P1](feuille-de-route/P1-mise-en-prod.md) ne sont pas faites, en particulier celles de sécurité : catalogue protégé, essais de connexion limités, identifiants d'encodeur, en-têtes. Sur une telle machine, fermer aussi les ports avec `BIND_ADDRESS=127.0.0.1`, derrière Caddy : voir [HTTPS](#https).
 
 ## Régler le moteur
 
@@ -129,7 +187,7 @@ Le nginx de la console pose ces en-têtes sur chaque réponse :
 | `Permissions-Policy` | `camera=(), microphone=()` | ni caméra ni micro |
 | `Content-Security-Policy-Report-Only` | voir plus bas | les sources permises de chaque ressource |
 
-`Strict-Transport-Security` vient du reverse proxy HTTPS, pas de la console.
+`Strict-Transport-Security` vient du reverse proxy HTTPS, pas de la console : Caddy le pose, voir [HTTPS](#https).
 
 La CSP est en rodage : elle ne bloque rien. Le navigateur signale dans sa console, celle des outils de développement, ce qu'elle bloquerait, sur des lignes qui commencent par `[Report Only]`. Elle permet l'origine de la console, plus `blob:` pour l'écoute. Quand le flux et `now.json` passent par le même domaine que la console, derrière le reverse proxy, il n'y a rien à régler.
 
@@ -204,4 +262,4 @@ Une migration défaite perd les données qu'elle avait ajoutées. Sauvegarder av
 
 ## Plusieurs stations
 
-Chaque station a son propre dossier de données, sa propre base et son propre `.env`. Pour en faire tourner plusieurs sur une machine, donner à chacune un nom de projet Compose (`docker compose -p <station>`) et des ports distincts.
+Chaque station a son propre dossier de données, sa propre base et son propre `.env`. Pour en faire tourner plusieurs sur une machine, donner à chacune un nom de projet Compose (`docker compose -p <station>`) et des ports distincts, `HARBOR_PORT` compris. Le profil `vps` ne sert qu'à l'une d'elles : les ports 80 et 443 ne se partagent pas.

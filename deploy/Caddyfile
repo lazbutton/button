@@ -1,0 +1,65 @@
+# Le reverse proxy HTTPS d'une station sur Internet : le service caddy, profil
+# Compose `vps`. Un domaine, et son certificat Let's Encrypt, renouvelé sans
+# personne. Sur ce domaine : le flux d'Icecast et son statut, now.json, puis la
+# console pour tout le reste. Le harbor n'y passe pas : il a son propre port.
+# Variables de deploy/.env : DOMAIN, ACME_EMAIL, CADDY_TLS.
+# Voir docs/deploiement.md, « HTTPS », et la décision 0015.
+#
+# Aucune adresse de client n'est gardée : pas de journal des accès, et les
+# messages de Caddy, comme celui du départ d'un auditeur, les perdent.
+{
+	# L'e-mail du compte Let's Encrypt. Vide, le compte n'en a pas.
+	email "{$ACME_EMAIL}"
+
+	log default {
+		format filter {
+			fields {
+				request>remote_ip delete
+				request>remote_port delete
+				request>client_ip delete
+				request>headers>X-Forwarded-For delete
+			}
+		}
+	}
+}
+
+# http:// redirige vers https://, sur ce domaine.
+{$DOMAIN} {
+	# acme : Let's Encrypt. internal : un certificat de Caddy, que les
+	# navigateurs refusent, pour un essai ou la CI.
+	tls {
+		issuer {$CADDY_TLS:acme}
+	}
+
+	header Strict-Transport-Security "max-age=31536000"
+
+	# Les mounts d'Icecast à la racine, comme /button.mp3, et son statut. En
+	# lecture seulement : une source ne se branche jamais par ce domaine. Le
+	# mount WAV du moniteur reste sur le réseau de la station.
+	@icecast {
+		method GET HEAD
+		path_regexp ^/([^/]+\.(mp3|aac|ogg|opus)|status-json\.xsl)$
+	}
+	handle @icecast {
+		# Chaque écriture d'Icecast part tout de suite vers l'auditeur.
+		reverse_proxy icecast:8000 {
+			flush_interval -1
+		}
+	}
+
+	handle /now.json {
+		reverse_proxy nowplaying:6820
+	}
+
+	# nginx dit http à tusd, qui donne alors l'adresse d'un envoi en http:// :
+	# le navigateur, en https://, bloquerait la suite de l'envoi.
+	handle /tus/* {
+		reverse_proxy console:80 {
+			header_down Location ^http:// https://
+		}
+	}
+
+	handle {
+		reverse_proxy console:80
+	}
+}
