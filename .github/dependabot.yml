@@ -19,5 +19,33 @@ updates:
     directory: /services/catalog
     schedule:
       interval: monthly
-  # The engine (Poetry) is left out on purpose: its pins follow upstream
-  # Radiotomate and Liquidsoap, and are updated by hand.
+  # The engine (Poetry). Its version constraints follow upstream Radiotomate
+  # and Liquidsoap, and change by hand: Dependabot only moves poetry.lock
+  # within them, which is where the fixes come from.
+  - package-ecosystem: pip
+    directory: /engine
+    schedule:
+      interval: monthly
+    versioning-strategy: lockfile-only
+    groups:
+      engine:
+        patterns: ["*"]
+  # The base images of the seven published images, one pull request per image
+  # across directories. A Python bump goes with python-version in the
+  # workflows, a Liquidsoap bump with liquidsoap-check (engine.yml) and
+  # scripts/verifier.sh. A Debian image named only by its release
+  # (bookworm-slim) gets no update.
+  - package-ecosystem: docker
+    directories:
+      - /console
+      - /engine
+      - /engine/playout
+      - /services/catalog
+      - /services/icecast
+      - /services/nowplaying
+      - /deploy/share
+    schedule:
+      interval: monthly
+    groups:
+      images:
+        group-by: dependency-name
