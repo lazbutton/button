@@ -35,7 +35,7 @@ BUTTON tient l'antenne d'une radio 24 h sur 24 : musique en rotation, habillage,
 
 | Composant | Code | Image | Port |
 |---|---|---|---|
-| playout | `engine/playout/` | `button-playout` | 6833 interne, 6800 harbor |
+| playout | `engine/playout/` | `button-playout` | 6833 interne, 6800 harbor, publié pour l'encodeur |
 | interface | `engine/` | `button-radiotomate` | 6811 |
 | scheduler | `engine/` | `button-radiotomate` | 6822 interne |
 | dropbox | `engine/`, `deploy/scripts/` | `button-radiotomate` | — |
@@ -47,6 +47,7 @@ BUTTON tient l'antenne d'une radio 24 h sur 24 : musique en rotation, habillage,
 | tusd | — | `tusproject/tusd` | 8080 interne |
 | radiotomate-init | `engine/`, `deploy/scripts/` | `button-radiotomate` | — : prépare la station à chaque démarrage, puis s'arrête |
 | share | `deploy/share/` | `button-share` | 445, sur `127.0.0.1` par défaut, seulement avec `--profile share` |
+| caddy | `deploy/Caddyfile` | `caddy` | 80 et 443, seulement avec `--profile vps` : le HTTPS devant la console, le flux et `now.json` |
 
 L'interface et le scheduler partagent le réseau du playout (`network_mode: service:radiotomate-playout`). Redémarrer le playout seul les rend injoignables : on recrée toujours les trois ensemble.
 
@@ -75,6 +76,7 @@ Pendant un direct, l'horloge se met en pause et laisse tomber les ancres dues. �
 | Index de recherche | `MEILI_DATA` | reconstruit par le catalogue |
 | Envois en cours | volume `tusd-data` | les morceaux d'un envoi reprenable |
 | Mots de passe du dossier partagé | volume `share-private` | écrits par le catalogue, lus par `share` ; jamais dans la banque |
+| Certificats HTTPS | `CADDY_DATA` | les certificats et le compte Let's Encrypt de Caddy, avec le profil `vps` |
 
 Les heures ne sont pas stockées de la même façon partout : heure locale dans les tables historiques, UTC dans l'Agenda. Voir l'[ADR 0008](decisions/0008-deux-conventions-d-heure.md).
 
