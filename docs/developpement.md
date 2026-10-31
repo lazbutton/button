@@ -127,6 +127,35 @@ Le moteur de démo est partagé par tous les parcours d'un lancement, et il ench
 
 Sur `main`, la CI publie aussi les images Docker, seulement si tout est vert.
 
+## Dépendances, licences et failles
+
+Dependabot propose chaque mois les mises à jour ([`.github/dependabot.yml`](../.github/dependabot.yml)) : les actions GitHub, les dépendances de la console, du catalogue et du moteur, et les images de base des sept images. Pour le moteur, il ne déplace que `poetry.lock` : les contraintes de `pyproject.toml` suivent Radiotomate et Liquidsoap, et changent à la main. Quand il monte la version de Python d'une image de base, `python-version` des workflows suit à la main ; pour Liquidsoap, le job `liquidsoap-check` d'`engine.yml` et `scripts/verifier.sh`.
+
+### Les licences
+
+Chaque dépendance npm ou Python livrée avec BUTTON, dans le build de la console ou dans une image, a une licence compatible avec l'AGPL. Les licences acceptées, et pourquoi, sont dans [`scripts/licences.toml`](../scripts/licences.toml). La CI les contrôle sur chaque pull request qui touche un fichier de dépendances ([`licences.yml`](../.github/workflows/licences.yml)). Les outils de développement ne sont pas livrés : ils ne sont pas contrôlés.
+
+Le même contrôle, sur cette machine :
+
+```bash
+python3 scripts/licences.py npm console/package-lock.json engine/sass/package-lock.json
+(cd engine && poetry run python ../scripts/licences.py poetry poetry.lock)
+services/catalog/.venv/bin/python scripts/licences.py pip
+```
+
+Il échoue sur une licence refusée, et sur une licence inconnue ou qui ne se lit pas. Une licence inconnue se vérifie, puis entre dans `licences.toml`, acceptée ou refusée, avec sa raison. Un paquet dont les métadonnées ne disent pas la licence entre dans `[paquets]`, à sa version, une fois sa licence vérifiée à la main.
+
+### Les failles des images
+
+Trivy analyse chaque image juste après sa publication depuis `main`, et les sept images `:main` chaque lundi ([`failles.yml`](../.github/workflows/failles.yml)). Le job échoue sur toute faille critique. Il passe après la publication, jamais avant : une station qui suit `main` reçoit ses correctifs, même quand une faille reste ouverte.
+
+Devant un job rouge :
+
+- **Un correctif existe** : prendre la mise à jour qui l'apporte, une image de base plus récente ou un `poetry.lock` à jour. Quand l'image de base a déjà le correctif, relancer le workflow de l'image sur `main` (« Run workflow ») la reconstruit.
+- **Aucun correctif** : accepter la faille dans [`.trivyignore.yaml`](../.trivyignore.yaml), pour les seuls paquets touchés (`purls`), avec sa raison (`statement`) et une expiration à 90 jours au plus (`expired_at`). Passé cette date, le job échoue de nouveau : revoir la faille, puis repousser la date ou corriger.
+
+Pour analyser une image à la main : « Run workflow » sur `failles`, avec son nom ; sans nom, les sept images `:main`. Trivy est épinglé dans `failles.yml`, version et empreinte, et Dependabot ne le suit pas : le monter à la main, avec l'empreinte de `trivy_<version>_checksums.txt`.
+
 ## Règles du projet
 
 Elles sont dans le [AGENTS.md](../AGENTS.md) de la racine, communes aux personnes et aux agents, et dans le `AGENTS.md` de chaque dossier. Les plus importantes :

@@ -1,0 +1,60 @@
+# Les failles critiques acceptées dans les images publiées, et pourquoi.
+#
+# Le job Trivy (.github/workflows/failles.yml) échoue sur toute faille
+# critique d'une image, sauf celles-ci. Une faille n'entre ici que sans
+# correctif dans la distribution de l'image, avec :
+#   - purls : les paquets touchés, pour que la même faille reste en échec là
+#     où un correctif existe ;
+#   - statement : pourquoi on l'accepte ;
+#   - expired_at : 90 jours au plus. Passé cette date, le job échoue de
+#     nouveau : on revoit la faille, puis on repousse la date ou on corrige.
+# Voir docs/developpement.md, « Dépendances, licences et failles ».
+
+vulnerabilities:
+  # Debian 12 : python:3.13-slim-bookworm et debian:bookworm-slim.
+  - id: CVE-2023-45853
+    purls: ["pkg:deb/debian/zlib1g"]
+    statement: La faille est dans MiniZip, que zlib1g ne contient pas. Debian ne la corrigera pas.
+    expired_at: 2027-01-29
+  - id: CVE-2025-7458
+    purls: ["pkg:deb/debian/libsqlite3-0"]
+    statement: Demande de pouvoir lancer ses propres requêtes SQL ; BUTTON ne lance que les siennes. Pas de correctif dans Debian 12.
+    expired_at: 2027-01-29
+  - id: CVE-2023-6879
+    purls: ["pkg:deb/debian/libaom3"]
+    statement: Dans l'encodage vidéo AV1 ; BUTTON ne traite que du son. Pas de correctif dans Debian 12.
+    expired_at: 2027-01-29
+  - id: CVE-2026-58016
+    purls: ["pkg:deb/debian/libglib2.0-0", "pkg:deb/debian/libglib2.0-data"]
+    statement: Dans la lecture du XML d'introspection D-Bus ; aucun conteneur n'utilise D-Bus. Correctif reporté par Debian 12, présent dans Debian 13.
+    expired_at: 2027-01-29
+  - id: CVE-2025-47917
+    purls: ["pkg:deb/debian/libmbedcrypto7"]
+    statement: Ne touche que les programmes qui appellent mbedtls_x509_string_to_names(). mbedtls 2.28 n'est plus suivi dans Debian 12 ; Debian 13 a mbedtls 3.6.
+    expired_at: 2027-01-29
+  - id: CVE-2026-34873
+    purls: ["pkg:deb/debian/libmbedcrypto7"]
+    statement: Usurpation d'un client à la reprise d'une session TLS 1.3. Pas de correctif pour mbedtls 2.28 dans Debian 12 ; Debian 13 l'a corrigée.
+    expired_at: 2027-01-29
+  - id: CVE-2026-34875
+    purls: ["pkg:deb/debian/libmbedcrypto7"]
+    statement: Dépassement de tampon à l'export d'une clé FFDH. Pas de correctif pour mbedtls 2.28 dans Debian 12 ; Debian 13 l'a corrigée.
+    expired_at: 2027-01-29
+
+  # Debian 12 et Debian 13, dont savonet/liquidsoap.
+  - id: CVE-2026-6653
+    purls: ["pkg:deb/debian/libxml2"]
+    statement: Déni de service par un XML fabriqué. Pas de correctif dans Debian 12 ni dans Debian 13 au 31 octobre 2026.
+    expired_at: 2027-01-29
+  - id: CVE-2019-16224
+    purls: ["pkg:deb/debian/liblmdb0"]
+    statement: Demande un fichier LMDB fourni par l'attaquant. Pas de correctif dans Debian 12 ni dans Debian 13.
+    expired_at: 2027-01-29
+  - id: CVE-2019-16225
+    purls: ["pkg:deb/debian/liblmdb0"]
+    statement: Demande un fichier LMDB fourni par l'attaquant. Pas de correctif dans Debian 12 ni dans Debian 13.
+    expired_at: 2027-01-29
+  - id: CVE-2019-16227
+    purls: ["pkg:deb/debian/liblmdb0"]
+    statement: Demande un fichier LMDB fourni par l'attaquant. Pas de correctif dans Debian 12 ni dans Debian 13.
+    expired_at: 2027-01-29
