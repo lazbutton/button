@@ -392,6 +392,11 @@ PLAYOUT_REJECTED = {
     "code": "playout_rejected",
 }
 
+CART_EMPTY = {
+    "error": "Ce bac n'a aucun son prêt : rien n'est parti à l'antenne.",
+    "code": "cart_empty",
+}
+
 
 @pytest.mark.parametrize(
     ("status", "text"),
@@ -780,6 +785,58 @@ async def test_gestures_through_the_scheduler(  # noqa: PLR0913
     assert fired.status_code == 400
     assert await fired.get_json() == PLAYOUT_REJECTED
     assert sent == ["DELETE /live"] * 3 + ["POST /queue/jingles"]
+
+
+async def test_cart_without_sound_ready_through_the_scheduler(  # noqa: PLR0913
+    app: CustomQuart,
+    app_configration: dict,
+    beets_integration: BeetsIntegration,
+    dbsession: ormSession,
+    users_password: str,
+    auth: dict,
+    jingles_cart,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Nothing to push: a 409 the console shows, the playout hears nothing."""
+    sound = await dbsession.scalar(
+        select(Sound).where(Sound.cart_id == jingles_cart.id)
+    )
+    assert sound is not None
+    sound.active = False
+    user = User(username="live-json-cart-empty")
+    user.update_password(users_password)
+    user.update_permissions({"can_live": "true", "can_carts": "true"})
+    dbsession.add(user)
+    await dbsession.commit()
+    sent: list[str] = []
+
+    def playout(request: httpx.Request) -> httpx.Response:
+        sent.append(f"{request.method} {request.url.path}")
+        return httpx.Response(200, json={"OK": 1})
+
+    monkeypatch.setitem(app.config, "PLAYOUT_CLIENT", _playout(playout))
+    scheduler = Scheduler.__new__(Scheduler)
+    scheduler.client = httpx.AsyncClient(
+        base_url="http://127.0.0.1:6822",
+        transport=httpx.ASGITransport(app=app),
+        headers=auth,
+    )
+    client = _interface_client(app_configration, beets_integration)
+    await _login(client, "live-json-cart-empty", users_password)
+    live_mod.set_live_snapshot(None)
+    with patch.object(Scheduler, "get", return_value=scheduler):
+        fired = await client.post(f"/carts/{jingles_cart.id}/now.json")
+        page = await client.post(
+            f"/carts/{jingles_cart.id}/now",
+            headers={"HX-Request": "true"},
+        )
+    assert fired.status_code == 409
+    assert await fired.get_json() == CART_EMPTY
+    # The HTMX page keeps its code: its error path says it too.
+    assert page.status_code == 400
+    message = json.loads(page.headers["HX-Trigger"])["radiotomateMessage"]
+    assert message["text"] == CART_EMPTY["error"]
+    assert sent == []
 
 
 async def test_antenne_state_and_flush_json(

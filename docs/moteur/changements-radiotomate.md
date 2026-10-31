@@ -32,6 +32,8 @@ Liquidsoap 2.4.5 annote chaque push avec `radiotomate_queue`. Le journal d’ant
 
 `DELETE /live`, `POST /schedule/<id>/now` et `POST /schedule/<id>/sounds/<id>/now` répondaient 200, que le playout ait fait l’ordre ou non. Ces routes d’ordres du scheduler, avec `POST /schedule/path/now` et `POST /queues/flush`, répondent maintenant 502 `{ok:false, error, detail}` quand il ne l’a pas fait : `playout_unavailable` s’il n’a pas répondu, `playout_rejected` s’il a répondu une erreur. Ces gestes passent par `gesture_gateway_for` : l’ordre part une fois, et ne repart que si la connexion a été refusée. Après un délai, le playout a pu le faire, et le renvoyer passerait deux titres. L’horloge, la boîte d’envoi et l’Agenda gardent leurs essais.
 
+`POST /schedule/<id>/now` répondait aussi 200 quand le cart n’avait aucun son prêt, sans rien pousser. Il répond maintenant 409 `{ok:false, error:"cart_empty", detail}`. Un cart aléatoire dans ce cas levait une `IndexError` : `next_sound_random` rend maintenant `None`, comme les autres modes.
+
 Un titre Beets sans `rg_track_gain` est analysé à la prévision (`analyze_item_soon`), puis au push si le gain manque encore (`ensure_item_gain`). Rien n’est poussé sans gain.
 
 ## API pour la console

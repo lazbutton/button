@@ -57,6 +57,15 @@ class PlayoutUnavailableError(RuntimeError):
     """The scheduler answered, but the playout did not: stopped, or too slow."""
 
 
+class CartEmptyError(RuntimeError):
+    """The cart has no sound ready: nothing was sent to the playout."""
+
+    message = "Ce bac n'a aucun son prêt : rien n'est parti à l'antenne."
+
+    def __init__(self) -> None:
+        super().__init__(self.message)
+
+
 class Scheduler:
     """
     This is a singleton: use `Scheduler.get()`.
@@ -121,7 +130,8 @@ class Scheduler:
         """
         An antenna order. Raises SchedulerUnavailableError or
         PlayoutUnavailableError when the scheduler or the playout did not answer,
-        RuntimeError when one of them refused the order.
+        CartEmptyError when a cart had no sound to send, RuntimeError when one of
+        them refused the order.
         """
         result = await self._request(method, path, timeout=ORDER_TIMEOUT, **kwargs)
         if result.status_code == 200:
@@ -141,6 +151,8 @@ class Scheduler:
             raise RuntimeError(result.text or f"HTTP {result.status_code}")
         if body.get("error") == "playout_unavailable":
             raise PlayoutUnavailableError("Le playout ne répond pas.")
+        if body.get("error") == "cart_empty":
+            raise CartEmptyError
         raise RuntimeError(body.get("detail") or result.text)
 
     async def skip(self):
@@ -786,14 +798,10 @@ class SchedulerDemo(Scheduler):
             cart = await Cart.from_id(session, cart_id, load_sounds=True)
             if not cart:
                 raise RuntimeError(f"cart #{cart_id} not found")
-            try:
-                sound = cart.next_sound()
-            except IndexError:
-                sound = None
-            if sound is None and cart.sounds:
-                sound = cart.sounds[0]
+            # As the scheduler: no sound ready, nothing plays.
+            sound = cart.next_sound()
             if sound is None:
-                raise RuntimeError(f"cart #{cart_id} has no sound")
+                raise CartEmptyError
             async with self._lock:
                 self._archive_current()
                 await self._set_now_from_sound(cart, sound)

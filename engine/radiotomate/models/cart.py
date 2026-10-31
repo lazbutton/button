@@ -325,4 +325,6 @@ class Cart(Base):
 
     def next_sound_random(self) -> Sound | None:
         available_sounds = [s for s in self.sounds if s.available]
+        if not available_sounds:
+            return None
         return choice(available_sounds)
