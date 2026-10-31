@@ -49,7 +49,7 @@ L’interface HTMX reste. À côté, les mêmes objets ont une forme JSON, avec 
 | Domaine | Chemins |
 | --- | --- |
 | Compte | `/account.json`, `/login.json` |
-| Utilisateurs | `/users.json`, `/users/…/stream-token.json` |
+| Utilisateurs | `/users.json`, `/users/hosts.json`, `/users/…/stream-token.json` |
 | Carts et sons | `/carts.json`, sons, rangs, lecture immédiate |
 | Banque | `/media/bank.json` |
 | Horloges | `/autodj/clocks.json`, `/slots.json`, `/categories.json` |
@@ -96,6 +96,8 @@ Le scheduler surveille l’antenne (`scheduler/alerts.py`) : silence, playout in
 `radiotomate interface --port` et `radiotomate scheduler --port` changent le port d’écoute, 6811 et 6822 par défaut. En démo, l’interface tient lieu de scheduler sur son propre port : deux bancs tournent sur une machine.
 
 `beets/compat.py` corrige l’import de Beets 2.5 sous Python 3.14 : l’ioctl de taille de terminal demandait 4 octets, le noyau en écrit 8.
+
+L’image du playout passe `apt-get upgrade` sur celle de Liquidsoap, que ses auteurs ne reconstruisent pas quand Debian publie un correctif. Liquidsoap garde la version de son tag.
 
 ## Marque et interface
 

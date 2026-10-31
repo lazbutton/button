@@ -869,6 +869,62 @@ async def test_cart_json_forbidden_without_carts(
     assert bulk.status_code == 403
 
 
+async def test_hosts_json_names_who_can_go_live(
+    raw_app,
+    app_configration: dict,
+    beets_integration: BeetsIntegration,
+    dbsession: ormSession,
+    users_password: str,
+):
+    for username, permissions in (
+        ("hosts-admin", {"admin": True}),
+        ("hosts-stream", {"live": True, "stream": True}),
+        ("hosts-desk", {"live": True}),
+    ):
+        user = User(username=username, notes="private")
+        user.update_password(users_password)
+        user.update_permissions_map(permissions)
+        dbsession.add(user)
+    await dbsession.commit()
+    client = await _admin_client(
+        app_configration,
+        beets_integration,
+        dbsession,
+        users_password,
+        "hosts-prog",
+        permissions={"live": True, "carts": True, "autodj": True},
+    )
+    response = await client.get("/users/hosts.json")
+    assert response.status_code == 200, await response.get_data(as_text=True)
+    payload = await response.get_json()
+    # names only: the accounts themselves stay with the admins
+    assert list(payload) == ["hosts"]
+    assert "hosts-admin" in payload["hosts"]
+    assert "hosts-stream" in payload["hosts"]
+    assert "hosts-desk" not in payload["hosts"]
+    assert "hosts-prog" not in payload["hosts"]
+    assert (await client.get("/users.json")).status_code == 403
+
+
+async def test_hosts_json_forbidden_without_autodj(
+    raw_app,
+    app_configration: dict,
+    beets_integration: BeetsIntegration,
+    dbsession: ormSession,
+    users_password: str,
+):
+    client = await _admin_client(
+        app_configration,
+        beets_integration,
+        dbsession,
+        users_password,
+        "hosts-guest",
+        permissions={"live": True, "stream": True},
+    )
+    response = await client.get("/users/hosts.json")
+    assert response.status_code == 403
+
+
 async def test_slot_and_category_json(
     raw_app,
     app_configration: dict,

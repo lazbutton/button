@@ -58,6 +58,9 @@ jobs:
         with:
           context: ./console
           platforms: linux/amd64
+          # The serve stage upgrades Alpine's packages: from the cache, it
+          # would keep those of its first build. The npm build stays cached.
+          no-cache-filters: serve
           push: true
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}

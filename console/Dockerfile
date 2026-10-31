@@ -1,4 +1,4 @@
-FROM node:22-alpine AS build
+FROM node:25-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
@@ -7,7 +7,12 @@ COPY public ./public
 COPY src ./src
 RUN npm run build
 
-FROM nginx:1.27-alpine
+FROM nginx:1.30-alpine AS serve
+# The nginx image is only rebuilt with a release of nginx or of Alpine:
+# Alpine's fixes in between come in here, at each build (console.yml never
+# takes this stage from its cache). nginx and its modules keep the image's
+# version, pinned in /etc/apk/world.
+RUN apk upgrade --no-cache
 COPY docker/nginx.conf.template /etc/nginx/nginx-default.conf.template
 COPY docker/security-headers.conf.template /etc/nginx/security-headers.conf.template
 COPY docker/docker-entrypoint.sh /docker-entrypoint.d/99-automate-backend.sh

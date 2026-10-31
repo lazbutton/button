@@ -38,7 +38,7 @@ Nadia écoute une cinquantaine d'albums par semaine, et en garde une dizaine. El
 1. **Déposer.** Dans **Sons → Banque**, elle glisse les nouveautés. L'envoi reprend après une coupure, et la console montre l'avancement, le quota et les fichiers refusés avec leur raison. Chez elle, elle passe par le dossier de la station : [dossier-reseau.md](../exploitation/dossier-reseau.md).
 2. **Choisir.** Dans **Programmation → Sélections de titres**, elle décrit ce qui passe : `genre:Jazz`, ou une banque d'archives par son regroupement, `grouping:<dossier>`.
 3. **Composer.** Dans **Heures types**, elle enchaîne titres, jingles, programmes et pubs. Ses **Coupures à la minute** coupent pile, ou attendent la fin du titre.
-4. **Poser la semaine.** Dans **Semaine**, chaque créneau reçoit son heure type, et chaque émission hebdomadaire ses heures. L'animateur d'une émission, comme Inès, se choisit en **Compte du plateau** : seul un admin voit la liste des comptes, alors Nadia demande à Hélène.
+4. **Poser la semaine.** Dans **Semaine**, chaque créneau reçoit son heure type, et chaque émission hebdomadaire ses heures et son animateur, comme Inès, choisi en **Compte du plateau**.
 5. **Habiller.** Dans **Sons → Bacs**, elle crée un bac de jingles, un bac de pubs, ou un relais pour un décrochage, avec son adresse et sa durée max : [decrochage.md](../exploitation/decrochage.md).
 6. **Inviter.** Dans **Programmation → Agenda**, elle pose le set de Lou. **Copier le message** donne le texte à lui envoyer : [inviter-un-dj.md](../exploitation/inviter-un-dj.md).
 7. **Vérifier.** **À préparer** liste ce qui manque pour les sept prochains jours. Le **Conducteur** montre ce qui va passer : elle peut y réparer ou retirer une ligne.
@@ -57,10 +57,10 @@ Sans cela, le set n'aurait pas passé. Un set qui n'est pas prêt à son heure r
 - Un set daté passe à son heure, en entier, sans que les jingles et les pubs de l'heure type s'empilent derrière lui.
 - La pré-écoute d'un son, avant de le mettre à l'antenne.
 - L'espace disque de la banque, toujours visible dans la navigation.
+- Elle nomme elle-même l'animateur d'une émission ou d'un direct daté. La liste ne montre que les comptes qui peuvent passer en direct, sans le reste de leur fiche.
 
 ## Ce qui coince encore
 
-- **Nommer l'animateur d'une émission demande un admin.** Le champ « Compte du plateau » ne liste les comptes que pour un admin, et le choix de l'animateur d'un direct daté, dans l'Agenda, aussi. Besoin sans fiche : voir [README.md](README.md#les-besoins-sans-fiche).
 - **Pourquoi ce titre ?** L'historique de ce qui est passé, quand et d'où : UX-02.
 - **Une seule vue** pour les heures types, les créneaux et l'Agenda : UX-03.
 - **Des playlists choisies à la main**, à côté des sélections : UX-04. **Une page par émission** : UX-05.
