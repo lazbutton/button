@@ -7,7 +7,7 @@ COPY public ./public
 COPY src ./src
 RUN npm run build
 
-FROM nginx:1.27-alpine
+FROM nginx:1.30-alpine
 COPY docker/nginx.conf.template /etc/nginx/nginx-default.conf.template
 COPY docker/security-headers.conf.template /etc/nginx/security-headers.conf.template
 COPY docker/docker-entrypoint.sh /docker-entrypoint.d/99-automate-backend.sh
