@@ -114,7 +114,7 @@ Les parcours, dans `console/e2e/` :
 | `antenne.spec.ts` | se connecter, puis voir l'antenne |
 | `accessibilite.spec.ts` | chaque écran et chaque onglet passés à axe-core, avec les menus et les panneaux de l'antenne, une confirmation rouge et deux incidents ouverts simulés par `page.route` : en clair et en sombre avec le compte admin, puis la barre latérale repliée et la largeur d'une tablette, et sur un téléphone avec l'animateur |
 | `barre.spec.ts` | la barre du haut : ce qui passe, et le dernier titre connu quand le moteur ne répond plus, l'état de l'antenne et son détail, le casque et sa source, un flux muet, qui s'arrête ou qui ne répond jamais, en PCM comme par l'élément audio, le menu du compte, le lien « Code source » |
-| `pupitre.spec.ts` | Espace, `/` et Entrée, la pré-écoute, « Diffuser », déplacer une ligne au clavier et à la souris, retirer puis annuler, le focus rendu à « Passer en direct » |
+| `pupitre.spec.ts` | Espace, `/` et Entrée, la pré-écoute, « Diffuser », déplacer une ligne au clavier et à la souris, monter une ligne en tête devant une ligne déjà commencée, retirer puis annuler, le focus rendu à « Passer en direct » |
 | `etats.spec.ts` | session expirée, droit manquant, moteur injoignable, moteur muet, moteur arrêté derrière nginx (502 en HTML), envoi trop lourd pour nginx (413 en HTML) et route absente, puis les gestes refusés ou sans réponse de la page Automate, simulés par `page.route` devant le moteur de démo et le faux catalogue |
 | `bacs.spec.ts` | « Diffuser maintenant » sur un bac sans son prêt : la console dit que rien n'est parti |
 | `roles.spec.ts` | ce que voient l'animateur, le programmateur et l'admin |
@@ -141,8 +141,6 @@ Le moteur de démo est partagé par tous les parcours d'un lancement, et il ench
 La file bouge aussi quand l'antenne tient : une ligne en sort quand son heure de fin passe, et la page relit la file toutes les 3 s. Un geste qui réordonne la file, ou qui en retire une ligne, passe par `tenirLaFile(page, geste)`. L'antenne tenue, la page se recharge avec une horloge factice et lit la file. Puis son horloge s'arrête jusqu'à la fin du geste : la page ne relit plus la file, et le temps n'en fait plus sortir de ligne. Avec l'horloge factice, une erreur levée dans une minuterie de la page n'arrive qu'à sa console, pas au contrôle des erreurs JavaScript du banc.
 
 Une ligne de la file se désigne par son heure exacte, l'attribut `datetime` de son heure : l'heure affichée, à la seconde, peut être celle de deux lignes. La file ne dit pas d'où vient une ligne, de l'horloge ou du pupitre. Un parcours qui en a besoin le lit au moteur, comme le parcours « Annuler » de `pupitre.spec.ts` : « Annuler » remet une ligne du pupitre retirée à la suite, à une autre heure.
-
-Un défaut du moteur reste à corriger : il range les lignes déplacées à partir du plus tôt de leurs départs, même passé. Une ligne montée devant une ligne commencée depuis plus longtemps qu'elle ne dure finit alors avant maintenant, et sort de la file. Le parcours en attente « une ligne montée en tête de la file y reste… » de `pupitre.spec.ts` le montre. D'ici là, les parcours qui réordonnent la file laissent sa première ligne en place.
 
 Sur `main`, la CI publie aussi les images Docker, seulement si tout est vert.
 

@@ -12,8 +12,10 @@ from radiotomate.models import Sound
 from radiotomate.models.execution import ProgrammingVersion, RundownItem
 from radiotomate.scheduler.execution import (
     DESK_ORIGIN,
+    attach_desk_pins,
     delete_desk_item,
     insert_desk_item,
+    reorder_desk_items,
     replace_forecast_items,
 )
 from radiotomate.scheduler_api import Scheduler
@@ -116,6 +118,135 @@ async def test_delete_hard_anchor_conflicts(dbsession: ormSession):
         await delete_desk_item(dbsession, "ri-hard-anchor")
     assert caught.value.status_code == 409
     assert await dbsession.get(RundownItem, "ri-hard-anchor") is not None
+
+
+async def _reorder_version(dbsession: ormSession, version_id: str) -> None:
+    dbsession.add(
+        ProgrammingVersion(id=version_id, source="test", description="reorder")
+    )
+    await dbsession.flush()
+
+
+def _reorder_row(  # noqa: PLR0913
+    item_id: str,
+    version_id: str,
+    start: datetime,
+    duration: float,
+    *,
+    status: str = RundownStatus.PLANNED.value,
+    origin: str = DESK_ORIGIN,
+) -> RundownItem:
+    return RundownItem(
+        id=item_id,
+        programming_version_id=version_id,
+        sequence=0,
+        planned_at=start,
+        duration=duration,
+        kind="son",
+        when_mode="sequential",
+        queue="carts",
+        resource=item_id,
+        path=f"/media/10-rotation/{item_id}.mp3",
+        status=status,
+        origin=origin,
+    )
+
+
+async def test_reorder_packs_from_the_earliest_start(dbsession: ormSession):
+    await _reorder_version(dbsession, "pv-reorder-future")
+    later = (datetime.now() + timedelta(minutes=5)).replace(microsecond=0)
+    dbsession.add_all(
+        [
+            _reorder_row("ri-song", "pv-reorder-future", later, 180),
+            _reorder_row(
+                "ri-jingle", "pv-reorder-future", later + timedelta(minutes=3), 4
+            ),
+        ]
+    )
+    await dbsession.commit()
+    await reorder_desk_items(dbsession, ["ri-jingle", "ri-song"])
+    jingle = await dbsession.get(RundownItem, "ri-jingle")
+    song = await dbsession.get(RundownItem, "ri-song")
+    assert jingle.planned_at == later
+    assert song.planned_at == later + timedelta(seconds=4)
+
+
+async def test_reorder_never_packs_into_the_past(dbsession: ormSession):
+    """A short line moved above one that started 40 s ago starts now: it stays in
+    the antenna file, and the expiry of past desk lines keeps it."""
+    await _reorder_version(dbsession, "pv-reorder-past")
+    now = datetime.now()
+    dbsession.add_all(
+        [
+            _reorder_row(
+                "ri-started", "pv-reorder-past", now - timedelta(seconds=40), 60
+            ),
+            _reorder_row("ri-short", "pv-reorder-past", now + timedelta(seconds=20), 4),
+        ]
+    )
+    await dbsession.commit()
+    before = datetime.now()
+    await reorder_desk_items(dbsession, ["ri-short", "ri-started"])
+    short = await dbsession.get(RundownItem, "ri-short")
+    started = await dbsession.get(RundownItem, "ri-started")
+    assert short.planned_at >= before
+    assert started.planned_at == short.planned_at + timedelta(seconds=4)
+
+    await attach_desk_pins(dbsession, {"items": []})
+    assert await dbsession.get(RundownItem, "ri-short") is not None
+
+
+async def test_reorder_waits_for_the_title_on_air(dbsession: ormSession):
+    await _reorder_version(dbsession, "pv-reorder-air")
+    now = datetime.now().replace(microsecond=0)
+    on_air = _reorder_row(
+        "ri-on-air",
+        "pv-reorder-air",
+        now - timedelta(seconds=10),
+        180,
+        status=RundownStatus.ON_AIR.value,
+        origin="clock",
+    )
+    on_air.started_at = now - timedelta(seconds=10)
+    dbsession.add_all(
+        [
+            on_air,
+            _reorder_row("ri-early", "pv-reorder-air", now - timedelta(seconds=5), 20),
+            _reorder_row("ri-next", "pv-reorder-air", now + timedelta(seconds=15), 4),
+        ]
+    )
+    await dbsession.commit()
+    await reorder_desk_items(dbsession, ["ri-next", "ri-early"])
+    following = await dbsession.get(RundownItem, "ri-next")
+    early = await dbsession.get(RundownItem, "ri-early")
+    assert following.planned_at == now + timedelta(seconds=170)
+    assert early.planned_at == now + timedelta(seconds=174)
+
+
+async def test_reorder_behind_a_started_line_keeps_its_start(dbsession: ormSession):
+    """Two lines swapped behind one that has already started: it keeps its start,
+    and the others follow its end. Nothing slides at each gesture."""
+    await _reorder_version(dbsession, "pv-reorder-keep")
+    now = datetime.now().replace(microsecond=0)
+    dbsession.add_all(
+        [
+            _reorder_row("ri-head", "pv-reorder-keep", now - timedelta(seconds=40), 60),
+            _reorder_row(
+                "ri-second", "pv-reorder-keep", now + timedelta(seconds=20), 180
+            ),
+            _reorder_row(
+                "ri-third", "pv-reorder-keep", now + timedelta(seconds=200), 4
+            ),
+        ]
+    )
+    await dbsession.commit()
+    await reorder_desk_items(dbsession, ["ri-head", "ri-third", "ri-second"])
+    head = await dbsession.get(RundownItem, "ri-head")
+    third = await dbsession.get(RundownItem, "ri-third")
+    second = await dbsession.get(RundownItem, "ri-second")
+    assert head.planned_at == now - timedelta(seconds=40)
+    assert third.planned_at == now + timedelta(seconds=20)
+    assert second.planned_at == now + timedelta(seconds=24)
 
 
 async def test_desk_insert_survives_preview_refresh(  # noqa: PLR0913

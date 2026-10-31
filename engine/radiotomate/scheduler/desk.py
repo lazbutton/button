@@ -352,7 +352,11 @@ async def reorder_desk_items(session: ormSession, ids: list[str]) -> None:
     """Pack the given rows from the earliest of their start times.
 
     Desk pins and clock rows in the antenna file both move. On-air and hard
-    anchors stay put.
+    anchors stay put. A row that takes the first slot from another never starts
+    in the past, nor before the end of the title on air: moved above a row that
+    has already started, it would end before now, leave the antenna file, and a
+    desk pin would then be dropped by ``expire_past_desk_items``. A first row
+    that keeps its slot keeps its start: the rows behind it end after it.
     """
     if not ids:
         raise DomainValidationError("Liste d'identifiants requise.", field="ids")
@@ -371,7 +375,12 @@ async def reorder_desk_items(session: ormSession, ids: list[str]) -> None:
     if not ordered:
         raise DomainValidationError("Aucun passage à réordonner.", field="ids")
     starts = [row.planned_at for row in ordered if row.planned_at is not None]
-    cursor = min(starts) if starts else await _on_air_end(session) or datetime.now()
+    first = min(starts) if starts else None
+    cursor = naive_datetime(first)
+    if cursor is None or ordered[0].planned_at != first:
+        now = datetime.now()
+        floor = max(now, naive_datetime(await _on_air_end(session)) or now)
+        cursor = floor if cursor is None else max(cursor, floor)
     for index, row in enumerate(ordered):
         row.planned_at = naive_datetime(cursor) or datetime.now()
         row.sequence = index
