@@ -311,6 +311,40 @@ async def test_timed_playlist_enqueues_two_sounds(  # noqa: PLR0913
         assert titles == [fake_sound.title, fake_sound2.title]
 
 
+@pytest.mark.parametrize(
+    ("mode", "schedule_mode", "queue"),
+    [
+        (CartMode.RANDOM, ScheduleMode.CLOCK, "/queue/carts"),
+        (CartMode.PLAYLIST, ScheduleMode.JINGLES, "/queue/jingles"),
+    ],
+    ids=["aleatoire", "file-jingles"],
+)
+async def test_cart_that_does_not_chain_plays_one_sound(  # noqa: PLR0913
+    client: QuartClient,
+    dbsession: ormSession,
+    fake_cart: Cart,
+    fake_sound: Sound,
+    fake_sound2: Sound,
+    auth: dict,
+    mode: CartMode,
+    schedule_mode: ScheduleMode,
+    queue: str,
+):
+    """Only a playlist of the carts queue goes on with the clock: one sound here."""
+    fake_cart.mode = mode
+    fake_cart.schedule_mode = schedule_mode
+    fake_sound2.gain = -1.0
+    fake_sound2.peak = -0.5
+    await dbsession.commit()
+    with patch(
+        "httpx.AsyncClient.post",
+        return_value=httpx.Response(200, json={"OK": 1}),
+    ) as mock_client:
+        result = await client.post(f"/schedule/{fake_cart.id}/now", headers=auth)
+        assert result.status_code == 200, (await result.data).decode()
+        assert [call.args[0] for call in mock_client.call_args_list] == [queue]
+
+
 async def _pushes_nothing(client: QuartClient, cart: Cart, auth: dict) -> None:
     """The cart has no sound ready: a 409, and the playout hears nothing."""
     with patch(
@@ -393,11 +427,12 @@ async def test_schedule_playlist_played_through_starts_again(  # noqa: PLR0913
         "httpx.AsyncClient.post",
         return_value=httpx.Response(200, json={"OK": 1}),
     ) as mock_client:
-        for _ in range(3):
+        for _ in range(2):
             result = await client.post(f"/schedule/{fake_cart.id}/now", headers=auth)
             assert result.status_code == 200, (await result.data).decode()
         titles = [call.kwargs["json"]["title"] for call in mock_client.call_args_list]
-    # The last sound never played goes alone, then the playlist starts again.
+    # The last sound never played goes alone. Played through, the whole list goes
+    # again, once.
     assert titles == [fake_sound2.title, fake_sound.title, fake_sound2.title]
 
 

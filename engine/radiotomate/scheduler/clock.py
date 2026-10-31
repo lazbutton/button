@@ -39,6 +39,7 @@ from radiotomate.models import (
     Setting,
     Sound,
 )
+from radiotomate.models.cart import CARTS_QUEUE
 from radiotomate.scheduler.metrics import runtime_metrics
 from radiotomate.scheduler.music_rules import (  # noqa: F401 — re-exported
     ARTIST_LAST_N,
@@ -97,6 +98,52 @@ _PUSHABLE_STATUSES = {
     RundownStatus.PLANNED.value,
     RundownStatus.RESCUE.value,
 }
+_ROUND_MODES = {CartMode.PLAYLIST, CartMode.PLAYLIST_LOOP}
+
+
+@dataclass
+class CartRound:
+    """
+    A playlist of the carts queue launched by « Diffuser maintenant »: the clock
+    queues its sounds one after the other, each once at most, then gives the
+    antenna back. A loop plays all of them, from its next sound. A one-shot
+    playlist plays its sounds never played, or all of them, as a loop, when none
+    is left. A clock anchor, a desk line or a single sound fired by hand plays
+    one sound and leaves the round as it is.
+    """
+
+    cart_id: int
+    # A one-shot playlist launched with sounds never played takes only those.
+    fresh_only: bool = False
+    queued: set[int] = field(default_factory=set)
+    # The playout has shown the round: carts on air, or queued.
+    seen: bool = False
+
+    @staticmethod
+    def applies_to(cart: Cart) -> bool:
+        return cart.mode in _ROUND_MODES and cart.playout_queue() == CARTS_QUEUE
+
+    @classmethod
+    def start(cls, cart: Cart) -> CartRound | None:
+        """The round a launch starts, or None for a cart that plays one sound."""
+        if not cls.applies_to(cart):
+            return None
+        first = cart.next_sound()
+        fresh = (
+            cart.mode is CartMode.PLAYLIST
+            and first is not None
+            and not first.last_played
+        )
+        return cls(cart.id, fresh_only=fresh)
+
+    def next_sound(self, cart: Cart) -> Sound | None:
+        """The round's next sound, or None once the round is over."""
+        sound = cart.next_sound()
+        if sound is None or sound.id in self.queued:
+            return None
+        if self.fresh_only and sound.last_played:
+            return None
+        return sound
 
 
 @dataclass
@@ -106,7 +153,7 @@ class SequencerState:
     fired_anchors: set[tuple[str, int, int]] = field(default_factory=set)
     restored: bool = False
     persisted_snapshot: tuple[int, int | None, frozenset] | None = None
-    active_cart_id: int | None = None
+    cart_round: CartRound | None = None
     epoch: int = 0
     pending_autodj_skip: bool = False
     pending_autodj_skip_minute: int | None = None
@@ -122,15 +169,24 @@ def reset_state() -> None:
     _state.fired_anchors.clear()
     _state.restored = False
     _state.persisted_snapshot = None
-    _state.active_cart_id = None
+    _state.cart_round = None
     _state.epoch = 0
     _state.pending_autodj_skip = False
     _state.pending_autodj_skip_minute = None
 
 
-def note_carts_push(cart_id: int) -> None:
-    """Remember which cart currently owns the carts Liquidsoap queue."""
-    _state.active_cart_id = cart_id
+def note_cart_round(cart_round: CartRound) -> None:
+    """The clock carries on the round « Diffuser maintenant » has started."""
+    _state.cart_round = cart_round
+
+
+def end_cart_round(cart_round: CartRound | None = None) -> None:
+    """
+    No more sounds from the launched cart: « Vider les files », the Agenda, or
+    its round is over. Given a round, ends it only if it is still the one on.
+    """
+    if cart_round is None or _state.cart_round is cart_round:
+        _state.cart_round = None
 
 
 def _session_engine(session: ormSession):
@@ -705,8 +761,6 @@ async def _push_existing_rundown_item(  # noqa: PLR0912
         sound = await Sound.from_id(session, item.sound_id)
         if sound is not None:
             sound.last_played = datetime.now()
-    if target == "carts" and item.cart_id:
-        note_carts_push(item.cart_id)
     _log.info("Clock pushed rundown %s %s to %s", item.kind, path, target)
     return True
 
@@ -815,8 +869,6 @@ async def _enqueue_cart_sound(
         _log.error("Cart chain push to %s failed: %s", queue, result.error)
         return False
     sound.last_played = datetime.now()
-    if queue == "carts":
-        note_carts_push(cart.id)
     return True
 
 
@@ -826,23 +878,37 @@ async def _refill_active_cart(
     gateway: PlayoutGateway,
     actions: list[str],
 ) -> None:
+    """Queue the launched cart's next sounds until its round is over."""
+    cart_round = _state.cart_round
+    if cart_round is None:
+        return
     src = source_id(live_data)
     carts_q = queued_count(live_data, "carts_queued", "next_cart")
-    if src not in {"carts", "starting", ""} and carts_q <= 0:
-        _state.active_cart_id = None
+    if src == "carts" or carts_q > 0:
+        cart_round.seen = True
+    elif cart_round.seen:
+        # Nothing of it on air or queued any more: the round was cut short.
+        end_cart_round(cart_round)
         return
-    if _state.active_cart_id is None or carts_q >= TARGET_QUEUE_DEPTH:
+    else:
+        # News from before the launch: its sounds are not in the queue yet.
         return
-    cart = await Cart.from_id(session, _state.active_cart_id, load_sounds=True)
-    if cart is None or cart.mode not in {CartMode.PLAYLIST, CartMode.PLAYLIST_LOOP}:
+    if carts_q >= TARGET_QUEUE_DEPTH:
+        return
+    cart = await Cart.from_id(session, cart_round.cart_id, load_sounds=True)
+    if cart is None or not CartRound.applies_to(cart):
+        end_cart_round(cart_round)
         return
     pushed_any = False
-    while carts_q < TARGET_QUEUE_DEPTH:
-        sound = _next_available_sound(cart)
+    # « Vider les files » or another launch during a push ends this round.
+    while carts_q < TARGET_QUEUE_DEPTH and _state.cart_round is cart_round:
+        sound = cart_round.next_sound(cart)
         if sound is None:
+            end_cart_round(cart_round)
             break
         if not await _enqueue_cart_sound(session, gateway, cart, sound):
             break
+        cart_round.queued.add(sound.id)
         carts_q += 1
         pushed_any = True
         actions.append("cart_chain")
@@ -1114,8 +1180,6 @@ async def _push_cart_to_queue(  # noqa: PLR0913
             queue,
         )
         sound.last_played = datetime.now()
-        if queue == "carts":
-            note_carts_push(cart.id)
         return True
     _log.error("Clock push to %s failed: %s", queue, result.error)
     return False
