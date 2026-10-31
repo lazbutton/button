@@ -33,7 +33,7 @@ Inès a appris BUTT avec une vidéo. Elle a réglé son encodeur une fois, avec 
 
 ## Son parcours
 
-1. **Une fois.** Hélène crée son compte, avec **Peut passer en direct**, puis le choisit dans son émission hebdomadaire, en **Compte du plateau** (**Programmation → Semaine**).
+1. **Une fois.** Hélène crée son compte, avec **Peut passer en direct**. Nadia le choisit dans son émission hebdomadaire, en **Compte du plateau** (**Programmation → Semaine**).
 2. **Une fois.** Dans **Réglages → Mon compte**, Inès voit ses **Créneaux**. Elle crée son **Jeton d'encodeur** et le colle aussitôt dans BUTT, comme mot de passe.
 3. **Chaque jeudi.** Sur la page **Antenne**, **Passer en direct** donne l'adresse, le port, le mount et l'identifiant, chacun à copier, et dit si l'encodeur est branché. Inès lance BUTT à 20 h.
 4. La console affiche **Direct** et le temps écoulé. Son émission hebdomadaire donne son nom au direct : à l'antenne, le titre devient « Les Heures bleues ». **Renommer** lui en donne un autre, le temps de ce direct.

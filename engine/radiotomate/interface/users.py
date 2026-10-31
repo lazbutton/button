@@ -32,6 +32,17 @@ async def users_json():
     return jsonify({"users": [_user_payload(user) for user in users]})
 
 
+@blueprint.get("/users/hosts.json")
+@login_required
+async def hosts_json():
+    # who plans the shows names their host, without reading the accounts
+    deny = forbidden_unless("autodj")
+    if deny:
+        return deny
+    users = await User.all(g.dbsession)
+    return jsonify({"hosts": [user.username for user in users if user.can_stream()]})
+
+
 @blueprint.post("/users.json")
 @login_required
 async def create_user_json():

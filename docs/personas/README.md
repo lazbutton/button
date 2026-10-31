@@ -78,7 +78,6 @@ Quelques besoins sont apparus en écrivant ces pages, qu'aucune fiche de la [feu
 |---|---|---|
 | Essayer son encodeur hors antenne | Inès | Le direct passe devant tout le reste : un encodeur accepté prend l'antenne |
 | Voir dans la console pourquoi un encodeur est refusé | Inès, Hélène | Pendant le créneau, le panneau reste sur « En attente ». La raison n'est écrite que dans `playout.log`, sur la machine |
-| Nommer l'animateur d'une émission sans être admin | Nadia | Le champ « Compte du plateau » ne liste les comptes que pour un admin |
 | Savoir qui prévenir quand l'automate ne répond plus | Jean-Pierre | Le bandeau dit depuis quand l'automate se tait, pas à qui le dire |
 | Rappeler sa date limite à un invité | Lou, Nadia | **À préparer** liste ce qui manque, mais la relance se fait à la main |
 
