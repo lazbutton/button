@@ -74,7 +74,7 @@ export function monitorSources(brand: Brand): MonitorSource[] {
   const publicStatus =
     brand.apps.player?.icecastStatusUrl ||
     "https://radio.lazbutton.xyz/status-json.xsl";
-  const publicNow = "https://radio.lazbutton.xyz/now.json";
+  const publicNow = brand.apps.player?.productionNowUrl || "https://radio.lazbutton.xyz/now.json";
 
   const sources: MonitorSource[] = [
     {

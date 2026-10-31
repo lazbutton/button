@@ -6,7 +6,8 @@ import { NO_ANSWER_MESSAGE, SEND_DEADLINE_MS, UPLOAD_IDLE_MS, withUploadDeadline
 import { closeSession } from "./sessionLogout";
 import { isUnknownRoute, UNKNOWN_ROUTE_MESSAGE } from "./unknownRoute";
 
-export const API_PREFIX = import.meta.env.DEV ? "/api" : "";
+// `?.` : ce module se lit aussi en node, où les parcours importent lib/brand.ts.
+export const API_PREFIX = import.meta.env?.DEV ? "/api" : "";
 
 let csrfToken: string | null = null;
 
@@ -33,10 +34,13 @@ export class ApiUnavailableError extends Error {
 
 export class ApiRequestError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  /** Le champ refusé, quand le moteur le nomme : `{error, code, message, field}`. */
+  field?: string;
+  constructor(status: number, message: string, field?: string) {
     super(message);
     this.name = "ApiRequestError";
     this.status = status;
+    this.field = field;
   }
 }
 
@@ -52,7 +56,7 @@ export class ApiNoAnswerError extends ApiRequestError {
   }
 }
 
-function raiseForStatus(response: Pick<Response, "status">, body?: { error?: string }): never {
+function raiseForStatus(response: Pick<Response, "status">, body?: { error?: string; field?: unknown }): never {
   if (response.status === 401) {
     csrfToken = null;
     apiCacheClear();
@@ -69,7 +73,9 @@ function raiseForStatus(response: Pick<Response, "status">, body?: { error?: str
   if (isPlayoutUnavailable(response.status, detail)) throw new ApiRequestError(502, PLAYOUT_UNAVAILABLE_MESSAGE);
   if (isEngineUnreachable(response.status, detail)) throw new ApiUnavailableError();
   if (isUnknownRoute(response.status, detail)) throw new ApiRequestError(404, UNKNOWN_ROUTE_MESSAGE);
-  if (detail) throw new ApiRequestError(response.status, detail);
+  if (detail) {
+    throw new ApiRequestError(response.status, detail, typeof body?.field === "string" ? body.field : undefined);
+  }
   throw new ApiUnavailableError();
 }
 

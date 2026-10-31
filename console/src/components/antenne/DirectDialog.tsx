@@ -3,19 +3,11 @@ import { X } from "lucide-react";
 import type { RefObject } from "react";
 import { useAccount } from "../../api/AccountContext";
 import { HARBOR_PHASE_LABEL, harborDetail, harborPhase, slotRule, weeklyHost } from "../../api/harborPanel";
+import { harborAddress } from "../../api/station";
 import type { AntenneState, EmissionsResponse, LiveSnapshot } from "../../api/types";
 import { useBrand } from "../../lib/BrandContext";
 import { CopyValue } from "./CopyValue";
 import { StreamToken } from "./StreamToken";
-
-function hostFromBase(base?: string): string {
-  if (!base) return "";
-  try {
-    return new URL(base.includes("://") ? base : `http://${base}`).hostname;
-  } catch {
-    return "";
-  }
-}
 
 /** Se brancher en direct : état de l'encodeur, règle du créneau, réglages à copier dans BUTT ou Mixxx. */
 export function DirectDialog({
@@ -46,7 +38,7 @@ export function DirectDialog({
   });
   const show = live?.emission ?? emissions?.current ?? null;
   const host = weeklyHost(emissions?.emissions, show?.id);
-  const address = hostFromBase(brand.apps.harbor?.url) || "radio.lazbutton.xyz";
+  const harbor = harborAddress(brand);
   const username = account?.username?.trim();
   const mayStream = isAdmin || canBroadcast;
   const accountLine = isAdmin
@@ -88,15 +80,15 @@ export function DirectDialog({
           <dd>Icecast (BUTT, Mixxx…)</dd>
           <dt>Adresse</dt>
           <dd>
-            <CopyValue label="l’adresse" value={address} />
+            <CopyValue label="l’adresse" value={harbor.host} />
           </dd>
           <dt>Port</dt>
           <dd>
-            <CopyValue label="le port" value="6800" />
+            <CopyValue label="le port" value={harbor.port} />
           </dd>
           <dt>Mount</dt>
           <dd>
-            <CopyValue label="le mount" value="/stream" />
+            <CopyValue label="le mount" value={harbor.mount} />
           </dd>
           {mayStream ? (
             <>

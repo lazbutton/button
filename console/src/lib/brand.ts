@@ -1,3 +1,6 @@
+import { API_PREFIX } from "../api/client";
+import { readPublicStation, type StationRead } from "../api/station";
+
 export type BrandApp = {
   url?: string;
   health?: string;
@@ -5,6 +8,8 @@ export type BrandApp = {
   status?: string;
   streamUrl?: string;
   productionStreamUrl?: string;
+  /** Le now.json public, celui de l'auditeur : le réglage `now_url` du moteur. */
+  productionNowUrl?: string;
   nowUrl?: string;
   icecastStatusUrl?: string;
   festivalUrl?: string;
@@ -197,7 +202,7 @@ async function fetchJson(url: string): Promise<Brand | null> {
   }
 }
 
-export async function loadBrand(): Promise<Brand> {
+async function loadBrandFile(): Promise<Brand> {
   const hub = hubUrl();
   if (hub) {
     const remote = await fetchJson(`${hub}/brand.json`);
@@ -206,4 +211,23 @@ export async function loadBrand(): Promise<Brand> {
   const local = await fetchJson("./brand.json");
   if (local?.suite?.name) return local;
   throw new Error("brand.json introuvable");
+}
+
+/**
+ * Les réglages de la station, lus sans session : la console en a besoin avant la
+ * connexion (`readPublicStation`, api/station.ts).
+ */
+export function loadStation(): Promise<StationRead> {
+  return readPublicStation(API_PREFIX);
+}
+
+export type LoadedBrand = { file: Brand } & StationRead;
+
+/**
+ * brand.json et les réglages du moteur, lus ensemble. La marque de la console prend les
+ * réglages du moteur d'abord, puis brand.json en repli : `withStation` (api/station.ts).
+ */
+export async function loadBrand(): Promise<LoadedBrand> {
+  const [file, read] = await Promise.all([loadBrandFile(), loadStation()]);
+  return { file, ...read };
 }

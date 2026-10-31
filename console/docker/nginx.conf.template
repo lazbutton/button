@@ -132,7 +132,7 @@ server {
 
     # Engine routes. A route missing here works in dev (Vite proxy) and gets
     # the console's index.html in prod: src/api/nginxRoutes.test.ts checks it.
-    location ~ ^/(csrf\.json|login\.json|login|logout|live\.json|account\.json|users\.json|users/|carts\.json|carts/|media/bank\.json|autodj/|antenne/|agenda\.json|agenda/|health/|system/) {
+    location ~ ^/(csrf\.json|login\.json|login|logout|live\.json|account\.json|users\.json|users/|carts\.json|carts/|media/bank\.json|autodj/|antenne/|agenda\.json|agenda/|health/|system/|station\.json) {
         include /etc/nginx/security-headers.conf;
         resolver 127.0.0.11 ipv6=off valid=10s;
         set $rt_backend ${AUTOMATE_BACKEND};

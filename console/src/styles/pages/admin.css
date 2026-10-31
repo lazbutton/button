@@ -581,6 +581,78 @@
   min-height: 2.5rem;
 }
 
+/* Réglages → Station : un groupe par sujet, deux colonnes sur un écran large. */
+.station-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  max-width: 48rem;
+}
+
+.station-group {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.station-group + .station-group {
+  margin-top: 0.8rem;
+}
+
+.station-group legend {
+  padding: 0;
+}
+
+.station-group-description {
+  margin: 0 0 0.6rem;
+  color: var(--app-text-muted);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.station-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 0.7rem 1rem;
+}
+
+/* La valeur grisée dit ce que la console garde : elle reste lisible, 4,5:1 au moins. */
+.station-fields .rt-TextFieldInput::placeholder {
+  color: var(--app-text-faint);
+  opacity: 1;
+}
+
+[data-appearance="dark"] .station-fields .rt-TextFieldInput::placeholder {
+  color: var(--app-text-muted);
+}
+
+.station-timezone {
+  color: var(--app-text);
+  font-weight: 650;
+}
+
+/* Toujours là, même vide : une région live annonce ce qu'on y écrit ensuite. */
+.station-done {
+  margin: 0;
+}
+
+.station-actions {
+  margin-top: 0.6rem;
+}
+
+@media (max-width: 760px) {
+  .station-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* Sur téléphone, une cible de 40 px au moins. */
+  .station-fields .rt-TextFieldRoot {
+    min-height: 2.5rem;
+  }
+}
+
 .admin-slots {
   list-style: none;
   margin: 0;

@@ -169,6 +169,22 @@ Le jeton d'encodeur, un par compte :
 
 Un moteur plus ancien que la console n'a pas ces routes : il répond 404, et la console dit de le mettre à jour.
 
+### Station
+
+Les réglages de la station sont dans la table `settings` du moteur, sous des clés `station.*` : `name`, `short`, `tagline`, `locale`, `public_stream_url`, `now_url`, `status_url`, `harbor_host`, `harbor_port`, `harbor_mount` et `source_url`. Chaque valeur est une chaîne, ou `null` quand la station ne l'a pas réglée. `harbor_port` est un entier. Une station les change dans la console, Réglages → Station, sans reconstruire d'image.
+
+- `GET /public/station.json`, sans session → ce qu'un auditeur voit : `{name, short, tagline, locale, public_stream_url, now_url, status_url, source_url}`, jamais le harbor. La réponse porte `Cache-Control: no-store`.
+- `GET /station.json`, admin seulement → les onze réglages, plus `timezone`, le fuseau, en lecture seule. C'est la variable `TZ` des conteneurs ([ADR 0005](decisions/0005-le-fuseau-est-celui-des-conteneurs.md)).
+- `PUT /station.json`, admin seulement → la même forme que `GET`. Seules les clés présentes changent, et une valeur vide ou `null` efface le réglage. Les autres clés sont ignorées. C'est tout ou rien : une valeur refusée répond 400 `validation_error` avec son `field`, et rien n'est écrit. `timezone` est refusé s'il diffère du fuseau en place.
+
+Les règles d'une valeur : un nom de 80 caractères au plus, un nom court de 16 et une accroche de 120, sur une seule ligne ; une langue comme `fr` ou `fr-FR` ; une adresse complète, en `http://` ou `https://`, de 500 caractères au plus, sans identifiant ni mot de passe, puisqu'elle se lit sans session ; un hôte sans `http://`, ni chemin, ni port, ou une adresse IP, IPv6 sans crochets ; un port de 1 à 65535 ; un mount qui commence par `/`, comme `/stream`.
+
+La console lit `GET /public/station.json` avant la connexion, puis pose chaque réglage sur sa marque, `brand.json` : un réglage `null` garde la valeur de `brand.json` (`console/src/api/station.ts`). Elle n'attend la réponse que 3 s. Face à un moteur sans la route (404), elle garde `brand.json` tel quel. Face à un moteur injoignable, en erreur ou trop lent, elle le garde aussi, mais relit les réglages toutes les 15 s, jusqu'à une réponse. Un moteur plus ancien que la console n'a pas `GET /station.json` : l'onglet Station dit alors de mettre à jour le moteur. Ouvert, l'onglet pose aussi sur la console les réglages qu'il vient de lire. La page d'un invité prend aussi le nom réglé : c'est `station` dans `GET /public/guest/{jeton}.json`.
+
+Le harbor, lui, ne se lit qu'avec un compte admin. Le panneau « Passer en direct », ouvert à tout compte, garde donc le direct de `brand.json` : l'hôte de `apps.harbor.url`, le port 6800 et le mount `/stream` (`harborAddress`, dans `console/src/api/station.ts`). L'onglet Station les montre en grisé. La fiche GEN-02 dira comment le panneau suit les réglages.
+
+La politique de sécurité du contenu (CSP) de la console ne suit pas ces réglages. Les origines du flux et de `now.json` y viennent de `CSP_MEDIA_SRC` et `CSP_CONNECT_SRC`, deux variables de l'image de la console. Changer l'adresse du flux dans l'onglet Station ne les change pas : le navigateur signale alors l'écart dans sa console, sans rien bloquer tant que la CSP reste en `Report-Only`. Voir [les en-têtes de sécurité](deploiement.md#les-en-têtes-de-sécurité).
+
 ### Catalogue (service à part du moteur)
 
 Le catalogue demande une session sur toutes ses routes, sauf `/health`, `/health/live` et `/tus-hook`, qu'appelle tusd. La recherche et la pré-écoute, `GET /library/media/{id}` avec requêtes Range, sont ouvertes à tous les rôles. Les routes `POST` demandent un admin. nginx vérifie la session devant `/library/` (`auth_request`) : sans session, il rend `401`, et `500` si le moteur ne répond pas. Le catalogue la vérifie aussi, par `/account.json`, car son port se joint sans nginx : `401 {error}` sans session, `502 {error}` si le moteur ne répond pas. Quand une pré-écoute échoue, la console redemande la même adresse en `HEAD` : l'élément audio ne donne pas le statut, et un `401` y veut dire que la session a expiré.

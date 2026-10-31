@@ -190,7 +190,8 @@ M · dépend de GEN-01 · conflits : les deux `brand.json`, `console/src/lib/`, 
 - **Pourquoi** : le code contient encore les adresses et les noms de la station d'origine. Une autre station les verrait en repli, et ils n'ont rien à faire dans un logiciel publié.
 - **Aujourd'hui** :
   - `console/public/brand.json` et `engine/radiotomate/brand.json` donnent des adresses, un hôte et un compte du réseau de la station ;
-  - des adresses en repli dans `console/src/lib/nowPlaying.ts`, `useMonitor.ts` et `monitorSource.ts`, des noms du réseau local dans `monitorPcm.ts`, une adresse dans `components/antenne/DirectDialog.tsx` ;
+  - des adresses en repli dans `console/src/lib/nowPlaying.ts`, `useMonitor.ts` et `monitorSource.ts`, des noms du réseau local dans `monitorPcm.ts`, l'adresse du direct dans `console/src/api/station.ts` (`harborAddress`), que montre « Passer en direct » ;
+  - ce panneau, ouvert à tout compte, ne lit pas les réglages du harbor de GEN-01 : `GET /station.json` est réservé aux admins. Le faire suivre demande de choisir ce qu'un animateur peut lire ;
   - les mounts `hold.mp3`, `button.mp3` et `studio.wav`, écrits dans `init-radiotomate.sh`, dans la démo de `engine/radiotomate/scheduler_api.py` et dans la console (`monitorPcm.ts`, `monitorSource.ts`, `lib/MonitorContext.tsx`) ;
   - les exemples `grouping:ntf1` dans `pages/CategoriesPage.tsx`, `mock/catalog.ts` et les gabarits `templates/autodj/` ;
   - la commande `radiotomate ntf-grille` (`commands/ntf.py`, `services/ntf_grille.py`) et son test.
