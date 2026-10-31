@@ -193,7 +193,7 @@ async def _push_set(
         await clock_mod._remember_cut_autodj(session, live_data, paris(now))
         clock_mod._state.pending_autodj_skip = True
         clock_mod._state.pending_autodj_skip_minute = paris(now).minute
-    clock_mod._state.active_cart_id = None
+    clock_mod.end_cart_round()
     return None
 
 

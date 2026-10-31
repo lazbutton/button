@@ -16,7 +16,6 @@ from werkzeug.exceptions import BadRequest
 from radiotomate.auth import token_required
 from radiotomate.enums import CartMode
 from radiotomate.models import Cart, Sound
-from radiotomate.models.cart import CARTS_QUEUE
 from radiotomate.scheduler.playout import (
     PlayoutGateway,
     PlayoutResult,
@@ -128,32 +127,30 @@ async def _push_cart_sound(
     """
     The answer for the first sound: the cart is on air once it is queued.
 
-    Only a playlist of the carts queue goes on with the clock
-    (``clock._refill_active_cart``): its second sound goes too. Any other cart
-    plays one sound.
+    A playlist of the carts queue starts a round: its second sound goes too, and
+    the clock queues the rest (``clock.CartRound``). Any other cart plays one sound.
     """
-    chains = (
-        cart.mode in {CartMode.PLAYLIST, CartMode.PLAYLIST_LOOP}
-        and cart.playout_queue() == CARTS_QUEUE
-    )
+    from radiotomate.scheduler.clock import CartRound, note_cart_round
+
+    cart_round = CartRound.start(cart)
     results: list[PlayoutResult] = []
-    for _ in range(2 if chains else 1):
-        sound = cart.next_sound()
+    for _ in range(2 if cart_round else 1):
+        sound = cart_round.next_sound(cart) if cart_round else cart.next_sound()
         if not sound:
-            break
-        if results and cart.mode is CartMode.PLAYLIST and sound.last_played:
-            # One-shot playlist: the order's second sound is one never played.
-            # Starting the playlist again is for the first sound only.
             break
         result = await _enqueue_sound(cart, sound, gateway, current_app)
         results.append(result)
         if not result.ok:
             # next_sound() would give the same sound again, its last_played unset
             break
+        if cart_round:
+            cart_round.queued.add(sound.id)
     if not results:
         _log.warning("Scheduled cart %d:%s has no next sound", cart.id, cart.title)
         return None
     await session.commit()
+    if cart_round and cart_round.queued:
+        note_cart_round(cart_round)
     return results[0]
 
 
@@ -183,10 +180,6 @@ async def _enqueue_sound(
             result.payload,
         )
         sound.last_played = datetime.now()
-        if queue == "carts":
-            from radiotomate.scheduler.clock import note_carts_push
-
-            note_carts_push(cart.id)
         if cart.max_duration:
             arm_max_duration(current_app, cart, sound_id=int(sound.id))
     else:
@@ -316,6 +309,10 @@ async def push_sound_now(cart_id: str, sound_id: str):
 @blueprint.post("/queues/flush")
 @token_required
 async def flush_playout_queues():
+    from radiotomate.scheduler.clock import end_cart_round
+
+    # Before the flush: the clock would queue the launched cart's next sounds.
+    end_cart_round()
     gateway = gesture_gateway_for(current_app.config["PLAYOUT_CLIENT"])
     result = await gateway.flush_queues()
     if not result.ok:

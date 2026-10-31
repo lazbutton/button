@@ -1,9 +1,10 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
+from quart.testing import QuartClient
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session as ormSession
 
@@ -20,11 +21,12 @@ from radiotomate.models.cart import Cart
 from radiotomate.models.sound import Sound
 from radiotomate.scheduler.clock import (
     PARIS,
+    CartRound,
     _choose_item,
     anchor_in_daypart,
     can_push_sequential_jingle,
     next_hard_anchor_minute,
-    note_carts_push,
+    note_cart_round,
     sequential_kind_cycle,
     tick,
     track_would_overflow_anchor,
@@ -653,7 +655,7 @@ async def test_active_cart_playlist_refills_on_tick(  # noqa: PLR0913
             )
         )
     await dbsession.commit()
-    note_carts_push(cart.id)
+    note_cart_round(CartRound(cart.id))
     client = _client()
     actions = await tick(
         dbsession,
@@ -678,3 +680,327 @@ async def test_active_cart_playlist_refills_on_tick(  # noqa: PLR0913
     assert len(carts_posts) == 2
     titles = [call.kwargs["json"]["title"] for call in carts_posts]
     assert titles == ["Un", "Deux"]
+
+
+def _launched(mode: CartMode, *played: int | None) -> list[str]:
+    """
+    The titles « Diffuser maintenant » then the clock queue: sound ``n`` was last
+    played at minute ``played[n - 1]`` past 23:00, or never (None).
+    """
+    cart = Cart(mode=mode)
+    cart.sounds = [
+        Sound(
+            id=rank,
+            title=str(rank),
+            rank=rank,
+            active=True,
+            gain=-1.0,
+            last_played=None if minute is None else datetime(2026, 9, 13, 23, minute),
+        )
+        for rank, minute in enumerate(played, start=1)
+    ]
+    cart_round = CartRound.start(cart)
+    titles = []
+    now = datetime(2026, 9, 14)
+    while (sound := cart_round.next_sound(cart)) is not None:
+        now += timedelta(minutes=1)
+        sound.last_played = now
+        cart_round.queued.add(sound.id)
+        titles.append(sound.title)
+    return titles
+
+
+def test_cart_round_plays_each_sound_once_at_most():
+    # « Une fois » : the sounds never played, in order…
+    assert _launched(CartMode.PLAYLIST, None, None, None) == ["1", "2", "3"]
+    assert _launched(CartMode.PLAYLIST, 1, None, None) == ["2", "3"]
+    assert _launched(CartMode.PLAYLIST, 1, 2, 3, None) == ["4"]
+    # …or, all played, the whole list once.
+    assert _launched(CartMode.PLAYLIST, 1, 2, 3) == ["1", "2", "3"]
+    # « Boucle » : the whole list once, from the next sound.
+    assert _launched(CartMode.PLAYLIST_LOOP, 1, 2, None) == ["3", "1", "2"]
+    # A single sound goes once, not twice.
+    assert _launched(CartMode.PLAYLIST, None) == ["1"]
+    assert _launched(CartMode.PLAYLIST_LOOP, 1) == ["1"]
+
+
+def test_cart_round_only_for_playlists_of_the_carts_queue():
+    assert CartRound.start(Cart(mode=CartMode.RANDOM)) is None
+    jingles = Cart(mode=CartMode.PLAYLIST_LOOP, schedule_mode=ScheduleMode.JINGLES)
+    assert CartRound.start(jingles) is None
+
+
+_PARTS = ("Un", "Deux", "Trois", "Quatre")
+
+
+async def _prog_cart(
+    dbsession: ormSession,
+    raw_app,
+    mode: CartMode,
+    played: tuple[int | None, ...] = (None, None, None),
+) -> tuple[Cart, list[Sound]]:
+    """
+    A programme in parts, one per value of ``played``: part ``n`` was last played
+    at minute ``played[n - 1]`` past 23:00 the day before, or never (None).
+    """
+    cartpath = raw_app.config["DATA_ROOT"] / "gender-minorities"
+    cart = Cart(
+        title="Prog Gender Minorities",
+        path=cartpath,
+        mode=mode,
+        schedule_mode=ScheduleMode.CLOCK,
+    )
+    dbsession.add(cart)
+    await dbsession.flush()
+    sounds = [
+        Sound(
+            cart_id=cart.id,
+            path=cartpath / f"{rank}.mp3",
+            duration=10,
+            title=_PARTS[rank - 1],
+            rank=rank,
+            gain=-1.0,
+            peak=-0.5,
+            last_played=None if minute is None else datetime(2026, 9, 13, 23, minute),
+        )
+        for rank, minute in enumerate(played, start=1)
+    ]
+    dbsession.add_all(sounds)
+    await dbsession.commit()
+    return cart, sounds
+
+
+def _playout_ok():
+    """The playout behind the scheduler's routes: every order succeeds."""
+    return patch(
+        "httpx.AsyncClient.post",
+        return_value=httpx.Response(200, json={"OK": 1}),
+    )
+
+
+def _carts_on_air() -> dict:
+    """A cart sound on air, nothing left in the carts queue: time to refill."""
+    return _live(
+        NIGHT,
+        source="carts",
+        remaining="180",
+        next_jingle={"rid": 1},
+        next_autodj={"rid": 1},
+        next_cart={"rid": -1},
+        jingles_queued=2,
+        autodj_queued=3,
+        carts_queued=0,
+    )
+
+
+def _carts_titles(client: AsyncMock) -> list[str]:
+    return [
+        call.kwargs["json"].get("title")
+        for call in client.post.call_args_list
+        if call.args[0] == "/queue/carts"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("mode", "played", "launched", "chained"),
+    [
+        (CartMode.PLAYLIST, (None, None, None), ["Un", "Deux"], ["Trois"]),
+        (CartMode.PLAYLIST, (1, None, None), ["Deux", "Trois"], []),
+        (CartMode.PLAYLIST, (1, 2, 3), ["Un", "Deux"], ["Trois"]),
+        (CartMode.PLAYLIST_LOOP, (1, 2, None), ["Trois", "Un"], ["Deux"]),
+    ],
+    ids=["une-fois", "une-fois-entamee", "une-fois-deja-passee", "boucle"],
+)
+async def test_launched_cart_plays_one_round(  # noqa: PLR0913
+    client: QuartClient,
+    auth: dict,
+    dbsession: ormSession,
+    raw_app,
+    jingles_cart: Cart,
+    beets_integration: BeetsIntegration,
+    mode: CartMode,
+    played: tuple[int | None, ...],
+    launched: list[str],
+    chained: list[str],
+):
+    """« Diffuser maintenant » plays the cart once, then the clock has the antenna."""
+    cart, _ = await _prog_cart(dbsession, raw_app, mode, played)
+    with _playout_ok() as playout:
+        result = await client.post(f"/schedule/{cart.id}/now", headers=auth)
+    assert result.status_code == 200, await result.get_data(as_text=True)
+    assert [call.kwargs["json"]["title"] for call in playout.call_args_list] == launched
+    dbsession.expire_all()
+    clock_client = _client()
+    for _ in range(3):
+        await tick(dbsession, _carts_on_air(), clock_client, beets_integration)
+    assert _carts_titles(clock_client) == chained
+
+
+@pytest.mark.parametrize(
+    "mode", [CartMode.PLAYLIST, CartMode.PLAYLIST_LOOP], ids=["une-fois", "boucle"]
+)
+async def test_anchor_plays_one_sound_of_a_playlist(
+    dbsession: ormSession,
+    jingles_cart: Cart,
+    pubs_cart: Cart,
+    beets_integration: BeetsIntegration,
+    mode: CartMode,
+):
+    """A pub break on a playlist cart: one spot. The clock went on with the cart."""
+    pubs_cart.mode = mode
+    for rank, title in enumerate(("Spot deux", "Spot trois"), start=2):
+        dbsession.add(
+            Sound(
+                cart_id=pubs_cart.id,
+                path=pubs_cart.path / f"spot-{rank}.mp3",
+                duration=20,
+                title=title,
+                rank=rank,
+                gain=-1.0,
+                peak=-0.5,
+            )
+        )
+    await dbsession.commit()
+    client = _client()
+    live = _live(
+        JOURNEE_20,
+        source="autodj",
+        remaining="180",
+        next_jingle={"rid": 1},
+        next_autodj={"rid": 1},
+        jingles_queued=2,
+        autodj_queued=3,
+    )
+    assert "anchor:20" in await tick(dbsession, live, client, beets_integration)
+    on_air = {**live, "source": "carts", "next_cart": {"rid": -1}, "carts_queued": 0}
+    for _ in range(3):
+        actions = await tick(dbsession, on_air, client, beets_integration)
+        assert "cart_chain" not in actions
+    assert _carts_titles(client) == ["Spot test"]
+
+
+async def test_anchor_leaves_the_launched_cart_its_round(  # noqa: PLR0913
+    client: QuartClient,
+    auth: dict,
+    dbsession: ormSession,
+    raw_app,
+    jingles_cart: Cart,
+    pubs_cart: Cart,
+    beets_integration: BeetsIntegration,
+):
+    """The pub goes after the sounds already queued, then the cart ends its round."""
+    cart, _ = await _prog_cart(dbsession, raw_app, CartMode.PLAYLIST, (None,) * 4)
+    with _playout_ok():
+        result = await client.post(f"/schedule/{cart.id}/now", headers=auth)
+    assert result.status_code == 200, await result.get_data(as_text=True)
+    dbsession.expire_all()
+    clock_client = _client()
+    queued = _live(
+        JOURNEE_20,
+        source="carts",
+        remaining="180",
+        next_jingle={"rid": 1},
+        next_autodj={"rid": 1},
+        next_cart={"rid": 1},
+        jingles_queued=2,
+        autodj_queued=3,
+        carts_queued=2,
+    )
+    assert "anchor:20" in await tick(dbsession, queued, clock_client, beets_integration)
+    on_air = {**queued, "next_cart": {"rid": -1}, "carts_queued": 0}
+    for _ in range(3):
+        await tick(dbsession, on_air, clock_client, beets_integration)
+    assert _carts_titles(clock_client) == ["Spot test", "Trois", "Quatre"]
+
+
+async def test_flush_ends_the_launched_round(  # noqa: PLR0913
+    client: QuartClient,
+    auth: dict,
+    dbsession: ormSession,
+    raw_app,
+    jingles_cart: Cart,
+    beets_integration: BeetsIntegration,
+):
+    """« Vider les files » : the sound on air ends, then the clock has the antenna."""
+    cart, _ = await _prog_cart(dbsession, raw_app, CartMode.PLAYLIST_LOOP)
+    with _playout_ok():
+        launch = await client.post(f"/schedule/{cart.id}/now", headers=auth)
+        flush = await client.post("/queues/flush", headers=auth)
+    assert launch.status_code == 200, await launch.get_data(as_text=True)
+    assert flush.status_code == 200, await flush.get_data(as_text=True)
+    dbsession.expire_all()
+    clock_client = _client()
+    actions = await tick(dbsession, _carts_on_air(), clock_client, beets_integration)
+    assert "cart_chain" not in actions
+    assert _carts_titles(clock_client) == []
+
+
+async def test_sound_fired_by_hand_plays_alone(  # noqa: PLR0913
+    client: QuartClient,
+    auth: dict,
+    dbsession: ormSession,
+    raw_app,
+    jingles_cart: Cart,
+    beets_integration: BeetsIntegration,
+):
+    """« Diffuser maintenant » on one sound: that sound, not the rest of its cart."""
+    cart, sounds = await _prog_cart(dbsession, raw_app, CartMode.PLAYLIST_LOOP)
+    with _playout_ok() as playout:
+        result = await client.post(
+            f"/schedule/{cart.id}/sounds/{sounds[1].id}/now", headers=auth
+        )
+    assert result.status_code == 200, await result.get_data(as_text=True)
+    assert [call.kwargs["json"]["title"] for call in playout.call_args_list] == ["Deux"]
+    dbsession.expire_all()
+    clock_client = _client()
+    actions = await tick(dbsession, _carts_on_air(), clock_client, beets_integration)
+    assert "cart_chain" not in actions
+    assert _carts_titles(clock_client) == []
+
+
+async def test_news_from_before_the_launch_leave_the_round_going(  # noqa: PLR0913
+    client: QuartClient,
+    auth: dict,
+    dbsession: ormSession,
+    raw_app,
+    jingles_cart: Cart,
+    beets_integration: BeetsIntegration,
+):
+    """A tick that left with the antenna of before the launch: no carts yet."""
+    cart, _ = await _prog_cart(dbsession, raw_app, CartMode.PLAYLIST)
+    with _playout_ok():
+        result = await client.post(f"/schedule/{cart.id}/now", headers=auth)
+    assert result.status_code == 200, await result.get_data(as_text=True)
+    dbsession.expire_all()
+    clock_client = _client()
+    before = {**_carts_on_air(), "source": "autodj"}
+    await tick(dbsession, before, clock_client, beets_integration)
+    for _ in range(2):
+        await tick(dbsession, _carts_on_air(), clock_client, beets_integration)
+    assert _carts_titles(clock_client) == ["Trois"]
+
+
+async def test_round_cut_short_does_not_come_back(  # noqa: PLR0913
+    client: QuartClient,
+    auth: dict,
+    dbsession: ormSession,
+    raw_app,
+    jingles_cart: Cart,
+    beets_integration: BeetsIntegration,
+):
+    """The playout lost the round, restarted say: the clock does not bring it back."""
+    cart, _ = await _prog_cart(dbsession, raw_app, CartMode.PLAYLIST, (None,) * 4)
+    with _playout_ok():
+        result = await client.post(f"/schedule/{cart.id}/now", headers=auth)
+    assert result.status_code == 200, await result.get_data(as_text=True)
+    dbsession.expire_all()
+    clock_client = _client()
+    on_air = _carts_on_air()
+    await tick(
+        dbsession, {**on_air, "carts_queued": 2}, clock_client, beets_integration
+    )
+    await tick(
+        dbsession, {**on_air, "source": "autodj"}, clock_client, beets_integration
+    )
+    await tick(dbsession, on_air, clock_client, beets_integration)
+    assert _carts_titles(clock_client) == []

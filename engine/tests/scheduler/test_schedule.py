@@ -427,11 +427,12 @@ async def test_schedule_playlist_played_through_starts_again(  # noqa: PLR0913
         "httpx.AsyncClient.post",
         return_value=httpx.Response(200, json={"OK": 1}),
     ) as mock_client:
-        for _ in range(3):
+        for _ in range(2):
             result = await client.post(f"/schedule/{fake_cart.id}/now", headers=auth)
             assert result.status_code == 200, (await result.data).decode()
         titles = [call.kwargs["json"]["title"] for call in mock_client.call_args_list]
-    # The last sound never played goes alone, then the playlist starts again.
+    # The last sound never played goes alone. Played through, the whole list goes
+    # again, once.
     assert titles == [fake_sound2.title, fake_sound.title, fake_sound2.title]
 
 
