@@ -141,14 +141,11 @@ Sinon, sur un autre domaine ou sur un port publié comme `18000` ou `6820`, déc
 | `CSP_MEDIA_SRC` | le flux et Icecast : l'écoute, le moniteur, le statut | `https://flux.radio.example` |
 | `CSP_CONNECT_SRC` | `now.json`, et toute autre adresse que la console lit | `https://titre.radio.example` |
 
-`compose.yml` ne les transmet pas encore à la console. Un `compose.override.yml`, à côté de lui, s'en charge :
+Les poser dans `.env` :
 
-```yaml
-services:
-  console:
-    environment:
-      CSP_MEDIA_SRC: https://flux.radio.example
-      CSP_CONNECT_SRC: https://titre.radio.example
+```bash
+CSP_MEDIA_SRC=https://flux.radio.example
+CSP_CONNECT_SRC=https://titre.radio.example
 ```
 
 Puis `docker compose up -d console`. Une valeur qui contient autre chose que des adresses, comme un guillemet ou un point-virgule, empêche la console de démarrer : `docker compose logs console` dit pourquoi. Pour vérifier les deux variables, ouvrir la console, lancer l'écoute, puis chercher des lignes `[Report Only]` dans la console du navigateur.

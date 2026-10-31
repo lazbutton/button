@@ -45,6 +45,9 @@ services:
     environment:
       BUTTON_BACKEND: ${BUTTON_BACKEND:-http://radiotomate-playout:6811}
       TUSD_UPSTREAM: http://tusd:8080
+      # CSP : le flux et now.json, quand ils sont sur une autre origine.
+      CSP_MEDIA_SRC: ${CSP_MEDIA_SRC:-}
+      CSP_CONNECT_SRC: ${CSP_CONNECT_SRC:-}
     ports:
       - "${CONSOLE_PORT:-30126}:80"
     depends_on:
