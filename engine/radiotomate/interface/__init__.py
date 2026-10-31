@@ -10,8 +10,13 @@ from multipart import (
     PushMultipartParser,
     parse_options_header,
 )
+from werkzeug.exceptions import BadRequest
 
 _allowed_chars = ("-", ".", "_")
+_unreadable_upload = (
+    "Un fichier n'a pas de nom lisible : son nom finit peut-être par « \\ ». "
+    "Renomme-le, puis envoie-le à nouveau."
+)
 
 
 def safe_path(basedir: Path, filename: str, prefix: str = "") -> Path:
@@ -58,6 +63,7 @@ async def stream_form(
     form_fields = MultiDict()
     current_form_field = None
     current_file = None
+    written_paths = []
     with ExitStack() as stack:
         parser = PushMultipartParser(boundary, strict=True)
         stack.enter_context(parser)
@@ -69,6 +75,7 @@ async def stream_form(
                         target_path = safe_path(base_path, result.filename)
                         current_file = target_path.open("wb", buffering=1024 * 1024)
                         stack.enter_context(current_file)
+                        written_paths.append(target_path)
                         form_fields[result.name] = {
                             "filename": result.filename,
                             "content_type": result.content_type,
@@ -78,7 +85,15 @@ async def stream_form(
                         current_form_field = result.name
                 elif result:  # Result is a non-empty bytearray
                     if current_form_field:
-                        form_fields[current_form_field] = result.decode()
+                        try:
+                            form_fields[current_form_field] = result.decode()
+                        except UnicodeDecodeError as exc:
+                            # Not text: most likely a file whose name multipart
+                            # cannot read, such as `son\` since multipart 1.3.1.
+                            # Refuse the whole form, and keep none of its files.
+                            for path in written_paths:
+                                path.unlink(missing_ok=True)
+                            raise BadRequest(_unreadable_upload) from exc
                     else:
                         current_file.write(result)
                 else:  # end of segment
