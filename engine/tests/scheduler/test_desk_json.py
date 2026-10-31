@@ -15,6 +15,7 @@ from radiotomate.scheduler.execution import (
     attach_desk_pins,
     delete_desk_item,
     insert_desk_item,
+    item_to_payload,
     reorder_desk_items,
     replace_forecast_items,
 )
@@ -355,6 +356,74 @@ async def test_insert_after_an_overrun_starts_now(dbsession: ormSession):
     before = datetime.now()
     line = await insert_desk_item(dbsession, {"path": "/media/10-rotation/next.mp3"})
     assert line.planned_at >= before
+
+
+async def _shown_clock_ids(dbsession: ormSession) -> list[str]:
+    """Clock lines of the antenna file, once the desk lines have hidden theirs."""
+    rows = await dbsession.scalars(
+        select(RundownItem)
+        .where(RundownItem.origin != DESK_ORIGIN)
+        .order_by(RundownItem.planned_at)
+    )
+    forecast = {"items": [item_to_payload(row) for row in rows]}
+    payload = await attach_desk_pins(dbsession, forecast)
+    return [item["id"] for item in payload["items"] if item["origin"] != DESK_ORIGIN]
+
+
+@pytest.mark.parametrize("removal", ["suppress_at", "replace_at"])
+async def test_reorder_onto_a_removed_line_time_keeps_it_shown(
+    dbsession: ormSession, removal: str
+):
+    """B is removed from A B C D, or replaced by a desk line. Reordered as A D C,
+    D takes the start of B, to the microsecond: the removal hides B only."""
+    await _reorder_version(dbsession, "pv-reorder-hidden")
+    start = datetime.now() + timedelta(minutes=5)
+    dbsession.add_all(
+        [
+            _reorder_row(
+                item_id,
+                "pv-reorder-hidden",
+                start + timedelta(seconds=30 * index),
+                30,
+                origin="clock",
+            )
+            for index, item_id in enumerate(["ri-a", "ri-b", "ri-c", "ri-d"])
+        ]
+    )
+    await dbsession.commit()
+    removed_at = (start + timedelta(seconds=30)).isoformat()
+    if removal == "suppress_at":
+        await insert_desk_item(dbsession, {"suppress_at": removed_at})
+    else:
+        await insert_desk_item(
+            dbsession,
+            {"path": "/media/10-rotation/ri-b.mp3", "replace_at": removed_at},
+        )
+    assert await _shown_clock_ids(dbsession) == ["ri-a", "ri-c", "ri-d"]
+
+    await reorder_desk_items(dbsession, ["ri-a", "ri-d", "ri-c"])
+    moved = await dbsession.get(RundownItem, "ri-d")
+    assert moved.planned_at.isoformat() == removed_at
+    assert await _shown_clock_ids(dbsession) == ["ri-a", "ri-d", "ri-c"]
+
+
+async def test_removal_without_ids_still_hides_by_time(dbsession: ormSession):
+    """A removal posted by an older engine knows no ids: it hides by time."""
+    await _reorder_version(dbsession, "pv-hidden-older")
+    start = datetime.now() + timedelta(minutes=5)
+    removed = start + timedelta(seconds=30)
+    pin = _reorder_row("ri-pin", "pv-hidden-older", removed, 0)
+    pin.path = None
+    pin.details = {"suppress_at": removed.isoformat()}
+    dbsession.add_all(
+        [
+            _reorder_row("ri-kept", "pv-hidden-older", start, 30, origin="clock"),
+            _reorder_row("ri-removed", "pv-hidden-older", removed, 30, origin="clock"),
+            pin,
+        ]
+    )
+    await dbsession.commit()
+    assert await _shown_clock_ids(dbsession) == ["ri-kept"]
 
 
 async def test_desk_insert_survives_preview_refresh(  # noqa: PLR0913

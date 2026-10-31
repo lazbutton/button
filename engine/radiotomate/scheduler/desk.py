@@ -81,11 +81,16 @@ def merge_desk_into_items(
     forecast: list[dict],
     desk_payloads: list[dict],
 ) -> list[dict]:
-    suppress_at = {
-        str(row.get("suppress_at") or row.get("hides_at") or "")
-        for row in desk_payloads
-        if row.get("suppress_at") or row.get("hides_at")
-    }
+    # A removal hides the clock rows it found at its time, by id: a row that a
+    # reorder later puts at that time stays shown. Without ids, by time.
+    hidden_ids: set[str] = set()
+    hidden_at: set[str] = set()
+    for row in desk_payloads:
+        at = row.get("suppress_at") or row.get("hides_at")
+        if row.get("hides_ids"):
+            hidden_ids.update(row["hides_ids"])
+        elif at:
+            hidden_at.add(str(at))
     visible_desk = [
         row for row in desk_payloads if row.get("path") or not row.get("suppress_at")
     ]
@@ -100,7 +105,8 @@ def merge_desk_into_items(
             key = stamped.get("path") or stamped.get("resource") or ""
             stamped["id"] = f"clock|{stamped.get('at')}|{key}"
         at = str(stamped.get("at") or "")
-        if at in suppress_at and stamped.get("when") != WhenMode.ANCHORED.value:
+        hidden = stamped["id"] in hidden_ids or at in hidden_at
+        if hidden and stamped.get("when") != WhenMode.ANCHORED.value:
             continue
         kept.append(stamped)
 
@@ -146,6 +152,8 @@ async def attach_desk_pins(session: ormSession, payload: dict) -> dict:
         details = dict(row.details or {})
         if details.get("suppress_at"):
             item["suppress_at"] = details["suppress_at"]
+        if details.get("hides_ids"):
+            item["hides_ids"] = details["hides_ids"]
         desk_payloads.append(item)
     items = merge_desk_into_items(list(payload.get("items") or []), desk_payloads)
     merged = dict(payload)
@@ -202,6 +210,19 @@ async def _planned_at_for_insert(
     return floor
 
 
+async def _clock_row_ids_at(session: ormSession, at: datetime) -> list[str]:
+    """Ids of the clock rows planned at that very time: those a removal hides."""
+    return list(
+        await session.scalars(
+            select(RundownItem.id).where(
+                RundownItem.planned_at == at,
+                RundownItem.origin != DESK_ORIGIN,
+                RundownItem.when_mode != WhenMode.ANCHORED.value,
+            )
+        )
+    )
+
+
 class DeskPin(NamedTuple):
     path: str
     kind: str
@@ -241,19 +262,21 @@ async def insert_desk_item(session: ormSession, data: dict) -> RundownItem:
     path, kind, artist, title, duration = read_desk_pin(data)
     sound = await Sound.from_media_path(session, path)
     version = await ensure_programming_version(session)
+    replace_at = str(data.get("replace_at") or "").strip() or None
     planned_at = await _planned_at_for_insert(
         session,
         after_id=str(data.get("after_id") or "").strip() or None,
         before_id=str(data.get("before_id") or "").strip() or None,
-        replace_at=str(data.get("replace_at") or "").strip() or None,
+        replace_at=replace_at,
     )
     details = {
         "artist": artist,
         "title": title or _desk_resource(artist, title),
         "cart": str(data.get("cart") or ""),
     }
-    if data.get("replace_at"):
-        details["hides_at"] = str(data.get("replace_at"))
+    if replace_at:
+        details["hides_at"] = replace_at
+        details["hides_ids"] = await _clock_row_ids_at(session, planned_at)
     item = RundownItem(
         id=str(uuid4()),
         programming_version_id=version.id,
@@ -278,20 +301,23 @@ async def insert_desk_item(session: ormSession, data: dict) -> RundownItem:
 
 
 async def _insert_suppress(session: ormSession, at: str) -> RundownItem:
-    _parse_iso(at)
+    planned_at = _parse_iso(at)
     version = await ensure_programming_version(session)
     item = RundownItem(
         id=str(uuid4()),
         programming_version_id=version.id,
         sequence=await _next_sequence(session),
-        planned_at=_parse_iso(at),
+        planned_at=planned_at,
         duration=0,
         kind=PositionKind.SON.value,
         when_mode=WhenMode.SEQUENTIAL.value,
         queue="carts",
         resource="",
         path=None,
-        details={"suppress_at": at},
+        details={
+            "suppress_at": at,
+            "hides_ids": await _clock_row_ids_at(session, planned_at),
+        },
         status=RundownStatus.PLANNED.value,
         origin=DESK_ORIGIN,
     )
