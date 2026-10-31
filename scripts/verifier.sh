@@ -2,7 +2,8 @@
 # Les vérifications de la CI, sur cette machine.
 #   ./scripts/verifier.sh                  tout ce qui peut tourner ici
 #   ./scripts/verifier.sh moteur console   seulement ces parties
-# Parties : donnees, moteur, liquidsoap, console, services, nginx, deploy, e2e.
+# Parties : donnees, licences, moteur, liquidsoap, console, services, nginx,
+# deploy, e2e.
 # Sans argument, une partie qui manque d'un outil (Docker…) est sautée.
 # Nommée, elle échoue.
 set -euo pipefail
@@ -11,7 +12,7 @@ root=$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd)
 # Homebrew (macOS) : Poetry, Node et Docker y sont souvent installés.
 [ -d /opt/homebrew/bin ] && export PATH="/opt/homebrew/bin:$PATH"
 
-all=(donnees moteur liquidsoap console services nginx deploy e2e)
+all=(donnees licences moteur liquidsoap console services nginx deploy e2e)
 # Code de sortie d'une partie à qui il manque un outil.
 absent=75
 
@@ -130,6 +131,33 @@ check_donnees() {
   done
   [ $((trouvees + perimees)) -eq 0 ] || return 1
   echo "Rien d'une station dans les fichiers du dépôt. Exceptions : $((${#exceptions_donnees[@]} / 3))."
+}
+
+check_licences() {
+  python3 -c 'import tomllib' 2>/dev/null ||
+    missing "Python 3.11 ou plus absent : installer Python 3.13, celui de la CI." || return
+  cd "$root"
+  # Comme licences.yml. Le moteur et le catalogue se lisent dans leur
+  # environnement : s'il manque, le reste est contrôlé, puis la partie sautée.
+  python3 scripts/test_licences.py
+  python3 scripts/licences.py npm console/package-lock.json engine/sass/package-lock.json
+  local manque=0
+  if command -v poetry >/dev/null 2>&1; then
+    (cd engine && poetry run python ../scripts/licences.py poetry poetry.lock)
+  else
+    echo "Poetry absent, moteur non contrôlé : https://python-poetry.org/docs/#installation" >&2
+    manque=1
+  fi
+  local catalogue=services/catalog/.venv/bin/python
+  if "$catalogue" -c 'import mutagen, watchdog' 2>/dev/null; then
+    "$catalogue" scripts/licences.py pip
+  else
+    echo "Dépendances du catalogue absentes, catalogue non contrôlé. Une fois :" >&2
+    echo "  python3 -m venv services/catalog/.venv" >&2
+    echo "  services/catalog/.venv/bin/pip install -r services/catalog/requirements.txt" >&2
+    manque=1
+  fi
+  [ "$manque" -eq 0 ] || return "$absent"
 }
 
 check_moteur() {
@@ -251,7 +279,7 @@ skipped=""
 failed=""
 for part in "${parts[@]}"; do
   case $part in
-    donnees | moteur | liquidsoap | console | services | nginx | deploy | e2e) ;;
+    donnees | licences | moteur | liquidsoap | console | services | nginx | deploy | e2e) ;;
     *)
       echo "Partie inconnue : $part. Parties : ${all[*]}." >&2
       exit 64

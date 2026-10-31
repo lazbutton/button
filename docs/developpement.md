@@ -48,6 +48,7 @@ Le script lance les mêmes commandes que la CI ([`.github/workflows/`](../.githu
 | Partie | Ce qui tourne | Il faut |
 |---|---|---|
 | `donnees` | `git grep` des adresses IP privées, des noms en `.ts.net`, des clés privées et des jetons, puis des motifs de la station ([plus bas](#aucune-donnée-de-station)) | git |
+| `licences` | les tests de `scripts/licences.py`, puis les licences des paquets npm, du moteur et du catalogue ([plus bas](#les-licences)) | Python 3.11 ou plus et Poetry, `poetry install` fait, `services/catalog/.venv` |
 | `moteur` | `ruff check`, `ruff format --check`, puis `pytest` avec `TZ=Europe/Paris`, sans `tests/interface` ni `tests/e2e` | Poetry |
 | `liquidsoap` | `liquidsoap --check engine/playout/radiotomate.liq`, avec un `RTCONFIG` minimal | Docker |
 | `console` | `npm test`, puis `tsc` et `vite build` | Node 22, `npm install` fait |
@@ -147,15 +148,9 @@ Dependabot propose chaque mois les mises à jour ([`.github/dependabot.yml`](../
 
 Chaque dépendance npm ou Python livrée avec BUTTON, dans le build de la console ou dans une image, a une licence compatible avec l'AGPL. Les licences acceptées, et pourquoi, sont dans [`scripts/licences.toml`](../scripts/licences.toml). La CI les contrôle sur chaque pull request qui touche un fichier de dépendances ([`licences.yml`](../.github/workflows/licences.yml)). Les outils de développement ne sont pas livrés : ils ne sont pas contrôlés.
 
-`scripts/verifier.sh` ne le lance pas encore. Le même contrôle, sur cette machine :
+Sur cette machine, `./scripts/verifier.sh licences` lance le même contrôle, après les tests de `scripts/licences.py`. Sans Poetry, ou sans l'environnement du catalogue ([plus haut](#vérifier-avant-de-proposer-un-changement)), la partie contrôle le reste, puis se dit sautée ; nommée, elle échoue.
 
-```bash
-python3 scripts/licences.py npm console/package-lock.json engine/sass/package-lock.json
-(cd engine && poetry run python ../scripts/licences.py poetry poetry.lock)
-services/catalog/.venv/bin/python scripts/licences.py pip
-```
-
-Il échoue sur une licence refusée, et sur une licence inconnue ou qui ne se lit pas. Une licence inconnue se vérifie, puis entre dans `licences.toml`, acceptée ou refusée, avec sa raison. Une exception ajoutée par `WITH` aussi : seules celles qui donnent des droits en plus sont acceptées. Un paquet dont les métadonnées ne disent pas la licence entre dans `[paquets]`, à sa version, une fois sa licence vérifiée à la main.
+Le contrôle échoue sur une licence refusée, et sur une licence inconnue ou qui ne se lit pas. Une licence inconnue se vérifie, puis entre dans `licences.toml`, acceptée ou refusée, avec sa raison. Une exception ajoutée par `WITH` aussi : seules celles qui donnent des droits en plus sont acceptées. Un paquet dont les métadonnées ne disent pas la licence entre dans `[paquets]`, à sa version, une fois sa licence vérifiée à la main.
 
 Le moteur se contrôle dans son environnement Poetry. Un paquet que `poetry.lock` réserve à une autre plateforme, ou à une autre version de Python, n'y est pas installé : le contrôle le saute, et le dit. La CI, elle, prend le Python de l'image, 3.13.
 
