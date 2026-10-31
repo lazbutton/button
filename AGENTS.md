@@ -13,7 +13,7 @@ BUTTON est un automate de diffusion pour radios associatives, sous licence AGPL-
 | `services/` | Catalogue, titre en cours, Icecast | [services/AGENTS.md](services/AGENTS.md) |
 | `deploy/` | Compose de la station, scripts de l'hôte, dossier partagé | [deploy/AGENTS.md](deploy/AGENTS.md) |
 | `docs/` | La documentation, en français | [docs/README.md](docs/README.md) |
-| `scripts/` | Banc local (`dev.sh`), parcours dans un navigateur (`e2e.sh`) et vérifications (`verifier.sh`) | ce fichier |
+| `scripts/` | Banc local (`dev.sh`), parcours dans un navigateur (`e2e.sh`), vérifications (`verifier.sh`) et licences des dépendances (`licences.py`) | ce fichier |
 
 Pour comprendre le tout : [docs/architecture.md](docs/architecture.md). Pour le vocabulaire : [docs/glossaire.md](docs/glossaire.md).
 
@@ -38,7 +38,7 @@ Pour comprendre le tout : [docs/architecture.md](docs/architecture.md). Pour le 
 - [ ] Le schéma de la base change : une nouvelle migration, avec son test dans `engine/tests/test_migrations.py`.
 - [ ] Une ligne dans [CHANGELOG.md](CHANGELOG.md), sous « Non publié ».
 - [ ] Les docs touchées par le changement sont à jour.
-- [ ] Une nouvelle dépendance a une licence compatible avec l'AGPL, vérifiée avant l'ajout. Une police, une icône ou un son embarqués sont listés dans [AUTHORS.md](AUTHORS.md).
+- [ ] Une nouvelle dépendance a une licence compatible avec l'AGPL, vérifiée avant l'ajout : la liste des licences acceptées est dans [scripts/licences.toml](scripts/licences.toml), et la CI la contrôle. Une police, une icône ou un son embarqués sont listés dans [AUTHORS.md](AUTHORS.md).
 - [ ] Une fonction risquée a un interrupteur : [ADR 0009](docs/decisions/0009-interrupteurs.md).
 
 ## Les règles fixes

@@ -1,0 +1,116 @@
+# Les licences acceptées pour une dépendance de BUTTON, et pourquoi.
+#
+# BUTTON est sous AGPL-3.0-or-later. Ce qu'il livre réunit son code et celui
+# de ses dépendances : le build de la console, les images du moteur et du
+# catalogue. Chaque dépendance livrée doit donc avoir une licence qui permet
+# de distribuer l'ensemble sous l'AGPL. Les outils de développement, qui ne
+# sont pas livrés, ne sont pas contrôlés. Les paquets Debian des images non
+# plus : ce sont des programmes à part, comme ffmpeg, que BUTTON appelle.
+#
+# scripts/licences.py lit ce fichier ; la CI le lance (licences.yml). Une
+# licence qui n'est dans aucune liste fait échouer le contrôle. On la vérifie,
+# puis on l'ajoute ici avec sa raison. Un paquet dont les métadonnées ne
+# disent pas la licence va dans [paquets], une fois sa licence vérifiée.
+#
+# Les identifiants sont ceux de SPDX : https://spdx.org/licenses/
+
+[[acceptees]]
+pourquoi = "Permissives : elles demandent seulement de garder la notice de copyright. Le code entre tel quel dans une œuvre sous AGPL."
+licences = [
+  "0BSD",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "CC0-1.0",
+  "ISC",
+  "MIT",
+  "MIT-0",
+  "PSF-2.0",
+  "Python-2.0",
+  "Unlicense",
+  "WTFPL",
+  "Zlib",
+]
+
+[[acceptees]]
+pourquoi = "Apache 2.0 : permissive, avec une clause de brevets que la GPL v3 et l'AGPL v3 acceptent. La GPL v2 seule, elle, ne l'accepte pas."
+licences = ["Apache-2.0"]
+
+[[acceptees]]
+pourquoi = "MPL 2.0 : copyleft fichier par fichier. Sa section 3.3 permet de la combiner avec la GPL et l'AGPL, sauf si le paquet l'exclut (MPL-2.0-no-copyleft-exception, refusée plus bas)."
+licences = ["MPL-2.0"]
+
+[[acceptees]]
+pourquoi = "LGPL : la bibliothèque peut passer sous la GPL v3, que la section 13 de l'AGPL v3 permet de combiner avec elle."
+licences = [
+  "LGPL-2.0-or-later",
+  "LGPL-2.1-only",
+  "LGPL-2.1-or-later",
+  "LGPL-3.0-only",
+  "LGPL-3.0-or-later",
+]
+
+[[acceptees]]
+pourquoi = "GPL v3, ou v2 « ou toute version ultérieure » : la section 13 de la GPL v3 et celle de l'AGPL v3 permettent de les réunir dans une même œuvre. Chaque partie garde sa licence."
+licences = ["GPL-2.0-or-later", "GPL-3.0-only", "GPL-3.0-or-later"]
+
+[[acceptees]]
+pourquoi = "AGPL v3 : la licence de BUTTON."
+licences = ["AGPL-3.0-only", "AGPL-3.0-or-later"]
+
+# Les exceptions qu'une licence ajoute par WITH. Toute autre exception rend
+# la licence inconnue : npm et PyPI ne les vérifient pas, et une clause comme
+# Commons-Clause, qui interdit la vente, s'écrit aussi avec WITH.
+
+[[exceptions_acceptees]]
+pourquoi = "Elles donnent des droits en plus, sans en retirer : la licence de base décide seule."
+exceptions = [
+  "Bison-exception-2.2",
+  "Classpath-exception-2.0",
+  "GCC-exception-3.1",
+  "LLVM-exception",
+]
+
+# Refusées : le contrôle dit pourquoi, au lieu de « licence inconnue ».
+
+[[refusees]]
+pourquoi = "GPL v2 seule : sans « ou toute version ultérieure », elle ne se combine pas avec du code sous GPL v3 ou AGPL v3. GPL-2.0 est l'ancien nom de GPL-2.0-only."
+licences = ["GPL-2.0-only", "GPL-2.0"]
+
+[[refusees]]
+pourquoi = "Incompatibles avec la GPL : clause de publicité (BSD à 4 clauses), conditions en plus (Apache 1.x, MPL 1.x, EPL, CDDL), ou combinaison exclue (MPL-2.0-no-copyleft-exception)."
+licences = [
+  "Apache-1.0",
+  "Apache-1.1",
+  "BSD-4-Clause",
+  "CDDL-1.0",
+  "CDDL-1.1",
+  "EPL-1.0",
+  "EPL-2.0",
+  "MPL-1.0",
+  "MPL-1.1",
+  "MPL-2.0-no-copyleft-exception",
+]
+
+[[refusees]]
+pourquoi = "Pas libres : usage restreint (SSPL, BUSL, Elastic), clause « for Good, not Evil » (JSON), pas d'usage commercial ou pas de modification (CC BY-NC, CC BY-ND), ou propriétaire (UNLICENSED, dans npm)."
+licences = [
+  "BUSL-1.1",
+  "CC-BY-NC-4.0",
+  "CC-BY-NC-ND-4.0",
+  "CC-BY-NC-SA-4.0",
+  "CC-BY-ND-4.0",
+  "Elastic-2.0",
+  "JSON",
+  "SSPL-1.0",
+  "UNLICENSED",
+]
+
+# Les paquets dont les métadonnées ne disent pas la licence, vérifiée à la
+# main, à cette version : une autre version repasse par le contrôle. Un nom
+# Python s'écrit comme le contrôle l'affiche : minuscules, tirets
+# (ruamel-yaml@0.18.16).
+
+[paquets.npm]
+"combine-errors@3.0.3" = { licence = "MIT", verifiee = "Readme.md du paquet et dépôt MatthewMueller/combine-errors : MIT. Son package.json n'a pas de champ license." }
+
+[paquets.python]
