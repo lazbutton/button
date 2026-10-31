@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import httpx
+import pytest
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session as ormSession
 
@@ -615,17 +616,24 @@ async def test_tick_skips_unchanged_cursor_persist(
         upsert.assert_not_called()
 
 
-async def test_active_cart_playlist_refills_on_tick(
+@pytest.mark.parametrize(
+    ("mode", "played_through"),
+    [(CartMode.PLAYLIST_LOOP, False), (CartMode.PLAYLIST, True)],
+    ids=["boucle", "une-fois-deja-passee"],
+)
+async def test_active_cart_playlist_refills_on_tick(  # noqa: PLR0913
     dbsession: ormSession,
     raw_app,
     jingles_cart: Cart,
     beets_integration: BeetsIntegration,
+    mode: CartMode,
+    played_through: bool,
 ):
     cartpath = raw_app.config["DATA_ROOT"] / "gender-minorities"
     cart = Cart(
         title="Prog Gender Minorities",
         path=cartpath,
-        mode=CartMode.PLAYLIST_LOOP,
+        mode=mode,
         schedule_mode=ScheduleMode.TIMED,
     )
     dbsession.add(cart)
@@ -640,6 +648,8 @@ async def test_active_cart_playlist_refills_on_tick(
                 rank=rank,
                 gain=-1.0,
                 peak=-0.5,
+                # A one-shot playlist played through starts again.
+                last_played=datetime(2026, 9, 13, 23, rank) if played_through else None,
             )
         )
     await dbsession.commit()

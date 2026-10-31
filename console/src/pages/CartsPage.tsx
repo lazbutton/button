@@ -422,7 +422,7 @@ function bacFacts(cart: Cart) {
 const EMPTY_KIND: Record<Exclude<BacFilter, "tous">, { title: string; text: string }> = {
   fichiers: {
     title: "Aucun bac de fichiers",
-    text: "Un bac de fichiers joue ses sons en boucle, au hasard ou une seule fois.",
+    text: "Un bac de fichiers joue ses sons en boucle, au hasard, ou chacun une fois avant de reprendre.",
   },
   habillage: {
     title: "Aucun habillage",

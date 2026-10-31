@@ -109,6 +109,31 @@ async def test_cart_ident_pads_and_relay(
     assert missing.status_code == 400
 
 
+async def test_cart_json_next_sound_of_a_playlist_played_through(  # noqa: PLR0913
+    raw_app,
+    app_configration: dict,
+    beets_integration: BeetsIntegration,
+    dbsession: ormSession,
+    users_password: str,
+    fake_cart,
+    fake_sound,
+):
+    """The next sound is the one « Diffuser maintenant » plays: the first again."""
+    fake_sound.last_played = datetime(2026, 10, 30, 9, 0)
+    await dbsession.commit()
+    client = await _admin_client(
+        app_configration,
+        beets_integration,
+        dbsession,
+        users_password,
+        "next-sound",
+    )
+    listed = await (await client.get("/carts.json")).get_json()
+    cart = next(row for row in listed["carts"] if row["id"] == fake_cart.id)
+    assert cart["mode"] == "playlist"
+    assert cart["next_sound_id"] == fake_sound.id
+
+
 async def test_account_password_json(
     raw_app,
     app_configration: dict,

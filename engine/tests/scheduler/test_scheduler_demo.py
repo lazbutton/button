@@ -1,4 +1,5 @@
 from asyncio import sleep
+from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session as ormSession
@@ -161,6 +162,40 @@ async def test_demo_relay_cart(  # noqa: PLR0913
             assert now["title"] == "Radio partenaire"
             # It lasts max_duration, as the scheduler's timer would cut it.
             assert 590 < now["remaining"] <= 600
+    finally:
+        Scheduler.reset_instance()
+
+
+async def test_demo_playlist_played_through_starts_again(  # noqa: PLR0913
+    raw_app,
+    app_configration: dict,
+    beets_integration: BeetsIntegration,
+    dbsession: ormSession,
+    users_password: str,
+    jingles_cart,
+    pubs_cart,
+):
+    """As the scheduler: a one-shot playlist played through starts again."""
+    user = User(username="demo-cart-again")
+    user.update_password(users_password)
+    user.update_permissions({"can_live": "true"})
+    dbsession.add(user)
+    pubs_cart.mode = CartMode.PLAYLIST
+    spot = await dbsession.scalar(select(Sound).where(Sound.cart_id == pubs_cart.id))
+    assert spot is not None
+    spot.last_played = datetime(2026, 10, 30, 9, 0)
+    await dbsession.commit()
+
+    iface = _demo_app(app_configration, beets_integration)
+    try:
+        async with iface.test_app():
+            client = iface.test_client()
+            await _login(client, "demo-cart-again", users_password)
+            await _wait_simulating(client)
+            fired = await client.post(f"/carts/{pubs_cart.id}/now.json")
+            assert fired.status_code == 200, await fired.get_data(as_text=True)
+            now = await (await client.get("/live.json")).get_json()
+            assert now["title"] == spot.title
     finally:
         Scheduler.reset_instance()
 
