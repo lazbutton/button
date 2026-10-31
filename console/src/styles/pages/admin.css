@@ -187,7 +187,7 @@
 }
 
 .admin-inline-feedback {
-  color: var(--app-live);
+  color: var(--app-live-ink);
   font-variant-numeric: tabular-nums;
 }
 

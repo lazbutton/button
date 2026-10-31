@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { useAccount } from "../../api/AccountContext";
 import { ROLE_LABEL } from "../../api/roles";
 import { useLogout } from "../../api/SessionGate";
-import { initials } from "../../api/topbar";
+import { accountLabel, initials } from "../../api/topbar";
 import { APPEARANCE_OPTIONS, useAppearance } from "../../lib/Appearance";
 import { useBrand } from "../../lib/BrandContext";
 import { DEFAULT_SOURCE_URL, type AppearanceChoice } from "../../lib/brand";
@@ -27,15 +27,15 @@ export function AccountMenu() {
   const sourceUrl = brand.suite.sourceUrl || DEFAULT_SOURCE_URL;
 
   return (
-    <DropdownMenu.Root>
+    <DropdownMenu.Root modal={false}>
       <DropdownMenu.Trigger>
-        <button type="button" className="tb-account" aria-label={`Compte${username ? ` ${username}` : ""} : menu`}>
+        <button type="button" className="tb-account" aria-label={accountLabel(username)}>
           <span className="tb-avatar" aria-hidden="true">
             {mark}
           </span>
         </button>
       </DropdownMenu.Trigger>
-      <DropdownMenu.Content align="end" sideOffset={6} className="tb-menu tb-menu--account">
+      <DropdownMenu.Content variant="soft" align="end" sideOffset={6} className="tb-menu tb-menu--account">
         <div className="tb-menu-who">
           <span className="tb-avatar is-large" aria-hidden="true">
             {mark}

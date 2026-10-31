@@ -37,7 +37,7 @@ for (const role of ["animateur", "programmateur", "admin"] as const) {
     await expect(navigation.getByRole("link")).toHaveText([...vu.pages]);
 
     // Le menu du compte dit le rôle, et garde le lien vers le code source.
-    await barre.getByRole("button", { name: `Compte ${role} : menu` }).click();
+    await barre.getByRole("button", { name: new RegExp(`^[A-Z]{2}, compte ${role} : menu$`) }).click();
     const menu = page.getByRole("menu");
     await expect(menu.getByText(vu.libelle, { exact: true })).toBeVisible();
     await expect(menu.getByRole("menuitem", { name: "Code source AGPL" })).toBeVisible();

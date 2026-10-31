@@ -90,7 +90,7 @@ export function UsersPage({ embedded = false }: { embedded?: boolean }) {
         <ShieldCheck size={13} aria-hidden="true" />
         {adminCount} admin{adminCount === 1 ? "" : "s"}
       </Badge>
-      <Button onClick={() => setCreateOpen(true)}>
+      <Button highContrast onClick={() => setCreateOpen(true)}>
         <Plus className="ui-button-icon" aria-hidden="true" />
         Nouveau compte
       </Button>
@@ -290,7 +290,7 @@ function UserRow({
               Mise à jour…
             </span>
           ) : null}
-          <DropdownMenu.Root>
+          <DropdownMenu.Root modal={false}>
             <DropdownMenu.Trigger>
               <IconButton
                 className="admin-row-menu"
@@ -303,7 +303,7 @@ function UserRow({
                 {deleting ? <Spinner size="1" /> : <MoreHorizontal size={16} aria-hidden="true" />}
               </IconButton>
             </DropdownMenu.Trigger>
-            <DropdownMenu.Content align="end">
+            <DropdownMenu.Content variant="soft" align="end">
               <DropdownMenu.Item
                 disabled={updating != null || deleting}
                 onSelect={() => setFicheOpen(true)}
@@ -457,7 +457,7 @@ function UserFiche({
               onChange={(event) => setNotes(event.target.value)}
             />
           </FormField>
-          <Button type="button" disabled={busy} onClick={() => void saveNotes()}>
+          <Button type="button" highContrast disabled={busy} onClick={() => void saveNotes()}>
             Enregistrer les notes
           </Button>
           <FormField label="Nouveau mot de passe" hint="Remplace l’ancien. La personne s’en sert à la prochaine connexion.">
@@ -469,7 +469,7 @@ function UserFiche({
               onChange={(event) => setPassword(event.target.value)}
             />
           </FormField>
-          <Button type="button" disabled={busy || !password.trim()} onClick={() => void savePassword()}>
+          <Button type="button" highContrast disabled={busy || !password.trim()} onClick={() => void savePassword()}>
             Réinitialiser le mot de passe
           </Button>
           {listedAsHost(user.permissions) ? (
@@ -501,7 +501,7 @@ function UserFiche({
                 </Text>
               ) : null}
               <Flex gap="2" wrap="wrap">
-                <Button type="button" disabled={busy || folderPassword.length < 8} onClick={() => void saveFolder(false)}>
+                <Button type="button" highContrast disabled={busy || folderPassword.length < 8} onClick={() => void saveFolder(false)}>
                   Enregistrer le mot de passe du dossier
                 </Button>
                 <Button type="button" variant="soft" color="gray" disabled={busy} onClick={() => void saveFolder(true)}>
@@ -638,7 +638,7 @@ function CreateUserDialog({
                 Annuler
               </Button>
             </Dialog.Close>
-            <Button type="submit" disabled={busy || !username.trim() || !password}>
+            <Button type="submit" highContrast disabled={busy || !username.trim() || !password}>
               {busy ? <Spinner size="1" /> : null}
               {busy ? "Création…" : "Créer le compte"}
             </Button>

@@ -152,7 +152,7 @@ export function CartLibrary({
         </TextField.Root>
         <Select.Root size="2" value={filter} onValueChange={(value) => onFilter(value as BacFilter)}>
           <Select.Trigger variant="soft" color="gray" className="bacs-filter" aria-label="Type de bac" />
-          <Select.Content position="popper" align="end" className="bacs-filter-menu">
+          <Select.Content variant="soft" position="popper" align="end" className="bacs-filter-menu">
             {FILTERS.map((item) => (
               <Select.Item key={item.id} value={item.id}>
                 {item.label}

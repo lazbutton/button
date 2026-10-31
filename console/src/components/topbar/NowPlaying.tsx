@@ -20,18 +20,20 @@ export function NowPlaying({
   const now = topNow({ live, item: liveToItem(live), clock, stale, answeredAt });
 
   return (
-    <Link
-      to="/antenne"
+    <div
       className="tb-now"
       data-ending={now.ending ? "true" : "false"}
       data-idle={now.idle ? "true" : "false"}
       data-stale={now.stale ? "true" : "false"}
-      aria-label={now.label}
     >
-      <span className="tb-now-line">
-        <span className="tb-now-title">{now.title}</span>
-        {now.artist ? <span className="tb-now-artist">{now.artist}</span> : null}
-      </span>
+      {/* Le lien ne contient que le titre et l'artiste, que son nom reprend dans l'ordre, même quand la
+          barre resserrée cache l'artiste. L'avancée et le temps restent à côté ; le lien couvre tout le cadre. */}
+      <Link to="/antenne" className="tb-now-link" aria-label={now.label}>
+        <span className="tb-now-line">
+          <span className="tb-now-title">{now.title}</span>{" "}
+          {now.artist ? <span className="tb-now-artist">{now.artist}</span> : null}
+        </span>
+      </Link>
       {now.timed ? (
         <span className="tb-now-meta" aria-hidden="true">
           <span className="tb-now-track">
@@ -44,6 +46,6 @@ export function NowPlaying({
           <span className="tb-now-note">{now.note}</span>
         </span>
       ) : null}
-    </Link>
+    </div>
   );
 }

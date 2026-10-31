@@ -71,3 +71,15 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/button-console:${{ github.sha }}
           cache-from: type=gha,scope=console
           cache-to: type=gha,mode=max,scope=console
+
+  trivy:
+    name: Trivy
+    # After the push, never before: a critical vulnerability turns the run red
+    # but does not hold back the image and the fixes it carries.
+    needs: [docker]
+    permissions:
+      contents: read
+      packages: read
+    uses: ./.github/workflows/failles.yml
+    with:
+      images: ghcr.io/${{ github.repository_owner }}/button-console:${{ github.sha }}

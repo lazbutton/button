@@ -110,13 +110,13 @@ export function ClockEditor({
             onRetry={onRetry}
             onRevert={onRevert}
           />
-          <DropdownMenu.Root>
+          <DropdownMenu.Root modal={false}>
             <DropdownMenu.Trigger>
               <IconButton size="2" variant="ghost" color="gray" aria-label="Actions de l'heure type">
                 <MoreHorizontal size={17} />
               </IconButton>
             </DropdownMenu.Trigger>
-            <DropdownMenu.Content align="end" className="prog-menu">
+            <DropdownMenu.Content variant="soft" align="end" className="prog-menu">
               <DropdownMenu.Item onSelect={onDuplicate}>
                 <Copy size={15} aria-hidden="true" />
                 Dupliquer…
@@ -201,7 +201,7 @@ export function ClockEditor({
               }}
             >
               <Select.Trigger className="prog-fallback" aria-label="Bac de secours" />
-              <Select.Content position="popper" className="prog-select-menu">
+              <Select.Content variant="soft" position="popper" className="prog-select-menu">
                 <Select.Item value={NO_FALLBACK}>Rien : un blanc plutôt qu'un secours</Select.Item>
                 {clock.fallback_cart && !fallbackKnown ? (
                   <Select.Item value={clock.fallback_cart} disabled>
@@ -313,14 +313,14 @@ function SaveIndicator({
   if (state === "idle") return null;
   if (state === "error") {
     return (
-      <DropdownMenu.Root>
+      <DropdownMenu.Root modal={false}>
         <DropdownMenu.Trigger>
           <button type="button" className="prog-save is-error" aria-label={`Non enregistré : ${reason ?? ""}`}>
             <AlertTriangle size={14} aria-hidden="true" />
             Non enregistré
           </button>
         </DropdownMenu.Trigger>
-        <DropdownMenu.Content align="end" className="prog-menu prog-save-menu">
+        <DropdownMenu.Content variant="soft" align="end" className="prog-menu prog-save-menu">
           {reason ? <DropdownMenu.Label className="prog-save-reason">{reason}</DropdownMenu.Label> : null}
           <DropdownMenu.Item onSelect={onRetry}>Réessayer d'enregistrer</DropdownMenu.Item>
           <DropdownMenu.Item onSelect={onRevert}>Revenir à la version enregistrée</DropdownMenu.Item>
