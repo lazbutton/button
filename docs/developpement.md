@@ -108,6 +108,7 @@ Les parcours, dans `console/e2e/` :
 | `roles.spec.ts` | ce que voient l'animateur, le programmateur et l'admin |
 | `apparence.spec.ts` | le thème clair et le sombre, choisis dans le menu du compte ou suivant l'appareil |
 | `telephone.spec.ts` | la console sur un téléphone de 360 px, au doigt |
+| `station.spec.ts` | l'onglet Station de l'admin : un nom enregistré passe sans recharger dans le titre de l'onglet et la barre de navigation, et tient après un rechargement ; face à un moteur sans ces routes (404), la console garde `brand.json` ; une valeur refusée se dit sous son champ, qui prend le focus |
 
 Un défaut connu de la console garde son parcours en `test.fixme`, avec la raison en commentaire : Playwright le saute. Pour le voir échouer, remplacer `test.fixme` par `test` le temps d'un lancement.
 
