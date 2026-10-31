@@ -162,6 +162,22 @@ Sans `RT_TAG`, la station suit `main`. Pour geler une version, mettre un tag dat
 
 `RT_TAG` ne gèle que le moteur et le playout. La console, Icecast, nowplaying, le catalogue et le partage suivent `main` tant que les versions publiées n'existent pas : voir MAJ-01 dans la [feuille de route](feuille-de-route/P1-mise-en-prod.md).
 
+Ensuite, vérifier que l'antenne tourne, sans compte, depuis le dossier de la station :
+
+```bash
+scripts/smoke.sh http://127.0.0.1:30126 http://127.0.0.1:18000/button.mp3
+```
+
+Le contrôle prend l'adresse de la console, puis celle du flux public. Sur la machine, avec les ports par défaut, ce sont celles de l'exemple. Derrière un reverse proxy, donner plutôt leurs adresses publiques, en `https://`, pour le vérifier lui aussi : le contrôle ne suit pas les redirections. Il vérifie, dans l'ordre :
+
+1. le playout, l'interface et le scheduler sont `healthy`, en attendant deux minutes au plus ;
+2. la console répond et relaie le moteur : `/` et `/health/ready` répondent 200 ;
+3. le scheduler est prêt : son `/health/ready`, lu dans son conteneur, répond 200 ;
+4. sans cookie, la recherche de la médiathèque répond 401 ;
+5. le flux envoie de l'audio, et `now.json`, lu dans le conteneur de nowplaying, répond.
+
+Au premier point qui échoue, il s'arrête en erreur, nomme le point et ce qui ne va pas, et dit quel journal lire. Un service du moteur arrêté le fait échouer tout de suite, sans attendre. Le point 4 ne voit pas un catalogue arrêté : sans cookie, nginx répond 401 sans le joindre. Sur une machine lente, `SMOKE_WAIT=300 scripts/smoke.sh …` attend la santé du moteur cinq minutes. Le contrôle appelle `docker compose` sans option : une station lancée avec `-p <station>` ou `--env-file <fichier>` se contrôle avec `COMPOSE_PROJECT_NAME=<station>` ou `COMPOSE_ENV_FILES=<fichier>` devant la commande. Le contrôle ne change rien à la station : il sert aussi après une installation, ou à tout moment.
+
 ## Revenir en arrière
 
 `radiotomate-init` applique les migrations à chaque démarrage. Si la version récente a migré le schéma, une image plus ancienne ne sait pas le défaire, et le playout ne démarre plus. Il faut donc redescendre le schéma **avec l'image récente**, puis épingler l'ancienne :

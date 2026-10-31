@@ -7,7 +7,7 @@
 ```bash
 cd services/catalog
 pip install -r requirements.txt          # dans un venv, une fois
-../../scripts/verifier.sh services       # les neuf tests, comme la CI
+../../scripts/verifier.sh services       # les dix tests, comme la CI
 ```
 
 Pour essayer Icecast et nowplaying seuls : [deploy/local/](../deploy/local/README.md).
@@ -25,7 +25,7 @@ Pour essayer Icecast et nowplaying seuls : [deploy/local/](../deploy/local/READM
 ## Tests
 
 - Chaque test est un script `unittest` lancé seul : `python test_inbox_api.py`. Les faux services, comme un faux moteur, sont des `BaseHTTPRequestHandler` dans le test.
-- La CI lance neuf fichiers, listés dans `.github/workflows/services.yml` sous la forme `- run: python test_xxx.py`. `scripts/verifier.sh` lit cette liste : un fichier de test nouveau s'y ajoute, sinon personne ne le lance.
+- La CI lance dix fichiers, listés dans `.github/workflows/services.yml` sous la forme `- run: python test_xxx.py`. `scripts/verifier.sh` lit cette liste : un fichier de test nouveau s'y ajoute, sinon personne ne le lance.
 
 ## nowplaying et Icecast
 
