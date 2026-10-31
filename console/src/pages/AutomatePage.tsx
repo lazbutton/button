@@ -152,7 +152,7 @@ export function AutomatePage() {
           </Button>
           <ConfirmDialog
             title="Vider les files ?"
-            description="Les prochains titres déjà envoyés sont retirés. L’horloge les repousse au tick d’après. Le titre en cours finit."
+            description="Les prochains titres déjà envoyés sont retirés. L’horloge les repousse au tick d’après, sauf ceux d’un bac lancé : il s’arrête. Le titre en cours finit."
             confirmLabel="Vider les files"
             busy={busy === "flush"}
             onConfirm={flush}
