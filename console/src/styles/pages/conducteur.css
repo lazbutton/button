@@ -73,7 +73,7 @@
 }
 
 .conducteur-strip-remain {
-  color: color-mix(in srgb, var(--app-live) 88%, white);
+  color: var(--app-live-ink);
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.04em;
   line-height: 1;
@@ -172,6 +172,11 @@
   overflow-anchor: none;
 }
 
+.engine-rundown.is-board .engine-rundown-list:focus-visible {
+  outline: 2px solid var(--app-focus);
+  outline-offset: -2px;
+}
+
 .engine-rundown-now {
   position: sticky;
   top: 0;
@@ -231,9 +236,14 @@
   width: 1.35rem;
 }
 
+/* Une ligne passée s'efface par ses couleurs, pas par une opacité qui pâlirait ses textes sous 4,5:1. */
 .engine-rundown-row.is-past {
-  opacity: 0.62;
   overflow-anchor: none;
+}
+
+.engine-rundown-row.is-past .engine-rundown-at,
+.engine-rundown-row.is-past .engine-rundown-resource {
+  color: var(--app-text-muted);
 }
 
 .engine-rundown-row.is-status-rescue {
@@ -394,7 +404,7 @@
 }
 
 .engine-rundown-remain {
-  color: var(--app-live);
+  color: var(--app-live-ink);
   font-size: 0.66rem;
   font-variant-numeric: tabular-nums;
   font-weight: 650;

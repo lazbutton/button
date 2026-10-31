@@ -185,7 +185,7 @@ export function ClockSteps({
                   </Tooltip>
                 ) : null}
               </span>
-              <DropdownMenu.Root>
+              <DropdownMenu.Root modal={false}>
                 <DropdownMenu.Trigger>
                   <IconButton
                     size="2"
@@ -197,7 +197,7 @@ export function ClockSteps({
                     <MoreHorizontal size={16} />
                   </IconButton>
                 </DropdownMenu.Trigger>
-                <DropdownMenu.Content align="end" className="prog-menu">
+                <DropdownMenu.Content variant="soft" align="end" className="prog-menu">
                   <DropdownMenu.Item disabled={index === 0} onSelect={() => move(index, index - 1)}>
                     <ArrowUp size={15} aria-hidden="true" />
                     Monter
@@ -264,7 +264,7 @@ export function ClockSteps({
 
 function AddStepMenu({ onAdd }: { onAdd: (kind: PositionKind) => void }) {
   return (
-    <DropdownMenu.Root>
+    <DropdownMenu.Root modal={false}>
       <DropdownMenu.Trigger>
         <Button size="2" variant="soft" color="gray">
           <Plus className="ui-button-icon" />
@@ -272,7 +272,7 @@ function AddStepMenu({ onAdd }: { onAdd: (kind: PositionKind) => void }) {
           <ChevronDown size={13} aria-hidden="true" />
         </Button>
       </DropdownMenu.Trigger>
-      <DropdownMenu.Content align="end" className="prog-menu">
+      <DropdownMenu.Content variant="soft" align="end" className="prog-menu">
         {STEP_KINDS.map((item) => (
           <DropdownMenu.Item key={item.kind} onSelect={() => onAdd(item.kind)}>
             <span className={`prog-dot is-${item.kind}`} aria-hidden="true" />

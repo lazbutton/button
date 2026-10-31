@@ -28,8 +28,9 @@ export function HealthStrip({
               className={`health-pill tone-${pillar.tone}`}
               aria-label={`${pillar.label} : ${pillar.value} (${TONE_LABEL[pillar.tone]})`}
             >
+              {/* L'espace sépare les mots du texte affiché, que le nom reprend. */}
               <span className="health-pill-dot" aria-hidden="true" />
-              <span className="health-pill-k">{pillar.label}</span>
+              <span className="health-pill-k">{pillar.label}</span>{" "}
               <span className="health-pill-v">{pillar.value}</span>
             </button>
           </Popover.Trigger>

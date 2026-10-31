@@ -57,7 +57,7 @@ export function ListenControl() {
       </Tooltip>
       {listening ? <VuMeter analyserL={monitor.analyserL} analyserR={monitor.analyserR} live={monitor.live} /> : null}
       {monitor.canChooseSource && source ? (
-        <DropdownMenu.Root>
+        <DropdownMenu.Root modal={false}>
           <DropdownMenu.Trigger>
             <button
               type="button"
@@ -69,7 +69,7 @@ export function ListenControl() {
               <ChevronDown size={14} strokeWidth={2} aria-hidden="true" />
             </button>
           </DropdownMenu.Trigger>
-          <DropdownMenu.Content align="end" sideOffset={6} className="tb-menu tb-menu--source">
+          <DropdownMenu.Content variant="soft" align="end" sideOffset={6} className="tb-menu tb-menu--source">
             <DropdownMenu.Label>Source du casque</DropdownMenu.Label>
             <DropdownMenu.RadioGroup
               value={monitor.sourceId}

@@ -261,6 +261,7 @@ function HitRow({
   const kind = deskKindFromHit(hit);
   const labels = labelsFromHit(hit);
   const title = labels.title || "ce titre";
+  const duration = mmss(hit.duration || 0);
 
   return (
     <li data-index={index} className={`${active ? "is-active" : ""}${previewing ? " is-preview" : ""}`}>
@@ -268,7 +269,8 @@ function HitRow({
         type="button"
         className="ant-hit"
         draggable
-        aria-label={`Mettre ${title} à la suite`}
+        // Le nom reprend ce que le bouton affiche, dans l'ordre : titre, artiste, durée.
+        aria-label={`Mettre à la suite : ${title}${labels.artist ? `, ${labels.artist}` : ""}, ${duration}`}
         onDragStart={(event) => {
           event.dataTransfer.effectAllowed = "copy";
           event.dataTransfer.setData(LIBRARY_DRAG_MIME, JSON.stringify(hit));
@@ -278,10 +280,10 @@ function HitRow({
       >
         <span className={`ant-kind is-${kind}`} aria-hidden="true" />
         <span className="ant-hit-copy">
-          <span className="ant-hit-title">{labels.title || "—"}</span>
+          <span className="ant-hit-title">{labels.title || "—"}</span>{" "}
           {labels.artist ? <span className="ant-hit-artist">{labels.artist}</span> : null}
-        </span>
-        <span className="ant-hit-dur">{mmss(hit.duration || 0)}</span>
+        </span>{" "}
+        <span className="ant-hit-dur">{duration}</span>
         <Plus className="ant-hit-add" size={15} aria-hidden="true" />
       </button>
       <button

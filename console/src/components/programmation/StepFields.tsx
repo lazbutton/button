@@ -22,7 +22,7 @@ export function KindSelect({
         <span className={`prog-dot is-${value}`} aria-hidden="true" />
         {stepKindLabel(value)}
       </Select.Trigger>
-      <Select.Content position="popper" className="prog-select-menu">
+      <Select.Content variant="soft" position="popper" className="prog-select-menu">
         {STEP_KINDS.map((item) => (
           <Select.Item key={item.kind} value={item.kind}>
             <span className="prog-kind-option">
@@ -84,7 +84,7 @@ export function SourceSelect({
           className={`prog-source${source.missing || source.empty ? " is-missing" : ""}`}
           aria-label={label}
         />
-        <Select.Content position="popper" className="prog-select-menu">
+        <Select.Content variant="soft" position="popper" className="prog-select-menu">
           {value === NONE ? (
             <Select.Item value={NONE} disabled>
               Choisir une sélection
@@ -134,7 +134,7 @@ export function SourceSelect({
         className={`prog-source${source.missing || source.empty ? " is-missing" : ""}`}
         aria-label={label}
       />
-      <Select.Content position="popper" className="prog-select-menu">
+      <Select.Content variant="soft" position="popper" className="prog-select-menu">
         {value === NONE ? (
           <Select.Item value={NONE} disabled>
             Choisir un bac

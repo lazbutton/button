@@ -14,7 +14,8 @@
   --app-border-strong: rgb(10 10 10 / 0.16);
   --app-text: #0a0a0a;
   --app-text-muted: #525252;
-  --app-text-faint: #737373;
+  /* Le texte le plus pâle : 4,5:1 au moins sur le fond et les surfaces 1 à 3 (WCAG AA). */
+  --app-text-faint: #666666;
   --app-accent: #0a0a0a;
   --app-accent-hover: #000000;
   --app-accent-soft: color-mix(in srgb, var(--app-accent) 10%, transparent);
@@ -24,16 +25,18 @@
   --app-live-soft: color-mix(in srgb, var(--app-live) 14%, transparent);
   --app-ok: #3ecf8e;
   --app-danger: #ff4d4d;
-  --app-warning: #737373;
+  --app-warning: var(--app-text-faint);
   --app-vu-ok: #3ecf8e;
   --app-vu-warn: #f0e24a;
   --app-vu-hot: #ff7a45;
   --app-vu-clip: #ff4d4d;
   --app-focus: color-mix(in srgb, var(--app-accent) 55%, var(--app-bg));
-  /* Encres lisibles des couleurs d'état, sur fond clair comme sombre. */
+  /* Encres lisibles des couleurs d'état, sur fond clair comme sombre : le texte en
+     rouge ou en orange les prend, jamais la couleur pure. */
   --app-ok-ink: color-mix(in srgb, var(--app-ok) 62%, var(--app-text));
   --app-live-ink: color-mix(in srgb, var(--app-live) 74%, var(--app-text));
-  --app-warn-ink: color-mix(in srgb, var(--app-vu-hot) 74%, var(--app-text));
+  --app-danger-ink: color-mix(in srgb, var(--app-danger) 74%, var(--app-text));
+  --app-warn-ink: color-mix(in srgb, var(--app-vu-hot) 62%, var(--app-text));
   --kind-musique: #0a0a0a;
   --kind-jingle: #404040;
   --kind-son: #737373;
@@ -60,7 +63,7 @@
   --app-border-strong: color-mix(in srgb, white 16%, transparent);
   --app-text: #f5f5f5;
   --app-text-muted: #a3a3a3;
-  --app-text-faint: #737373;
+  --app-text-faint: #8f8f8f;
   --app-accent: #f5f5f5;
   --app-accent-hover: #ffffff;
   --app-focus: color-mix(in srgb, var(--app-accent) 72%, white);
