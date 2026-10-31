@@ -17,7 +17,7 @@ async function verifier(page: Page, ecran: string) {
 async function verifierLesOnglets(page: Page, ecran: string) {
   // Les onglets suivent le rôle : on les compte une fois le compte chargé, quand
   // la barre du haut le nomme.
-  await expect(page.getByRole("banner").getByRole("button", { name: /^Compte .+ : menu$/ })).toBeVisible();
+  await expect(page.getByRole("banner").getByRole("button", { name: /, compte .+ : menu$/ })).toBeVisible();
   const onglets = page.getByRole("tablist").first().getByRole("tab");
   await expect(onglets.first()).toBeVisible();
   const nombre = await onglets.count();
@@ -55,7 +55,7 @@ for (const [theme, colorScheme] of [
       await verifier(page, "Antenne");
 
       const barre = page.getByRole("banner");
-      await barre.getByRole("button", { name: /^Compte / }).click();
+      await barre.getByRole("button", { name: /, compte .+ : menu$/ }).click();
       await expect(page.getByRole("menu")).toBeVisible();
       await verifier(page, "Antenne, menu du compte");
       await page.keyboard.press("Escape");

@@ -103,6 +103,11 @@
   min-width: 52rem;
 }
 
+/* Les lignes du tableau ne font pas de boîte : leurs cellules restent dans la grille, en-têtes collants compris. */
+.ag-week-row {
+  display: contents;
+}
+
 .ag-week-grid.is-dragging {
   cursor: grabbing;
   user-select: none;
@@ -129,7 +134,7 @@
 }
 
 .ag-day-head.is-today {
-  color: var(--app-live);
+  color: var(--app-live-ink);
 }
 
 .ag-gutter {
@@ -283,6 +288,7 @@
     0 3px 10px rgb(10 10 10 / 0.12);
 }
 
+.ag-week-frame:focus-visible,
 .ag-block:focus-visible,
 .ag-weekly:focus-visible,
 .ag-row:focus-visible {
@@ -497,7 +503,7 @@
 
 .ag-chip.tone-live {
   background: var(--app-live-soft);
-  color: var(--app-live);
+  color: var(--app-live-ink);
 }
 
 .ag-chip.tone-done {
@@ -532,7 +538,7 @@
 }
 
 .ag-list-day h3.is-today {
-  color: var(--app-live);
+  color: var(--app-live-ink);
 }
 
 .ag-list-day ol {

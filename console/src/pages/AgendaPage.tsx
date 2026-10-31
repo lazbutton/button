@@ -269,13 +269,13 @@ export function AgendaPage() {
                 </Button>
               ) : null}
               {isAdmin && data?.enabled ? (
-                <DropdownMenu.Root>
+                <DropdownMenu.Root modal={false}>
                   <DropdownMenu.Trigger>
                     <IconButton size="2" variant="ghost" color="gray" aria-label="Plus d'actions">
                       <MoreHorizontal size={16} />
                     </IconButton>
                   </DropdownMenu.Trigger>
-                  <DropdownMenu.Content align="end" className="prog-menu">
+                  <DropdownMenu.Content variant="soft" align="end" className="prog-menu">
                     <DropdownMenu.Item color="red" onSelect={() => setConfirmOff(true)}>
                       <Power size={15} aria-hidden="true" />
                       Couper l'agenda…

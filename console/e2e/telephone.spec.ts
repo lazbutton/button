@@ -77,7 +77,7 @@ test("les gestes du pupitre se font au doigt", async ({ page }) => {
   await casque.tap();
   await expect(casque).toHaveAttribute("aria-pressed", "true");
 
-  await page.getByRole("banner").getByRole("button", { name: "Compte animateur : menu" }).tap();
+  await page.getByRole("banner").getByRole("button", { name: "AN, compte animateur : menu" }).tap();
   await expect(page.getByRole("menuitem", { name: "Code source AGPL" })).toBeVisible();
 });
 
@@ -89,7 +89,7 @@ test("les cibles du pupitre et de la barre font 40 px au moins", async ({ page }
     page.getByRole("button", { name: "Ouvrir la navigation" }),
     barre.getByRole("button", { name: /^Antenne : / }),
     barre.getByRole("button", { name: /^Écouter au casque/ }),
-    barre.getByRole("button", { name: /^Compte / }),
+    barre.getByRole("button", { name: /, compte .+ : menu$/ }),
     antenne(page).getByRole("button", { name: /^Suivant/ }),
     antenne(page).getByRole("button", { name: "Passer en direct" }),
     ligne.getByRole("button", { name: /^Retirer / }),

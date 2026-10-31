@@ -1140,7 +1140,7 @@
 }
 
 .bacs-listen-state.is-error {
-  color: var(--app-danger);
+  color: var(--app-danger-ink);
 }
 
 .bacs-listen-state.is-error i {
@@ -1883,7 +1883,7 @@
 
 .banque-quota.is-high .banque-quota-foot,
 .banque-quota.is-full .banque-quota-foot {
-  color: var(--app-danger);
+  color: var(--app-danger-ink);
   font-weight: 560;
 }
 
@@ -2251,7 +2251,7 @@
 }
 
 .banque-file-reason {
-  color: var(--app-danger);
+  color: var(--app-danger-ink);
   font-weight: 560;
 }
 
@@ -2276,7 +2276,7 @@
 }
 
 .banque-file.is-error .banque-file-state {
-  color: var(--app-danger);
+  color: var(--app-danger-ink);
   font-weight: 600;
 }
 
@@ -2312,7 +2312,7 @@
   display: inline-flex;
   align-items: center;
   gap: 0.3rem;
-  color: var(--app-danger);
+  color: var(--app-danger-ink);
   font-size: 0.74rem;
   font-weight: 560;
 }
@@ -2369,7 +2369,7 @@
 }
 
 .banque-activity-when.is-stale {
-  color: var(--app-danger);
+  color: var(--app-danger-ink);
 }
 
 .banque-activity-unknown {
@@ -2404,7 +2404,7 @@
 
 .banque-list.is-danger .bacs-count.is-some {
   background: color-mix(in srgb, var(--app-danger) 12%, transparent);
-  color: var(--app-danger);
+  color: var(--app-danger-ink);
 }
 
 .banque-list-hint {
@@ -2482,7 +2482,7 @@
   padding: 0.1rem 0.45rem;
   border-radius: 999px;
   background: color-mix(in srgb, var(--app-danger) 10%, transparent);
-  color: var(--app-danger);
+  color: var(--app-danger-ink);
   font-size: 0.68rem;
   font-weight: 560;
   white-space: nowrap;
