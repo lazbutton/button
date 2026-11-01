@@ -7,7 +7,7 @@ COPY public ./public
 COPY src ./src
 RUN npm run build
 
-FROM nginx:1.30-alpine AS serve
+FROM nginx:1.31-alpine AS serve
 # The nginx image is only rebuilt with a release of nginx or of Alpine:
 # Alpine's fixes in between come in here, at each build (console.yml never
 # takes this stage from its cache). nginx and its modules keep the image's
