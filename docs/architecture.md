@@ -26,7 +26,8 @@ BUTTON tient l'antenne d'une radio 24 h sur 24 : musique en rotation, habillage,
         │
    banque de sons ◄── dropbox (Beets, promotion de l'inbox)
         ▲
-        └── share (Samba, profil « share ») : la banque dans le Finder
+        ├── share (Samba, profil « share ») : la banque dans le Finder
+        └── cloud-sync (rclone, profil « cloud ») : les bacs ouverts dans Dropbox
 
    nowplaying ◄── métadonnées du moteur ──► now.json, pour les sites et players
 ```
@@ -48,6 +49,9 @@ BUTTON tient l'antenne d'une radio 24 h sur 24 : musique en rotation, habillage,
 | radiotomate-init | `engine/`, `deploy/scripts/` | `button-radiotomate` | — : prépare la station à chaque démarrage, puis s'arrête |
 | share | `deploy/share/` | `button-share` | 445, sur `127.0.0.1` par défaut, seulement avec `--profile share` |
 | caddy | `deploy/Caddyfile` | `caddy` | 80 et 443, seulement avec `--profile vps` : le HTTPS devant la console, le flux et `now.json` |
+| cloud-sync | `deploy/scripts/cloud-sync.sh` | `rclone/rclone` | — : seulement avec `--profile cloud`, copie dans son bac un son déposé dans Dropbox |
+
+Malgré son nom, le service `radiotomate-dropbox` ne parle pas à Dropbox : il range l'inbox et tient Beets à jour. Le pont vers Dropbox est `cloud-sync` : [exploitation/bacs-dropbox.md](exploitation/bacs-dropbox.md).
 
 L'interface et le scheduler partagent le réseau du playout (`network_mode: service:radiotomate-playout`). Redémarrer le playout seul les rend injoignables : on recrée toujours les trois ensemble.
 
@@ -77,6 +81,8 @@ Pendant un direct, l'horloge se met en pause et laisse tomber les ancres dues. �
 | Envois en cours | volume `tusd-data` | les morceaux d'un envoi reprenable |
 | Mots de passe du dossier partagé | volume `share-private` | écrits par le catalogue, lus par `share` ; jamais dans la banque |
 | Certificats HTTPS | `CADDY_DATA` | les certificats et le compte Let's Encrypt de Caddy, avec le profil `vps` |
+| Jeton Dropbox | `CLOUD_SYNC_CONFIG/rclone.conf` | la configuration de rclone, avec le profil `cloud` ; rclone y renouvelle le jeton. Jamais dans `.env` ni dans le dépôt |
+| Copies depuis Dropbox | volume `cloud-sync-state` | ce que `cloud-sync` a copié, et le dernier compte rendu de chaque dossier : un son retiré dans la console ne revient pas |
 
 Les heures ne sont pas stockées de la même façon partout : heure locale dans les tables historiques, UTC dans l'Agenda. Voir l'[ADR 0008](decisions/0008-deux-conventions-d-heure.md).
 
