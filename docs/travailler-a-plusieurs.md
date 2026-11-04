@@ -100,7 +100,7 @@ Le graphe décrit la copie où il a été construit. Dans un worktree, le hook d
 - `radiotomate-playout` ne redémarre jamais seul : l'interface et le scheduler partagent son réseau. Voir ARC-01.
 - Docker contourne le pare-feu ufw. Vérifier les ports depuis une autre machine, pas avec `ufw status`.
 - Les images ne sont construites que pour `linux/amd64` : une machine ARM ne les lance pas.
-- Le projet Compose s'appelle `button`. Le renommer recrée vides les volumes `button_tusd-data` et `button_share-private`.
+- Le projet Compose s'appelle `button`. Le renommer recrée vides les volumes `button_tusd-data`, `button_share-private` et `button_cloud-sync-state`.
 - La CI publie les images sous le propriétaire du dépôt. Transférer le dépôt change donc le registre, sans aucune erreur visible.
 - Un contrôle sans compte ne peut pas lire `/antenne/state.json`. Il lit les `/health/ready` de l'interface et du scheduler.
 - Pour valider nginx dans Docker sur macOS, ne pas monter le dossier temporaire du Mac : il n'est pas toujours monté dans la VM. `scripts/verifier.sh nginx` monte `console/docker/` depuis le dépôt.

@@ -25,6 +25,9 @@ on:
       - "!deploy/share/**/*.md"
       - "deploy/compose.yml"
       - ".github/workflows/services.yml"
+      # test_cloud_sync.py checks the Dropbox bridge against the engine's audio
+      # formats. Pull requests only: no service image depends on this file.
+      - "engine/radiotomate/services/media_bank.py"
   workflow_dispatch:
 
 permissions:
@@ -54,6 +57,7 @@ jobs:
       - run: python test_init_secrets.py
       - run: python test_icecast_config.py
       - run: python test_smoke.py
+      - run: python test_cloud_sync.py
 
   docker:
     name: build & push images
