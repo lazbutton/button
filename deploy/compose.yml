@@ -297,6 +297,31 @@ services:
     ports:
       - "${SMB_BIND:-127.0.0.1}:445:445"
 
+  # Bacs ouverts dans Dropbox. Absent de `docker compose up` : `--profile cloud`.
+  # Copie dans son bac un son déposé dans Bacs/<id>-<titre>, dans le dossier
+  # Dropbox de la station. Voir docs/exploitation/bacs-dropbox.md.
+  cloud-sync:
+    profiles: ["cloud"]
+    image: rclone/rclone:1.75.2
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      CLOUD_SYNC_REMOTE: ${CLOUD_SYNC_REMOTE:-}
+      CLOUD_SYNC_INTERVAL: ${CLOUD_SYNC_INTERVAL:-60}
+      MEDIA_ROOT: /media
+      # L'heure du compte rendu, dans Dropbox.
+      TZ: ${TZ:-Europe/Paris}
+    volumes:
+      # Au même chemin que pour le moteur : les liens de Carts/ visent /media.
+      - ${BUTTON_MEDIA:-./media}:/media
+      # Ce qui a déjà été copié : un son retiré dans la console ne revient pas.
+      - cloud-sync-state:/state
+      # rclone.conf, avec le jeton Dropbox, hors du dépôt et de .env. En
+      # écriture : rclone y renouvelle le jeton.
+      - ${CLOUD_SYNC_CONFIG:-./data/rclone}:/config/rclone
+      - ./scripts/cloud-sync.sh:/cloud-sync.sh:ro
+    entrypoint: ["/bin/sh", "/cloud-sync.sh"]
+
   # HTTPS sur Internet. Absent de `docker compose up` : `--profile vps`, ou
   # COMPOSE_PROFILES=vps dans .env. Caddy joint les services par le réseau de
   # Docker : BIND_ADDRESS=127.0.0.1 ferme leurs ports sans le gêner.
@@ -336,3 +361,4 @@ services:
 volumes:
   tusd-data:
   share-private:
+  cloud-sync-state:

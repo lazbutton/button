@@ -240,6 +240,7 @@ check_deploy() {
   cd "$root/deploy"
   docker compose --env-file .env.example -f compose.yml config --quiet
   docker compose --env-file .env.example -f compose.yml --profile share config --quiet
+  docker compose --env-file .env.example -f compose.yml --profile cloud config --quiet
   echo "compose.yml : valide avec .env.example"
   if command -v shellcheck >/dev/null 2>&1; then
     shellcheck "$root"/scripts/*.sh "$root"/deploy/scripts/*.sh "$root"/deploy/share/entrypoint.sh
