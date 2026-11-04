@@ -69,6 +69,7 @@ async def test_replace_forecast_keeps_desk_pins(dbsession: ormSession):
 
 
 async def test_delete_clock_planned_item(dbsession: ormSession):
+    """The desk erases a planned clock line. FON-18 asks whether it should."""
     dbsession.add(
         ProgrammingVersion(id="pv-clock-delete", source="test", description="del")
     )
@@ -426,6 +427,46 @@ async def test_removal_without_ids_still_hides_by_time(dbsession: ormSession):
     assert await _shown_clock_ids(dbsession) == ["ri-kept"]
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="FON-17: a removal names its line by time alone, and hides every clock "
+    "line planned at that time",
+)
+@pytest.mark.parametrize("removal", ["suppress_at", "replace_at"])
+async def test_removal_at_a_shared_time_hides_the_removed_line_only(
+    dbsession: ormSession, removal: str
+):
+    """B and D start at the same time, to the microsecond: a reorder put D at the
+    start of a removed B, then the undo brought B back. Removing D leaves B."""
+    await _reorder_version(dbsession, "pv-hidden-shared")
+    start = datetime.now() + timedelta(minutes=5)
+    shared = start + timedelta(seconds=30)
+    dbsession.add_all(
+        [
+            _reorder_row("ri-a", "pv-hidden-shared", start, 30, origin="clock"),
+            _reorder_row("ri-b", "pv-hidden-shared", shared, 30, origin="clock"),
+            _reorder_row("ri-d", "pv-hidden-shared", shared, 30, origin="clock"),
+            _reorder_row(
+                "ri-c",
+                "pv-hidden-shared",
+                shared + timedelta(seconds=30),
+                30,
+                origin="clock",
+            ),
+        ]
+    )
+    await dbsession.commit()
+    removed_at = item_to_payload(await dbsession.get(RundownItem, "ri-d"))["at"]
+    if removal == "suppress_at":
+        await insert_desk_item(dbsession, {"suppress_at": removed_at})
+    else:
+        await insert_desk_item(
+            dbsession,
+            {"path": "/media/10-rotation/ri-d.mp3", "replace_at": removed_at},
+        )
+    assert await _shown_clock_ids(dbsession) == ["ri-a", "ri-b", "ri-c"]
+
+
 async def test_desk_insert_survives_preview_refresh(  # noqa: PLR0913
     raw_app,
     app_configration: dict,
@@ -510,6 +551,70 @@ async def test_desk_delete_anchor_json_409(
     await dbsession.commit()
     response = await client.delete("/autodj/conducteur/items/ri-http-anchor.json")
     assert response.status_code == 409
+
+
+@pytest.mark.parametrize(
+    "method",
+    [
+        "patch",
+        pytest.param(
+            "delete",
+            marks=pytest.mark.xfail(
+                strict=True,
+                reason="FON-18: DELETE erases a clock line that PATCH refuses; "
+                "test_delete_clock_planned_item still expects the erasure",
+            ),
+        ),
+    ],
+)
+async def test_desk_clock_line_json_409(  # noqa: PLR0913
+    raw_app,
+    app_configration: dict,
+    beets_integration: BeetsIntegration,
+    dbsession: ormSession,
+    users_password: str,
+    method: str,
+):
+    """The desk refuses to change a clock line, and the line stays: the console
+    takes one out of the antenna file with a removal, that the undo lifts."""
+    client = await _admin_client(
+        app_configration,
+        beets_integration,
+        dbsession,
+        users_password,
+        "desk-clock-admin",
+    )
+    dbsession.add(
+        ProgrammingVersion(id="pv-desk-http-clock", source="test", description="c")
+    )
+    await dbsession.flush()
+    dbsession.add(
+        RundownItem(
+            id="ri-http-clock",
+            programming_version_id="pv-desk-http-clock",
+            sequence=0,
+            planned_at=datetime.now() + timedelta(minutes=8),
+            duration=180,
+            kind="musique",
+            when_mode="sequential",
+            queue="autodj",
+            resource="Titre de l'horloge",
+            path="/media/10-rotation/titre-horloge.mp3",
+            status=RundownStatus.PLANNED.value,
+            origin="clock",
+        )
+    )
+    await dbsession.commit()
+    url = "/autodj/conducteur/items/ri-http-clock.json"
+    if method == "patch":
+        response = await client.patch(url, json={"title": "Autre titre"})
+    else:
+        response = await client.delete(url)
+    assert response.status_code == 409
+    kept = await dbsession.scalar(
+        select(RundownItem.id).where(RundownItem.id == "ri-http-clock")
+    )
+    assert kept == "ri-http-clock"
 
 
 async def test_skip_keeps_following_desk_pins(
