@@ -1,4 +1,6 @@
-import type { Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
+import { CONDUCTEUR_JSON } from "../src/api/rundownLive.ts";
+import type { Rundown } from "../src/api/types.ts";
 import { antenne, avis, bibliotheque, expect, file, secondes, seConnecter, tenirLAntenne, tenirLaFile, test } from "./banc.ts";
 
 // Le pupitre au quotidien, avec le compte qui s'en sert le plus : l'animateur.
@@ -37,6 +39,38 @@ async function voisines(page: Page): Promise<{ rang: number; haut: string; bas: 
   const rang = titres.findIndex((titre, index) => index > 0 && titre !== titres[index - 1]);
   if (rang < 0) throw new Error(`Aucune paire de titres voisins différents dans la file : ${titres.join(", ")}.`);
   return { rang, haut: titres[rang - 1], bas: titres[rang] };
+}
+
+/**
+ * La dernière ligne de la file que « Annuler » remet à sa place : une ligne de
+ * l'horloge, qu'un retrait masque. Une ligne du pupitre retirée est effacée, et
+ * « Annuler » la remet à la suite, à une autre heure. La file ne dit pas d'où
+ * vient une ligne : le parcours le lit au moteur. Une ligne verrouillée n'a pas
+ * de bouton « Retirer » : le moteur de démo verrouille aussi la ligne de son
+ * titre en cours, parfois loin dans la file.
+ *
+ * L'heure de passage exacte de la ligne, l'attribut `datetime` de son heure, la
+ * désigne : aucune autre ligne du moteur ne l'a. Le masque d'un retrait vaut
+ * pour une heure exacte, et ne cache donc qu'elle. L'heure affichée, à la
+ * seconde, peut être celle de deux lignes.
+ */
+async function derniereLigneDeLHorloge(page: Page): Promise<Locator> {
+  const reponse = await page.request.get(CONDUCTEUR_JSON);
+  expect(reponse.ok(), "file lue au moteur").toBe(true);
+  const { items } = (await reponse.json()) as Rundown;
+  // L'heure exacte de chaque ligne qui a un bouton « Retirer », dans l'ordre de la file.
+  const heures = await lignes(page)
+    .filter({ has: page.getByRole("button", { name: /^Retirer / }) })
+    .getByRole("time")
+    .evaluateAll((balises) => balises.map((balise) => balise.getAttribute("datetime") ?? ""));
+  const heure = heures
+    .filter((at) => {
+      const memes = items.filter((item) => item.at === at);
+      return memes.length === 1 && memes[0].origin === "clock";
+    })
+    .at(-1);
+  if (!heure) throw new Error(`Aucune ligne de l'horloge à retirer parmi : ${heures.join(", ")}.`);
+  return lignes(page).filter({ has: page.locator(`time[datetime="${heure}"]`) });
 }
 
 test("Espace passe au titre suivant, une seule fois, et s’écrit dans un champ", async ({ page }) => {
@@ -194,25 +228,24 @@ test("une ligne montée devant une ligne déjà commencée prend la tête de la 
 });
 
 test("une ligne retirée de la file revient avec « Annuler »", async ({ page }) => {
-  await tenirLAntenne(page);
-  // La dernière ligne visible vient de l'horloge. Son heure de passage la désigne
-  // sans doute possible : les titres, eux, reviennent.
-  const derniere = lignes(page).last();
-  const heure = (await derniere.getByRole("time").textContent()) ?? "";
-  expect(heure).toMatch(/^\d{2}:\d{2}:\d{2}$/);
-  const retirer = (await derniere.getByRole("button", { name: /^Retirer / }).getAttribute("aria-label")) ?? "";
-  const ligne = lignes(page).filter({ hasText: heure });
-  await expect(ligne).toHaveCount(1);
+  // La file tenue, aucune ligne du haut n'en sort pendant le geste : elle ne
+  // glisse pas. Le message du retrait reste aussi : ses 8 s ne passent pas.
+  await tenirLaFile(page, async () => {
+    const ligne = await derniereLigneDeLHorloge(page);
+    await expect(ligne).toHaveCount(1);
+    const retirer = ligne.getByRole("button", { name: /^Retirer / });
+    const nom = (await retirer.getAttribute("aria-label")) ?? "";
 
-  await ligne.getByRole("button", { name: retirer }).click();
-  const retrait = avis(page, "Retiré de la file.");
-  await expect(retrait).toBeVisible();
-  await expect(ligne).toHaveCount(0);
+    await retirer.click();
+    const retrait = avis(page, "Retiré de la file.");
+    await expect(retrait).toBeVisible();
+    await expect(ligne).toHaveCount(0);
 
-  await retrait.getByRole("button", { name: "Annuler" }).click();
-  await expect(avis(page, "Annulé.")).toBeVisible();
-  await expect(ligne).toHaveCount(1);
-  await expect(ligne.getByRole("button", { name: retirer })).toBeVisible();
+    await retrait.getByRole("button", { name: "Annuler" }).click();
+    await expect(avis(page, "Annulé.")).toBeVisible();
+    await expect(ligne).toHaveCount(1);
+    await expect(ligne.getByRole("button", { name: nom, exact: true })).toBeVisible();
+  });
 });
 
 test("fermer le panneau du direct rend le focus à « Passer en direct »", async ({ page }) => {
