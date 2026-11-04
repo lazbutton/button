@@ -78,6 +78,41 @@ class PromoteInPlaceTest(unittest.TestCase):
             self.assertEqual((rotation / "Ada - Song.wav").read_bytes(), b"wav")
             self.assertFalse((rotation / "Ada - Song.flac").exists())
 
+    def test_upper_case_extensions_are_lowered(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            media = root / "media"
+            inbox = media / "00-inbox" / "rotation"
+            rotation = media / "10-rotation"
+            inbox.mkdir(parents=True)
+            rotation.mkdir(parents=True)
+            (inbox / "Eve - Hit.FLAC").write_bytes(b"flac")
+            (rotation / "Cy - Tune.WAV").write_bytes(b"wav")
+            bindir = root / "bin"
+            bindir.mkdir()
+            write_bin(bindir, "ffprobe", "#!/bin/sh\n")
+            write_bin(
+                bindir,
+                "ffmpeg",
+                "#!/bin/sh\n"
+                "out=\n"
+                "for arg in \"$@\"; do out=$arg; done\n"
+                "printf 'done' > \"$out\"\n",
+            )
+            env = os.environ.copy()
+            env["PATH"] = f"{bindir}{os.pathsep}{env.get('PATH', '')}"
+            env["MEDIA_ROOT"] = str(media)
+            subprocess.run(["sh", str(SCRIPT)], check=True, env=env, cwd=root)
+            # Les noms, pas exists() : le disque du Mac ignore la casse.
+            self.assertEqual(
+                sorted(path.name for path in rotation.iterdir()),
+                ["Cy - Tune.flac", "Eve - Hit.flac"],
+            )
+            self.assertEqual(
+                [path.name for path in (media / "00-inbox" / "_sources").iterdir()],
+                ["Eve - Hit.FLAC"],
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -46,7 +46,7 @@ promote_dir() {
     [ -f "$src" ] || continue
     name=$(basename "$src")
     stem=${name%.*}
-    ext=$(printf '%s' "${name##*.}" | tr 'A-Z' 'a-z')
+    ext=$(printf '%s' "${name##*.}" | LC_ALL=C tr '[:upper:]' '[:lower:]')
     case "$stem" in
       *" - "*) artist=${stem%% - *}; title=${stem#* - } ;;
       *)       artist=""; title=$stem ;;
@@ -65,6 +65,8 @@ promote_dir() {
       fi
       if [ -e "$target" ]; then echo "déjà là : $name"; skipped=$((skipped+1)); continue; fi
       partial="$dest/.$stem.partial.${target##*.}"
+      # Sans guillemets exprès : codec_args donne plusieurs arguments à ffmpeg.
+      # shellcheck disable=SC2086
       if [ "$DRY" = 1 ]; then
         echo "+ ffmpeg -v error -y -i $src -map 0:a $codec_args -metadata artist=$artist -metadata title=$title $partial"
       elif ! ffmpeg -v error -y -i "$src" -map 0:a $codec_args \
@@ -124,7 +126,7 @@ tag_in_place() {
     name=$(basename "$src")
     case "$name" in .*) continue ;; esac
     stem=${name%.*}
-    ext=$(printf '%s' "${name##*.}" | tr 'A-Z' 'a-z')
+    ext=$(printf '%s' "${name##*.}" | LC_ALL=C tr '[:upper:]' '[:lower:]')
     case "$stem" in
       *" - "*) artist=${stem%% - *}; title=${stem#* - } ;;
       *)       artist=""; title=$stem ;;
