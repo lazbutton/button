@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session as ormSession
 
 from radiotomate.beets import BeetsIntegration
@@ -467,6 +467,53 @@ async def test_removal_at_a_shared_time_hides_the_removed_line_only(
     assert await _shown_clock_ids(dbsession) == ["ri-a", "ri-b", "ri-c"]
 
 
+# Handed to the playout, not yet on air.
+_SENT = ["reserved", "pending_push", "sent", "accepted", "in_queue"]
+
+
+async def _desk_gesture(
+    dbsession: ormSession, gesture: str, line: RundownItem, other: RundownItem
+) -> None:
+    at = item_to_payload(line)["at"]
+    if gesture == "suppress_at":
+        await insert_desk_item(dbsession, {"suppress_at": at})
+    elif gesture == "replace_at":
+        await insert_desk_item(
+            dbsession, {"path": "/media/10-rotation/autre.mp3", "replace_at": at}
+        )
+    elif gesture == "delete":
+        await delete_desk_item(dbsession, line.id)
+    else:
+        await reorder_desk_items(dbsession, [other.id, line.id])
+
+
+@pytest.mark.parametrize("gesture", ["suppress_at", "replace_at", "delete", "ranks"])
+@pytest.mark.parametrize("status", _SENT)
+async def test_a_line_already_sent_is_neither_removed_nor_moved(
+    dbsession: ormSession, status: str, gesture: str
+):
+    """Liquidsoap plays a line in the order it got it and cannot give it back:
+    removed or moved, it would air all the same. The desk refuses, and the line
+    stays as it was."""
+    await _reorder_version(dbsession, "pv-sent")
+    start = (datetime.now() + timedelta(minutes=2)).replace(microsecond=0)
+    sent = _reorder_row("ri-sent", "pv-sent", start, 180, status=status, origin="clock")
+    later = _reorder_row(
+        "ri-later", "pv-sent", start + timedelta(minutes=3), 180, origin="clock"
+    )
+    dbsession.add_all([sent, later])
+    await dbsession.commit()
+    with pytest.raises(DomainConflict, match="déjà partie") as caught:
+        await _desk_gesture(dbsession, gesture, sent, later)
+    assert caught.value.status_code == 409
+    kept = await dbsession.get(RundownItem, "ri-sent")
+    assert (kept.status, kept.planned_at) == (status, start)
+    desk_rows = select(func.count(RundownItem.id)).where(
+        RundownItem.origin == DESK_ORIGIN
+    )
+    assert await dbsession.scalar(desk_rows) == 0
+
+
 async def test_desk_insert_survives_preview_refresh(  # noqa: PLR0913
     raw_app,
     app_configration: dict,
@@ -615,6 +662,59 @@ async def test_desk_clock_line_json_409(  # noqa: PLR0913
         select(RundownItem.id).where(RundownItem.id == "ri-http-clock")
     )
     assert kept == "ri-http-clock"
+
+
+async def test_desk_sent_line_json_409(
+    raw_app,
+    app_configration: dict,
+    beets_integration: BeetsIntegration,
+    dbsession: ormSession,
+    users_password: str,
+):
+    """An older console still offers « Retirer » and the move: the refusal says why,
+    in French, and the console shows it."""
+    client = await _admin_client(
+        app_configration,
+        beets_integration,
+        dbsession,
+        users_password,
+        "desk-sent-admin",
+    )
+    await _reorder_version(dbsession, "pv-desk-http-sent")
+    start = datetime.now() + timedelta(minutes=2)
+    sent = _reorder_row(
+        "ri-http-sent",
+        "pv-desk-http-sent",
+        start,
+        180,
+        status=RundownStatus.IN_QUEUE.value,
+        origin="clock",
+    )
+    later = _reorder_row(
+        "ri-http-later",
+        "pv-desk-http-sent",
+        start + timedelta(minutes=3),
+        180,
+        origin="clock",
+    )
+    dbsession.add_all([sent, later])
+    await dbsession.commit()
+
+    removed = await client.post(
+        "/autodj/conducteur/items.json",
+        json={"suppress_at": item_to_payload(sent)["at"]},
+    )
+    assert removed.status_code == 409
+    body = await removed.get_json()
+    assert body["code"] == "conflict"
+    assert body["error"].startswith("Cette ligne est déjà partie vers l'antenne")
+
+    moved = await client.put(
+        "/autodj/conducteur/items/ranks.json",
+        json={"ids": ["ri-http-later", "ri-http-sent"]},
+    )
+    assert moved.status_code == 409
+    assert "ne se déplace plus" in (await moved.get_json())["error"]
 
 
 async def test_skip_keeps_following_desk_pins(

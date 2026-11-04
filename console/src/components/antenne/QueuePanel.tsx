@@ -3,7 +3,14 @@ import { useState, type DragEvent, type KeyboardEvent } from "react";
 import { Link } from "react-router-dom";
 import { mmss } from "../../api/antenneDesk";
 import { LIBRARY_DRAG_MIME, type LibraryHit } from "../../api/library";
-import { DESK_FILE_AHEAD, partitionRundown, queueItemKey, queueItemLocked, rundownCopy } from "../../api/rundownLive";
+import {
+  DESK_FILE_AHEAD,
+  partitionRundown,
+  queueItemKey,
+  queueItemLocked,
+  queueItemSent,
+  rundownCopy,
+} from "../../api/rundownLive";
 import type { LiveSnapshot, Rundown, RundownItem } from "../../api/types";
 import { parisParts } from "../../lib/parisClock";
 
@@ -122,6 +129,8 @@ export function QueuePanel({
             const locked = queueItemLocked(item, onAirId);
             const movable = Boolean(item.id) && !locked;
             const anchored = item.when === "anchored";
+            // Envoyée au playout : elle passera quoi qu'on fasse ici.
+            const sent = queueItemSent(item);
             const copy = rundownCopy(item);
             const start = Date.parse(item.at);
             const airAt = Number.isFinite(start) ? parisParts(new Date(start)).clock : "—";
@@ -198,7 +207,13 @@ export function QueuePanel({
                 ) : (
                   <span
                     className="ant-queue-lock"
-                    title={anchored ? "Ancre d’horloge : ne bouge pas" : "C’est le prochain : il ne bouge plus"}
+                    title={
+                      anchored
+                        ? "Ancre d’horloge : ne bouge pas"
+                        : sent
+                          ? "Déjà partie vers l’antenne : elle ne se retire ni ne bouge plus"
+                          : "C’est le prochain : il ne bouge plus"
+                    }
                   >
                     {anchored ? (
                       <span className="ant-queue-anchor">
@@ -210,10 +225,11 @@ export function QueuePanel({
                     <span className="ui-visually-hidden">verrouillé</span>
                   </span>
                 )}
-                <span className="ant-queue-copy">
+                <span className={sent ? "ant-queue-copy is-sent" : "ant-queue-copy"}>
                   <span className={`ant-kind is-${kind}`} aria-hidden="true" />
                   <span className="ant-queue-title">{copy.title || "—"}</span>
                   {copy.artist ? <span className="ant-queue-artist">{copy.artist}</span> : null}
+                  {sent ? <span className="ant-chip ant-queue-sent">Déjà partie</span> : null}
                 </span>
                 <span className="ant-queue-dur">{mmss(item.duration || 0)}</span>
                 {locked ? (
