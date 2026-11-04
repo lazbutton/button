@@ -54,12 +54,14 @@ Le script lance les mêmes commandes que la CI ([`.github/workflows/`](../.githu
 | `console` | `npm test`, puis `tsc` et `vite build` | Node 22, `npm install` fait |
 | `services` | les onze tests du catalogue listés dans `services.yml` | `services/catalog/.venv`, voir plus bas |
 | `nginx` | `nginx -t` sur `console/docker/nginx.conf.template` et ses en-têtes de sécurité, rendus par le script de démarrage de l'image | Docker |
-| `deploy` | `docker compose config` avec `.env.example`, puis ShellCheck s'il est installé | Docker |
+| `deploy` | `docker compose config` avec `.env.example`, puis ShellCheck sur les scripts du dépôt, comme la CI | Docker |
 | `e2e` | les parcours dans un navigateur, par `scripts/e2e.sh` ([plus bas](#les-parcours-dans-un-navigateur)) | Node 22 et Poetry, `npm install` et `poetry install` faits |
 
 Sans argument, une partie à qui il manque un outil est sautée, et le résumé le dit. Nommée, elle échoue.
 
 Sans argument, les parcours tournent aussi : la CI les lance sur chaque pull request qui touche la console ou le moteur, et un parcours cassé doit se voir avant elle. Ils prennent quelques minutes. Pour vérifier vite une partie, la nommer : `./scripts/verifier.sh moteur console`.
+
+La partie `deploy` passe ShellCheck avec l'image et sur la liste de [`shellcheck.yml`](../.github/workflows/shellcheck.yml), le workflow qui lance le même contrôle en CI, sur chaque pull request qui touche un script. La liste prend `scripts/`, `deploy/scripts/`, `deploy/share/entrypoint.sh` et les scripts de démarrage des images de la console et d'Icecast. Un script ailleurs s'y ajoute, sinon personne ne le vérifie. `engine/dev.sh` et `engine/install.sh` viennent de l'amont, Radiotomate : ils restent dehors. L'image est épinglée, et Dependabot ne la suit pas : la monter à la main, puis corriger ce que la nouvelle version signale.
 
 Les dépendances du catalogue vont dans un environnement à part, une fois :
 

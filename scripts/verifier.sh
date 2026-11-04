@@ -242,12 +242,24 @@ check_deploy() {
   docker compose --env-file .env.example -f compose.yml --profile share config --quiet
   docker compose --env-file .env.example -f compose.yml --profile cloud config --quiet
   echo "compose.yml : valide avec .env.example"
-  if command -v shellcheck >/dev/null 2>&1; then
-    shellcheck "$root"/scripts/*.sh "$root"/deploy/scripts/*.sh "$root"/deploy/share/entrypoint.sh
-    echo "ShellCheck : propre"
-  else
-    echo "ShellCheck absent, scripts non vérifiés : brew install shellcheck" >&2
-  fi
+  # ShellCheck comme la CI : l'image et la liste des scripts se lisent dans le
+  # workflow, shellcheck.yml, l'image seule sur sa ligne, puis un script ou un
+  # motif par ligne, jusqu'à la fin du bloc.
+  local lus image scripts
+  lus=$(awk '
+    liste && /^ +[^ #:"]+ *$/ { print $1; next }
+    liste { exit }
+    /^ +docker\.io\/koalaman\/shellcheck:[^ ]+ *$/ { print $1; liste = 1 }
+  ' "$root/.github/workflows/shellcheck.yml")
+  image=$(sed -n 1p <<<"$lus")
+  scripts=$(sed 1d <<<"$lus")
+  { [ -n "$image" ] && [ -n "$scripts" ]; } ||
+    { echo "Image ou scripts de ShellCheck introuvables dans shellcheck.yml." >&2; return 1; }
+  cd "$root"
+  # Sans guillemets exprès : le shell déplie les motifs, comme celui de la CI.
+  # shellcheck disable=SC2086
+  docker run --rm -v "$root:/mnt:ro" -w /mnt "$image" $scripts
+  echo "ShellCheck : propre"
 }
 
 check_e2e() {

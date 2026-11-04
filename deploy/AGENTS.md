@@ -5,8 +5,10 @@
 ## Vérifier
 
 ```bash
-../scripts/verifier.sh deploy    # docker compose config avec .env.example, ShellCheck si installé
+../scripts/verifier.sh deploy    # docker compose config avec .env.example, puis ShellCheck comme la CI
 ```
+
+La CI lance ShellCheck sur chaque pull request qui touche un script ([`shellcheck.yml`](../.github/workflows/shellcheck.yml)), et `verifier.sh` lit dans ce workflow la même image et la même liste. Un script nouveau hors de `deploy/scripts/` s'ajoute à la liste. Un avertissement voulu se garde par une directive, sous une ligne qui dit pourquoi, comme dans `promote-inbox.sh`.
 
 `verifier.sh` ne passe pas encore le profil `vps` ni le `Caddyfile`. Après un changement de l'un ou de l'autre :
 

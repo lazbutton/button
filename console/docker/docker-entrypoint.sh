@@ -35,6 +35,9 @@ TUSD_UPSTREAM=${TUSD_UPSTREAM%/}
 CSP_MEDIA_SRC=${CSP_MEDIA_SRC:+ $CSP_MEDIA_SRC}
 CSP_CONNECT_SRC=${CSP_CONNECT_SRC:+ $CSP_CONNECT_SRC}
 export AUTOMATE_BACKEND CATALOG_UPSTREAM TUSD_UPSTREAM CSP_MEDIA_SRC CSP_CONNECT_SRC
+# Les noms entre apostrophes, exprès : envsubst ne remplace que ces variables,
+# et laisse à nginx les siennes, comme $remote_addr.
+# shellcheck disable=SC2016
 variables='${AUTOMATE_BACKEND} ${CATALOG_UPSTREAM} ${TUSD_UPSTREAM} ${CSP_MEDIA_SRC} ${CSP_CONNECT_SRC}'
 envsubst "$variables" < /etc/nginx/nginx-default.conf.template > /etc/nginx/conf.d/default.conf
 envsubst "$variables" < /etc/nginx/security-headers.conf.template > /etc/nginx/security-headers.conf
