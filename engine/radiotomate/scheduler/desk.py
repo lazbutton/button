@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, NamedTuple
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 
 from radiotomate.domain.errors import (
     DomainConflict,
@@ -19,7 +19,8 @@ from radiotomate.domain.errors import (
 )
 from radiotomate.domain.execution import naive_datetime, rundown_summary
 from radiotomate.enums import PositionKind, RundownStatus, WhenMode
-from radiotomate.models import RundownItem, Sound
+from radiotomate.models import RundownItem, Setting, Sound
+from radiotomate.scheduler.clock import _PUSHABLE_STATUSES
 from radiotomate.scheduler.execution import (
     _CLOSED_DESK_STATUSES,
     DESK_KINDS,
@@ -31,6 +32,10 @@ from radiotomate.scheduler.execution import (
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session as ormSession
+
+# ADR 0009: turned off, a clock line removed at the desk airs, as before.
+SETTING_SKIP_REMOVED = "features.skip_removed_lines"
+_SETTING_OFF = {"0", "false", "off", ""}
 
 
 def desk_queue_for(kind: str) -> str:
@@ -120,10 +125,70 @@ def merge_desk_into_items(
     return combined
 
 
+async def skip_removed_lines(session: ormSession) -> bool:
+    """Whether the clock leaves out the lines removed at the desk. A missing key
+    leaves them out."""
+    row = await Setting.from_key(session, SETTING_SKIP_REMOVED)
+    return row is None or str(row.value).strip().lower() not in _SETTING_OFF
+
+
+def _is_removal(row: RundownItem) -> bool:
+    return bool((row.details or {}).get("suppress_at"))
+
+
+def _removed_by(removal: RundownItem):
+    """The clock rows a removal takes off, those it hides from the file: by id, or
+    by time for a removal posted by an older engine, which has no ids."""
+    ids = (removal.details or {}).get("hides_ids")
+    taken = (
+        RundownItem.id.in_(list(ids))
+        if ids
+        else RundownItem.planned_at == removal.planned_at
+    )
+    return and_(
+        taken,
+        RundownItem.origin != DESK_ORIGIN,
+        RundownItem.when_mode != WhenMode.ANCHORED.value,
+    )
+
+
+async def removed_clock_ids(session: ormSession) -> set[str]:
+    """Ids of the clock rows removed at the desk: the clock does not push them while
+    their removal lasts. « Annuler » deletes the removal and gives them back."""
+    active = await list_active_desk_items(session)
+    removals = [row for row in active if _is_removal(row)]
+    if not removals or not await skip_removed_lines(session):
+        return set()
+    return set(
+        await session.scalars(
+            select(RundownItem.id).where(or_(*(_removed_by(row) for row in removals)))
+        )
+    )
+
+
+async def _skip_removed(
+    session: ormSession, removals: list[RundownItem], now: datetime
+) -> None:
+    rows = await session.scalars(
+        select(RundownItem).where(
+            RundownItem.status.in_(list(_PUSHABLE_STATUSES)),
+            or_(*(_removed_by(row) for row in removals)),
+        )
+    )
+    for row in rows:
+        row.status = RundownStatus.SKIPPED.value
+        row.reason = "retiré de la file"
+        row.closed_at = now
+
+
 async def expire_past_desk_items(
     session: ormSession, now: datetime | None = None
 ) -> None:
-    """Drop unlocked desk pins whose planned window is already over."""
+    """Drop unlocked desk pins whose planned window is already over.
+
+    A removal that goes marks its lines skipped: the clock passed them over, and
+    with nothing left to hide them they would air late.
+    """
     cutoff = naive_datetime(now) or datetime.now()
     rows = await list_active_desk_items(session)
     stale: list[RundownItem] = []
@@ -138,6 +203,9 @@ async def expire_past_desk_items(
             stale.append(row)
     if not stale:
         return
+    removals = [row for row in stale if _is_removal(row)]
+    if removals and await skip_removed_lines(session):
+        await _skip_removed(session, removals, cutoff)
     for row in stale:
         await session.delete(row)
     await session.commit()

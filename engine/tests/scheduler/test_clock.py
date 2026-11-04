@@ -9,13 +9,15 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session as ormSession
 
 from radiotomate.beets import BeetsIntegration
-from radiotomate.enums import CartMode, ScheduleMode
+from radiotomate.enums import CartMode, RundownStatus, ScheduleMode
 from radiotomate.models import (
     AutoDJSlot,
     Clock,
     ClockPosition,
     MetadataLog,
     MusicCategory,
+    RundownItem,
+    Setting,
 )
 from radiotomate.models.cart import Cart
 from radiotomate.models.sound import Sound
@@ -30,6 +32,13 @@ from radiotomate.scheduler.clock import (
     sequential_kind_cycle,
     tick,
     track_would_overflow_anchor,
+)
+from radiotomate.scheduler.desk import SETTING_SKIP_REMOVED
+from radiotomate.scheduler.execution import (
+    delete_desk_item,
+    ensure_forecast,
+    expire_past_desk_items,
+    insert_desk_item,
 )
 
 NIGHT = "2026-09-14T00:30:00+02:00"
@@ -309,6 +318,112 @@ async def test_tick_does_not_jump_ahead_to_later_jingle(
     assert all(
         not str(c.args[0]).endswith("/jingles") for c in client.post.call_args_list
     )
+
+
+async def _night_music(
+    dbsession: ormSession, beets_integration: BeetsIntegration
+) -> list[dict]:
+    """The music lines of the night file, in their order."""
+    now = datetime(2026, 9, 14, 0, 30, tzinfo=PARIS)
+    data = await ensure_forecast(dbsession, beets_integration, now=now, cursor=0)
+    return [item for item in data["items"] if item.get("kind") == "musique"]
+
+
+def _autodj_wants_two() -> dict:
+    """The jingles queue is full and the autodj queue empty: two music lines go."""
+    return _live(
+        NIGHT,
+        remaining="180",
+        next_jingle={"rid": 1},
+        jingles_queued=2,
+        autodj_queued=0,
+    )
+
+
+def _pushed_ids(client: AsyncMock) -> list[str]:
+    return [
+        call.kwargs["json"]["radiotomate_item_id"]
+        for call in client.post.call_args_list
+    ]
+
+
+@pytest.mark.parametrize("known_by", ["ids", "time"])
+async def test_a_removed_clock_line_is_not_pushed(
+    dbsession: ormSession,
+    jingles_cart: Cart,
+    beets_integration: BeetsIntegration,
+    known_by: str,
+):
+    """« Retirer » on a clock line of the file: the clock pushes the next lines in
+    its place. « Annuler » deletes the removal and gives the line back. A removal
+    posted by an older engine knows its line by time only."""
+    music = await _night_music(dbsession, beets_integration)
+    removal = await insert_desk_item(dbsession, {"suppress_at": music[0]["at"]})
+    if known_by == "time":
+        removal.details = {"suppress_at": music[0]["at"]}
+        await dbsession.commit()
+
+    client = _client()
+    await tick(dbsession, _autodj_wants_two(), client, beets_integration)
+    assert _pushed_ids(client) == [music[1]["id"], music[2]["id"]]
+
+    await delete_desk_item(dbsession, removal.id)
+    client = _client()
+    await tick(dbsession, _autodj_wants_two(), client, beets_integration)
+    assert _pushed_ids(client) == [music[0]["id"], music[3]["id"]]
+
+
+async def test_a_removed_line_stays_off_air_once_its_removal_expires(
+    dbsession: ormSession,
+    jingles_cart: Cart,
+    beets_integration: BeetsIntegration,
+):
+    """A removal goes 30 s past the time of its line, at a reading of the file. Its
+    line is then marked skipped: with nothing left to hide it, the clock would
+    push it late."""
+    music = await _night_music(dbsession, beets_integration)
+    await insert_desk_item(dbsession, {"suppress_at": music[0]["at"]})
+    await tick(dbsession, _autodj_wants_two(), _client(), beets_integration)
+
+    past = datetime.fromisoformat(music[0]["at"]) + timedelta(seconds=30)
+    await expire_past_desk_items(dbsession, now=past)
+    removed = await dbsession.get(RundownItem, music[0]["id"])
+    assert removed.status == RundownStatus.SKIPPED.value
+    client = _client()
+    await tick(dbsession, _autodj_wants_two(), client, beets_integration)
+    assert _pushed_ids(client) == [music[3]["id"], music[4]["id"]]
+
+
+@pytest.mark.parametrize(
+    ("value", "skips"),
+    [(None, True), ("1", True), ("0", False), ("false", False), ("Off", False)],
+)
+async def test_removed_lines_follow_the_switch(
+    dbsession: ormSession,
+    jingles_cart: Cart,
+    beets_integration: BeetsIntegration,
+    value: str | None,
+    skips: bool,
+):
+    """features.skip_removed_lines turned off: a removed line airs, as before, and
+    its removal going leaves it to the clock."""
+    if value is not None:
+        await Setting.upsert(dbsession, SETTING_SKIP_REMOVED, value)
+        await dbsession.commit()
+    music = await _night_music(dbsession, beets_integration)
+    await insert_desk_item(dbsession, {"suppress_at": music[0]["at"]})
+    await insert_desk_item(dbsession, {"suppress_at": music[3]["at"]})
+
+    client = _client()
+    await tick(dbsession, _autodj_wants_two(), client, beets_integration)
+    pushed = [music[1], music[2]] if skips else [music[0], music[1]]
+    assert _pushed_ids(client) == [item["id"] for item in pushed]
+
+    past = datetime.fromisoformat(music[3]["at"]) + timedelta(seconds=30)
+    await expire_past_desk_items(dbsession, now=past)
+    later = await dbsession.get(RundownItem, music[3]["id"])
+    status = RundownStatus.SKIPPED if skips else RundownStatus.PLANNED
+    assert later.status == status.value
 
 
 async def test_autodj_fills_while_cart_is_on_air(
