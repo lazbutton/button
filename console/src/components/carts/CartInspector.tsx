@@ -1,8 +1,9 @@
 import { Button, IconButton, SegmentedControl, Switch, TextArea, TextField, Tooltip } from "@radix-ui/themes";
-import { ArrowUpRight, ChevronRight, Copy, FolderOpen, RotateCcw, Save, Trash2, X } from "lucide-react";
+import { ArrowUpRight, Check, ChevronRight, Copy, FolderOpen, RotateCcw, Save, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { titleTaken } from "../../api/cartErrors";
+import { cartFolderName, finderRel } from "../../api/cartFolder";
 import { MODE_HELP, relayUrlOk } from "../../api/cartMeta";
 import { fetchBankFolders } from "../../api/cartSounds";
 import { fetchVolume, stationSmbUrl } from "../../api/volume";
@@ -45,15 +46,6 @@ function draftFromCart(cart: Cart): CartDraft {
   };
 }
 
-function finderRel(cartId: number, title: string): string {
-  const slug =
-    (title || "")
-      .trim()
-      .replace(/[^A-Za-z0-9._-]+/g, "-")
-      .replace(/^[-._]+|[-._]+$/g, "") || "cart";
-  return `Bacs/${cartId}-${slug}`;
-}
-
 export function CartInspector({
   cart,
   busy,
@@ -77,6 +69,7 @@ export function CartInspector({
   const baselineId = useRef(cart.id);
   const [bankPaths, setBankPaths] = useState<string[]>(HABILLAGE_FOLDERS);
   const [copied, setCopied] = useState(false);
+  const [nameCopy, setNameCopy] = useState<"" | "ok" | "fail">("");
   const [volume, setVolume] = useState<{ name: string; host: string } | null>(null);
 
   // A new bac resets the form. The same bac reloaded keeps the fields being edited.
@@ -140,9 +133,26 @@ export function CartInspector({
     ];
   }, [bankPaths, draft.bankFolder]);
 
+  const folderName = cartFolderName(cart.id, draft.title.trim() || cart.title);
   const finderPath = finderRel(cart.id, draft.title.trim() || cart.title);
   const networkUrl =
     volume?.host && volume.name ? stationSmbUrl(volume.host, volume.name, finderPath) : "";
+
+  // Le nom seul, sans Bacs/ : c'est lui qu'on tape pour créer le dossier dans Dropbox.
+  const copyFolderName = () => {
+    // Pas de presse-papiers hors HTTPS, sauf sur localhost.
+    if (!navigator.clipboard) {
+      setNameCopy("fail");
+      return;
+    }
+    void navigator.clipboard.writeText(folderName).then(
+      () => {
+        setNameCopy("ok");
+        window.setTimeout(() => setNameCopy(""), 1500);
+      },
+      () => setNameCopy("fail"),
+    );
+  };
 
   const save = () =>
     onSave({
@@ -284,6 +294,23 @@ export function CartInspector({
                   </span>
                   <Switch size="1" checked={draft.identPads} onCheckedChange={(next) => set("identPads", next)} />
                 </label>
+                <div className="bacs-network">
+                  <span className="ui-field-label">Nom du dossier</span>
+                  <code>{finderPath}</code>
+                  <span className="bacs-network-actions">
+                    <Button type="button" size="1" variant="soft" color="gray" onClick={copyFolderName}>
+                      {nameCopy === "ok" ? <Check className="ui-button-icon" /> : <Copy className="ui-button-icon" />}
+                      {nameCopy === "ok" ? "Copié" : "Copier le nom"}
+                    </Button>
+                  </span>
+                  <small>
+                    Quand la station est reliée à Dropbox, un dossier de ce nom, dans son dossier Bacs, ouvre le bac
+                    aux dépôts.
+                  </small>
+                  {nameCopy === "fail" ? (
+                    <small role="status">Copie impossible ici : sélectionne le nom, puis copie-le.</small>
+                  ) : null}
+                </div>
               </>
             )}
             {networkUrl ? (

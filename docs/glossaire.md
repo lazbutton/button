@@ -11,6 +11,7 @@ Les mots de la radio et ceux du code. Quand la console et le code n'emploient pa
 | Antenne | Ce qui part vers les auditeurs. Aussi la page principale de la console | `AntennePage.tsx`, `/antenne/state.json` |
 | Auto-DJ | La musique que le moteur choisit seul dans la banque, selon les catégories | file Liquidsoap `autodj` |
 | Bac | Le mot de la console pour un cart : des sons joués selon un mode, en liste, en boucle, au hasard, ou un relais | `Cart` |
+| Bac ouvert | Un bac dont le dossier existe dans le dossier `Bacs` de Dropbox, sous son numéro et son titre : un son qu'on y dépose entre dans le bac | `cloud-sync`, `deploy/scripts/cloud-sync.sh` |
 | Banque | Les dossiers de fichiers audio de la station : `00-inbox`, `10-rotation`, `20-archives`, `30-habillage`, `40-emissions`, `50-carts`… Une banque d'archives est un dossier de `20-archives` | `BUTTON_MEDIA`, `MEDIA_ROOT` |
 | Catalogue | Le service qui indexe la banque, répond aux recherches et range les envois | `services/catalog/` |
 | Catégorie | Une requête Beets qui choisit des titres, comme `genre:Jazz` | `MusicCategory` |
@@ -20,7 +21,7 @@ Les mots de la radio et ceux du code. Quand la console et le code n'emploient pa
 | Décrochage | Partager l'antenne avec une autre radio pendant une plage | voir `docs/exploitation/decrochage.md` |
 | Diffusion | Une entrée de l'Agenda : un set ou un direct | `kind` vaut `set` ou `live` |
 | Direct | Une prise d'antenne par un encodeur branché sur le harbor | source `stream` |
-| Dropbox | Le conteneur qui surveille l'inbox, range les fichiers et met à jour Beets | `radiotomate-dropbox` |
+| Dropbox | Deux choses à ne pas confondre. Le conteneur qui surveille l'inbox, range les fichiers et met à jour Beets : lui ne parle pas à Dropbox. Et le stockage en ligne, où un bac ouvert reçoit des sons | `radiotomate-dropbox` ; `cloud-sync` |
 | Émission | Un programme nommé : hebdomadaire, avec un jour, des heures et parfois un animateur ; ou de session, le direct en cours | `emissions` |
 | Encodeur | Le logiciel qui envoie le son du direct : BUTT, Mixxx… | — |
 | Habillage | Les jingles, virgules et idents qui ponctuent l'antenne | `30-habillage` |
