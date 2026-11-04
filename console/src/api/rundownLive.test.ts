@@ -12,6 +12,8 @@ import {
   isDeskPin,
   liveHarborRundownItem,
   partitionRundown,
+  queueItemLocked,
+  queueItemSent,
 } from "./rundownLive.ts";
 
 test("Icecast title wins over the wall covering slot", () => {
@@ -136,6 +138,29 @@ function fileItem(partial: Partial<RundownItem> & Pick<RundownItem, "at" | "reso
     ...partial,
   };
 }
+
+test("a line already sent to the playout is locked: it no longer leaves the file nor moves", () => {
+  const at = "2026-09-20T14:02:00+02:00";
+  for (const code of ["reserved", "pending_push", "sent", "accepted", "in_queue"]) {
+    const item = fileItem({ id: `l-${code}`, at, resource: "nowave — Agave", status: "", status_code: code });
+    assert.equal(queueItemSent(item), true, code);
+    assert.equal(queueItemLocked(item, "on-air"), true, code);
+  }
+  // Un moteur qui ne donne que le libellé.
+  const labelled = fileItem({ id: "l-label", at, resource: "nowave — Agave", status: "en file" });
+  assert.equal(queueItemSent(labelled), true);
+  for (const code of ["planned", "rescue", "failed"]) {
+    const item = fileItem({ id: `l-${code}`, at, resource: "nowave — Agave", status: "", status_code: code });
+    assert.equal(queueItemSent(item), false, code);
+    assert.equal(queueItemLocked(item, "on-air"), false, code);
+  }
+  const onAir = fileItem({ id: "l-air", at, resource: "nowave — Agave", status_code: "on_air" });
+  assert.equal(queueItemSent(onAir), false);
+  assert.equal(queueItemLocked(onAir), true);
+  const anchor = fileItem({ id: "l-anchor", at, resource: "Pub", when: "anchored", status_code: "planned" });
+  assert.equal(queueItemSent(anchor), false);
+  assert.equal(queueItemLocked(anchor), true);
+});
 
 test("harbor live wins over the clock covering slot", () => {
   const wall = new Date("2026-09-20T10:20:05+02:00");

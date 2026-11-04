@@ -8,6 +8,7 @@ import {
   itemNamedLikeLive,
   itemStatusCode,
   partitionRundown,
+  queueItemSent,
 } from "../api/rundownLive";
 import { KIND_LABELS } from "../api/clockMeta";
 import type { LiveSnapshot, PositionKind, Rundown, RundownItem } from "../api/types";
@@ -75,7 +76,8 @@ function hourDivider(items: RundownItem[], index: number): string | null {
 function canRemove(item: RundownItem, role: "past" | "on-air" | "next" | "later"): boolean {
   if (!item.id || role === "on-air") return false;
   if (item.when === "anchored") return false;
-  return true;
+  // Déjà partie vers l'antenne, son statut le dit : le moteur refuse de la retirer.
+  return !queueItemSent(item);
 }
 
 function RundownRow({

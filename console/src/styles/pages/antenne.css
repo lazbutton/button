@@ -733,6 +733,17 @@ li.is-next .ant-queue-at {
   text-overflow: ellipsis;
 }
 
+/* Une ligne déjà envoyée au playout : la mention passe sous le titre plutôt que
+   de le couper, et reste entière. */
+.ant-queue-copy.is-sent {
+  flex-wrap: wrap;
+  row-gap: 0.15rem;
+}
+
+.ant-queue-sent {
+  flex: none;
+}
+
 .ant-queue-dur {
   color: var(--app-text-faint);
   font-size: 0.75rem;

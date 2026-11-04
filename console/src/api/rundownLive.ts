@@ -202,9 +202,18 @@ export function queueItemKey(item: RundownItem, index = 0): string {
   return item.id || `${item.at}:${item.path || item.resource}:${index}`;
 }
 
+/** Envoyée au playout, pas encore à l’antenne : Liquidsoap la passera dans l’ordre reçu. */
+const SENT_CODES = new Set(["reserved", "pending_push", "sent", "accepted", "in_queue"]);
+
+/** La ligne est déjà partie vers l’antenne : la retirer ou la déplacer ne changerait rien. */
+export function queueItemSent(item: RundownItem): boolean {
+  return SENT_CODES.has(itemStatusCode(item));
+}
+
 export function queueItemLocked(item: RundownItem, onAirId?: string): boolean {
   if (item.id && onAirId && item.id === onAirId) return true;
   if (itemStatusCode(item) === "on_air") return true;
+  if (queueItemSent(item)) return true;
   return item.when === "anchored";
 }
 
