@@ -55,6 +55,8 @@ fi
 
 (
   cd "$STAGE"
+  # find écarte SHA256SUMS, que la redirection crée en même temps : rien ne le lit.
+  # shellcheck disable=SC2094
   if command -v sha256sum >/dev/null 2>&1; then
     find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
   else

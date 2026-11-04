@@ -22,7 +22,7 @@ missing() {
 }
 
 need_docker() {
-  command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 ||
+  { command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; } ||
     missing "Docker absent ou arrêté : lancer Docker, puis relancer."
 }
 

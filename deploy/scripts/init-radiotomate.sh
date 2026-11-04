@@ -186,7 +186,6 @@ os.chmod(path, 0o640)
 PY
 
 MEDIA="${MEDIA_ROOT:-/media}"
-BEETS_CONFIG="$BEETSDIR/config.yaml"
 export BEETS_LIBRARY_DIR="$MEDIA"
 python3 - <<'PY'
 from pathlib import Path

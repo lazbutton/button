@@ -3,7 +3,7 @@
 # Aucun Liquidsoap, aucun service distant : tout reste sur cette machine.
 set -eu
 
-root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
+root=$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd)
 radio=$root/engine
 console=$root/console
 # Homebrew (macOS) : Poetry et Node y sont souvent installés.
