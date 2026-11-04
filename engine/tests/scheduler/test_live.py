@@ -1,6 +1,7 @@
 import asyncio
 import json
 from collections import Counter
+from datetime import datetime, timedelta
 from unittest.mock import patch
 
 import httpx
@@ -8,9 +9,12 @@ import pytest
 from quart.testing import QuartClient
 from sqlalchemy.orm import Session as ormSession
 
+from radiotomate.enums import RundownStatus
 from radiotomate.interface.autodj import MultiDict, process_filters
-from radiotomate.models import AutoDJSlot, Cart
+from radiotomate.models import AutoDJSlot, Cart, ProgrammingVersion, RundownItem
 from radiotomate.quart import CustomQuart
+from radiotomate.scheduler.playout import PlayoutResult
+from tests.scheduler.test_clock import _flush_answer
 from tests.scheduler.test_schedule import _playout, _playout_down
 
 
@@ -236,32 +240,100 @@ async def test_skip_502_when_playout_down(  # noqa: PLR0913
     assert sent == ["DELETE /live"] * attempts
 
 
-async def test_harbor_disconnect_flushes_jingles_and_autodj(raw_app: CustomQuart):
+class _HarborReturnPlayout:
+    """The playout as a live ends: it empties the queues it is told to, giving
+    ``answer``, and skips."""
+
+    def __init__(self, answer: dict | None = None):
+        self.answer = answer
+        self.flushed: list[list[str] | None] = []
+        self.skipped = 0
+
+    async def flush_queues(self, queues=None):
+        self.flushed.append(list(queues) if queues else None)
+        return PlayoutResult(ok=True, payload=self.answer)
+
+    async def skip(self, params=None):
+        self.skipped += 1
+        return PlayoutResult(ok=True)
+
+
+async def _end_a_live(raw_app: CustomQuart, playout: _HarborReturnPlayout) -> None:
     from radiotomate.scheduler import live as sched_live
-    from radiotomate.scheduler.playout import PlayoutResult
 
-    class FakeGateway:
-        def __init__(self):
-            self.flushed: list[list[str] | None] = []
-            self.skipped = 0
-
-        async def flush_queues(self, queues=None):
-            self.flushed.append(list(queues) if queues else None)
-            return PlayoutResult(ok=True)
-
-        async def skip(self, params=None):
-            self.skipped += 1
-            return PlayoutResult(ok=True)
-
-    fake = FakeGateway()
-    with patch("radiotomate.scheduler.playout.gateway_for", return_value=fake):
+    with patch("radiotomate.scheduler.playout.gateway_for", return_value=playout):
         async with raw_app.app_context():
             sched_live.reset_playout_source_memory()
             await sched_live._on_playout_source({"source": "stream"})
             await sched_live._on_playout_source({"source": "autodj"})
             sched_live.reset_playout_source_memory()
+
+
+async def test_harbor_disconnect_flushes_jingles_and_autodj(raw_app: CustomQuart):
+    fake = _HarborReturnPlayout()
+    await _end_a_live(raw_app, fake)
     assert fake.flushed == [["jingles", "autodj"]]
     assert fake.skipped == 1
+
+
+async def _lines_in_queues(dbsession: ormSession) -> dict[str, str]:
+    """A line on air, and one sent to each queue: their ids."""
+    dbsession.add(ProgrammingVersion(id="pv-sent", source="test", description="sent"))
+    await dbsession.flush()
+    queues = {
+        "on_air": "autodj",
+        "autodj": "autodj",
+        "jingles": "jingles",
+        "carts": "carts",
+    }
+    start = datetime.now()
+    for rank, (name, queue) in enumerate(queues.items()):
+        status = RundownStatus.ON_AIR if name == "on_air" else RundownStatus.IN_QUEUE
+        dbsession.add(
+            RundownItem(
+                id=f"ri-{name}",
+                programming_version_id="pv-sent",
+                sequence=rank,
+                planned_at=start + timedelta(minutes=3 * rank),
+                duration=180,
+                kind="jingle" if queue == "jingles" else "musique",
+                when_mode="anchored" if queue == "carts" else "sequential",
+                queue=queue,
+                resource=name,
+                path=f"/data/{name}.mp3",
+                details={},
+                status=status.value,
+                origin="clock",
+            )
+        )
+    await dbsession.commit()
+    return {name: f"ri-{name}" for name in queues}
+
+
+@pytest.mark.parametrize("named", [True, False], ids=["named", "older-playout"])
+async def test_harbor_return_closes_the_lines_it_flushed(
+    raw_app: CustomQuart, dbsession: ormSession, named: bool
+):
+    """Back from a live, the jingles and autodj queues are emptied: their lines are
+    skipped, « file vidée ». The title on air plays on, and the carts queue keeps
+    its stock, with its line."""
+    lines = await _lines_in_queues(dbsession)
+    answer = _flush_answer(
+        named=named, autodj=[lines["autodj"]], jingles=[lines["jingles"]]
+    )
+    await _end_a_live(raw_app, _HarborReturnPlayout(answer))
+
+    dbsession.expire_all()
+    statuses = {
+        name: (await dbsession.get(RundownItem, item_id)).status
+        for name, item_id in lines.items()
+    }
+    assert statuses == {
+        "on_air": "on_air",
+        "autodj": "skipped",
+        "jingles": "skipped",
+        "carts": "in_queue",
+    }
 
 
 async def _seed_next_rundown(dbsession: ormSession, spec: dict) -> None:

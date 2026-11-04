@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from sqlalchemy import delete, select
+from sqlalchemy import and_, delete, or_, select
 
 from radiotomate.domain.execution import (
     ENGAGED_STATUSES,
@@ -54,6 +54,14 @@ _CLOSED_DESK_STATUSES = {
     RundownStatus.PLAYED.value,
     RundownStatus.SKIPPED.value,
     RundownStatus.REPLACED.value,
+}
+FLUSHED_REASON = "file vidée"
+PLAYOUT_QUEUES = ("autodj", "jingles", "carts")
+# A line Liquidsoap holds: what a flush takes out of its queues.
+_QUEUED_STATUSES = {
+    RundownStatus.SENT.value,
+    RundownStatus.ACCEPTED.value,
+    RundownStatus.IN_QUEUE.value,
 }
 
 
@@ -620,6 +628,55 @@ async def clear_live_forecast(session: ormSession) -> None:
     if doomed_ids:
         await session.flush()
         await session.execute(delete(RundownItem).where(RundownItem.id.in_(doomed_ids)))
+
+
+async def close_flushed_items(
+    session: ormSession,
+    flushed: object,
+    queues: list[str] | None = None,
+) -> int:
+    """Close the lines a flush took out of Liquidsoap: skipped, « file vidée ».
+
+    The clock pushes planned lines only: left in queue, they would never air. The
+    playout names, queue by queue, the lines of the titles it took out: it keeps
+    the title a queue has loaded, on air or next, and its line stays. An older
+    playout only counts them: every line in an emptied queue is closed, and the
+    loaded title, once on air, gets its line back by its id (``reconcile_as_run``).
+    """
+    answer = flushed if isinstance(flushed, dict) else {}
+    named: set[str] = set()
+    counted: list[str] = []
+    for queue in queues or PLAYOUT_QUEUES:
+        info = answer.get(queue)
+        ids = info.get("item_ids") if isinstance(info, dict) else None
+        if isinstance(ids, list):
+            named.update(str(item_id) for item_id in ids if item_id)
+        else:
+            counted.append(queue)
+    taken = []
+    if named:
+        engaged = ENGAGED_STATUSES - {RundownStatus.ON_AIR.value}
+        taken.append(
+            and_(RundownItem.id.in_(named), RundownItem.status.in_(list(engaged)))
+        )
+    if counted:
+        taken.append(
+            and_(
+                RundownItem.queue.in_(counted),
+                RundownItem.status.in_(list(_QUEUED_STATUSES)),
+            )
+        )
+    if not taken:
+        return 0
+    rows = list(await session.scalars(select(RundownItem).where(or_(*taken))))
+    now = datetime.now()
+    for row in rows:
+        row.status = RundownStatus.SKIPPED.value
+        row.reason = FLUSHED_REASON
+        row.closed_at = now
+    if rows:
+        _log.info("Flush closed %d rundown line(s)", len(rows))
+    return len(rows)
 
 
 async def _reanchor_on_air(session: ormSession) -> None:

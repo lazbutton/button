@@ -111,13 +111,16 @@ async def _item(session: ormSession, row: AgendaDiffusion) -> RundownItem | None
 
 
 async def _drop_planned_blocks(session: ormSession) -> None:
-    """The forecast is rebuilt around what really happened. Desk pins stay."""
+    """The forecast is rebuilt around what really happened. Desk pins stay, and so
+    do the lines once sent to the playout, closed by a flush: their commands point
+    at them."""
     from radiotomate.scheduler.execution import DESK_ORIGIN
 
     await session.execute(
         delete(RundownItem).where(
             RundownItem.status.in_(list(REPLACEABLE_STATUSES)),
             RundownItem.origin != DESK_ORIGIN,
+            RundownItem.reserved_at.is_(None),
         )
     )
 
@@ -131,7 +134,7 @@ async def _push_set(
 ) -> str | None:
     """Cut what plays and put the set on air. Returns an error, or None."""
     from radiotomate.scheduler import clock as clock_mod
-    from radiotomate.scheduler.execution import record_live_item
+    from radiotomate.scheduler.execution import close_flushed_items, record_live_item
 
     current = row.current_file
     if current is None:
@@ -140,7 +143,9 @@ async def _push_set(
     if not path.is_file():
         return "Fichier introuvable"
     flushed = await gateway.flush_queues(["carts", "jingles", "autodj"])
-    if not flushed.ok:
+    if flushed.ok:
+        await close_flushed_items(session, flushed.payload)
+    else:
         _log.warning("agenda: flush before %s failed: %s", row.id, flushed.error)
     artist = row.guest.name if row.guest is not None else row.title
     title = row.set_title or row.title
@@ -198,13 +203,20 @@ async def _push_set(
 
 
 async def _stop_set(
-    gateway: PlayoutGateway, live_data: dict, row: AgendaDiffusion
+    session: ormSession,
+    gateway: PlayoutGateway,
+    live_data: dict,
+    row: AgendaDiffusion,
 ) -> None:
     """Skip the set if it plays; drop it if it only waits in the carts queue."""
+    from radiotomate.scheduler.execution import close_flushed_items
+
     if _playing(live_data, row):
         await gateway.skip({"queue": "carts"})
     elif _queued(live_data, row):
-        await gateway.flush_queues(["carts"])
+        flushed = await gateway.flush_queues(["carts"])
+        if flushed.ok:
+            await close_flushed_items(session, flushed.payload, ["carts"])
 
 
 def _miss(row: AgendaDiffusion, reason: str, actions: list[str]) -> None:
@@ -337,7 +349,7 @@ async def finish_stops(
         return
     now = utc(now)
     for row in result.stops:
-        await _stop_set(gateway, live_data, row)
+        await _stop_set(session, gateway, live_data, row)
         await _end_set(
             session,
             row,

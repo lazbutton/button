@@ -222,11 +222,17 @@ async def _on_playout_source(live_data: dict) -> None:
     _playout_source_state["last"] = source
     if not is_harbor_source(previous) or is_harbor_source(source):
         return
+    from radiotomate.scheduler.execution import close_flushed_items
     from radiotomate.scheduler.playout import gateway_for
 
     gateway = gateway_for(current_app.config["PLAYOUT_CLIENT"])
-    result = await gateway.flush_queues(["jingles", "autodj"])
-    if not result.ok:
+    queues = ["jingles", "autodj"]
+    result = await gateway.flush_queues(queues)
+    if result.ok:
+        async with QuartAlchemy.get().session() as session:
+            await close_flushed_items(session, result.payload, queues)
+            await session.commit()
+    else:
         _log.error("Harbor return flush failed: %s", result.error)
     if source_id(live_data) in {"autodj", "jingles"}:
         skipped = await gateway.skip()

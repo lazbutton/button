@@ -961,9 +961,12 @@ end
 harbor.http.register(port=API_PORT, method="POST", "/queue/clean", queue_clean_POST)
 
 
+# `item_ids`: the rundown items of the removed requests, which the scheduler
+# closes. The request a queue has loaded (`current`, on air or next) stays.
 def _queue_flush_result(q)
   removed = ref(0)
   kept = ref(0)
+  item_ids = ref([])
   playing = ref(-1)
   current_maybe = q.current()
   if null.defined(current_maybe) then
@@ -974,11 +977,16 @@ def _queue_flush_result(q)
     if rid == playing() then
       kept := kept() + 1
     else
+      md = request.metadata(r)
+      item_id = md["radiotomate_item_id"]
+      if item_id != "" then
+        item_ids := [...item_ids(), item_id]
+      end
       q.remove_request_id(rid)
       removed := removed() + 1
     end
   end, q.queue())
-  {removed=removed(), kept=kept()}
+  {removed=removed(), kept=kept(), item_ids=item_ids()}
 end
 
 
@@ -1006,7 +1014,7 @@ def queue_flush_POST(req, res) =
     if list.mem(name, wanted) then
       _queue_flush_result(q)
     else
-      {removed=0, kept=q.length()}
+      {removed=0, kept=q.length(), item_ids=[]}
     end
   end
   res.status_code(200)

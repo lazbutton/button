@@ -22,7 +22,7 @@ from radiotomate.models import (
 from radiotomate.scheduler.clock import _state, tick
 from radiotomate.scheduler.rundown import build_rundown
 from radiotomate.services.emissions import harbor_allowed
-from tests.scheduler.test_clock import _client, _live
+from tests.scheduler.test_clock import _client, _flush_answer, _flushing_client, _live
 
 PARIS = ZoneInfo("Europe/Paris")
 # Monday: the "Journée pubs" clock has a hard pub anchor at :20 and :40.
@@ -124,6 +124,83 @@ async def test_a_set_starts_at_its_minute_and_holds_the_pub_anchor(
     assert row.air_status == "on_air"
     assert row.air_item_id == pushed[0]["radiotomate_item_id"]
     assert _state.pending_autodj_skip is True
+
+
+async def _in_queue(session: ormSession) -> list[str]:
+    rows = await session.scalars(
+        select(RundownItem.id).where(RundownItem.status == "in_queue")
+    )
+    return list(rows)
+
+
+async def test_a_set_start_leaves_no_flushed_line_in_queue(
+    dbsession: ormSession,
+    jingles_cart: Cart,
+    pubs_cart: Cart,
+    beets_integration: BeetsIntegration,
+    media,
+):
+    """The set empties the queues: the lines the clock had sent there do not stay
+    in queue, where they would never air. They are closed, and stay so when the
+    rest of the forecast goes: their commands point at them."""
+    row = await _diffusion(dbsession)
+    before = T - timedelta(minutes=15)
+    await tick(
+        dbsession,
+        _live(_at(before), remaining="180", next_jingle={"rid": 1}, jingles_queued=1),
+        _client(),
+        beets_integration,
+        now=before,
+    )
+    sent = await _in_queue(dbsession)
+    assert sent
+    client = _flushing_client(_flush_answer(autodj=sent))
+    await tick(
+        dbsession, _live(_at(T), source="autodj"), client, beets_integration, now=T
+    )
+    row = await _reload(dbsession, row.id)
+    assert await _in_queue(dbsession) == [row.air_item_id]
+    for item_id in sent:
+        line = await dbsession.get(RundownItem, item_id)
+        assert (line.status, line.reason) == ("skipped", "file vidée")
+
+
+async def test_a_set_stopped_in_queue_leaves_no_line_in_queue(
+    dbsession: ormSession,
+    jingles_cart: Cart,
+    beets_integration: BeetsIntegration,
+    media,
+):
+    """Stopped while it still waits in the carts queue, the set is taken out of it,
+    and its line does not stay in queue."""
+    row = await _diffusion(dbsession)
+    await tick(
+        dbsession, _live(_at(T), source="autodj"), _client(), beets_integration, now=T
+    )
+    row = await _reload(dbsession, row.id)
+    row.stop_requested_at = utc_naive(T + timedelta(seconds=10))
+    await dbsession.commit()
+    moment = T + timedelta(seconds=20)
+    uri = f'annotate:radiotomate_item_id="{row.air_item_id}":/media/set.mp3'
+    client = _flushing_client(_flush_answer(carts=[row.air_item_id]))
+    await tick(
+        dbsession,
+        _live(
+            _at(moment),
+            source="autodj",
+            remaining="60",
+            next_cart={"rid": 3, "initial_uri": uri},
+            carts_queued=1,
+        ),
+        client,
+        beets_integration,
+        now=moment,
+    )
+    assert ("/queue/flush", {"queues": ["carts"]}) in _posts(client)
+    line = await dbsession.get(RundownItem, row.air_item_id)
+    assert (line.status, line.reason) == ("skipped", "file vidée")
+    row = await _reload(dbsession, row.id)
+    assert row.air_status == "aired"
 
 
 async def test_while_the_set_plays_nothing_else_is_pushed(
