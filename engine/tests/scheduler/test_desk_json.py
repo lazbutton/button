@@ -426,6 +426,46 @@ async def test_removal_without_ids_still_hides_by_time(dbsession: ormSession):
     assert await _shown_clock_ids(dbsession) == ["ri-kept"]
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="FON-17: a removal names its line by time alone, and hides every clock "
+    "line planned at that time",
+)
+@pytest.mark.parametrize("removal", ["suppress_at", "replace_at"])
+async def test_removal_at_a_shared_time_hides_the_removed_line_only(
+    dbsession: ormSession, removal: str
+):
+    """B and D start at the same time, to the microsecond: a reorder put D at the
+    start of a removed B, then the undo brought B back. Removing D leaves B."""
+    await _reorder_version(dbsession, "pv-hidden-shared")
+    start = datetime.now() + timedelta(minutes=5)
+    shared = start + timedelta(seconds=30)
+    dbsession.add_all(
+        [
+            _reorder_row("ri-a", "pv-hidden-shared", start, 30, origin="clock"),
+            _reorder_row("ri-b", "pv-hidden-shared", shared, 30, origin="clock"),
+            _reorder_row("ri-d", "pv-hidden-shared", shared, 30, origin="clock"),
+            _reorder_row(
+                "ri-c",
+                "pv-hidden-shared",
+                shared + timedelta(seconds=30),
+                30,
+                origin="clock",
+            ),
+        ]
+    )
+    await dbsession.commit()
+    removed_at = item_to_payload(await dbsession.get(RundownItem, "ri-d"))["at"]
+    if removal == "suppress_at":
+        await insert_desk_item(dbsession, {"suppress_at": removed_at})
+    else:
+        await insert_desk_item(
+            dbsession,
+            {"path": "/media/10-rotation/ri-d.mp3", "replace_at": removed_at},
+        )
+    assert await _shown_clock_ids(dbsession) == ["ri-a", "ri-b", "ri-c"]
+
+
 async def test_desk_insert_survives_preview_refresh(  # noqa: PLR0913
     raw_app,
     app_configration: dict,
