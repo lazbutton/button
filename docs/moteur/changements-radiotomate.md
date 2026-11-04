@@ -42,6 +42,8 @@ Une playlist simple (`playlist`) passée en entier reprend au début, comme une 
 
 Un titre Beets sans `rg_track_gain` est analysé à la prévision (`analyze_item_soon`), puis au push si le gain manque encore (`ensure_item_gain`). Rien n’est poussé sans gain.
 
+Une ligne de l’horloge retirée au pupitre (`suppress_at`) ne part plus à l’antenne. Le retrait ne faisait que la masquer dans la file, et l’horloge la poussait quand même à son tour. `_load_pushable_sequential` laisse maintenant de côté les lignes qu’un retrait masque (`desk.removed_clock_ids`) : par leur identifiant, ou par leur heure pour un retrait posé par un moteur plus ancien. Quand le retrait expire, 30 s après l’heure de sa ligne, `expire_past_desk_items` la marque `skipped`. Sinon, plus rien ne la masquant, elle partirait en retard. Le réglage `features.skip_removed_lines`, à faux, rend le comportement d’avant.
+
 ## API pour la console
 
 L’interface HTMX reste. À côté, les mêmes objets ont une forme JSON, avec un jeton CSRF (`GET /csrf.json`, en-tête `X-CSRF-Token`) sur les écritures authentifiées par cookie. `POST /login` et `POST /login.json` en sont exemptés.

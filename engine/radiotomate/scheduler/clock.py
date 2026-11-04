@@ -530,17 +530,20 @@ def _is_jingle_item(item: RundownItem) -> bool:
 
 
 async def _load_pushable_sequential(session: ormSession) -> list[RundownItem]:
-    return list(
-        await session.scalars(
-            select(RundownItem)
-            .where(
-                RundownItem.status.in_(list(_PUSHABLE_STATUSES)),
-                RundownItem.origin != "desk",
-                RundownItem.when_mode != WhenMode.ANCHORED.value,
-            )
-            .order_by(RundownItem.planned_at, RundownItem.sequence)
+    # Through execution, which loads desk: desk imported first hits their cycle.
+    from radiotomate.scheduler.execution import removed_clock_ids
+
+    removed = await removed_clock_ids(session)
+    rows = await session.scalars(
+        select(RundownItem)
+        .where(
+            RundownItem.status.in_(list(_PUSHABLE_STATUSES)),
+            RundownItem.origin != "desk",
+            RundownItem.when_mode != WhenMode.ANCHORED.value,
         )
+        .order_by(RundownItem.planned_at, RundownItem.sequence)
     )
+    return [row for row in rows if row.id not in removed]
 
 
 def _on_air_title(live_data: dict) -> str:
