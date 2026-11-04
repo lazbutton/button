@@ -9,6 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session as ormSession
 
 from radiotomate.beets import BeetsIntegration
+from radiotomate.domain.errors import DomainConflict
 from radiotomate.enums import CartMode, RundownStatus, ScheduleMode
 from radiotomate.models import (
     AutoDJSlot,
@@ -39,6 +40,7 @@ from radiotomate.scheduler.execution import (
     ensure_forecast,
     expire_past_desk_items,
     insert_desk_item,
+    reorder_desk_items,
 )
 
 NIGHT = "2026-09-14T00:30:00+02:00"
@@ -424,6 +426,33 @@ async def test_removed_lines_follow_the_switch(
     later = await dbsession.get(RundownItem, music[3]["id"])
     status = RundownStatus.SKIPPED if skips else RundownStatus.PLANNED
     assert later.status == status.value
+
+
+async def test_the_lines_already_sent_are_neither_removed_nor_moved(
+    dbsession: ormSession,
+    jingles_cart: Cart,
+    beets_integration: BeetsIntegration,
+):
+    """The clock keeps two lines ahead in Liquidsoap, which plays them in the order
+    it got them and cannot give them back. Removed, they aired all the same: the
+    desk refuses to remove or move them. The next line still goes."""
+    music = await _night_music(dbsession, beets_integration)
+    client = _client()
+    await tick(dbsession, _autodj_wants_two(), client, beets_integration)
+    assert _pushed_ids(client) == [music[0]["id"], music[1]["id"]]
+
+    for sent in music[:2]:
+        with pytest.raises(DomainConflict, match="déjà partie"):
+            await insert_desk_item(dbsession, {"suppress_at": sent["at"]})
+    with pytest.raises(DomainConflict, match="déjà partie"):
+        await reorder_desk_items(dbsession, [music[2]["id"], music[0]["id"]])
+    desk_rows = select(func.count(RundownItem.id)).where(RundownItem.origin == "desk")
+    assert await dbsession.scalar(desk_rows) == 0
+
+    await insert_desk_item(dbsession, {"suppress_at": music[2]["at"]})
+    client = _client()
+    await tick(dbsession, _autodj_wants_two(), client, beets_integration)
+    assert _pushed_ids(client) == [music[3]["id"], music[4]["id"]]
 
 
 async def test_autodj_fills_while_cart_is_on_air(

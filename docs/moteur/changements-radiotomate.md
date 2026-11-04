@@ -44,6 +44,8 @@ Un titre Beets sans `rg_track_gain` est analysé à la prévision (`analyze_item
 
 Une ligne de l’horloge retirée au pupitre (`suppress_at`) ne part plus à l’antenne. Le retrait ne faisait que la masquer dans la file, et l’horloge la poussait quand même à son tour. `_load_pushable_sequential` laisse maintenant de côté les lignes qu’un retrait masque (`desk.removed_clock_ids`) : par leur identifiant, ou par leur heure pour un retrait posé par un moteur plus ancien. Quand le retrait expire, 30 s après l’heure de sa ligne, `expire_past_desk_items` la marque `skipped`. Sinon, plus rien ne la masquant, elle partirait en retard. Le réglage `features.skip_removed_lines`, à faux, rend le comportement d’avant.
 
+Une ligne déjà envoyée au playout, de statut `reserved`, `pending_push`, `sent`, `accepted` ou `in_queue`, ne se retire ni ne se déplace plus au pupitre (`desk.item_is_sent`). Liquidsoap la joue dans l’ordre où il l’a reçue, et ne sait pas la rendre : retirée, elle passait quand même, et déplacée, elle gardait sa place. Le retrait (`suppress_at`, `replace_at`), `DELETE` et le réordre la refusent en 409. L’horloge garde deux titres d’avance (`TARGET_QUEUE_DEPTH`) : ce sont en général les deux lignes qui suivent le titre à l’antenne.
+
 ## API pour la console
 
 L’interface HTMX reste. À côté, les mêmes objets ont une forme JSON, avec un jeton CSRF (`GET /csrf.json`, en-tête `X-CSRF-Token`) sur les écritures authentifiées par cookie. `POST /login` et `POST /login.json` en sont exemptés.

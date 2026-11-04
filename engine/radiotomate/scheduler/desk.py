@@ -17,7 +17,11 @@ from radiotomate.domain.errors import (
     DomainNotFound,
     DomainValidationError,
 )
-from radiotomate.domain.execution import naive_datetime, rundown_summary
+from radiotomate.domain.execution import (
+    ENGAGED_STATUSES,
+    naive_datetime,
+    rundown_summary,
+)
 from radiotomate.enums import PositionKind, RundownStatus, WhenMode
 from radiotomate.models import RundownItem, Setting, Sound
 from radiotomate.scheduler.clock import _PUSHABLE_STATUSES
@@ -36,6 +40,15 @@ if TYPE_CHECKING:
 # ADR 0009: turned off, a clock line removed at the desk airs, as before.
 SETTING_SKIP_REMOVED = "features.skip_removed_lines"
 _SETTING_OFF = {"0", "false", "off", ""}
+
+# Handed to the playout, not yet on air. Liquidsoap plays a line in the order it
+# got it and cannot give it back: removed or moved, it would air all the same.
+_SENT_STATUSES = ENGAGED_STATUSES - {RundownStatus.ON_AIR.value}
+_SENT_REMOVE = (
+    "Cette ligne est déjà partie vers l'antenne : elle ne se retire plus. "
+    "Une fois à l'antenne, « Suivant » la coupe."
+)
+_SENT_MOVE = "Cette ligne est déjà partie vers l'antenne : elle ne se déplace plus."
 
 
 def desk_queue_for(kind: str) -> str:
@@ -66,6 +79,11 @@ def item_is_locked(item: RundownItem) -> bool:
     if item.status == RundownStatus.ON_AIR.value:
         return True
     return item.when_mode == WhenMode.ANCHORED.value
+
+
+def item_is_sent(item: RundownItem) -> bool:
+    """Already handed to the playout, and not yet on air."""
+    return item.status in _SENT_STATUSES
 
 
 async def list_active_desk_items(session: ormSession) -> list[RundownItem]:
@@ -279,16 +297,20 @@ async def _planned_at_for_insert(
 
 
 async def _clock_row_ids_at(session: ormSession, at: datetime) -> list[str]:
-    """Ids of the clock rows planned at that very time: those a removal hides."""
-    return list(
+    """Ids of the clock rows planned at that very time: those a removal hides. A row
+    already sent to the playout would air anyway: the removal is refused."""
+    rows = list(
         await session.scalars(
-            select(RundownItem.id).where(
+            select(RundownItem).where(
                 RundownItem.planned_at == at,
                 RundownItem.origin != DESK_ORIGIN,
                 RundownItem.when_mode != WhenMode.ANCHORED.value,
             )
         )
     )
+    if any(item_is_sent(row) for row in rows):
+        raise DomainConflict(_SENT_REMOVE)
+    return [row.id for row in rows]
 
 
 class DeskPin(NamedTuple):
@@ -449,6 +471,8 @@ async def delete_desk_item(session: ormSession, item_id: str) -> None:
         raise DomainConflict(
             "Impossible de retirer un passage à l'antenne ou une ancre dure."
         )
+    if item_is_sent(item):
+        raise DomainConflict(_SENT_REMOVE)
     await session.delete(item)
     await session.commit()
 
@@ -476,6 +500,8 @@ async def reorder_desk_items(session: ormSession, ids: list[str]) -> None:
             continue
         if item_is_locked(row):
             raise DomainConflict("Impossible de réordonner un passage verrouillé.")
+        if item_is_sent(row):
+            raise DomainConflict(_SENT_MOVE)
         ordered.append(row)
     if not ordered:
         raise DomainValidationError("Aucun passage à réordonner.", field="ids")
