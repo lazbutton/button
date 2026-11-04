@@ -1079,6 +1079,111 @@ async def test_flush_ends_the_launched_round(  # noqa: PLR0913
     assert _carts_titles(clock_client) == []
 
 
+def _flush_answer(*, named: bool = True, **taken: list[str]) -> dict:
+    """Liquidsoap's answer to a flush: queue by queue, the rundown lines of the
+    titles it took out. An older playout (``named=False``) only counts them."""
+    answer = {}
+    for queue in ("autodj", "jingles", "carts"):
+        ids = taken.get(queue, [])
+        answer[queue] = {"removed": len(ids), "kept": 0}
+        if named:
+            answer[queue]["item_ids"] = ids
+    return answer
+
+
+def _flushing_client(answer: dict) -> AsyncMock:
+    """A playout that answers a flush with ``answer``, and any other order ok."""
+    client = _client()
+
+    async def post(path: str, **_kwargs) -> httpx.Response:
+        if path == "/queue/flush":
+            return httpx.Response(200, json=answer)
+        return httpx.Response(200, json={"ok": 1})
+
+    client.post = AsyncMock(side_effect=post)
+    return client
+
+
+async def _flush(client: QuartClient, auth: dict, answer: dict) -> None:
+    """« Vider les files », through the scheduler, with the playout's answer."""
+    from radiotomate.scheduler.playout import PlayoutGateway
+
+    playout = AsyncMock(return_value=httpx.Response(200, json=answer))
+    with patch.object(PlayoutGateway, "_call", new=playout):
+        flush = await client.post("/queues/flush", headers=auth)
+    assert flush.status_code == 200, await flush.get_data(as_text=True)
+
+
+@pytest.mark.parametrize(
+    ("taken", "named", "closed"),
+    [((0, 1), True, (0, 1)), ((1,), True, (1,)), ((1,), False, (0, 1))],
+    ids=["both", "first-loaded", "older-playout"],
+)
+async def test_a_flush_closes_the_lines_it_took_out(  # noqa: PLR0913
+    client: QuartClient,
+    auth: dict,
+    dbsession: ormSession,
+    jingles_cart: Cart,
+    beets_integration: BeetsIntegration,
+    taken: tuple[int, ...],
+    named: bool,
+    closed: tuple[int, ...],
+):
+    """« Vider les files » takes out of Liquidsoap the two lines the clock had sent:
+    left in queue, they never aired, as the clock only pushes planned lines. They
+    are skipped, « file vidée », and the clock goes on with the next ones. The
+    title a queue has loaded stays there, and so does its line. An older playout
+    only counts what it took out: every line of the emptied queues is closed."""
+    music = await _night_music(dbsession, beets_integration)
+    await tick(dbsession, _autodj_wants_two(), _client(), beets_integration)
+    ids = [music[index]["id"] for index in taken]
+    await _flush(client, auth, _flush_answer(named=named, autodj=ids))
+
+    dbsession.expire_all()
+    for index in (0, 1):
+        row = await dbsession.get(RundownItem, music[index]["id"])
+        if index in closed:
+            assert (row.status, row.reason) == ("skipped", "file vidée"), index
+        else:
+            assert (row.status, row.reason) == ("in_queue", None), index
+    clock_client = _client()
+    await tick(dbsession, _autodj_wants_two(), clock_client, beets_integration)
+    assert _pushed_ids(clock_client) == [music[2]["id"], music[3]["id"]]
+
+
+async def test_a_line_closed_by_a_flush_airs_on_its_id(
+    client: QuartClient,
+    auth: dict,
+    dbsession: ormSession,
+    jingles_cart: Cart,
+    beets_integration: BeetsIntegration,
+):
+    """An older playout closes the line of the title a queue kept loaded too. The
+    title airs all the same: the as-run gives its line back by its id."""
+    from radiotomate.scheduler.execution import reconcile_as_run
+
+    music = await _night_music(dbsession, beets_integration)
+    await tick(dbsession, _autodj_wants_two(), _client(), beets_integration)
+    await _flush(client, auth, _flush_answer(named=False, autodj=[music[1]["id"]]))
+
+    dbsession.expire_all()
+    loaded = music[0]["id"]
+    assert (await dbsession.get(RundownItem, loaded)).status == "skipped"
+    log = MetadataLog(
+        on_air=datetime.now(),
+        source="autodj",
+        title=music[0]["resource"],
+        artist="",
+        album="",
+        extra={"radiotomate_item_id": loaded},
+    )
+    log.rundown_item_id = loaded
+    dbsession.add(log)
+    await reconcile_as_run(dbsession, log)
+    await dbsession.commit()
+    assert (await dbsession.get(RundownItem, loaded)).status == "on_air"
+
+
 async def test_sound_fired_by_hand_plays_alone(  # noqa: PLR0913
     client: QuartClient,
     auth: dict,

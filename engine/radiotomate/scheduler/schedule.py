@@ -310,6 +310,7 @@ async def push_sound_now(cart_id: str, sound_id: str):
 @token_required
 async def flush_playout_queues():
     from radiotomate.scheduler.clock import end_cart_round
+    from radiotomate.scheduler.execution import close_flushed_items
 
     # Before the flush: the clock would queue the launched cart's next sounds.
     end_cart_round()
@@ -318,6 +319,8 @@ async def flush_playout_queues():
     if not result.ok:
         return failure_body(result), 502
     payload = result.payload if isinstance(result.payload, dict) else {}
+    await close_flushed_items(g.dbsession, payload)
+    await g.dbsession.commit()
     return {"ok": True, "queues": payload}
 
 
