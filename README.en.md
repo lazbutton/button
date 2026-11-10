@@ -28,9 +28,11 @@ See [docs/architecture.md](docs/architecture.md) (in French).
 
 ```bash
 git clone https://github.com/lazbutton/button.git
-cd button/deploy
-cp .env.example .env      # then replace every "change-me"
-docker compose up -d
+cd button
+git checkout vX.Y.Z       # the release marked "Latest"
+cd deploy
+cp .env.example .env      # then set BUTTON_VERSION=X.Y.Z, and replace every "change-me"
+docker compose pull && docker compose up -d
 ```
 
 Next steps: [docs/deploiement.md](docs/deploiement.md).

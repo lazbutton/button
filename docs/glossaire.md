@@ -48,4 +48,5 @@ Les mots de la radio et ceux du code. Quand la console et le code n'emploient pa
 | Set | Une émission enregistrée de l'Agenda, souvent déposée par un invité | `kind:"set"` |
 | Station | Une radio installée : sa machine, ses données, sa marque | — |
 | tus, tusd | Le protocole et le serveur d'envoi reprenable des fichiers | service `tusd` |
+| Version | Une version publiée de BUTTON, numérotée `X.Y.Z`, avec ses sept images. `stable` désigne la plus haute | tag git `vX.Y.Z`, `BUTTON_VERSION`, `version.yml` |
 | Volume Finder | Le dossier partagé de la banque, ouvert depuis le Finder ou l'Explorateur | service `share` |

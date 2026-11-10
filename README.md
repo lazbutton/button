@@ -28,9 +28,11 @@ Le détail est dans [docs/architecture.md](docs/architecture.md).
 
 ```bash
 git clone https://github.com/lazbutton/button.git
-cd button/deploy
-cp .env.example .env      # puis remplacer chaque « change-me »
-docker compose up -d
+cd button
+git checkout vX.Y.Z       # la version marquée « Latest » des versions publiées
+cd deploy
+cp .env.example .env      # puis poser BUTTON_VERSION=X.Y.Z, et remplacer chaque « change-me »
+docker compose pull && docker compose up -d
 ```
 
 La suite est dans [docs/deploiement.md](docs/deploiement.md).

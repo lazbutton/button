@@ -38,4 +38,4 @@ body:
     id: version
     attributes:
       label: Version
-      description: Tag de l'image (AAAAMMJJ-sha7) ou commit.
+      description: Numéro de la version (0.1.0), ou, pour main, tag daté de l'image (AAAAMMJJ-sha7) ou commit.
