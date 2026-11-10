@@ -80,11 +80,11 @@ jobs:
       - name: A machine like a fresh VPS
         run: |
           # No Docker: station install puts the current one, from Docker's
-          # repository, as on a fresh VPS. The runner's own goes, with its
-          # Compose 2.38: every Compose v2 refuses the x-rt-tag guard of
-          # compose.yml. So do the plugins the image adds by hand, and its
-          # source of Docker's repository: a second one, with another key,
-          # would stop apt-get update.
+          # repository, as on a fresh VPS. The runner's own goes, Compose 2.38
+          # included: services.yml reads compose.yml with a Compose v2. So do
+          # the plugins the image adds by hand, and its source of Docker's
+          # repository: a second one, with another key, would stop apt-get
+          # update.
           dpkg-query -W -f '${db:Status-Abbrev} ${Package}\n' |
             awk '$1 == "ii" && $2 ~ /^(docker|containerd|moby)/ { print $2 }' > "$RUNNER_TEMP/docker-packages"
           echo "Docker du runner : $(tr '\n' ' ' < "$RUNNER_TEMP/docker-packages")"

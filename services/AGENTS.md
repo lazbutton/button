@@ -28,6 +28,7 @@ Pour essayer Icecast et nowplaying seuls : [deploy/local/](../deploy/local/READM
 
 - Chaque test est un script `unittest` lancé seul : `python test_inbox_api.py`. Les faux services, comme un faux moteur, sont des `BaseHTTPRequestHandler` dans le test.
 - La CI lance douze fichiers, listés dans `.github/workflows/services.yml` sous la forme `- run: python test_xxx.py`. `scripts/verifier.sh` lit cette liste : un fichier de test nouveau s'y ajoute, sinon personne ne le lance.
+- `test_compose.py` tourne une seconde fois avec Compose v2, qu'une station peut avoir encore : `COMPOSE_IMAGE` lui donne une image de Docker épinglée, dont il prend le Compose. `verifier.sh` lit l'image dans `services.yml`, et la lance si Docker tourne.
 
 ## nowplaying et Icecast
 

@@ -216,6 +216,17 @@ check_services() {
     echo "-- $test"
     "$python" "$test"
   done <<<"$tests"
+  # test_compose.py encore, avec le Compose v2 de la CI, qu'une station peut
+  # avoir encore : l'image se lit dans services.yml. Il faut que Docker tourne.
+  local image
+  image=$(sed -nE 's/^ +COMPOSE_IMAGE: *([^ ]+) *$/\1/p' "$root/.github/workflows/services.yml")
+  [ -n "$image" ] || { echo "Image de Compose v2 introuvable dans services.yml." >&2; return 1; }
+  if docker info >/dev/null 2>&1; then
+    echo "-- test_compose.py, avec le Compose de $image"
+    COMPOSE_IMAGE=$image "$python" test_compose.py
+  else
+    echo "-- test_compose.py avec Compose v2 : sauté, Docker absent ou arrêté."
+  fi
 }
 
 check_nginx() {
