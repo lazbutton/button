@@ -13,7 +13,8 @@ engine/tests/test_beets_import_loop.py.
 Le faux update fait comme le vrai, 2.5.1 : il ne relit qu'un fichier plus récent
 que la date notée, et ne note pas la nouvelle. Devant un fichier disparu, il
 retire le titre et élague les dossiers vidés jusqu'à la racine de la
-bibliothèque, la banque, sauf si `-d` en donne une autre.
+bibliothèque, la banque, sauf si `-d` en donne une autre. Après la relecture d'un
+titre d'album, il donne à tous les titres de l'album le genre du premier.
 
 Un lancement du script fait un tour : le faux sleep arrête la boucle. Elle
 n'indexe un dossier que s'il n'a pas bougé pendant sa pause. Un dépôt demande
@@ -84,6 +85,15 @@ def prune(folder: bytes, root: bytes) -> None:
     while folder.startswith(root + b"/") and os.path.isdir(folder) and not os.listdir(folder):
         os.rmdir(folder)
         folder = os.path.dirname(folder)
+
+
+def id_query(terms: list[str]) -> list[int] | None:
+    """id:1 , id:2 : la virgule seule sépare les requêtes, qui s'ajoutent."""
+    if not terms or len(terms) % 2 == 0 or any(term != "," for term in terms[1::2]):
+        return None
+    if not all(term.startswith("id:") and term[3:].isdigit() for term in terms[::2]):
+        return None
+    return [int(term[3:]) for term in terms[::2]]
 
 
 def fake_beet(beetsdir: Path, args: list[str]) -> int:  # noqa: PLR0911, PLR0912
@@ -174,21 +184,28 @@ def fake_beet(beetsdir: Path, args: list[str]) -> int:  # noqa: PLR0911, PLR0912
                     os.utime(path)
                     con.execute("update items set mtime = ? where id = ?", (int(os.stat(path).st_mtime), item_id))
         return 0
-    if args[:2] == ["update", "-M"] and len(args) > 2 and args[-1].startswith("path:"):
-        flags = args[2:-1]
-        excluded = set(flags[1::2])
-        if len(flags) % 2 or set(flags[::2]) - {"-e"} or excluded - {"grouping", "genre"}:
+    if args[:2] == ["update", "-M"]:
+        terms = args[2:]
+        excluded = set()
+        while terms[:1] == ["-e"] and len(terms) > 1:
+            excluded.add(terms[1])
+            terms = terms[2:]
+        ids = id_query(terms)
+        if ids is None or excluded - {"grouping", "genre"}:
             print(f"faux beet, update inattendu : {args}", file=sys.stderr)
             return 2
-        # Ce que le test fait arriver pendant que Beets relit le dossier.
+        if len(ids) > MOST_IDS:
+            print("sqlite3.OperationalError: Expression tree is too large (maximum depth 1000)", file=sys.stderr)
+            return 1
+        # Ce que le test fait arriver pendant que Beets relit.
         during = beetsdir / "pendant-update"
         if during.exists():
             subprocess.run(["sh", str(during)], check=True)
             during.unlink()
-        top = os.fsencode(args[-1].removeprefix("path:"))
+        albums = set()
         with closing(open_library(beetsdir)) as con, con:
-            found = [row for row in con.execute("select id, path, mtime from items") if under(row[1], top)]
-            for item_id, path, mtime in found:
+            found = [row for row in con.execute("select id, path, mtime, album_id from items") if row[0] in ids]
+            for item_id, path, mtime, album in found:
                 if not os.path.exists(path):
                     con.execute("delete from items where id = ?", (item_id,))
                     prune(os.path.dirname(path), directory)
@@ -202,16 +219,22 @@ def fake_beet(beetsdir: Path, args: list[str]) -> int:  # noqa: PLR0911, PLR0912
                     f"update items set {', '.join(f'{field} = ?' for field in read)} where id = ?",
                     (*read.values(), item_id),
                 )
+                if album is not None:
+                    albums.add(album)
                 with (beetsdir / "relus.log").open("a", encoding="utf-8") as reads:
                     reads.write(os.fsdecode(path) + "\n")
+            # Puis l'album d'un titre relu prend le genre de son premier titre, et
+            # le donne à tous ses titres.
+            for album in albums:
+                first = con.execute("select genre from items where album_id = ? order by id", (album,)).fetchone()
+                if first is not None:
+                    con.execute("update items set genre = ? where album_id = ?", (first[0], album))
         return 0
-    if args[:2] == ["remove", "-f"] and len(args) % 2:
-        # id:1 , id:2 : la virgule seule sépare les requêtes, qui s'ajoutent.
-        terms = args[2:]
-        if any(term != "," for term in terms[1::2]) or not all(term.startswith("id:") for term in terms[::2]):
+    if args[:2] == ["remove", "-f"]:
+        ids = id_query(args[2:])
+        if ids is None:
             print(f"faux beet, remove inattendu : {args}", file=sys.stderr)
             return 2
-        ids = [int(term.removeprefix("id:")) for term in terms[::2]]
         if len(ids) > MOST_IDS:
             print("sqlite3.OperationalError: Expression tree is too large (maximum depth 1000)", file=sys.stderr)
             return 1
@@ -556,10 +579,13 @@ class BeetsImportLoopTest(unittest.TestCase):
         blues = self.media / "20-archives" / "blues"
         blues.mkdir()
         (blues / "Dan - Live.flac").write_bytes(b"live")
+        soul = self.media / "20-archives" / "soul"
+        soul.mkdir()
+        (soul / "Eve - Live.flac").write_bytes(b"live")
         self.turn()
         self.turn()
         before = self.items()
-        self.assertEqual(len(before), 4)
+        self.assertEqual(len(before), 5)
 
         # Un titre supprimé, une banque vidée, une autre supprimée en entier.
         (self.rotation / "Bea - Deux.mp3").unlink()
@@ -568,7 +594,8 @@ class BeetsImportLoopTest(unittest.TestCase):
         removed = self.turn()
 
         # Au tour suivant, sans attendre que les dossiers se calment.
-        self.assertEqual(self.items(), {"10-rotation/Ada - Un.mp3": before["10-rotation/Ada - Un.mp3"]})
+        kept = ["10-rotation/Ada - Un.mp3", "20-archives/soul/Eve - Live.flac"]
+        self.assertEqual(self.items(), {path: before[path] for path in kept})
         self.assertIn("3 titre(s) retiré(s)", removed.stdout)
         # La banque vidée garde son dossier.
         self.assertTrue(jazz.is_dir())
@@ -693,6 +720,86 @@ class BeetsImportLoopTest(unittest.TestCase):
         self.assertEqual(self.items(), {})
         self.assertTrue(jazz.is_dir())
 
+        # Remis : l'historique l'a oublié avec lui.
+        cy.write_bytes(b"live")
+        self.turn()
+        self.turn()
+        self.assertEqual(self.groupings(), {"20-archives/jazz/Cy - Live.flac": "jazz"})
+
+    def test_a_file_deleted_while_another_is_read_comes_back_when_put_back(self) -> None:
+        ada = self.rotation / "Ada - Un.mp3"
+        bea = self.rotation / "Bea - Deux.mp3"
+        ada.write_bytes(b"un")
+        bea.write_bytes(b"deux")
+        self.turn()
+        self.turn()
+        ada.write_bytes(b"un, corrige")
+        os.utime(ada, (OLD, OLD))
+        self.turn()
+
+        # Supprimé pendant que Beets relit Ada, puis remis avant le tour suivant,
+        # comme un fichier que Finder remplace.
+        (self.beetsdir / "pendant-update").write_text(f'rm "{bea}"\n', encoding="utf-8")
+        self.between_two_turns(f'printf deux > "{bea}"\n')
+        self.turn()
+        self.turn()
+
+        self.assertEqual(
+            self.groupings(),
+            {"10-rotation/Ada - Un.mp3": "rotation", "10-rotation/Bea - Deux.mp3": "rotation"},
+        )
+
+    def test_a_tree_recreated_on_a_disk_that_is_not_mounted_removes_nothing(self) -> None:
+        (self.rotation / "Ada - Un.mp3").write_bytes(b"un")
+        jazz = self.media / "20-archives" / "jazz"
+        jazz.mkdir()
+        (jazz / "Cy - Live.flac").write_bytes(b"live")
+        self.turn()
+        self.turn()
+        before = self.items()
+
+        # Le disque de la banque n'est pas monté, et setup-media-tree.sh a recréé
+        # l'arbre, vide, au démarrage.
+        disk = self.root / "disque"
+        self.media.rename(disk)
+        (self.media / "10-rotation").mkdir(parents=True)
+        (self.media / "20-archives").mkdir()
+        unmounted = self.turn()
+
+        self.assertEqual(self.items(), before)
+        self.assertIn("aucun des 1 titre(s) indexé(s)", unmounted.stderr)
+
+        # Monté : rien n'est réimporté.
+        shutil.rmtree(self.media)
+        disk.rename(self.media)
+        self.turn()
+        self.turn()
+        self.assertEqual(self.items(), before)
+
+    def test_a_changed_track_of_a_folder_album_leaves_the_others_alone(self) -> None:
+        ada = self.rotation / "Ada - Un.mp3"
+        bea = self.rotation / "Bea - Deux.mp3"
+        ada.write_bytes(b"un")
+        bea.write_bytes(b"deux")
+        # Indexée par dossier, la rotation est un album.
+        self.index_by_folder(self.rotation, "grouping=rotation")
+        self.beet("modify", "-y", "genre=Rock", f"path:{ada}")
+        self.beet("modify", "-y", "genre=Jazz", f"path:{bea}")
+        before = self.items()
+        self.assertEqual(before["10-rotation/Ada - Un.mp3"]["album_id"], before["10-rotation/Bea - Deux.mp3"]["album_id"])
+
+        bea.write_bytes(b"deux, corrige")
+        os.utime(bea, (OLD, OLD))
+        self.turn()
+        self.turn()
+
+        after = self.items()
+        self.assertEqual(after["10-rotation/Ada - Un.mp3"], before["10-rotation/Ada - Un.mp3"])
+        # Relu hors de son album : son id ne change pas.
+        self.assertEqual(after["10-rotation/Bea - Deux.mp3"]["id"], before["10-rotation/Bea - Deux.mp3"]["id"])
+        self.assertEqual(after["10-rotation/Bea - Deux.mp3"]["title"], "deux, corrige")
+        self.assertIsNone(after["10-rotation/Bea - Deux.mp3"]["album_id"])
+
     def test_a_whole_bank_removed_at_once_leaves_the_library(self) -> None:
         bank = self.media / "20-archives" / "jazz"
         bank.mkdir()
@@ -701,12 +808,16 @@ class BeetsImportLoopTest(unittest.TestCase):
         for number in range(count):
             (bank / f"Cy - Live {number}.flac").write_bytes(b"%d" % number)
         self.index_by_folder(bank, "grouping=jazz", "genre=Archive")
-        self.assertEqual(len(self.items()), count)
+        soul = self.media / "20-archives" / "soul"
+        soul.mkdir()
+        (soul / "Eve - Live.flac").write_bytes(b"live")
+        self.index_by_folder(soul, "grouping=soul", "genre=Archive")
+        self.assertEqual(len(self.items()), count + 1)
 
         shutil.rmtree(bank)
         removed = self.turn()
 
-        self.assertEqual(self.items(), {})
+        self.assertEqual(self.groupings(), {"20-archives/soul/Eve - Live.flac": "soul"})
         self.assertIn(f"{count} titre(s) retiré(s)", removed.stdout)
 
 

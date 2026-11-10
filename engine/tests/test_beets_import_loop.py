@@ -312,20 +312,29 @@ def test_a_removed_track_leaves_the_library_and_comes_back_when_put_back(
     media = _station(tmp_path)
     rotation = media / "10-rotation"
     jazz = media / "20-archives" / "jazz"
+    soul = media / "20-archives" / "soul"
+    soul.mkdir()
     shutil.copy(TRACK, rotation / "Ada - Un.mp3")
     shutil.copy(TRACK, rotation / "Bea - Deux.mp3")
     shutil.copy(TRACK, jazz / "Cy - Live.mp3")
+    shutil.copy(TRACK, soul / "Dan - Live.mp3")
     _turn(tmp_path)
     _turn(tmp_path)
     before = _items(tmp_path)
-    assert sorted(before) == ["Ada - Un.mp3", "Bea - Deux.mp3", "Cy - Live.mp3"]
+    assert sorted(before) == [
+        "Ada - Un.mp3",
+        "Bea - Deux.mp3",
+        "Cy - Live.mp3",
+        "Dan - Live.mp3",
+    ]
 
     (rotation / "Bea - Deux.mp3").unlink()
     (jazz / "Cy - Live.mp3").unlink()
     removed = _turn(tmp_path)
 
     # on the next turn, with no wait for the folders to settle
-    assert _items(tmp_path) == {"Ada - Un.mp3": before["Ada - Un.mp3"]}
+    kept = ["Ada - Un.mp3", "Dan - Live.mp3"]
+    assert _items(tmp_path) == {name: before[name] for name in kept}
     assert "2 titre(s) retiré(s)" in removed.stdout
     # beet update would have pruned the emptied bank, and 20-archives with it
     assert jazz.is_dir()
@@ -337,7 +346,9 @@ def test_a_removed_track_leaves_the_library_and_comes_back_when_put_back(
     _turn(tmp_path)
 
     items = _items(tmp_path)
-    assert items.pop("Ada - Un.mp3") == before["Ada - Un.mp3"]
+    assert {name: items.pop(name) for name in kept} == {
+        name: before[name] for name in kept
+    }
     assert {name: fields[2:4] for name, fields in items.items()} == {
         "Bea - Deux.mp3": ("rotation", ""),
         "Cy - Live.mp3": ("jazz", "Archive"),
@@ -388,6 +399,35 @@ def test_a_changed_track_is_read_again_once_and_keeps_its_id(tmp_path: Path):
         path.name: (int(path.stat().st_mtime),) for path in files
     }
     assert _items(tmp_path, "mtime")["Bea - Deux.mp3"] == (OLD,)
+
+
+def test_a_changed_track_of_a_folder_album_leaves_the_others_alone(tmp_path: Path):
+    media = _station(tmp_path)
+    rotation = media / "10-rotation"
+    for name, genre, year in (
+        ("Ada - Un.mp3", "Rock", 1990),
+        ("Bea - Deux.mp3", "Jazz", 2001),
+        ("Cy - Trois.mp3", "Funk", 2010),
+    ):
+        shutil.copy(TRACK, rotation / name)
+        _retag(rotation / name, OLD, genre=genre, year=year)
+    # as the loop did before: the folder is one album
+    _index_by_folder(tmp_path, rotation)
+    fields = "id, album_id, genre, year, title"
+    before = _items(tmp_path, fields)
+    assert len({values[1] for values in before.values()}) == 1
+
+    _retag(rotation / "Cy - Trois.mp3", int(time.time()) + 60, title="Trois, corrigé")
+    _turn(tmp_path)
+    _turn(tmp_path)
+
+    # beet update would give the album fields of its first track to all of them
+    after = _items(tmp_path, fields)
+    assert after["Ada - Un.mp3"] == before["Ada - Un.mp3"]
+    assert after["Bea - Deux.mp3"] == before["Bea - Deux.mp3"]
+    # read out of its album, under the same id
+    cy_id = before["Cy - Trois.mp3"][0]
+    assert after["Cy - Trois.mp3"] == (cy_id, None, "Funk", 2010, "Trois, corrigé")
 
 
 def _mp3_in_wav(path: Path) -> None:
