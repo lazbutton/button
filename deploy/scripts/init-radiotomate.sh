@@ -108,6 +108,28 @@ fi
 export RTCONFIG="$CONFIG"
 radiotomate -c "$RTCONFIG" update
 
+# Une installation neuve ferme le harbor au mot de passe du compte : l'encodeur
+# n'y entre qu'avec son jeton. Neuve = aucun compte encore, donc aucun encodeur
+# à couper ; posé avant le compte admin, une installation interrompue le repose
+# à la relance. Une station existante sans la clé garde le mot de passe
+# (docs/exploitation/passer-en-direct.md), et un réglage posé n'est jamais changé.
+python3 - <<'PY'
+import os
+import sqlite3
+from contextlib import closing
+from pathlib import Path
+
+db = Path(os.environ.get("RADIOTOMATE_DATA", "/data")) / "radiotomate.db"
+with closing(sqlite3.connect(db)) as con, con:
+    if con.execute("select count(*) from users").fetchone()[0] == 0:
+        added = con.execute(
+            "insert or ignore into settings (key, value) values (?, ?)",
+            ("features.allow_account_password", "0"),
+        ).rowcount
+        if added:
+            print("installation neuve : le harbor n'accepte que les jetons d'encodeur")
+PY
+
 # 1 = sortie Icecast tenue vers une adresse injoignable : Liquidsoap démarre sans
 # envoyer de flux (quand un autre moteur tient déjà le mount public). Vide = sorties normales.
 RT_SKIP_ICECAST_OUTPUTS="${RT_SKIP_ICECAST_OUTPUTS:-}"
