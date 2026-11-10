@@ -19,10 +19,13 @@ name: station
 # registry, not built here: a pull request that changes an image and the
 # folder together is only checked whole once merged. Then the smoke check,
 # and a second install, which must change no file of the folder and no
-# container. In both cases, the runner keeps the default ACL of /opt, open to
-# every account: station install must keep it off .env and off the folder.
-# Each case pulls about 3 GB of images: hence the paths below, what a real
-# install runs, and not every pull request.
+# container. Then the commands of a station: status, a backup with the
+# sounds, uninstall --purge, a fresh install as on a new machine, and
+# restore, which must bring back the same accounts, clocks, weekly shows,
+# Agenda, settings and sounds. In both cases, the runner keeps the default ACL
+# of /opt, open to every account: station install must keep it off .env and
+# off the folder. Each case pulls the images twice, about 3 GB each time:
+# hence the paths below, what a real install runs, and not every pull request.
 
 on:
   push:
@@ -65,7 +68,9 @@ jobs:
     name: real install
     # Not ubuntu-latest: station install takes Ubuntu 24.04, not the next one.
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    # Above the sum of the steps' own limits: a step that hangs fails on its
+    # own, and its logs are still uploaded.
+    timeout-minutes: 90
     strategy:
       # One case that fails says nothing of the other: both go to the end.
       fail-fast: false
@@ -195,6 +200,150 @@ jobs:
           echo "::group::Ce que la relance n'a pas changé"
           cat "$RUNNER_TEMP/out/avant.txt"
           echo "::endgroup::"
+      - name: Back up the station
+        timeout-minutes: 10
+        working-directory: /opt/button
+        run: |
+          out=$RUNNER_TEMP/out
+          sudo station status 2>&1 | tee "$out/status.log"
+          # What a station keeps: an account, a clock, a weekly show, a dated
+          # live of the Agenda, a setting, and a sound.
+          sudo station cli users add animateur-ci --password "$(openssl rand -hex 12)"
+          sudo docker compose exec -T radiotomate-interface python3 - <<'PY'
+          import sqlite3
+          from contextlib import closing
+
+          with closing(sqlite3.connect("/data/radiotomate.db", timeout=30)) as con, con:
+              con.execute("insert into clocks (name) values ('Horloge de la CI')")
+              con.execute(
+                  "insert into emissions (scope, title, day_of_week, start_minute, end_minute, created, modified)"
+                  " values ('weekly', 'Émission de la CI', 2, 1200, 1320, datetime('now'), datetime('now'))"
+              )
+              con.execute(
+                  "insert into agenda_diffusions (kind, title, starts_at, ends_at, created, modified)"
+                  " values ('live', 'Direct de la CI', datetime('now', '+2 days'),"
+                  " datetime('now', '+2 days', '+1 hour'), datetime('now'), datetime('now'))"
+              )
+              con.execute("insert or replace into settings (key, value) values ('station.tagline', 'Gardée par la CI')")
+          PY
+          sudo mkdir -p media/30-habillage
+          echo "sauvegardé par la CI" | sudo tee media/30-habillage/ci-sauvegarde.txt >/dev/null
+          # Their fingerprint, without any secret: the restored station must
+          # give the same.
+          cat >"$RUNNER_TEMP/empreinte.py" <<'PY'
+          import hashlib
+          import sqlite3
+          from contextlib import closing
+
+          QUERIES = {
+              "comptes": "select username, password from users order by username",
+              "horloges": "select name from clocks order by name",
+              "émissions": "select title, day_of_week, start_minute from emissions order by id",
+              "Agenda": "select kind, title, starts_at from agenda_diffusions order by id",
+              "réglages": "select key, value from settings where key like 'station.%' order by key",
+          }
+          with closing(sqlite3.connect("/data/radiotomate.db", timeout=30)) as con:
+              for name, query in QUERIES.items():
+                  rows = con.execute(query).fetchall()
+                  print(name, len(rows), hashlib.sha256(repr(rows).encode()).hexdigest()[:16])
+          PY
+          # sudo is for docker compose, which reads .env; the script is the
+          # runner's, and so are the files of out/, below too.
+          # shellcheck disable=SC2024
+          sudo docker compose exec -T radiotomate-interface python3 - <"$RUNNER_TEMP/empreinte.py" |
+            tee "$out/empreinte-avant.txt"
+          # Without a terminal, the admin password stays in .env: it must open
+          # a session on the restored station.
+          (umask 077 && sudo sed -n 's/^RT_ADMIN_PASSWORD=//p' .env | tail -n 1 >"$RUNNER_TEMP/admin-avant")
+          if [ ! -s "$RUNNER_TEMP/admin-avant" ]; then
+            echo "::error title=Mot de passe admin::RT_ADMIN_PASSWORD est vide dans .env."
+            exit 1
+          fi
+          # In backups/, then with the sounds, out of the folder, which
+          # uninstall --purge will wipe.
+          sudo station backup 2>&1 | tee "$out/sauvegarde.log"
+          sudo station backup "$RUNNER_TEMP/sauvegarde.tar" --with-media 2>&1 | tee -a "$out/sauvegarde.log"
+          sudo sh -c 'stat -c "%a %U %n" backups backups/button-*.tar' | tee "$out/droits.txt"
+          sudo stat -c '%a %U %n' "$RUNNER_TEMP/sauvegarde.tar" | tee -a "$out/droits.txt"
+          wrong=$(grep -v -e '^700 root backups$' -e '^600 root ' "$out/droits.txt" || true)
+          if [ -n "$wrong" ]; then
+            echo "::error title=Sauvegarde::une archive n'est pas en 600, à root, ou backups/ en 700 : $wrong"
+            exit 1
+          fi
+          # sudo reads the archive, at root; the list is the runner's.
+          # shellcheck disable=SC2024
+          sudo tar -tf "$RUNNER_TEMP/sauvegarde.tar" >"$out/contenu.txt"
+          if ! grep -qx 'media/30-habillage/ci-sauvegarde.txt' "$out/contenu.txt"; then
+            echo "::error title=Sauvegarde::l'archive --with-media n'a pas les sons."
+            exit 1
+          fi
+          # The admin password stays in .env, never in a backup.
+          if [ "$(sudo tar -xOf "$RUNNER_TEMP/sauvegarde.tar" env | sed -n 's/^RT_ADMIN_PASSWORD=//p')" != "" ]; then
+            echo "::error title=Sauvegarde::l'archive porte le mot de passe admin."
+            exit 1
+          fi
+      - name: A fresh station, as on a new machine
+        timeout-minutes: 20
+        run: |
+          out=$RUNNER_TEMP/out
+          sudo station uninstall --purge --yes 2>&1 | tee "$out/desinstallation.log"
+          if [ -e /opt/button ] || [ -e /usr/local/bin/station ] ||
+            [ -n "$(sudo docker ps -aq --filter label=com.docker.compose.project=button)" ]; then
+            echo "::error title=Désinstallation::après station uninstall --purge, il reste /opt/button, la commande ou un conteneur."
+            exit 1
+          fi
+          sudo bash "$RUNNER_TEMP/station/station" install --from "$RUNNER_TEMP/station/station.tar.gz" \
+            --tls internal --domain radio.example --yes --github-token-file "$RUNNER_TEMP/token" 2>&1 |
+            tee "$out/reinstallation.log"
+          cd /opt/button
+          # sudo is for docker compose, which reads .env; the script and the
+          # fingerprint are the runner's.
+          # shellcheck disable=SC2024
+          sudo docker compose exec -T radiotomate-interface python3 - <"$RUNNER_TEMP/empreinte.py" >"$out/empreinte-neuve.txt"
+          if diff -q "$out/empreinte-avant.txt" "$out/empreinte-neuve.txt"; then
+            echo "::error title=Installation neuve::la station neuve a déjà les comptes de la sauvegarde : la restauration ne prouverait rien."
+            exit 1
+          fi
+      - name: Restore the backup, the same station comes back
+        timeout-minutes: 15
+        working-directory: /opt/button
+        run: |
+          out=$RUNNER_TEMP/out
+          sudo station restore "$RUNNER_TEMP/sauvegarde.tar" --yes 2>&1 | tee "$out/restauration.log"
+          # sudo is for docker compose, which reads .env; the script and the
+          # fingerprint are the runner's.
+          # shellcheck disable=SC2024
+          sudo docker compose exec -T radiotomate-interface python3 - <"$RUNNER_TEMP/empreinte.py" >"$out/empreinte-apres.txt"
+          if ! diff "$out/empreinte-avant.txt" "$out/empreinte-apres.txt"; then
+            echo "::error title=Restauration::la station restaurée n'a pas les comptes, les horloges, la grille, l'Agenda ou les réglages de la sauvegarde : voir le diff plus haut."
+            exit 1
+          fi
+          if [ "$(sudo cat media/30-habillage/ci-sauvegarde.txt)" != "sauvegardé par la CI" ]; then
+            echo "::error title=Restauration::les sons de la sauvegarde ne sont pas revenus."
+            exit 1
+          fi
+          # The admin of the backup opens a session, through the console.
+          code=$(jq -n --rawfile password "$RUNNER_TEMP/admin-avant" \
+            '{username: "admin", password: ($password | rtrimstr("\n"))}' |
+            curl -sS -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' --data @- \
+              http://127.0.0.1:30126/login.json)
+          if [ "$code" != 200 ]; then
+            echo "::error title=Comptes::le compte admin de la sauvegarde ne se connecte pas : $code."
+            exit 1
+          fi
+          mode=$(sudo stat -c '%a %U' .env)
+          if [ "$mode" != "600 root" ]; then
+            echo "::error title=.env::/opt/button/.env est en $mode après la restauration : il faut 600, à root."
+            exit 1
+          fi
+          sudo sh -c 'ls -d data/radiotomate.avant-restauration-* .env.avant-restauration-*'
+          sudo station status 2>&1 | tee "$out/status-apres.log"
+          sudo scripts/smoke.sh http://127.0.0.1:30126 http://127.0.0.1:18000/button.mp3
+          # No secret in what station wrote.
+          if grep -rqF -- "$(cat "$RUNNER_TEMP/admin-avant")" "$out"; then
+            echo "::error title=Secrets::une sortie de station contient le mot de passe admin."
+            exit 1
+          fi
       - name: Logs of the station
         if: failure()
         run: |
