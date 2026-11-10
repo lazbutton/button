@@ -30,12 +30,23 @@ trap cleanup EXIT
 STAGE="$WORKDIR/radiotomate"
 mkdir -p "$STAGE"
 
-if ! command -v sqlite3 >/dev/null 2>&1; then
-  echo "sqlite3 is required" >&2
+# sqlite3, sinon Python et son module sqlite3, par la même API de sauvegarde :
+# l'image du moteur n'a que Python, et station backup y lance ce script.
+if sqlite3 -version >/dev/null 2>&1; then
+  sqlite3 "$DB" ".backup '$STAGE/radiotomate.db'"
+elif command -v python3 >/dev/null 2>&1; then
+  python3 - "$DB" "$STAGE/radiotomate.db" <<'PY'
+import sqlite3
+import sys
+from contextlib import closing
+
+with closing(sqlite3.connect(sys.argv[1])) as source, closing(sqlite3.connect(sys.argv[2])) as copy:
+    source.backup(copy)
+PY
+else
+  echo "sqlite3 is required: install it (apt install sqlite3), then retry." >&2
   exit 1
 fi
-
-sqlite3 "$DB" ".backup '$STAGE/radiotomate.db'"
 cp -p "$YAML" "$STAGE/radiotomate.yaml"
 
 copy_tree() {
