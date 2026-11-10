@@ -1,22 +1,22 @@
 import {
-  Badge,
   Button,
-  Checkbox,
   Dialog,
   DropdownMenu,
   Flex,
   IconButton,
+  Select,
   Spinner,
-  Table,
+  Switch,
   Text,
   TextField,
 } from "@radix-ui/themes";
-import { KeyRound, MoreHorizontal, Plus, Search, SearchX, ShieldCheck, Trash2, Users } from "lucide-react";
+import { MoreHorizontal, Plus, Search, SearchX, Trash2, Users } from "lucide-react";
 import { useMemo, useState, type FormEvent } from "react";
 import { ProtoToast, useProtoToast } from "../components/ProtoToast";
 import { apiDelete, apiPostJson, apiPut, ApiRequestError } from "../api/client";
 import { emissionWindowLabel } from "../api/emissionMeta";
 import { slotsForHost } from "../api/hostSlots";
+import { DAY_LONG } from "../api/programmationView";
 import { setVolumePassword } from "../api/volume";
 import {
   canBroadcast,
@@ -27,15 +27,15 @@ import {
   type Role,
 } from "../api/roles";
 import { SessionGate } from "../api/SessionGate";
+import { initials } from "../api/topbar";
 import type { Emission, EmissionsResponse, User, UsersResponse } from "../api/types";
 import { useApiJson } from "../api/useApiJson";
 import { StreamToken } from "../components/antenne/StreamToken";
-import "../styles/pages/admin.css";
+import { SettingsHead } from "../components/reglages/SettingsCard";
+import "../styles/pages/reglages.css";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
 import { EmptyState } from "../ui/EmptyState";
 import { FormField, SelectField } from "../ui/FormField";
-import { PageHeader } from "../ui/PageHeader";
-import { Panel, SectionHeader } from "../ui/Panel";
 
 type UserFilter = "all" | Role | "direct";
 
@@ -50,7 +50,8 @@ const USER_FILTERS = [
   { value: "direct", label: "Peuvent passer en direct" },
 ];
 
-export function UsersPage({ embedded = false }: { embedded?: boolean }) {
+/** Réglages → Comptes, pour un admin : qui entre dans la console, avec quel rôle. */
+export function UsersPage() {
   const { data, error, loading, reload } = useApiJson<UsersResponse>("/users.json");
   const emissions = useApiJson<EmissionsResponse>("/antenne/emissions.json");
   const { message, show } = useProtoToast();
@@ -68,139 +69,110 @@ export function UsersPage({ embedded = false }: { embedded?: boolean }) {
         [user.username, user.notes, ROLE_LABEL[role], broadcast ? "direct" : ""].some((value) =>
           value.toLocaleLowerCase("fr").includes(needle),
         );
-      const matchesFilter =
-        filter === "all" ||
-        (filter === "direct" ? broadcast : role === filter);
+      const matchesFilter = filter === "all" || (filter === "direct" ? broadcast : role === filter);
       return matchesSearch && matchesFilter;
     });
   }, [filter, search, users]);
-  const adminCount = users.filter((user) => roleFromPermissions(user.permissions) === "admin").length;
+  const filtering = search.trim() !== "" || filter !== "all";
   const resetFilters = () => {
     setSearch("");
     setFilter("all");
   };
 
-  const actions = (
-    <>
-      <Badge variant="soft" color="gray">
-        <Users size={13} aria-hidden="true" />
-        {users.length} compte{users.length === 1 ? "" : "s"}
-      </Badge>
-      <Badge variant="soft" color="gray">
-        <ShieldCheck size={13} aria-hidden="true" />
-        {adminCount} admin{adminCount === 1 ? "" : "s"}
-      </Badge>
-      <Button highContrast onClick={() => setCreateOpen(true)}>
-        <Plus className="ui-button-icon" aria-hidden="true" />
-        Nouveau compte
-      </Button>
-    </>
-  );
-
   return (
-    <>
-      <div className={embedded ? "admin-page admin-page--embedded" : "ui-page admin-page"}>
-        {embedded ? null : (
-          <PageHeader
-            eyebrow="Administration"
-            title="Comptes"
-            description="Chaque personne a un rôle. L’interrupteur « Peut passer en direct » est indépendant."
-            actions={actions}
-          />
-        )}
-
-        <SessionGate loading={loading} error={error} ready={data != null} onRetry={() => void reload()}>
-          <Panel padded={false} className="admin-panel">
-            <div className="admin-panel-heading">
-              <SectionHeader
-                title="Accès Radiotomate"
-                description="Chaque compte a un rôle. L’interrupteur « Peut passer en direct » est à part."
-                count={filteredUsers.length}
-                actions={embedded ? <div className="admin-page-actions">{actions}</div> : undefined}
-              />
-            </div>
-
-            <div className="admin-toolbar">
-              <FormField label="Rechercher">
-                <TextField.Root
-                  className="ui-field-control admin-search-control"
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Identifiant ou rôle…"
-                  aria-label="Rechercher un compte"
-                >
-                  <TextField.Slot>
-                    <Search size={15} aria-hidden="true" />
-                  </TextField.Slot>
-                </TextField.Root>
-              </FormField>
-              <SelectField
-                label="Afficher"
-                value={filter}
-                options={USER_FILTERS}
-                onValueChange={(value) => setFilter(value as UserFilter)}
-              />
-              <Text className="admin-result-count" size="1" color="gray">
-                {filteredUsers.length === users.length
-                  ? `${users.length} au total`
-                  : `${filteredUsers.length} sur ${users.length}`}
-              </Text>
-            </div>
-
-            {filteredUsers.length ? (
-              <div className="admin-table-scroll">
-                <Table.Root className="admin-table admin-users-table">
-                  <Table.Header>
-                    <Table.Row>
-                      <Table.ColumnHeaderCell>Compte</Table.ColumnHeaderCell>
-                      <Table.ColumnHeaderCell>Rôle</Table.ColumnHeaderCell>
-                      <Table.ColumnHeaderCell aria-label="Actions" />
-                    </Table.Row>
-                  </Table.Header>
-                  <Table.Body>
-                    {filteredUsers.map((user) => (
-                <UserRow
-                  key={user.id}
-                  user={user}
-                  emissions={emissions.data?.emissions}
-                  onChanged={reload}
-                  onFeedback={show}
-                  onError={show}
-                />
-                    ))}
-                  </Table.Body>
-                </Table.Root>
-              </div>
-            ) : (
-              <div className="admin-empty">
-                <EmptyState
-                  icon={users.length ? SearchX : Users}
-                  title={users.length ? "Aucun résultat" : "Aucun compte"}
-                  description={
-                    users.length
-                      ? "Aucun compte ne correspond à cette recherche ou à ce rôle."
-                      : "Créez un compte pour donner accès à l’administration Radiotomate."
-                  }
-                  actionLabel={users.length ? "Réinitialiser les filtres" : "Créer un compte"}
-                  onAction={users.length ? resetFilters : () => setCreateOpen(true)}
-                />
-              </div>
-            )}
-          </Panel>
-        </SessionGate>
-      </div>
-      <CreateUserDialog
-        open={createOpen}
-        onOpenChange={setCreateOpen}
-        onCreated={reload}
-        onFeedback={show}
+    <div className="reglages-section">
+      <SettingsHead
+        title="Comptes"
+        count={data ? users.length : undefined}
+        description="Une personne, un compte. Le rôle dit ce qu’elle peut faire, et « Peut passer en direct » s’y ajoute."
+        actions={
+          <Button highContrast onClick={() => setCreateOpen(true)}>
+            <Plus className="ui-button-icon" aria-hidden="true" />
+            Nouveau compte
+          </Button>
+        }
       />
+
+      <SessionGate loading={loading} error={error} ready={data != null} onRetry={() => void reload()}>
+        <div className="reglages-card reglages-users">
+          <div className="reglages-toolbar">
+            <TextField.Root
+              className="ui-field-control reglages-search"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Rechercher un compte…"
+              aria-label="Rechercher un compte"
+            >
+              <TextField.Slot>
+                <Search size={15} aria-hidden="true" />
+              </TextField.Slot>
+            </TextField.Root>
+            <Select.Root value={filter} onValueChange={(value) => setFilter(value as UserFilter)}>
+              <Select.Trigger className="reglages-filter" aria-label="Afficher" />
+              <Select.Content variant="soft" position="popper">
+                {USER_FILTERS.map((option) => (
+                  <Select.Item key={option.value} value={option.value}>
+                    {option.label}
+                  </Select.Item>
+                ))}
+              </Select.Content>
+            </Select.Root>
+            <span className="reglages-toolbar-count" role="status">
+              {filtering ? `${filteredUsers.length} sur ${users.length}` : ""}
+            </span>
+          </div>
+
+          {filteredUsers.length ? (
+            <table className="reglages-users-table">
+              <thead>
+                <tr>
+                  <th scope="col">Compte</th>
+                  <th scope="col">Rôle</th>
+                  <th scope="col">Peut passer en direct</th>
+                  <th scope="col">
+                    <span className="ui-visually-hidden">Actions</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredUsers.map((user) => (
+                  <UserRow
+                    key={user.id}
+                    user={user}
+                    emissions={emissions.data?.emissions}
+                    onChanged={reload}
+                    onFeedback={show}
+                    onError={show}
+                  />
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <div className="reglages-users-empty">
+              <EmptyState
+                icon={users.length ? SearchX : Users}
+                title={users.length ? "Aucun résultat" : "Aucun compte"}
+                description={
+                  users.length
+                    ? "Aucun compte ne correspond à cette recherche ou à ce rôle."
+                    : "Crée un compte pour ouvrir la console à quelqu’un."
+                }
+                actionLabel={users.length ? "Tout afficher" : "Nouveau compte"}
+                onAction={users.length ? resetFilters : () => setCreateOpen(true)}
+              />
+            </div>
+          )}
+        </div>
+      </SessionGate>
+      <CreateUserDialog open={createOpen} onOpenChange={setCreateOpen} onCreated={reload} onFeedback={show} />
       <ProtoToast message={message} />
-    </>
+    </div>
   );
 }
 
-const DAYS = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"];
+function slotLabel(row: Emission): string {
+  return `${row.day_of_week != null ? `${DAY_LONG[row.day_of_week]} · ` : ""}${emissionWindowLabel(row)}`;
+}
 
 function UserRow({
   user,
@@ -221,6 +193,7 @@ function UserRow({
   const [ficheOpen, setFicheOpen] = useState(false);
   const role = roleFromPermissions(user.permissions);
   const broadcast = canBroadcast(user.permissions);
+  const locked = updating != null || deleting;
 
   const save = async (nextRole: Role, nextBroadcast: boolean, kind: "role" | "direct") => {
     setUpdating(kind);
@@ -252,99 +225,98 @@ function UserRow({
   };
 
   return (
-    <Table.Row>
-      <Table.RowHeaderCell data-label="Compte">
-        <div className="admin-primary-cell">
-          <span className="admin-primary-title">{user.username}</span>
-          {user.notes ? <span className="admin-primary-meta">{user.notes}</span> : null}
+    <tr>
+      <th scope="row" className="reglages-user-cell">
+        {/* La mise en page va dans un bloc à part : une cellule en flex perdrait son rôle de cellule. */}
+        <div className="reglages-user">
+          <span className="reglages-avatar" aria-hidden="true">
+            {initials(user.username)}
+          </span>
+          <span className="reglages-user-copy">
+            <span className="reglages-user-name">{user.username}</span>
+            {user.notes ? <span className="reglages-user-notes">{user.notes}</span> : null}
+          </span>
         </div>
-      </Table.RowHeaderCell>
-      <Table.Cell data-label="Rôle">
-        <div className="admin-permissions" role="group" aria-label={`Rôle de ${user.username}`}>
-          <SelectField
-            label="Rôle"
-            value={role}
-            options={ROLE_OPTIONS}
-            disabled={updating != null || deleting}
-            onValueChange={(value) => void save(value as Role, broadcast, "role")}
+      </th>
+      <td className="reglages-user-role">
+        <Select.Root value={role} disabled={locked} onValueChange={(value) => void save(value as Role, broadcast, "role")}>
+          <Select.Trigger className="ui-field-control" aria-label={`Rôle de ${user.username}`} />
+          <Select.Content variant="soft" position="popper">
+            {ROLE_OPTIONS.map((option) => (
+              <Select.Item key={option.value} value={option.value}>
+                {option.label}
+              </Select.Item>
+            ))}
+          </Select.Content>
+        </Select.Root>
+      </td>
+      <td className="reglages-user-direct">
+        <label className="reglages-direct">
+          <Switch
+            checked={broadcast}
+            disabled={locked}
+            onCheckedChange={(next) => void save(role, next, "direct")}
+            aria-label={`Peut passer en direct pour ${user.username}`}
           />
-          <label className={`admin-permission${broadcast ? " is-active" : ""}`}>
-            {updating === "direct" ? (
-              <Spinner size="1" />
-            ) : (
-              <Checkbox
-                checked={broadcast}
-                disabled={updating != null || deleting}
-                onCheckedChange={(next) => void save(role, next === true, "direct")}
-                aria-label={`Peut passer en direct pour ${user.username}`}
-              />
-            )}
-            <span>Peut passer en direct</span>
-          </label>
-        </div>
-      </Table.Cell>
-      <Table.Cell className="admin-actions-cell" data-label="Actions">
-        <div className="admin-user-actions">
-          {updating ? (
-            <span className="admin-row-busy" role="status" aria-live="polite">
-              Mise à jour…
-            </span>
-          ) : null}
-          <DropdownMenu.Root modal={false}>
-            <DropdownMenu.Trigger>
-              <IconButton
-                className="admin-row-menu"
-                size="1"
-                variant="ghost"
-                color="gray"
-                disabled={updating != null || deleting}
-                aria-label={`Actions pour ${user.username}`}
-              >
-                {deleting ? <Spinner size="1" /> : <MoreHorizontal size={16} aria-hidden="true" />}
-              </IconButton>
-            </DropdownMenu.Trigger>
-            <DropdownMenu.Content variant="soft" align="end">
-              <DropdownMenu.Item
-                disabled={updating != null || deleting}
-                onSelect={() => setFicheOpen(true)}
-              >
-                Fiche du compte
-              </DropdownMenu.Item>
-              <DropdownMenu.Item
-                color="red"
-                disabled={updating != null || deleting}
-                onSelect={() => setConfirmOpen(true)}
-              >
-                <Trash2 size={14} aria-hidden="true" />
-                Supprimer le compte
-              </DropdownMenu.Item>
-            </DropdownMenu.Content>
-          </DropdownMenu.Root>
-          <ConfirmDialog
-            open={confirmOpen}
-            onOpenChange={setConfirmOpen}
-            title="Supprimer le compte ?"
-            description={
-              <>
-                Le compte <strong>{user.username}</strong> perdra immédiatement tous ses accès.
-              </>
-            }
-            confirmLabel="Supprimer"
-            busy={deleting}
-            onConfirm={deleteUser}
-          />
-          <UserFiche
-            user={user}
-            emissions={emissions}
-            open={ficheOpen}
-            onOpenChange={setFicheOpen}
-            onChanged={onChanged}
-            onFeedback={onFeedback}
-            onError={onError}
-          />
-        </div>
-      </Table.Cell>
-    </Table.Row>
+          {/* Sur un téléphone, la colonne n'a plus d'en-tête : le libellé revient à côté. */}
+          <span className="reglages-direct-label" aria-hidden="true">
+            Peut passer en direct
+          </span>
+        </label>
+      </td>
+      <td className="reglages-user-actions">
+        {updating ? (
+          <span className="reglages-row-busy" role="status">
+            Mise à jour…
+          </span>
+        ) : null}
+        <DropdownMenu.Root modal={false}>
+          <DropdownMenu.Trigger>
+            <IconButton
+              className="reglages-row-menu"
+              variant="ghost"
+              color="gray"
+              disabled={locked}
+              aria-label={`Actions pour ${user.username}`}
+            >
+              {deleting ? <Spinner size="1" /> : <MoreHorizontal size={16} aria-hidden="true" />}
+            </IconButton>
+          </DropdownMenu.Trigger>
+          <DropdownMenu.Content variant="soft" align="end">
+            <DropdownMenu.Item disabled={locked} onSelect={() => setFicheOpen(true)}>
+              Fiche du compte
+            </DropdownMenu.Item>
+            <DropdownMenu.Separator />
+            <DropdownMenu.Item color="red" disabled={locked} onSelect={() => setConfirmOpen(true)}>
+              <Trash2 size={14} aria-hidden="true" />
+              Supprimer le compte
+            </DropdownMenu.Item>
+          </DropdownMenu.Content>
+        </DropdownMenu.Root>
+        <ConfirmDialog
+          open={confirmOpen}
+          onOpenChange={setConfirmOpen}
+          title="Supprimer le compte ?"
+          description={
+            <>
+              Le compte <strong>{user.username}</strong> perdra immédiatement tous ses accès.
+            </>
+          }
+          confirmLabel="Supprimer"
+          busy={deleting}
+          onConfirm={deleteUser}
+        />
+        <UserFiche
+          user={user}
+          emissions={emissions}
+          open={ficheOpen}
+          onOpenChange={setFicheOpen}
+          onChanged={onChanged}
+          onFeedback={onFeedback}
+          onError={onError}
+        />
+      </td>
+    </tr>
   );
 }
 
@@ -373,7 +345,9 @@ function UserFiche({
   const slots = slotsForHost(emissions, user.username);
   const role = roleFromPermissions(user.permissions);
 
-  const saveNotes = async () => {
+  const saveNotes = async (event: FormEvent) => {
+    event.preventDefault();
+    if (busy) return;
     setBusy(true);
     try {
       await apiPut(`/users/${user.id}.json`, { notes });
@@ -386,8 +360,9 @@ function UserFiche({
     }
   };
 
-  const savePassword = async () => {
-    if (!password.trim()) return;
+  const savePassword = async (event: FormEvent) => {
+    event.preventDefault();
+    if (busy || !password.trim()) return;
     setBusy(true);
     try {
       await apiPut(`/users/${user.id}.json`, { password });
@@ -430,36 +405,48 @@ function UserFiche({
         }
       }}
     >
-      <Dialog.Content className="admin-dialog" maxWidth="29rem">
-        <Dialog.Title>{user.username}</Dialog.Title>
-        <Dialog.Description>
-          {ROLE_LABEL[roleFromPermissions(user.permissions)]}
-          {canBroadcast(user.permissions) ? " · peut passer en direct" : ""}
-        </Dialog.Description>
-        <div className="admin-dialog-fields">
-          <h3 className="admin-account-title">Créneaux</h3>
+      <Dialog.Content className="reglages-dialog" maxWidth="31rem">
+        <div className="reglages-dialog-who">
+          <span className="reglages-avatar is-large" aria-hidden="true">
+            {initials(user.username)}
+          </span>
+          <div className="reglages-dialog-who-copy">
+            <Dialog.Title>{user.username}</Dialog.Title>
+            <Dialog.Description>
+              {ROLE_LABEL[role]}
+              {canBroadcast(user.permissions) ? " · peut passer en direct" : ""}
+            </Dialog.Description>
+          </div>
+        </div>
+
+        <section className="reglages-dialog-section">
+          <h3>Créneaux</h3>
           {slots.length === 0 ? (
-            <p>Aucun créneau nommé pour ce compte.</p>
+            <p className="reglages-empty">Aucun créneau nommé pour ce compte.</p>
           ) : (
-            <ul className="admin-slots">
+            <ul className="reglages-list">
               {slots.map((row) => (
                 <li key={row.id}>
-                  {row.day_of_week != null ? `${DAYS[row.day_of_week]} · ` : ""}
-                  {emissionWindowLabel(row)} · {row.title}
+                  <span className="reglages-list-when">{slotLabel(row)}</span>{" "}
+                  <span className="reglages-list-what">{row.title}</span>
                 </li>
               ))}
             </ul>
           )}
+        </section>
+
+        <form className="reglages-dialog-section" onSubmit={(event) => void saveNotes(event)}>
           <FormField label="Notes">
-            <TextField.Root
-              className="ui-field-control"
-              value={notes}
-              onChange={(event) => setNotes(event.target.value)}
-            />
+            <TextField.Root className="ui-field-control" value={notes} onChange={(event) => setNotes(event.target.value)} />
           </FormField>
-          <Button type="button" highContrast disabled={busy} onClick={() => void saveNotes()}>
-            Enregistrer les notes
-          </Button>
+          <div className="reglages-actions">
+            <Button type="submit" variant="soft" color="gray" disabled={busy}>
+              Enregistrer les notes
+            </Button>
+          </div>
+        </form>
+
+        <form className="reglages-dialog-section" onSubmit={(event) => void savePassword(event)}>
           <FormField label="Nouveau mot de passe" hint="Remplace l’ancien. La personne s’en sert à la prochaine connexion.">
             <TextField.Root
               className="ui-field-control"
@@ -469,18 +456,27 @@ function UserFiche({
               onChange={(event) => setPassword(event.target.value)}
             />
           </FormField>
-          <Button type="button" highContrast disabled={busy || !password.trim()} onClick={() => void savePassword()}>
-            Réinitialiser le mot de passe
-          </Button>
-          {listedAsHost(user.permissions) ? (
-            <>
-              <h3 className="admin-account-title">Jeton d’encodeur</h3>
-              <p>Le mot de passe de son encodeur. Renouveler le jeton coupe l’ancien : transmets le nouveau.</p>
-              <StreamToken owner={user.id} />
-            </>
-          ) : null}
+          <div className="reglages-actions">
+            <Button type="submit" variant="soft" color="gray" disabled={busy || !password.trim()}>
+              Réinitialiser le mot de passe
+            </Button>
+          </div>
+        </form>
+
+        {listedAsHost(user.permissions) ? (
+          <section className="reglages-dialog-section">
+            <h3>Jeton d’encodeur</h3>
+            <p className="reglages-dialog-text">
+              Le mot de passe de son encodeur. Renouveler le jeton coupe l’ancien : transmets le nouveau.
+            </p>
+            <StreamToken owner={user.id} />
+          </section>
+        ) : null}
+
+        <section className="reglages-dialog-section">
+          <h3>Dossier de la station</h3>
           {role === "animateur" ? (
-            <p>Ce compte n’a pas le dossier de la station.</p>
+            <p className="reglages-dialog-text">Ce compte n’a pas le dossier de la station.</p>
           ) : (
             <>
               <FormField
@@ -496,21 +492,28 @@ function UserFiche({
                 />
               </FormField>
               {folderError ? (
-                <Text size="2" color="red" role="alert">
+                <Text as="p" size="2" color="red" role="alert">
                   {folderError}
                 </Text>
               ) : null}
-              <Flex gap="2" wrap="wrap">
-                <Button type="button" highContrast disabled={busy || folderPassword.length < 8} onClick={() => void saveFolder(false)}>
+              <div className="reglages-actions">
+                <Button
+                  type="button"
+                  variant="soft"
+                  color="gray"
+                  disabled={busy || folderPassword.length < 8}
+                  onClick={() => void saveFolder(false)}
+                >
                   Enregistrer le mot de passe du dossier
                 </Button>
                 <Button type="button" variant="soft" color="gray" disabled={busy} onClick={() => void saveFolder(true)}>
                   Retirer l’accès
                 </Button>
-              </Flex>
+              </div>
             </>
           )}
-        </div>
+        </section>
+
         <Flex gap="2" mt="4" justify="end">
           <Dialog.Close>
             <Button type="button" variant="soft" color="gray" disabled={busy}>
@@ -577,16 +580,13 @@ function CreateUserDialog({
         }
       }}
     >
-      <Dialog.Content className="admin-dialog" maxWidth="29rem">
+      <Dialog.Content className="reglages-dialog" maxWidth="29rem">
         <form onSubmit={(event) => void submit(event)}>
           <Dialog.Title>Nouveau compte</Dialog.Title>
           <Dialog.Description>
-            Choisis un rôle. L’interrupteur ouvre le harbor sur le créneau de cette personne.
+            Un identifiant, un mot de passe et un rôle. Transmets ensuite le mot de passe à la personne.
           </Dialog.Description>
-          <div className="admin-dialog-icon" aria-hidden="true">
-            <KeyRound size={20} />
-          </div>
-          <div className="admin-dialog-fields">
+          <div className="reglages-dialog-fields">
             <FormField label="Identifiant">
               <TextField.Root
                 className="ui-field-control"
@@ -597,26 +597,7 @@ function CreateUserDialog({
                 required
               />
             </FormField>
-            <SelectField
-              label="Rôle"
-              value={role}
-              options={ROLE_OPTIONS}
-              disabled={busy}
-              onValueChange={(value) => setRole(value as Role)}
-            />
-            <label className="admin-permission">
-              <Checkbox
-                checked={broadcast}
-                disabled={busy}
-                onCheckedChange={(next) => setBroadcast(next === true)}
-                aria-label="Peut passer en direct"
-              />
-              <span>Peut passer en direct</span>
-            </label>
-            <FormField
-              label="Mot de passe"
-              hint="Il sera demandé dès la première connexion."
-            >
+            <FormField label="Mot de passe" hint="Il sera demandé dès la première connexion.">
               <TextField.Root
                 className="ui-field-control"
                 type="password"
@@ -626,8 +607,22 @@ function CreateUserDialog({
                 required
               />
             </FormField>
+            <SelectField
+              label="Rôle"
+              value={role}
+              options={ROLE_OPTIONS}
+              disabled={busy}
+              onValueChange={(value) => setRole(value as Role)}
+            />
+            <label className="reglages-switch-row">
+              <span className="reglages-switch-copy">
+                <span className="reglages-switch-title">Peut passer en direct</span>
+                <span className="reglages-switch-hint">Ouvre le harbor sur le créneau de cette personne.</span>
+              </span>
+              <Switch checked={broadcast} disabled={busy} onCheckedChange={setBroadcast} />
+            </label>
             {formError ? (
-              <Text size="2" color="red" role="alert">
+              <Text as="p" size="2" color="red" role="alert">
                 {formError}
               </Text>
             ) : null}

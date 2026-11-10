@@ -1,0 +1,1134 @@
+/*
+ * Réglages : pour l'admin, un menu à gauche et une partie à droite ; pour les autres
+ * rôles, leur compte seul. Chaque partie a son en-tête, puis des cartes, une par sujet.
+ * Sous 760px, le menu passe en ligne au-dessus, et les colonnes s'empilent.
+ */
+
+.reglages-page {
+  gap: 1.25rem;
+}
+
+/* ---------- Le menu et la partie ouverte ---------- */
+
+.reglages-layout {
+  display: grid;
+  grid-template-columns: 12.5rem minmax(0, 1fr);
+  align-items: start;
+  gap: 2rem;
+}
+
+/* Le menu de Radix est fait pour une ligne d'onglets : il passe ici en colonne. */
+.reglages-nav.rt-TabsList {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.12rem;
+  overflow: visible;
+  white-space: normal;
+  box-shadow: none;
+}
+
+.reglages-nav-kicker {
+  padding: 0.15rem 0.55rem 0.4rem;
+  color: var(--app-text-faint);
+  font-size: 0.66rem;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.reglages-nav-rule {
+  height: 1px;
+  margin: 0.6rem 0.55rem;
+  background: var(--app-border);
+}
+
+.reglages-nav .reglages-nav-item {
+  justify-content: flex-start;
+  height: auto;
+  min-height: 2.5rem;
+  padding: 0.38rem 0.55rem;
+  border-radius: var(--app-radius-sm);
+  color: var(--app-text-muted);
+  font-size: 0.8rem;
+  font-weight: 500;
+  text-align: left;
+  transition:
+    background-color var(--motion-fast) ease,
+    color var(--motion-fast) ease;
+}
+
+.reglages-nav .reglages-nav-item::before {
+  display: none;
+}
+
+.reglages-nav .rt-BaseTabListTriggerInner {
+  position: static;
+  gap: 0.6rem;
+  padding: 0;
+  outline: none;
+  background: none;
+  font-weight: inherit;
+  letter-spacing: inherit;
+  word-spacing: inherit;
+}
+
+/* Radix double le libellé, caché, pour garder la largeur de l'onglet actif : inutile en colonne. */
+.reglages-nav .rt-BaseTabListTriggerInnerHidden {
+  display: none;
+}
+
+.reglages-nav .reglages-nav-item:hover {
+  color: var(--app-text);
+  background: var(--app-surface-hover);
+}
+
+.reglages-nav .reglages-nav-item[data-state="active"] {
+  color: var(--app-text);
+  background: var(--app-accent-soft);
+}
+
+.reglages-nav-icon {
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 auto;
+  stroke-width: 1.75;
+}
+
+.reglages-panel {
+  min-width: 0;
+  /* Les grilles d'une partie suivent sa largeur, pas celle de la fenêtre. */
+  container-type: inline-size;
+  border-radius: var(--app-radius-md);
+}
+
+.reglages-panel:focus-visible {
+  outline: 2px solid var(--app-focus);
+  outline-offset: 4px;
+}
+
+/* ---------- L'en-tête d'une partie ---------- */
+
+.reglages-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.reglages-head-copy {
+  min-width: 0;
+}
+
+.reglages-head-title {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.reglages-head-title h2 {
+  margin: 0;
+  color: var(--app-text);
+  font-size: 1.1rem;
+  font-weight: 650;
+  letter-spacing: -0.025em;
+  line-height: 1.2;
+}
+
+.reglages-head-description {
+  max-width: 44rem;
+  margin: 0.3rem 0 0;
+  color: var(--app-text-muted);
+  font-size: 0.79rem;
+  line-height: 1.5;
+}
+
+.reglages-head-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+/* ---------- Les cartes ---------- */
+
+.reglages-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  min-width: 0;
+}
+
+.reglages-stack--narrow {
+  max-width: 46rem;
+}
+
+.reglages-stack--form {
+  max-width: 54rem;
+}
+
+.reglages-card {
+  min-width: 0;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-lg);
+  background: var(--app-surface-1);
+  box-shadow: var(--app-shadow-panel);
+}
+
+.reglages-card-head {
+  padding: 0.95rem 1.05rem 0;
+}
+
+.reglages-card-head:last-child {
+  padding-bottom: 0.95rem;
+}
+
+.reglages-card-title {
+  margin: 0;
+  color: var(--app-text);
+  font-size: 0.86rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+}
+
+.reglages-card-description {
+  max-width: 42rem;
+  margin: 0.25rem 0 0;
+  color: var(--app-text-muted);
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+
+.reglages-card-body {
+  padding: 0.85rem 1.05rem 1.05rem;
+}
+
+/* Des gestes qui ne se défont pas : le cadre et le titre le disent, à l'encre rouge. */
+.reglages-card.is-danger {
+  border-color: color-mix(in srgb, var(--app-danger) 42%, var(--app-border));
+}
+
+.reglages-card.is-danger .reglages-card-title {
+  color: var(--app-danger-ink);
+}
+
+/* Un message à la place de la partie : moteur trop ancien, réglages muets. */
+.reglages-notice {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.95rem 1.05rem;
+}
+
+.reglages-notice p {
+  margin: 0;
+  color: var(--app-text);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+/* ---------- Petits textes, listes, champs ---------- */
+
+.reglages-note,
+.reglages-empty {
+  margin: 0.55rem 0 0;
+  color: var(--app-text-faint);
+  font-size: 0.74rem;
+  line-height: 1.5;
+}
+
+.reglages-empty {
+  margin: 0;
+  color: var(--app-text-muted);
+}
+
+.reglages-subtitle {
+  margin: 1rem 0 0.2rem;
+  color: var(--app-text);
+  font-size: 0.76rem;
+  font-weight: 650;
+}
+
+.reglages-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.reglages-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  min-height: 2.5rem;
+  padding: 0.6rem 0;
+  border-top: 1px solid var(--app-border);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.reglages-list li:first-child {
+  border-top: 0;
+  padding-top: 0.15rem;
+}
+
+.reglages-list-when {
+  flex: 0 0 auto;
+  min-width: 9.5rem;
+  color: var(--app-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.reglages-list-what {
+  min-width: 0;
+  color: var(--app-text);
+  font-weight: 560;
+  overflow-wrap: anywhere;
+}
+
+/* Une ligne sur deux étages : ce dont il s'agit, puis son état. */
+.reglages-list--stacked li {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+}
+
+.reglages-list--stacked .reglages-list-when {
+  order: 2;
+  min-width: 0;
+}
+
+/* Le jeton d'encodeur garde le bloc du panneau « Passer en direct », sans sa marge : la carte a la sienne. */
+.reglages-card-body .ant-token,
+.reglages-dialog-section .ant-token {
+  padding: 0;
+}
+
+.reglages-form {
+  display: grid;
+  gap: 0.85rem;
+  max-width: 24rem;
+}
+
+.reglages-form > p {
+  margin: 0;
+}
+
+.reglages-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.reglages-page .rt-Button:not(.rt-r-size-1) {
+  min-height: 2.5rem;
+}
+
+/* ---------- Mon compte ---------- */
+
+.reglages-avatar {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 999px;
+  background: var(--app-text);
+  color: var(--app-bg);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
+.reglages-avatar.is-large {
+  width: 2.75rem;
+  height: 2.75rem;
+  font-size: 0.85rem;
+}
+
+.reglages-profile {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  padding: 1rem 1.05rem;
+}
+
+.reglages-profile-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.reglages-profile-name {
+  margin: 0;
+  color: var(--app-text);
+  font-size: 1rem;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  overflow-wrap: anywhere;
+}
+
+.reglages-profile-meta {
+  margin: 0.3rem 0 0;
+  color: var(--app-text-muted);
+  font-size: 0.76rem;
+  line-height: 1.6;
+}
+
+.reglages-role {
+  display: inline-flex;
+  align-items: center;
+  height: 1.35rem;
+  margin-right: 0.3rem;
+  padding: 0 0.5rem;
+  border: 1px solid var(--app-border);
+  border-radius: 999px;
+  background: var(--app-surface-2);
+  color: var(--app-text);
+  font-size: 0.68rem;
+  font-weight: 600;
+  vertical-align: 0.05em;
+}
+
+/* Machine, clair, sombre : trois boutons collés, le choix en relief. */
+.reglages-segmented {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.2rem;
+  padding: 0.2rem;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  background: var(--app-surface-2);
+}
+
+.reglages-segmented button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 2.5rem;
+  padding: 0 0.9rem;
+  border: 0;
+  border-radius: var(--app-radius-sm);
+  background: transparent;
+  color: var(--app-text-muted);
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 560;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) ease,
+    color var(--motion-fast) ease;
+}
+
+.reglages-segmented button:hover {
+  color: var(--app-text);
+}
+
+.reglages-segmented button[aria-pressed="true"] {
+  background: var(--app-surface-1);
+  color: var(--app-text);
+  box-shadow:
+    0 1px 2px rgb(10 10 10 / 0.08),
+    0 0 0 1px var(--app-border);
+}
+
+[data-appearance="dark"] .reglages-segmented button[aria-pressed="true"] {
+  background: var(--app-surface-3);
+}
+
+.reglages-segmented svg {
+  width: 0.95rem;
+  height: 0.95rem;
+  stroke-width: 1.75;
+}
+
+/* ---------- Comptes ---------- */
+
+.reglages-users {
+  overflow: hidden;
+}
+
+.reglages-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.75rem 0.85rem;
+  border-bottom: 1px solid var(--app-border);
+}
+
+.reglages-toolbar .reglages-search {
+  flex: 1 1 15rem;
+  max-width: 22rem;
+}
+
+.reglages-toolbar .reglages-search svg {
+  color: var(--app-text-faint);
+}
+
+.reglages-toolbar .reglages-filter {
+  flex: 0 0 auto;
+  min-width: 12rem;
+}
+
+.reglages-toolbar-count {
+  margin-left: auto;
+  color: var(--app-text-faint);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.reglages-users-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.reglages-users-table thead th {
+  height: 2.3rem;
+  padding: 0.45rem 0.85rem;
+  border-bottom: 1px solid var(--app-border);
+  color: var(--app-text-faint);
+  font-size: 0.62rem;
+  font-weight: 680;
+  letter-spacing: 0.065em;
+  text-align: left;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* Le rôle, le direct et le menu prennent leur largeur ; le compte, le reste. Un filtre ne fait pas bouger les colonnes. */
+.reglages-users-table thead th:not(:first-child) {
+  width: 1%;
+}
+
+.reglages-users-table tbody tr {
+  transition: background-color var(--motion-fast) ease;
+}
+
+.reglages-users-table tbody tr:hover {
+  background: var(--app-surface-hover);
+}
+
+.reglages-users-table tbody tr + tr {
+  border-top: 1px solid var(--app-border);
+}
+
+.reglages-users-table tbody th,
+.reglages-users-table tbody td {
+  padding: 0.6rem 0.85rem;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.reglages-user-cell {
+  font-weight: inherit;
+}
+
+.reglages-user {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  min-width: 12rem;
+}
+
+.reglages-user-copy {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.reglages-user-name {
+  overflow: hidden;
+  color: var(--app-text);
+  font-size: 0.8rem;
+  font-weight: 620;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reglages-user-notes {
+  overflow: hidden;
+  color: var(--app-text-faint);
+  font-size: 0.7rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reglages-user-role .rt-SelectTrigger {
+  width: 11rem;
+}
+
+.reglages-direct {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 2.5rem;
+  min-height: 2.5rem;
+  cursor: pointer;
+}
+
+.reglages-direct-label {
+  display: none;
+  color: var(--app-text-muted);
+  font-size: 0.76rem;
+}
+
+.reglages-user-actions {
+  width: 1%;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.reglages-user-actions > * + * {
+  margin-left: 0.5rem;
+}
+
+.reglages-row-menu.rt-IconButton {
+  width: 2.5rem;
+  height: 2.5rem;
+}
+
+.reglages-row-busy {
+  color: var(--app-text-faint);
+  font-size: 0.7rem;
+}
+
+.reglages-users-empty {
+  padding: 0.85rem;
+}
+
+.reglages-users-empty .ui-empty {
+  min-height: 14rem;
+  border: 0;
+}
+
+/* ---------- Fenêtres : fiche du compte, nouveau compte ---------- */
+
+.reglages-dialog-who {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  margin-bottom: 0.4rem;
+}
+
+.reglages-dialog-who-copy {
+  min-width: 0;
+}
+
+.reglages-dialog-who .rt-DialogTitle {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.reglages-dialog-who .rt-DialogDescription {
+  margin: 0.15rem 0 0;
+}
+
+.reglages-dialog-section {
+  display: grid;
+  gap: 0.6rem;
+  margin: 0;
+  padding: 0.95rem 0;
+  border-top: 1px solid var(--app-border);
+}
+
+.reglages-dialog-section h3 {
+  margin: 0;
+  color: var(--app-text);
+  font-size: 0.8rem;
+  font-weight: 650;
+}
+
+.reglages-dialog-text {
+  margin: 0;
+  color: var(--app-text-muted);
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+
+.reglages-dialog-fields {
+  display: grid;
+  gap: 0.9rem;
+  margin-top: 1.1rem;
+}
+
+.reglages-switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  min-height: 3rem;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  cursor: pointer;
+}
+
+.reglages-switch-copy {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.reglages-switch-title {
+  color: var(--app-text);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.reglages-switch-hint {
+  color: var(--app-text-faint);
+  font-size: 0.7rem;
+  line-height: 1.4;
+}
+
+/* ---------- Station ---------- */
+
+/* Une carte par sujet. La légende flotte pour rester dans le cadre. */
+.reglages-fieldset {
+  margin: 0;
+  padding: 0.95rem 1.05rem 1.05rem;
+}
+
+.reglages-fieldset > legend {
+  float: left;
+  width: 100%;
+  padding: 0;
+}
+
+.reglages-fieldset > legend + * {
+  clear: both;
+}
+
+.reglages-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 0.8rem 1rem;
+  margin-top: 0.85rem;
+}
+
+/* La valeur grisée dit ce que la console garde : elle reste lisible, 4,5:1 au moins. */
+.reglages-fields .rt-TextFieldInput::placeholder {
+  color: var(--app-text-faint);
+  opacity: 1;
+}
+
+[data-appearance="dark"] .reglages-fields .rt-TextFieldInput::placeholder {
+  color: var(--app-text-muted);
+}
+
+.reglages-readonly {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.6rem;
+  margin: 0.95rem 0 0;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--app-border);
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+
+.reglages-readonly-label {
+  color: var(--app-text-muted);
+  font-size: 0.72rem;
+  font-weight: 560;
+}
+
+.reglages-readonly-value {
+  color: var(--app-text);
+  font-weight: 650;
+}
+
+.reglages-readonly-hint {
+  color: var(--app-text-faint);
+}
+
+/* Au bas du formulaire ; dès qu'un champ change, elle reste en vue au bas de l'écran :
+   on enregistre sans redescendre. */
+.reglages-savebar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem 1rem;
+  padding: 0.65rem 0.75rem 0.65rem 1.05rem;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-lg);
+  background: var(--app-surface-1);
+  box-shadow: var(--app-shadow-panel);
+  transition:
+    border-color var(--motion-fast) ease,
+    box-shadow var(--motion-fast) ease;
+}
+
+/* Elle reste aussi en vue tant que le focus y est : après « Annuler » ou un enregistrement,
+   le bouton qui a le focus et le message ne partent pas hors de l'écran. */
+.reglages-savebar.is-dirty,
+.reglages-savebar:focus-within {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+}
+
+.reglages-savebar.is-dirty {
+  border-color: var(--app-border-strong);
+  box-shadow: var(--app-shadow-float);
+}
+
+.reglages-savebar-copy {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.reglages-savebar-copy p {
+  margin: 0;
+}
+
+.reglages-savebar-status {
+  color: var(--app-text-muted);
+  font-size: 0.78rem;
+}
+
+.reglages-savebar .reglages-actions {
+  margin-left: auto;
+}
+
+/* ---------- Automate ---------- */
+
+.reglages-summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 0.2rem 0.85rem;
+  padding: 1rem 1.05rem 1.05rem;
+}
+
+.reglages-summary-icon {
+  display: grid;
+  place-items: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 999px;
+  background: var(--app-surface-2);
+  color: var(--app-text-muted);
+}
+
+.reglages-summary-icon svg {
+  width: 1.15rem;
+  height: 1.15rem;
+  stroke-width: 2;
+}
+
+.reglages-summary.tone-ok .reglages-summary-icon {
+  background: color-mix(in srgb, var(--app-ok) 16%, transparent);
+  color: var(--app-ok-ink);
+}
+
+.reglages-summary.tone-warn .reglages-summary-icon {
+  background: color-mix(in srgb, var(--app-vu-hot) 16%, transparent);
+  color: var(--app-warn-ink);
+}
+
+.reglages-summary.tone-alert {
+  border-color: color-mix(in srgb, var(--app-danger) 42%, var(--app-border));
+}
+
+.reglages-summary.tone-alert .reglages-summary-icon {
+  background: color-mix(in srgb, var(--app-danger) 16%, transparent);
+  color: var(--app-danger-ink);
+}
+
+.reglages-summary-copy {
+  min-width: 0;
+  padding-top: 0.15rem;
+}
+
+.reglages-summary-title {
+  margin: 0;
+  color: var(--app-text);
+  font-size: 0.95rem;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+}
+
+.reglages-summary-detail {
+  max-width: 46rem;
+  margin: 0.2rem 0 0;
+  color: var(--app-text-muted);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.reglages-summary-health {
+  grid-column: 1 / -1;
+  margin-top: 0.7rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--app-border);
+}
+
+.reglages-summary-health .reglages-note {
+  margin: 0 0 0.55rem;
+}
+
+.reglages-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.85rem;
+}
+
+@container (min-width: 34rem) {
+  .reglages-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container (min-width: 64rem) {
+  .reglages-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+.reglages-facts {
+  display: grid;
+  margin: 0;
+}
+
+.reglages-fact {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.4rem 0;
+  border-top: 1px solid var(--app-border);
+  font-size: 0.78rem;
+}
+
+.reglages-fact:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.reglages-fact dt {
+  color: var(--app-text-muted);
+}
+
+.reglages-fact dd {
+  margin: 0;
+  color: var(--app-text);
+  font-weight: 560;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.reglages-gestures {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.reglages-gesture {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1.25rem;
+  padding: 0.85rem 0;
+  border-top: 1px solid var(--app-border);
+}
+
+.reglages-gesture:first-child {
+  padding-top: 0.1rem;
+  border-top: 0;
+}
+
+.reglages-gesture:last-child {
+  padding-bottom: 0;
+}
+
+.reglages-gesture-copy {
+  min-width: 0;
+}
+
+.reglages-gesture-title {
+  margin: 0;
+  color: var(--app-text);
+  font-size: 0.8rem;
+  font-weight: 620;
+}
+
+.reglages-gesture-text {
+  max-width: 38rem;
+  margin: 0.2rem 0 0;
+  color: var(--app-text-muted);
+  font-size: 0.74rem;
+  line-height: 1.5;
+}
+
+.reglages-gesture-action {
+  flex: 0 0 auto;
+}
+
+/* ---------- Écrans étroits ---------- */
+
+@media (max-width: 760px) {
+  .reglages-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1rem;
+  }
+
+  /* Le menu passe en ligne, et défile de côté s'il ne tient pas. */
+  .reglages-nav.rt-TabsList {
+    position: static;
+    flex-direction: row;
+    gap: 0.25rem;
+    overflow-x: auto;
+    padding-bottom: 0.35rem;
+    border-bottom: 1px solid var(--app-border);
+    white-space: nowrap;
+  }
+
+  .reglages-nav-kicker,
+  .reglages-nav-rule,
+  .reglages-nav-icon {
+    display: none;
+  }
+
+  .reglages-nav .reglages-nav-item {
+    flex: 0 0 auto;
+    padding-inline: 0.7rem;
+  }
+
+  .reglages-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .reglages-head-actions {
+    justify-content: flex-start;
+  }
+
+  .reglages-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* Sur téléphone, une cible de 40 px au moins. */
+  .reglages-page .rt-TextFieldRoot,
+  .reglages-page .rt-SelectTrigger {
+    min-height: 2.5rem;
+  }
+
+  .reglages-gesture {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .reglages-list:not(.reglages-list--stacked) li {
+    flex-direction: column;
+    gap: 0.15rem;
+  }
+
+  .reglages-list-when {
+    min-width: 0;
+  }
+
+  /* Comptes : une carte par compte, le nom et son menu en haut, le rôle et le direct dessous. */
+  .reglages-toolbar .reglages-search,
+  .reglages-toolbar .reglages-filter {
+    flex: 1 1 100%;
+    max-width: none;
+  }
+
+  .reglages-toolbar-count:empty {
+    display: none;
+  }
+
+  .reglages-users-table thead {
+    display: none;
+  }
+
+  .reglages-users-table,
+  .reglages-users-table tbody {
+    display: block;
+  }
+
+  .reglages-users-table tbody tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.5rem 0.75rem;
+    padding: 0.75rem 0.85rem;
+  }
+
+  .reglages-users-table tbody th,
+  .reglages-users-table tbody td {
+    display: block;
+    padding: 0;
+  }
+
+  .reglages-users-table .reglages-user-cell {
+    grid-column: 1;
+    grid-row: 1;
+    min-width: 0;
+  }
+
+  .reglages-users-table .reglages-user {
+    min-width: 0;
+  }
+
+  .reglages-users-table .reglages-user-actions {
+    grid-column: 2;
+    grid-row: 1;
+    width: auto;
+  }
+
+  .reglages-users-table .reglages-user-role,
+  .reglages-users-table .reglages-user-direct {
+    grid-column: 1 / -1;
+  }
+
+  .reglages-user-role .rt-SelectTrigger {
+    width: 100%;
+  }
+
+  .reglages-direct-label {
+    display: inline;
+  }
+
+  .reglages-savebar .reglages-actions {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .reglages-savebar .reglages-actions .rt-Button {
+    flex: 1 1 auto;
+  }
+}
+
+@media (max-width: 520px) {
+  .reglages-profile {
+    flex-wrap: wrap;
+  }
+
+  .reglages-profile > .rt-Button {
+    width: 100%;
+  }
+
+  .reglages-segmented {
+    display: flex;
+  }
+
+  .reglages-segmented button {
+    flex: 1 1 0;
+    justify-content: center;
+    padding-inline: 0.5rem;
+  }
+}

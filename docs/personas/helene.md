@@ -27,7 +27,7 @@ Hélène accueille une dizaine de bénévoles à chaque rentrée, et en voit par
 
 - Les comptes créés un par un, et les mots de passe à transmettre.
 - Ne pas savoir qui a changé quoi, quand la grille a bougé.
-- Le diagnostic de l'automate, écrit pour un technicien.
+- Le détail du diagnostic de l'automate, écrit pour un technicien.
 - Les réglages qui demandent encore une commande sur la machine.
 
 ## Son parcours
@@ -37,7 +37,7 @@ Hélène accueille une dizaine de bénévoles à chaque rentrée, et en voit par
 3. **Un départ.** Elle supprime le compte, après confirmation.
 4. **La station.** **Réglages → Station** : le nom, le nom court, l'accroche, la langue, les adresses publiques du flux et de `now.json`. Un enregistrement change tout de suite le nom affiché.
 5. **Un souci dans l'Agenda.** Elle peut couper l'agenda, depuis son menu ⋯ : la grille joue seule, et rien n'est effacé.
-6. **Une alerte.** Le lien **Diagnostic** du bandeau ouvre **Réglages → Automate** : santé, dépannage, statut. Elle en lit le résumé, et passe le reste à Karim.
+6. **Une alerte.** Le lien **Diagnostic** du bandeau ouvre **Réglages → Automate**. Une phrase dit si tout va bien, et sinon ce qui ne va pas. Elle la lit, et la passe telle quelle à Karim, avec le détail en dessous. Les gestes lourds, qui ne se défont pas, sont à part.
 
 ## Le moment qui compte
 
@@ -51,6 +51,8 @@ Deux bénévoles de l'an dernier sont partis. Avant de supprimer leurs comptes, 
 - Les réglages de la station se changent dans la console, sans reconstruire d'image.
 - Couper l'agenda n'efface rien.
 - Un admin crée ou renouvelle le jeton d'encodeur d'un autre compte.
+- Dans Réglages, ce qui touche toute la station, les comptes, la station et l'automate, est rangé à part de son propre compte.
+- Le diagnostic de l'automate commence par une phrase qu'elle peut lire, et transmettre.
 - Le lien « Code source », étiqueté AGPL, reste dans le menu de chaque compte.
 
 ## Ce qui coince encore
