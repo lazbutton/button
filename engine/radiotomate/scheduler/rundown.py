@@ -570,6 +570,52 @@ async def build_rundown(  # noqa: PLR0912, PLR0915
     carts: dict = {}
     used_sounds: dict[int, set[int]] = {}
 
+    async def opening_anchor(
+        opening: datetime,
+        title_end: datetime,
+    ) -> tuple[dict, datetime] | None:
+        """
+        The anchor a daypart has on its first minute, as an item, and where the
+        forecast goes on.
+
+        That anchor is never « upcoming »: the daypart before stops short of it,
+        and it is already due once the forecast is in its own. The antenna plays
+        it all the same. Hard, it cuts the title that runs into ``opening``;
+        soft, it waits for ``title_end``.
+        """
+        entered = slot_at(opening.weekday(), opening.hour * 60 + opening.minute)
+        if entered is None or not entered.clock_id or window_at(opening) is not None:
+            return None
+        entered_clock = await clock_for(entered.clock_id)
+        if entered_clock is None:
+            return None
+        for pos in entered_clock.anchored_positions():
+            if pos.minute != opening.minute:
+                continue
+            if not (pos.is_hard_sync or pos.is_soft_sync):
+                continue
+            at = opening if pos.is_hard_sync else title_end
+            prepared = await _prepare_cart(
+                session,
+                pos,
+                entered_clock,
+                at=at,
+                when="anchored",
+                daypart=daypart_label(
+                    entered,
+                    entered.daypart_end_minute(next_slot(entered)),
+                ),
+                carts=carts,
+                used_sounds=used_sounds,
+            )
+            if prepared is None:
+                return None
+            payload, duration = prepared
+            if at > opening:
+                payload["reason"] = "glissement"
+            return payload, at + timedelta(seconds=duration)
+        return None
+
     while t < hard_cap and len(items) < MAX_ITEMS:
         last_at = datetime.fromisoformat(items[-1]["at"]) if items else None
         if last_at is not None and last_at >= deadline:
@@ -608,6 +654,9 @@ async def build_rundown(  # noqa: PLR0912, PLR0915
 
         nxt = next_slot(slot)
         slot_end = slot.daypart_end_minute(nxt)
+        slot_end_at = t.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(
+            minutes=slot_end
+        )
         label = daypart_label(slot, slot_end)
         sequential = clock.sequential_positions()
         anchored = clock.anchored_positions()
@@ -706,6 +755,12 @@ async def build_rundown(  # noqa: PLR0912, PLR0915
         t += timedelta(seconds=duration)
         sim_cursor += 1
         failures = 0
+        if t >= slot_end_at:
+            # The title runs into the next daypart, or ends where it starts.
+            opened = await opening_anchor(slot_end_at, t)
+            if opened is not None:
+                opening_payload, t = opened
+                items.append(opening_payload)
         if upcoming_soft is not None and t >= upcoming_soft[0]:
             glided = await _prepare_cart(
                 session,
