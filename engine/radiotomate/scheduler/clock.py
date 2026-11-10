@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from time import perf_counter
 from typing import TYPE_CHECKING
 
@@ -421,22 +421,20 @@ async def _clock_step(  # noqa: PLR0912, PLR0913, PLR0915
 
     if harbor:
         actions.append("live_hold")
-        today = now.date().isoformat()
-        _state.fired_anchors = {k for k in _state.fired_anchors if k[0] == today}
+        _forget_fired_anchors(now)
         nxt = await AutoDJSlot.next_after(session, slot)
         slot_end = slot.daypart_end_minute(nxt)
-        _hold_due_anchors(clock, slot.minute, slot_end, now, actions)
+        await _hold_due_anchors(session, clock, slot.minute, slot_end, now, actions)
         await persist_sequencer_cursor(session)
         return
 
     if agenda.hold:
         # A dated set is on air: its anchors are dropped, never stacked behind it.
         actions.append("agenda_hold")
-        today = now.date().isoformat()
-        _state.fired_anchors = {k for k in _state.fired_anchors if k[0] == today}
+        _forget_fired_anchors(now)
         nxt = await AutoDJSlot.next_after(session, slot)
         slot_end = slot.daypart_end_minute(nxt)
-        _hold_due_anchors(clock, slot.minute, slot_end, now, actions)
+        await _hold_due_anchors(session, clock, slot.minute, slot_end, now, actions)
         if not agenda.fill:
             await persist_sequencer_cursor(session)
             return
@@ -456,8 +454,7 @@ async def _clock_step(  # noqa: PLR0912, PLR0913, PLR0915
         _state.clock_id = clock.id
         _state.cursor = 0
 
-    today = now.date().isoformat()
-    _state.fired_anchors = {k for k in _state.fired_anchors if k[0] == today}
+    _forget_fired_anchors(now)
 
     nxt = await AutoDJSlot.next_after(session, slot)
     slot_end = slot.daypart_end_minute(nxt)
@@ -676,15 +673,67 @@ async def _planned_anchor_item(
             or (row.details or {}).get("minute") == pos.minute
         )
     ]
+    # A soft anchor is planned at the end of the title astride its minute, often
+    # past that minute: its line carries the minute in its details. Within the
+    # hour after this occurrence, it cannot be the line of another one.
+    occurrence = now.replace(minute=pos.minute, second=0, microsecond=0, tzinfo=None)
     for row in pool:
         planned = row.planned_at
         if (
             planned is not None
-            and planned.hour == now.hour
-            and planned.minute == pos.minute
+            and occurrence <= planned < occurrence + timedelta(hours=1)
+            and (
+                planned.minute == pos.minute
+                or (row.details or {}).get("minute") == pos.minute
+            )
         ):
             return row
     return None
+
+
+async def _soft_lines_astride_the_hour(
+    session: ormSession,
+    now: datetime,
+) -> list[tuple[tuple[str, int, int], RundownItem]]:
+    """
+    The planned lines of the soft anchors of the hour before, by occurrence key.
+
+    A soft anchor waits for the end of the title astride its minute, and the
+    conducteur plans it there. That title may end past the hour, in the next
+    daypart or on the next day: the occurrence is then the one of the hour
+    before, and its line, which carries its minute, says which. It is owed until
+    the title ends, and an hour after its minute at most, as the line of an hour
+    is (``_planned_anchor_item``). Never without its line: a reset of the
+    conducteur forgets the anchors fired, and drops their lines with them.
+    """
+    local = now.replace(tzinfo=None)
+    hour_before = local.replace(minute=0, second=0, microsecond=0) - timedelta(hours=1)
+    rows = await session.scalars(
+        select(RundownItem)
+        .where(
+            RundownItem.status.in_(list(_PUSHABLE_STATUSES)),
+            RundownItem.when_mode == WhenMode.ANCHORED.value,
+            RundownItem.origin != "desk",
+            RundownItem.planned_at >= hour_before,
+        )
+        .order_by(RundownItem.planned_at, RundownItem.sequence)
+    )
+    found: dict[tuple[str, int, int], RundownItem] = {}
+    for row in rows:
+        minute = (row.details or {}).get("minute")
+        if not isinstance(minute, int) or row.clock_position_id is None:
+            continue
+        occurrence = hour_before.replace(minute=minute)
+        owed_until = occurrence + timedelta(hours=1)
+        if not (occurrence <= row.planned_at < owed_until) or local >= owed_until:
+            continue
+        # The anchor may have moved, or turned hard, since the forecast.
+        pos = await session.get(ClockPosition, row.clock_position_id)
+        if pos is None or not pos.is_soft_sync or pos.minute != minute:
+            continue
+        key = (occurrence.date().isoformat(), occurrence.hour, minute)
+        found.setdefault(key, row)
+    return list(found.items())
 
 
 async def _beets_track_gain(beets_id: int) -> str | None:
@@ -985,7 +1034,17 @@ async def _remember_cut_autodj(
     session.add(log)
 
 
-def _hold_due_anchors(
+def _forget_fired_anchors(now: datetime) -> None:
+    """
+    Keep the anchors fired today, and those of the hour before: past midnight,
+    the title astride it may still owe a soft anchor of the day before.
+    """
+    since = (now - timedelta(hours=1)).date().isoformat()
+    _state.fired_anchors = {k for k in _state.fired_anchors if k[0] >= since}
+
+
+async def _hold_due_anchors(  # noqa: PLR0913
+    session: ormSession,
     clock: Clock,
     slot_start: int,
     slot_end: int,
@@ -1006,6 +1065,12 @@ def _hold_due_anchors(
             continue
         _state.fired_anchors.add(key)
         actions.append(f"anchor:{pos.minute}:hold")
+    # A soft anchor of the hour before still waits for the title astride the hour.
+    for key, _line in await _soft_lines_astride_the_hour(session, now):
+        if key in _state.fired_anchors:
+            continue
+        _state.fired_anchors.add(key)
+        actions.append(f"anchor:{key[2]}:hold")
 
 
 async def _fire_due_anchors(  # noqa: PLR0913
@@ -1055,6 +1120,22 @@ async def _fire_due_anchors(  # noqa: PLR0913
             _state.pending_autodj_skip_minute = now.minute
 
 
+async def _fire_soft_anchors_astride_the_hour(
+    session: ormSession,
+    gateway: PlayoutGateway,
+    now: datetime,
+    actions: list[str],
+) -> None:
+    """The title astride the hour ends: the soft anchors it held go, with their line."""
+    for key, line in await _soft_lines_astride_the_hour(session, now):
+        if key in _state.fired_anchors:
+            continue
+        if not await _push_existing_rundown_item(session, gateway, line, queue="carts"):
+            continue
+        _state.fired_anchors.add(key)
+        actions.append(f"soft:{key[2]}")
+
+
 async def _fire_due_soft_anchors(  # noqa: PLR0913
     session: ormSession,
     live_data: dict,
@@ -1065,6 +1146,12 @@ async def _fire_due_soft_anchors(  # noqa: PLR0913
     now: datetime,
     actions: list[str],
 ) -> None:
+    remaining = remaining_seconds(live_data)
+    src = source_id(live_data)
+    title_ends = remaining <= JINGLE_PREEMPT_REMAINING or src in {"", "starting"}
+    if title_ends:
+        # The hour before goes first.
+        await _fire_soft_anchors_astride_the_hour(session, gateway, now, actions)
     next_hard = next_hard_anchor(now, slot_start, slot_end, clock.anchored_positions())
     for pos in clock.anchored_positions():
         if pos.minute is None or not pos.is_soft_sync:
@@ -1081,9 +1168,7 @@ async def _fire_due_soft_anchors(  # noqa: PLR0913
             _state.fired_anchors.add(key)
             actions.append(f"soft-skip:{pos.minute}")
             continue
-        remaining = remaining_seconds(live_data)
-        src = source_id(live_data)
-        if remaining > JINGLE_PREEMPT_REMAINING and src not in {"", "starting"}:
+        if not title_ends:
             continue
         planned = await _planned_anchor_item(session, pos, now)
         if planned is not None:
