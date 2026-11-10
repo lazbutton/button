@@ -69,10 +69,39 @@ jobs:
     concurrency:
       group: station-install-${{ github.ref }}
       cancel-in-progress: true
+    defaults:
+      run:
+        # With pipefail: | tee would hide a failed install.
+        shell: bash
     steps:
       - uses: actions/checkout@v7
       - name: Files of a station, from this checkout
         run: python3 scripts/version.py station main "$RUNNER_TEMP/station"
+      - name: A machine like a fresh VPS
+        run: |
+          # No Docker: station install puts the current one, from Docker's
+          # repository, as on a fresh VPS. The runner's own goes, with its
+          # Compose 2.38: every Compose v2 refuses the x-rt-tag guard of
+          # compose.yml. So do the plugins the image adds by hand, and its
+          # source of Docker's repository: a second one, with another key,
+          # would stop apt-get update.
+          dpkg-query -W -f '${db:Status-Abbrev} ${Package}\n' |
+            awk '$1 == "ii" && $2 ~ /^(docker|containerd|moby)/ { print $2 }' > "$RUNNER_TEMP/docker-packages"
+          echo "Docker du runner : $(tr '\n' ' ' < "$RUNNER_TEMP/docker-packages")"
+          xargs -r -a "$RUNNER_TEMP/docker-packages" sudo apt-get purge -y -qq
+          sudo rm -rf /usr/libexec/docker /usr/local/lib/docker
+          sudo rm -f /etc/apt/sources.list.d/docker.list
+          if command -v docker; then
+            echo "::error title=Docker::docker est encore sur le runner."
+            exit 1
+          fi
+          # A default ACL on /opt passes to /opt/button, and overrides the
+          # umask with which station install writes .env: 666, not 600. A
+          # usual VPS has none.
+          if getfacl -p --default /opt 2>/dev/null | grep -q '^default:'; then
+            getfacl -p --default /opt
+            sudo setfacl -k /opt
+          fi
       - name: Install
         # Well under the job's limit: a run that hangs fails here, and its
         # logs are still uploaded.
@@ -145,6 +174,7 @@ jobs:
           mkdir -p "$out"
           if [ -f /opt/button/compose.yml ]; then
             cd /opt/button
+            sudo ls -la /opt/button || true
             sudo docker compose ps -a || true
             # sudo is for docker compose, which reads .env; the file is the runner's.
             # shellcheck disable=SC2024
