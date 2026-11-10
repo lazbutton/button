@@ -68,6 +68,22 @@ jobs:
       - run: python test_smoke.py
       - run: python test_cloud_sync.py
       - run: python test_compose.py
+      - name: test_compose.py, with Compose v2
+        env:
+          # A station may still run Compose v2, which reads compose.yml
+          # otherwise than the Compose 5 of ubuntu-latest: it evaluates every
+          # branch of a ${…}, even the one not taken. This pinned image has
+          # Compose 2.39.2; a new one must keep a v2. scripts/verifier.sh
+          # (services) reads it here, alone on its line.
+          COMPOSE_IMAGE: docker.io/library/docker:28.3.3-cli
+        run: |
+          version=$(docker run --rm "$COMPOSE_IMAGE" docker compose version --short)
+          echo "Compose $version, from $COMPOSE_IMAGE"
+          if [ "${version%%.*}" != 2 ]; then
+            echo "::error title=Compose v2::$COMPOSE_IMAGE a Compose $version : il faut une image avec un Compose v2."
+            exit 1
+          fi
+          python test_compose.py
 
   docker:
     name: build & push images

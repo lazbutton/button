@@ -17,8 +17,11 @@ name: button
 
 # RT_TAG, l'ancienne variable, n'épinglait que le moteur. Posé, il arrête
 # docker compose, qui dit quoi faire : ignoré, il laisserait le moteur repartir
-# sur une autre version, et migrer le schéma. Vide ou absent, ce champ est vide.
-x-rt-tag: "${RT_TAG:+${RT_TAG_N_EST_PLUS_LU:?RT_TAG n'est plus lu. Le retirer de .env, et épingler la version par BUTTON_VERSION. Voir docs/deploiement.md, « Mettre à jour ».}}"
+# sur une autre version, et migrer le schéma. Ce champ vaut false, ou, RT_TAG
+# posé, une phrase. Le tty de radiotomate-init le reprend : Compose n'y lit pas
+# de booléen, et s'arrête en citant la phrase. Jamais ${RT_TAG:+${…:?…}} :
+# Compose v2 évalue le :? même sans RT_TAG, et s'arrêterait toujours.
+x-rt-tag: &rt-tag "${RT_TAG:+RT_TAG=}${RT_TAG:-false}${RT_TAG:+ n'est plus lu. Le retirer de .env, et épingler la version par BUTTON_VERSION. Voir docs/deploiement.md, « Mettre à jour ».}"
 
 x-logging: &logging
   driver: json-file
@@ -122,6 +125,8 @@ services:
       dockerfile: Containerfile
     user: "0:0"
     restart: "no"
+    # Le garde de RT_TAG : false, sauf RT_TAG posé. Voir x-rt-tag.
+    tty: *rt-tag
     environment:
       RADIOTOMATE_DATA: /data
       BEETSDIR: /data/Beets
