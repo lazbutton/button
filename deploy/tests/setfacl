@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Un faux setfacl, hors de fakes/ : la machine des tests ne l'a que si
+# $FAKE_STATE/bin y mène, comme après apt-get install acl. Il note chaque appel
+# dans $FAKE_STATE/log ; les droits du dossier, chmod les donne ensuite.
+echo "setfacl $*" >>"$FAKE_STATE/log"

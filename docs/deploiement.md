@@ -31,7 +31,7 @@ La 0.1.0 n'a pas ce script : jusqu'à la version publiée suivante, cette adress
 
 La commande procède dans l'ordre :
 
-1. **Elle vérifie la machine** : les droits root, le système, le processeur, les ports 80, 443 et 6800, et la place. Elle vérifie aussi Docker et Compose v2, et propose de les installer depuis le dépôt de Docker.
+1. **Elle vérifie la machine** : les droits root, le système, le processeur, les ports 80, 443 et 6800, et la place. Elle vérifie aussi Docker et Compose v2, et propose de les installer depuis le dépôt de Docker. Une ACL par défaut sur `/opt`, qui ouvrirait la station en écriture à d'autres comptes, ne passe pas à son dossier : la commande l'en retire, avec `setfacl`. Sans `setfacl`, elle s'arrête avant d'écrire, et dit quoi installer.
 2. **Elle pose les questions.** Entrée garde la valeur proposée :
    - le nom de la station ;
    - son domaine ;

@@ -71,10 +71,10 @@ Le même workflow fait aussi une vraie installation, le job `install`, sur un ru
 - `neuf` : le runner est rendu semblable à un VPS neuf, sans Docker. `station install` l'installe alors depuis le dépôt de Docker ;
 - `deja-la` : le runner garde son Docker, comme un VPS qui l'avait déjà, et `station install` n'installe rien. Son Compose est un v2, 2.38, comme celui qu'une station peut encore avoir : un avertissement le dit, s'il ne l'est plus.
 
-Dans les deux cas, `/opt` perd d'abord son ACL par défaut. Le job fabrique l'archive d'une station depuis la branche, comme pour une version (`scripts/version.py station main`). Puis il lance `station install --from`, avec `--tls internal` et les images `:main` du registre. Il vérifie ensuite :
+Dans les deux cas, le runner garde l'ACL par défaut de `/opt`, ouverte à tous les comptes, que `station install` doit tenir à l'écart de `.env` et du dossier de la station. Le job fabrique l'archive d'une station depuis la branche, comme pour une version (`scripts/version.py station main`). Puis il lance `station install --from`, avec `--tls internal` et les images `:main` du registre. Il vérifie ensuite :
 
 - le contrôle de la station, `smoke.sh`, sur les ports locaux ;
-- `.env`, en droits 600, et la commande `station`, dans `/usr/local/bin` ;
+- `.env`, en droits 600 ; le dossier de la station, en 755 et sans ACL ; la commande `station`, dans `/usr/local/bin` ;
 - le mot de passe admin : sans terminal, il reste dans `.env`, et la sortie ne le montre pas ;
 - la relance : `sudo station install --from …` ne change ni un fichier du dossier, hors `data/` et `media/`, ni un conteneur.
 

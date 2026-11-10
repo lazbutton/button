@@ -65,13 +65,16 @@ C'est un seul fichier, sans extension, celui de la commande posée dans `/usr/lo
   - Un fichier que `compose.yml` monte depuis le dossier doit être dans l'archive : sinon, `version.py` refuse, et `test_version.py` échoue.
 - **`.env`.** Il ne se réécrit jamais : une relance n'y ajoute que ce qui manque. Une commande qui change un réglage de `.env`, comme `config` (INS-03), le dit.
 - **Le mot de passe admin.** Il ne s'écrit nulle part ailleurs que dans `.env`, en droits 600, et seulement jusqu'à son affichage, dans un terminal.
+- **Les droits.** Le umask ne suffit pas : une ACL par défaut sur le dossier passe outre, comme celle de `/opt` sur un runner de GitHub.
+  - Un fichier à protéger, comme `.env`, naît vide avec son mode, avant d'y écrire : `install -m 600 /dev/null`.
+  - Le dossier de la station perd une ACL par défaut qui l'ouvrirait en écriture : `check_acl`, puis `make_station_dir`. Sans `setfacl`, rien ne s'installe.
 - **L'environnement du shell.** Ce que `.env` règle n'en vient jamais : `env_isolate` retire ces variables avant `docker compose`. sudo garde `TZ`, par exemple.
 - **Les questions.** Chacune a son option, pour la CI : sans terminal, ou avec `--yes`, rien ne se demande.
 - **Les tests.** Ils sont dans `tests/`, lancés par `bats`, dans l'image officielle épinglée par [`station.yml`](../.github/workflows/station.yml).
-  - De faux outils jouent la machine : ceux de `tests/fakes/`, et `tests/docker`, que la machine n'a que si le test le pose.
+  - De faux outils jouent la machine : ceux de `tests/fakes/`, puis `tests/docker` et `tests/setfacl`, que la machine n'a que si le test les pose.
   - `STATION_ROOT` met les fichiers du système, comme `/etc/os-release` ou `/usr/local/bin`, dans un dossier temporaire.
   - Le script se lit aussi avec `source` : ses fonctions se définissent sans rien lancer, et un test peut remplacer `interactive` ou `terminal`.
-  - Une vraie installation tourne aussi en CI, le job `install` de `station.yml` : `station install --yes --tls internal`, avec les images `:main`, sur un runner Ubuntu 24.04, dans deux cas. `neuf` : le runner n'a plus Docker, que `station install` installe. `deja-la` : il garde le sien, avec un Compose v2, et `station install` n'installe rien. Puis une relance, qui ne doit changer ni un fichier du dossier, hors `data/` et `media/`, ni un conteneur. Voir [docs/developpement.md](../docs/developpement.md#vérifier-avant-de-proposer-un-changement).
+  - Une vraie installation tourne aussi en CI, le job `install` de `station.yml` : `station install --yes --tls internal`, avec les images `:main`, sur un runner Ubuntu 24.04 dont `/opt` a une ACL par défaut ouverte à tous, dans deux cas. `neuf` : le runner n'a plus Docker, que `station install` installe. `deja-la` : il garde le sien, avec un Compose v2, et `station install` n'installe rien. Puis une relance, qui ne doit changer ni un fichier du dossier, hors `data/` et `media/`, ni un conteneur. Voir [docs/developpement.md](../docs/developpement.md#vérifier-avant-de-proposer-un-changement).
 - **ShellCheck** passe sur le script et sur ses tests : ils sont dans la liste de `shellcheck.yml`.
 
 ## Pièges

@@ -46,6 +46,7 @@ jobs:
           deploy/tests/*.bash
           deploy/tests/*.bats
           deploy/tests/docker
+          deploy/tests/setfacl
           deploy/tests/fakes/*
           deploy/share/entrypoint.sh
           console/docker/docker-entrypoint.sh

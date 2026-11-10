@@ -72,6 +72,16 @@ install_in_terminal() {
   run bash -c 'source "$1"; shift; terminal() { true; }; main install "$@"' _ "$STATION" "$@"
 }
 
+# Sous une ACL par défaut, comme celle de /opt sur les runners de GitHub : le
+# umask n'y compte plus. Ici, umask ne fait plus rien, et le umask donné joue
+# l'ACL : 022 ouvre en lecture, 000 en écriture.
+install_under_acl() { # umask, options
+  local mask=$1
+  shift
+  # shellcheck disable=SC2016
+  run bash -c 'umask "$1"; umask() { :; }; source "$2"; shift 2; main install "$@"' _ "$mask" "$STATION" "$@"
+}
+
 # La valeur d'une variable du .env de la station.
 env_of() {
   grep -E "^$1=" "$DIR/.env" | tail -n 1 | cut -d= -f2-
