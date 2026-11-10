@@ -60,6 +60,7 @@ jobs:
       - run: python test_agenda_api.py
       - run: python test_refresh_volume.py
       - run: python test_promote_inplace.py
+      - run: python test_beets_import_loop.py
       - run: python test_share.py
       - run: python test_volume_api.py
       - run: python test_session.py
