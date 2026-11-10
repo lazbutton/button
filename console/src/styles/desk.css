@@ -1321,36 +1321,6 @@
   color: var(--gray-11);
 }
 
-.conductor-panel {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
-  height: 100%;
-}
-
-.engine-rundown.is-compact {
-  min-width: 0;
-}
-
-.engine-rundown tr.is-on-air {
-  background: var(--accent-a3);
-}
-
-.engine-rundown-remain {
-  color: var(--gray-11);
-  font-weight: 500;
-}
-
-.conductor-legend {
-  margin: 0;
-}
-
-.conductor-panel.is-compact .conductor-rail {
-  min-height: 5.6rem;
-  margin-bottom: 0.65rem;
-}
-
 .conductor-rail-marks {
   position: absolute;
   left: 0;

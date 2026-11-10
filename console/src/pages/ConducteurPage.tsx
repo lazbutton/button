@@ -1,18 +1,22 @@
-import { useCallback, useMemo, useState } from "react";
-import { Badge, Text } from "@radix-ui/themes";
-import { Radio } from "lucide-react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ConducteurBoard } from "../components/ConducteurBoard";
+import { PlanSummary } from "../components/conducteur/PlanSummary";
+import { RundownPanel } from "../components/conducteur/RundownPanel";
 import { ProtoToast, useProtoToast } from "../components/ProtoToast";
 import { RepairClockCartDialog } from "../components/RepairClockCartDialog";
-import { formatHhMmSs, formatMmSs } from "../lib/parisClock";
 import { useAntennaClock } from "../lib/liveClock";
 import { useAccount } from "../api/AccountContext";
 import { roleAtLeast } from "../api/roles";
-import { apiDeleteJson, ApiForbiddenError, ApiRequestError } from "../api/client";
+import {
+  ApiAuthError,
+  ApiForbiddenError,
+  ApiRequestError,
+  ApiUnavailableError,
+  apiDeleteJson,
+} from "../api/client";
 import { SessionGate } from "../api/SessionGate";
-import { emissionPillLabel } from "../api/emissionMeta";
-import { CONDUCTEUR_JSON, itemNamedLikeLive, nextAnchoredItem, partitionRundown, rundownCopy } from "../api/rundownLive";
+import { withoutClosedTwins } from "../api/conducteurView";
+import { CONDUCTEUR_JSON, partitionRundown } from "../api/rundownLive";
 import type {
   CartsResponse,
   ClocksResponse,
@@ -23,227 +27,165 @@ import type {
 } from "../api/types";
 import { useApiJson } from "../api/useApiJson";
 import { PageHeader } from "../ui/PageHeader";
-import { Panel } from "../ui/Panel";
 import "../styles/pages/conducteur.css";
 
 const POLL_MS = 3_000;
 
-function horizonLabel(minutes: number): string {
-  if (minutes >= 60) return `${Math.round(minutes / 60)} h`;
-  return `${minutes} min`;
+/**
+ * Le geste fini, le focus revient où il était : le bouton qui a ouvert la
+ * réparation. Si sa ligne a changé, ou après un retrait, il revient au
+ * déroulé plutôt que de tomber sur la page.
+ */
+function refocus(target: HTMLElement | null) {
+  // Deux images plus tard : la ligne retirée a quitté la page, le dialogue aussi.
+  window.requestAnimationFrame(() =>
+    window.requestAnimationFrame(() => {
+      if (target?.isConnected) {
+        target.focus();
+        return;
+      }
+      const active = document.activeElement;
+      if (!active || active === document.body) {
+        document.querySelector<HTMLElement>(".cond-list")?.focus({ preventScroll: true });
+      }
+    }),
+  );
 }
 
-function liveLine(live: LiveSnapshot | null, loading: boolean): string {
-  if (loading && !live) return "Lecture du live…";
-  if (!live || live.status === "offline") return "Pas de playout";
-  const artist = live.artist?.trim();
-  const title = live.title?.trim();
-  if (artist && title) return `${artist} — ${title}`;
-  return title || artist || "À l’antenne";
-}
-
-function liveState(live: LiveSnapshot | null): { color: "green" | "amber" | "gray"; label: string } {
-  if (!live || live.status === "offline") return { color: "gray", label: "Offline" };
-  if (live.status === "simulating") return { color: "amber", label: "Démo" };
-  return { color: "green", label: live.source?.toUpperCase() || "ON AIR" };
+/** Réparer une étape sans son : les heures types et les bacs ne se lisent que pour un programmateur. */
+function RepairHost({
+  item,
+  onClose,
+  onRepaired,
+  onError,
+}: {
+  item: RundownItem | null;
+  onClose: () => void;
+  onRepaired: () => Promise<void>;
+  onError: (message: string) => void;
+}) {
+  const clocks = useApiJson<ClocksResponse>("/autodj/clocks.json");
+  const carts = useApiJson<CartsResponse>("/carts.json");
+  const navigate = useNavigate();
+  return (
+    <RepairClockCartDialog
+      open={item != null}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+      clocks={clocks.data?.clocks ?? []}
+      carts={carts.data?.carts ?? []}
+      missingTitle={item?.cart || item?.resource || ""}
+      clockId={item?.clock_id}
+      clockName={item?.clock}
+      positionId={item?.position_id}
+      kind={item?.kind}
+      onRepaired={async () => {
+        await clocks.reload();
+        await onRepaired();
+      }}
+      onOpenCart={(cartId) => navigate(`/sons?id=${cartId}`)}
+      onError={onError}
+    />
+  );
 }
 
 export function ConducteurPage() {
   const live = useApiJson<LiveSnapshot>("/live.json", 2000);
-  const clock = useAntennaClock(live.data);
   const { data, setData, error, loading, reload } = useApiJson<Rundown>(CONDUCTEUR_JSON, POLL_MS);
-  const clocksRes = useApiJson<ClocksResponse>("/autodj/clocks.json");
-  const cartsRes = useApiJson<CartsResponse>("/carts.json");
-  const emissionsRes = useApiJson<EmissionsResponse>("/antenne/emissions.json", POLL_MS);
-  const navigate = useNavigate();
-  const { message, show } = useProtoToast();
+  const emissions = useApiJson<EmissionsResponse>("/antenne/emissions.json", POLL_MS);
+  const clock = useAntennaClock(live.data);
+  const { message, show, dismiss } = useProtoToast();
   const [repairItem, setRepairItem] = useState<RundownItem | null>(null);
   const { role } = useAccount();
   const canEdit = roleAtLeast(role, "programmateur");
 
-  const fail = (caught: unknown, fallback: string) => {
-    if (caught instanceof ApiForbiddenError) show("Il faut le rôle Programmateur pour modifier le conducteur.");
-    else if (caught instanceof ApiRequestError) show(caught.message);
-    else show(fallback);
-  };
+  // Les gestes passent aux lignes, qui ne se redessinent pas à chaque seconde :
+  // ils restent les mêmes d'un rendu à l'autre, et lisent le toast du moment.
+  const showRef = useRef(show);
+  showRef.current = show;
+
+  // Un geste qui échoue s'annonce en alerte, avec la raison du moteur quand il en donne une.
+  const fail = useCallback((caught: unknown, fallback: string) => {
+    const say = showRef.current;
+    if (caught instanceof ApiAuthError) say("Session expirée. Reconnecte-toi.", "error");
+    else if (caught instanceof ApiForbiddenError) say("Il faut le rôle Programmateur pour modifier le conducteur.", "error");
+    else if (caught instanceof ApiRequestError) say(caught.message, "error");
+    else if (caught instanceof ApiUnavailableError) say("L’automate ne répond pas. Réessaie dans un instant.", "error");
+    else say(fallback, "error");
+  }, []);
 
   const removeItem = useCallback(
     async (item: RundownItem) => {
-      if (!canEdit || !item.id) return;
+      if (!item.id) return;
       try {
         const payload = await apiDeleteJson<Rundown>(
           `/autodj/conducteur/items/${encodeURIComponent(item.id)}.json`,
         );
         setData(payload);
-        show("Retiré du conducteur");
+        showRef.current("Retiré du conducteur.", "success");
+        refocus(null);
       } catch (caught) {
-        fail(caught, "Retrait impossible.");
+        fail(caught, "Retrait impossible. Réessaie.");
       }
     },
-    [canEdit, setData, show],
+    [fail, setData],
   );
 
-  const snapshot = live.data;
-  const currentShow = snapshot?.emission ?? emissionsRes.data?.current ?? null;
-  const nextShow = emissionsRes.data?.next ?? null;
-  const emissionPill = emissionPillLabel(currentShow, nextShow, [
-    "Lun",
-    "Mar",
-    "Mer",
-    "Jeu",
-    "Ven",
-    "Sam",
-    "Dim",
-  ]);
-  const onAir = liveState(snapshot);
-  const nextAnchor = useMemo(() => {
-    if (!data) return null;
-    if (data.summary?.next_anchor?.at) return data.summary.next_anchor;
-    const found = nextAnchoredItem(data.items, new Date());
-    if (!found) return null;
-    return {
-      at: found.at,
-      minute: found.minute,
-      kind: found.kind,
-      resource: found.resource,
-      sync: found.sync,
-    };
-  }, [data]);
-
-  const parts = data ? partitionRundown(data.items, clock.wall, snapshot) : null;
-  const onAirItem = parts?.onAir ?? null;
-  const matchesAir = Boolean(onAirItem && itemNamedLikeLive(onAirItem, snapshot ?? null));
-  const onAirCopy = matchesAir && onAirItem ? rundownCopy(onAirItem) : null;
-  const stripTitle = onAirCopy
-    ? onAirCopy.artist
-      ? `${onAirCopy.artist} — ${onAirCopy.title}`
-      : onAirCopy.title
-    : liveLine(snapshot, live.loading);
-  const remaining =
-    snapshot && snapshot.status !== "offline" ? formatMmSs(clock.remainingSec) : null;
-  const nextAnchorRemainSec = nextAnchor?.at
-    ? Math.max(0, Math.round((Date.parse(nextAnchor.at) - Date.now()) / 1000))
-    : null;
-  const lastAt = data?.items.at(-1)?.at;
-  const lastClock = lastAt
-    ? (lastAt.includes("T") ? lastAt.split("T")[1] : lastAt).slice(0, 5)
-    : null;
+  const onRemove = useCallback((item: RundownItem) => void removeItem(item), [removeItem]);
+  const repairFromRef = useRef<HTMLElement | null>(null);
+  const onRepair = useCallback((item: RundownItem, origin: HTMLElement) => {
+    repairFromRef.current = origin;
+    setRepairItem(item);
+  }, []);
+  const closeRepair = useCallback(() => {
+    setRepairItem(null);
+    refocus(repairFromRef.current);
+  }, []);
+  const items = useMemo(() => (data ? withoutClosedTwins(data.items) : []), [data]);
+  const parts = data ? partitionRundown(items, clock.wall, live.data) : null;
 
   return (
-    <>
-    <div className="ui-page ui-page--fill conducteur-page">
-      <PageHeader
-        title="Conducteur"
-        status={
-          // En couleur douce, le texte vert ou ambre du badge manque de contraste.
-          <Badge color={onAir.color} variant="soft" highContrast>
-            <Radio size={12} aria-hidden="true" />
-            {onAir.label}
-          </Badge>
-        }
-      />
+    <main className="ui-page ui-page--fill cond">
+      <PageHeader title="Conducteur" description="Ce qui va passer, heure par heure, et ce qui vient de passer." />
 
-      <SessionGate
-        loading={loading}
-        error={error}
-        ready={data != null}
-        onRetry={() => void reload()}
-      >
-        {data ? (
-          <main className="conducteur-workspace">
-            <section className="conducteur-strip" aria-label="À l’antenne">
-              <div className="conducteur-strip-now">
-                <Text as="p" size="1" className="conducteur-strip-label">
-                  À l’antenne
-                </Text>
-                <Text as="p" size="3" weight="bold" className="conducteur-strip-title">
-                  {stripTitle}
-                </Text>
-              </div>
-              {remaining ? (
-                <Text as="p" size="5" weight="bold" className="conducteur-strip-remain">
-                  −{remaining}
-                </Text>
-              ) : null}
-              <dl className="conducteur-strip-facts">
-                <div>
-                  <dt>Horloge</dt>
-                  <dd>
-                    {data.clock || "Aucune"}
-                    {data.daypart ? ` · ${data.daypart}` : ""}
-                  </dd>
-                </div>
-                {nextAnchor ? (
-                  <div>
-                    <dt>Ancre</dt>
-                    <dd>
-                      {nextAnchor.minute != null
-                        ? `:${String(nextAnchor.minute).padStart(2, "0")}`
-                        : nextAnchor.kind || "ancre"}
-                      {nextAnchor.sync ? ` ${nextAnchor.sync}` : ""}
-                      {nextAnchorRemainSec != null
-                        ? ` · ${formatHhMmSs(nextAnchorRemainSec)}`
-                        : ""}
-                    </dd>
-                  </div>
-                ) : null}
-                {snapshot?.source ? (
-                  <div>
-                    <dt>File</dt>
-                    <dd>{snapshot.source}</dd>
-                  </div>
-                ) : null}
-                {emissionPill ? (
-                  <div>
-                    <dt>Émission</dt>
-                    <dd>
-                      <span className="conducteur-emission-pill">{emissionPill}</span>
-                    </dd>
-                  </div>
-                ) : null}
-                <div>
-                  <dt>Horizon</dt>
-                  <dd>
-                    {lastClock ? `→ ${lastClock}` : horizonLabel(data.horizon_min)}
-                    {lastClock ? ` · ${horizonLabel(data.horizon_min)}` : ""}
-                  </dd>
-                </div>
-              </dl>
-            </section>
-
-            <Panel padded={false} className="conducteur-rundown-panel">
-              <ConducteurBoard
-                rundown={data}
-                live={snapshot}
-                onRepair={canEdit ? setRepairItem : undefined}
-                onRemove={canEdit ? removeItem : undefined}
-              />
-            </Panel>
-          </main>
+      <SessionGate loading={loading} error={error} ready={data != null} onRetry={() => void reload()}>
+        {data && parts ? (
+          <>
+            <PlanSummary
+              rundown={data}
+              upcoming={parts.upcoming}
+              live={live.data}
+              emissions={emissions.data}
+              wall={clock.wall}
+              canOpenClock={canEdit}
+            />
+            <RundownPanel
+              rundown={data}
+              parts={parts}
+              live={live.data}
+              clock={clock}
+              unreadable={error === "down"}
+              canEdit={canEdit}
+              onRepair={canEdit ? onRepair : undefined}
+              onRemove={canEdit ? onRemove : undefined}
+            />
+          </>
         ) : null}
       </SessionGate>
-    </div>
-    <RepairClockCartDialog
-      open={repairItem != null}
-      onOpenChange={(open) => {
-        if (!open) setRepairItem(null);
-      }}
-      clocks={clocksRes.data?.clocks ?? []}
-      carts={cartsRes.data?.carts ?? []}
-      missingTitle={repairItem?.cart || repairItem?.resource || ""}
-      clockId={repairItem?.clock_id}
-      clockName={repairItem?.clock}
-      positionId={repairItem?.position_id}
-      kind={repairItem?.kind}
-      onRepaired={async () => {
-        await clocksRes.reload();
-        await reload();
-        show("Case réparée");
-      }}
-      onOpenCart={(cartId) => navigate(`/sons?id=${cartId}`)}
-      onError={show}
-    />
-    <ProtoToast message={message} />
-    </>
+
+      {canEdit ? (
+        <RepairHost
+          item={repairItem}
+          onClose={closeRepair}
+          onRepaired={async () => {
+            await reload();
+            showRef.current("Étape réparée.", "success");
+          }}
+          onError={(text) => showRef.current(text, "error")}
+        />
+      ) : null}
+      <ProtoToast message={message} onDismiss={dismiss} />
+    </main>
   );
 }
