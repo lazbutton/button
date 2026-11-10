@@ -13,10 +13,14 @@ on:
     branches: [main]
     paths:
       - "**.sh"
+      - "deploy/station"
+      - "deploy/tests/**"
       - ".github/workflows/shellcheck.yml"
   pull_request:
     paths:
       - "**.sh"
+      - "deploy/station"
+      - "deploy/tests/**"
       - ".github/workflows/shellcheck.yml"
   workflow_dispatch:
 
@@ -37,7 +41,12 @@ jobs:
           docker run --rm -v "$PWD:/mnt:ro" -w /mnt
           docker.io/koalaman/shellcheck:v0.11.0
           scripts/*.sh
+          deploy/station
           deploy/scripts/*.sh
+          deploy/tests/*.bash
+          deploy/tests/*.bats
+          deploy/tests/docker
+          deploy/tests/fakes/*
           deploy/share/entrypoint.sh
           console/docker/docker-entrypoint.sh
           services/icecast/docker-entrypoint.sh

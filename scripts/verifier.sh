@@ -237,11 +237,25 @@ check_nginx() {
 
 check_deploy() {
   need_docker || return
+  command -v python3 >/dev/null 2>&1 || missing "Python 3 absent : installer Python 3.13, celui de la CI." || return
   cd "$root/deploy"
   docker compose --env-file .env.example -f compose.yml config --quiet
   docker compose --env-file .env.example -f compose.yml --profile share config --quiet
   docker compose --env-file .env.example -f compose.yml --profile cloud config --quiet
   echo "compose.yml : valide avec .env.example"
+  # Comme version.yml : le compose.yml d'une station, celui des fichiers joints
+  # à chaque version, sans ses sections build:, reste valide.
+  local station profile
+  station=$(mktemp -d)
+  python3 "$root/scripts/version.py" station main "$station"
+  mkdir "$station/folder"
+  tar -xzf "$station/station.tar.gz" -C "$station/folder"
+  for profile in vps share cloud; do
+    docker compose --env-file .env.example -f "$station/folder/compose.yml" --profile "$profile" config --quiet ||
+      { rm -rf "$station"; return 1; }
+  done
+  rm -rf "$station"
+  echo "compose.yml d'une station : valide"
   # ShellCheck comme la CI : l'image et la liste des scripts se lisent dans le
   # workflow, shellcheck.yml, l'image seule sur sa ligne, puis un script ou un
   # motif par ligne, jusqu'à la fin du bloc.
@@ -260,6 +274,11 @@ check_deploy() {
   # shellcheck disable=SC2086
   docker run --rm -v "$root:/mnt:ro" -w /mnt "$image" $scripts
   echo "ShellCheck : propre"
+  # Les tests de deploy/station, comme la CI : l'image se lit dans station.yml.
+  local bats
+  bats=$(sed -nE 's/^ +(docker\.io\/bats\/bats:[^ ]+) *$/\1/p' "$root/.github/workflows/station.yml")
+  [ -n "$bats" ] || { echo "Image de bats introuvable dans station.yml." >&2; return 1; }
+  docker run --rm -v "$root:/code:ro" -w /code "$bats" deploy/tests
 }
 
 check_version() {
