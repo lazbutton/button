@@ -263,6 +263,9 @@ services:
       CATALOG_PORT: "30127"
       STATION_NAME: ${STATION_NAME:-BUTTON}
       SMB_HOST: ${SMB_HOST:-}
+      # Le volume share-private naît à root. Au démarrage, le catalogue l'ouvre
+      # en 1777, comme /tmp : la boucle Beets du moteur, qui ne tourne pas en
+      # root, y écrit les rôles du dossier partagé.
       SHARE_PRIVATE: /share-private
     volumes:
       - ${BUTTON_MEDIA:-./media}:/media

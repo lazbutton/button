@@ -79,7 +79,7 @@ Pendant un direct, l'horloge se met en pause et laisse tomber les ancres dues. �
 | Bibliothèque Beets | `RT_DATA/Beets` | index de la banque, ReplayGain |
 | Index de recherche | `MEILI_DATA` | reconstruit par le catalogue |
 | Envois en cours | volume `tusd-data` | les morceaux d'un envoi reprenable |
-| Mots de passe du dossier partagé | volume `share-private` | écrits par le catalogue, lus par `share` ; jamais dans la banque |
+| Comptes du dossier partagé | volume `share-private` | les mots de passe, écrits par le catalogue, et les rôles, par la boucle Beets ; lus par `share`, jamais dans la banque |
 | Certificats HTTPS | `CADDY_DATA` | les certificats et le compte Let's Encrypt de Caddy, avec le profil `vps` |
 | Jeton Dropbox | `CLOUD_SYNC_CONFIG/rclone.conf` | la configuration de rclone, avec le profil `cloud` ; rclone y renouvelle le jeton. Jamais dans `.env` ni dans le dépôt |
 | Copies depuis Dropbox | volume `cloud-sync-state` | ce que `cloud-sync` a copié, et le dernier compte rendu de chaque dossier : un son retiré dans la console ne revient pas |

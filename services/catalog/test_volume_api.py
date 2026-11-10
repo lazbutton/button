@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 import sys
 import tempfile
 import threading
@@ -12,6 +13,7 @@ import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "deploy" / "scripts"))
 
@@ -33,6 +35,28 @@ class VolumeApiTest(unittest.TestCase):
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
             volume_api.queue_password(root, "bea", None)
             self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["action"], "clear")
+
+    def test_the_share_volume_opens_to_the_beets_loop(self) -> None:
+        # Docker crée le volume au nom de root, et la boucle Beets ne tourne pas en root.
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            os.chmod(root, 0o755)
+            self.assertIsNone(volume_api.open_share_private(root))
+            self.assertEqual(stat.S_IMODE(root.stat().st_mode), 0o1777)
+            # Déjà ouvert, ou sans dossier, comme en dev : rien ne change.
+            with mock.patch.object(volume_api.os, "chmod") as chmod:
+                self.assertIsNone(volume_api.open_share_private(root))
+                self.assertIsNone(volume_api.open_share_private(root / "absent"))
+                chmod.assert_not_called()
+
+    def test_a_share_volume_left_closed_is_said(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            refused = PermissionError(1, "Operation not permitted")
+            with mock.patch.object(volume_api.os, "chmod", side_effect=refused):
+                warning = volume_api.open_share_private(root)
+            self.assertIn(f"{root} n'a pas pu être ouvert à la boucle Beets", warning or "")
+            self.assertIn("« Si les rôles n'arrivent pas au dossier »", warning or "")
 
 
 class CatalogVolumeHttpTest(unittest.TestCase):
