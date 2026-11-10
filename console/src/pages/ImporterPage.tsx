@@ -22,6 +22,7 @@ import { filesFromDataTransfer, isFileDrag } from "../api/audioDrop";
 import {
   agoLabel,
   BANK_FORMATS,
+  bankRoom,
   destinationLabel,
   formatBytes,
   percentOf,
@@ -29,6 +30,9 @@ import {
   tusRetryable,
   ROTATION_DESTINATION,
   type BankDestination,
+  type BankRoom,
+  type InboxDisk,
+  type InboxQuota,
 } from "../api/soundsView";
 import { createBank } from "../api/banks";
 import { useAccount } from "../api/AccountContext";
@@ -54,7 +58,9 @@ type InboxFile = {
 type InboxStatus = {
   /** Rotation, then every folder of 20-archives. Missing from an older catalogue. */
   destinations?: BankDestination[];
-  quota: { used: number; limit: number };
+  quota: InboxQuota;
+  /** Missing from an older catalogue, null when the catalogue cannot read the disk. */
+  disk?: InboxDisk | null;
   queue: InboxFile[];
   rejected: InboxFile[];
   progress: InboxFile[];
@@ -263,9 +269,8 @@ export function ImporterPage() {
     void filesFromDataTransfer(data, () => true).then(addLocal);
   };
 
-  const quotaUsed = status?.quota.used ?? 0;
-  const quotaLimit = status?.quota.limit ?? 0;
-  const overQuota = quotaLimit > 0 && quotaUsed + readyBytes > quotaLimit;
+  const room = bankRoom(status?.quota, status?.disk);
+  const tooBig = room != null && readyBytes > room.free;
 
   return (
     <div className="banque">
@@ -279,7 +284,7 @@ export function ImporterPage() {
         </div>
         <div className="banque-head-tools">
           <StationFolder />
-          <QuotaMeter used={quotaUsed} limit={quotaLimit} pending={readyBytes} known={status != null} />
+          <RoomMeter room={room} pending={readyBytes} known={status != null} />
         </div>
       </header>
 
@@ -436,10 +441,10 @@ export function ImporterPage() {
                     </>
                   )}
                 </p>
-                {overQuota && ready ? (
+                {tooBig && ready ? (
                   <span className="banque-warn">
                     <AlertTriangle size={13} aria-hidden="true" />
-                    Dépasse le quota restant
+                    {room?.kind === "disque" ? "Dépasse la place libre du disque" : "Dépasse le quota restant"}
                   </span>
                 ) : null}
                 <span className="bacs-spacer" />
@@ -508,31 +513,35 @@ export function ImporterPage() {
   );
 }
 
-function QuotaMeter({ used, limit, pending, known }: { used: number; limit: number; pending: number; known: boolean }) {
-  const usedPct = limit > 0 ? Math.min(100, (used / limit) * 100) : 0;
-  const pendingPct = limit > 0 ? Math.min(100 - usedPct, (pending / limit) * 100) : 0;
+/** The disk, or the quota when it is the one an upload meets first. */
+function RoomMeter({ room, pending, known }: { room: BankRoom | null; pending: number; known: boolean }) {
+  const usedPct = room ? Math.min(100, (room.used / room.total) * 100) : 0;
+  const pendingPct = room ? Math.min(100 - usedPct, (pending / room.total) * 100) : 0;
   const level = usedPct >= 95 ? "is-full" : usedPct >= 85 ? "is-high" : "";
+  const name = room?.kind === "quota" ? "Quota" : "Disque";
   return (
     <div
       className={`banque-quota ${level}`}
       role="meter"
-      aria-label="Quota de la station"
+      aria-label={`${name} de la station`}
       aria-valuemin={0}
-      aria-valuemax={limit || undefined}
-      aria-valuenow={used}
-      aria-valuetext={known ? `${formatBytes(used)} sur ${formatBytes(limit)}` : "inconnu"}
+      aria-valuemax={room?.total}
+      aria-valuenow={room?.used ?? 0}
+      aria-valuetext={
+        room ? `${formatBytes(room.used)} sur ${formatBytes(room.total)}, ${formatBytes(room.free)} libres` : "inconnu"
+      }
     >
       <span className="banque-quota-copy">
-        <span>Quota</span>
-        <strong>{known ? `${formatBytes(used)} / ${formatBytes(limit)}` : "—"}</strong>
+        <span>{name}</span>
+        <strong>{room ? `${formatBytes(room.used)} / ${formatBytes(room.total)}` : "—"}</strong>
       </span>
       <span className="banque-quota-track" aria-hidden="true">
         <i style={{ width: `${usedPct}%` }} />
         {pendingPct > 0 ? <i className="is-pending" style={{ width: `${pendingPct}%` }} /> : null}
       </span>
       <span className="banque-quota-foot">
-        {known ? `${formatBytes(Math.max(0, limit - used))} libres` : "Catalogue injoignable"}
-        {pending > 0 && known ? ` · ${formatBytes(pending)} à envoyer` : ""}
+        {room ? `${formatBytes(room.free)} libres` : known ? "Place inconnue" : "Catalogue injoignable"}
+        {pending > 0 && room ? ` · ${formatBytes(pending)} à envoyer` : ""}
       </span>
     </div>
   );

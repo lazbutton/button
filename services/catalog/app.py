@@ -783,7 +783,9 @@ class CatalogHandler(BaseHTTPRequestHandler):
             # A guest's set (Agenda): the engine decides, the folder is the date's.
             engine = agenda_api.engine_call(AUTOMATE_URL, agenda_api.playout_token())
             if hook == "pre-create":
-                json_response(self, agenda_api.pre_create(event, token, MEDIA_ROOT, engine))
+                json_response(
+                    self, agenda_api.pre_create(event, token, MEDIA_ROOT, engine, TUSD_DIR)
+                )
                 return
             if hook == "post-finish":
                 json_response(

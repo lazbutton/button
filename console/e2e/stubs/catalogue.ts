@@ -8,7 +8,7 @@
 //   node --experimental-strip-types e2e/stubs/catalogue.ts <port> <banque> <moteur>
 
 import { createHash } from "node:crypto";
-import { closeSync, createReadStream, existsSync, openSync, readdirSync, readSync, statSync } from "node:fs";
+import { closeSync, createReadStream, existsSync, openSync, readdirSync, readSync, statfsSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { basename, dirname, extname, join } from "node:path";
 
@@ -132,6 +132,20 @@ function usedBytes(): number {
   return total;
 }
 
+/** Le disque sous la banque, comme disk_space() du vrai : ce que dit df, ou null s'il est illisible. */
+function diskSpace(): { total: number; used: number; free: number } | null {
+  try {
+    const disk = statfsSync(banque);
+    return {
+      total: disk.blocks * disk.bsize,
+      used: (disk.blocks - disk.bfree) * disk.bsize,
+      free: disk.bavail * disk.bsize,
+    };
+  } catch {
+    return null;
+  }
+}
+
 /** grouping=a,b se lit « a ou b », comme any_of() du vrai catalogue. */
 function anyOf(raw: string | null, value: string): boolean {
   const values = (raw ?? "").split(",").map((part) => part.trim()).filter(Boolean);
@@ -220,6 +234,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       return json(response, 200, {
         destinations: [{ id: "rotation", label: "Rotation", group: "rotation", folder: "10-rotation" }],
         quota: { used: usedBytes(), limit: 100 * 1024 ** 3 },
+        disk: diskSpace(),
         queue: [],
         rejected: [],
         progress: [],

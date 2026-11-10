@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import errno
 import os
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 import agenda_api
 
@@ -75,6 +78,72 @@ class AgendaApiTest(unittest.TestCase):
             self.assertEqual(body["HTTPResponse"]["Body"], "dépôt fermé")
             down = agenda_api.pre_create(event, "tok", media, FakeEngine({}))
             self.assertIn("indisponible", down["HTTPResponse"]["Body"])
+
+    def test_pre_create_refuses_a_set_the_disk_cannot_hold(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            media = Path(raw) / "media"
+            tusd = Path(raw) / "tusd"
+            media.mkdir()
+            tusd.mkdir()
+            engine = FakeEngine(
+                {
+                    "/internal/agenda/deposit-check.json": {
+                        "ok": True,
+                        "folder": "40-emissions/carte-blanche/entiere",
+                        "filename": "set.flac",
+                    }
+                }
+            )
+            _hook, event = agenda_api.hook_event(
+                v2("pre-create", {"Size": 2_000, "MetaData": {"filename": "set.flac", "diffusion": "7"}}),
+                {},
+            )
+            # The quota leaves room (empty bank), the disk holds the set once, not twice:
+            # tusd's copy, then the folder's, on the same disk.
+            disk = SimpleNamespace(total=10_000, used=7_000, free=3_000)
+            with mock.patch.object(agenda_api.inbox_api.shutil, "disk_usage", return_value=disk):
+                body = agenda_api.pre_create(event, "tok", media, engine, tusd)
+                self.assertTrue(body["RejectUpload"])
+                self.assertEqual(body["HTTPResponse"]["Body"], "pas assez de place sur le disque")
+                self.assertIn("ChangeFileInfo", agenda_api.pre_create(event, "tok", media, engine))
+
+    def test_finish_leaves_no_set_the_disk_cannot_hold(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            media = Path(raw) / "media"
+            tusd = Path(raw) / "tusd"
+            media.mkdir()
+            tusd.mkdir()
+            meta = {
+                "filename": "set.flac",
+                "diffusion": "7",
+                "agenda_folder": "40-emissions/carte-blanche/entiere",
+                "agenda_filename": "set.flac",
+            }
+
+            def finish(uid: str) -> dict:
+                (tusd / uid).write_bytes(b"audio")
+                (tusd / f"{uid}.info").write_text("{}")
+                upload = {"ID": uid, "Storage": {"Path": str(tusd / uid)}, "MetaData": meta}
+                _hook, event = agenda_api.hook_event(v2("post-finish", upload), {})
+                return agenda_api.finish(event, "tok", media, tusd, engine)
+
+            engine = FakeEngine({"/internal/agenda/files.json": {"ok": True}})
+            # The disk filled during the upload: no room left for the copy.
+            full = SimpleNamespace(total=10_000, used=9_997, free=3)
+            with mock.patch.object(agenda_api.inbox_api.shutil, "disk_usage", return_value=full):
+                self.assertEqual(finish("a"), {"error": "pas assez de place sur le disque"})
+
+            # Room at first, then the copy runs out of it: no half set in the folder.
+            def cut(_src: str, dst: str) -> None:
+                Path(dst).write_bytes(b"au")
+                raise OSError(errno.ENOSPC, "No space left on device")
+
+            with mock.patch.object(agenda_api.inbox_api.shutil, "move", side_effect=cut):
+                self.assertEqual(finish("b"), {"error": "pas assez de place sur le disque"})
+
+            self.assertEqual(list(tusd.iterdir()), [])
+            self.assertEqual([path for path in media.rglob("*") if path.is_file()], [])
+            self.assertEqual(engine.calls, [])
 
     def test_finish_places_then_declares_or_trashes(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

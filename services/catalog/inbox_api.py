@@ -9,6 +9,7 @@ tout seul, et son nom affiché peut venir de son fichier .banque.json.
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import re
@@ -138,6 +139,7 @@ def judge_upload(
     in_inbox: bool,
     in_bank: bool,
     known: bool = True,
+    free: int | None = None,
 ) -> str | None:
     if not known:
         return "destination inconnue"
@@ -149,9 +151,76 @@ def judge_upload(
         return "fichier vide"
     if in_inbox or in_bank:
         return "déjà dans la banque"
-    if size is not None and used + size > limit:
+    return size_refusal(size, used=used, limit=limit, free=free)
+
+
+def size_refusal(size: int | None, *, used: int, limit: int, free: int | None) -> str | None:
+    """A file bigger than what is left: on the disk first, then in the station's quota.
+
+    The quota counts only the bank; the disk also holds the system, the
+    database and the shows. free is None when the disk cannot be read.
+    """
+    if size is None:
+        return None
+    if free is not None and size > free:
+        return "pas assez de place sur le disque"
+    if used + size > limit:
         return "quota dépassé"
     return None
+
+
+def disk_space(media: Path) -> dict | None:
+    """The disk under the bank, as df sees it. None when it cannot be read."""
+    try:
+        usage = shutil.disk_usage(media)
+    except OSError:
+        return None
+    return {"total": usage.total, "used": usage.used, "free": usage.free}
+
+
+def disk_free(media: Path) -> int | None:
+    space = disk_space(media)
+    return space["free"] if space else None
+
+
+def same_disk(a: Path, b: Path) -> bool:
+    """Both folders share one file system, so one free space. When in doubt, yes."""
+    try:
+        return a.stat().st_dev == b.stat().st_dev
+    except OSError:
+        return True
+
+
+def upload_free(media: Path, tusd_dir: Path | None) -> int | None:
+    """The most a new upload can weigh, before tusd writes it.
+
+    It lands in tusd's folder, then is copied into the bank: in Docker the two
+    are different mounts, so rename cannot move it. On one disk, it takes twice
+    its size until tusd's copy goes.
+    """
+    free = disk_free(media)
+    staging = disk_free(tusd_dir) if tusd_dir is not None else None
+    if free is None or staging is None:
+        return free
+    if same_disk(media, tusd_dir):
+        return free // 2
+    return min(free, staging)
+
+
+def move_in(storage: Path, target: Path) -> str | None:
+    """Move a finished upload into the bank. A copy cut short leaves no half file there."""
+    try:
+        shutil.move(str(storage), str(target))
+    except OSError as exc:
+        target.unlink(missing_ok=True)
+        return "pas assez de place sur le disque" if exc.errno == errno.ENOSPC else "copie impossible"
+    return None
+
+
+def drop_upload(storage: Path) -> None:
+    """tusd's copy of a refused upload, and its .info: its room comes back."""
+    storage.unlink(missing_ok=True)
+    Path(str(storage) + ".info").unlink(missing_ok=True)
 
 
 def _tree_bytes(root: Path) -> int:
@@ -234,6 +303,7 @@ def inbox_status(media: Path, tusd_dir: Path | None) -> dict:
     return {
         "destinations": destination_list(media),
         "quota": {"used": used, "limit": limit},
+        "disk": disk_space(media),
         "queue": queue[:200],
         "rejected": sitting[:200] + read_rejets(media),
         "progress": progress[:40],
@@ -315,11 +385,15 @@ def place_upload(media: Path, tusd_dir: Path, storage: Path, name: str, destinat
         limit=quota_limit(),
         in_inbox=target.exists(),
         in_bank=bank.exists(),
+        # The file already sits in tusd's folder: only its copy is left to make.
+        free=disk_free(media),
     )
     if reason:
         return reason
     target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.move(str(storage), str(target))
+    reason = move_in(storage, target)
+    if reason:
+        return reason
     info = Path(str(storage) + ".info")
     if info.is_file():
         info.unlink()
@@ -344,10 +418,7 @@ def finish_upload(event: dict, media: Path, tusd_dir: Path) -> tuple[int, dict]:
         return 200, {"ok": True}
     record_rejet(media, name, destination, reason)
     if reason != "fichier introuvable" and storage.is_file() and _inside(tusd_dir, storage):
-        storage.unlink()
-        info = Path(str(storage) + ".info")
-        if info.is_file():
-            info.unlink()
+        drop_upload(storage)
     return 200, {"error": reason}
 
 
@@ -384,6 +455,7 @@ def hook_decision(event: dict, media: Path, tusd_dir: Path) -> tuple[int, dict]:
         in_inbox=bool(in_inbox),
         in_bank=bool(in_bank),
         known=bool(inbox_rel),
+        free=upload_free(media, tusd_dir),
     )
     if reason:
         record_rejet(media, name, destination, reason)
