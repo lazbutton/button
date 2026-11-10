@@ -27,6 +27,8 @@ curl -fsSLO https://github.com/lazbutton/button/releases/latest/download/station
 sudo bash station install
 ```
 
+La 0.1.0 n'a pas ce script : jusqu'à la version publiée suivante, cette adresse ne trouve rien. Voir [d'où viennent les fichiers](#doù-viennent-les-fichiers).
+
 La commande procède dans l'ordre :
 
 1. **Elle vérifie la machine** : les droits root, le système, le processeur, les ports 80, 443 et 6800, et la place. Elle vérifie aussi Docker et Compose v2, et propose de les installer depuis le dépôt de Docker.
@@ -80,7 +82,7 @@ Chaque réponse a son option, pour installer sans question, en CI par exemple : 
 
 Ils viennent de la page de chaque version publiée : `station`, `station.tar.gz` et `SHA256SUMS`. Pourquoi : voir la décision [0016](decisions/0016-le-dossier-vient-de-sa-version.md).
 
-Une version publiée avant la commande `station`, comme la 0.1.0, n'a pas ces fichiers. Elle s'installe [à la main](#installer).
+Une version publiée avant la commande `station`, comme la 0.1.0, n'a pas ces fichiers. Elle s'installe [à la main](#installer). La première version qui s'installe par `station install` sera la prochaine publiée. D'ici là, `releases/latest/download/station` ne trouve rien.
 
 Pour essayer `main`, fabriquer l'archive depuis un clone, puis la copier sur la machine avec le script :
 
