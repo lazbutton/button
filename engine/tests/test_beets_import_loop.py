@@ -2,10 +2,10 @@
 `deploy/scripts/beets-import-loop.sh` with the real Beets, on the import settings
 that `deploy/scripts/init-radiotomate.sh` writes: a track dropped in a folder
 that is already indexed enters the library, a library indexed folder by folder,
-as the loop did before, is not imported again, and a file that is still being
-copied waits. The library follows the disk: a removed file leaves it, and comes
-back when put back at the same path, and a changed file is read again, under the
-same Beets id.
+as the loop did before, is not imported again, a file that is still being
+copied waits, and a WAV that holds MP3 stays as it is. The library follows
+the disk: a removed file leaves it, and comes back when put back at the same
+path, and a changed file is read again, under the same Beets id.
 The loop also runs against a fake `beet` in
 `services/catalog/test_beets_import_loop.py`, which the CI runs when the script
 changes.
@@ -19,6 +19,7 @@ import os
 import secrets
 import shutil
 import sqlite3
+import struct
 import subprocess
 import time
 from contextlib import closing
@@ -90,7 +91,13 @@ def _station(tmp_path: Path) -> Path:
         **{name: secrets.token_hex(24) for name in MACHINE_SECRETS},
     )
     assert init.returncode == 0, init.stderr
-    assert "incremental: true" in (beetsdir / "config.yaml").read_text(encoding="utf-8")
+    config = (beetsdir / "config.yaml").read_text(encoding="utf-8")
+    assert "incremental: true" in config
+    # From Beets 2.7, the import skips a track with the artist and the title of
+    # one already indexed: every track of these tests is the same file.
+    assert "duplicate_action: keep" in config
+    # From Beets 2.10, it replaces a WAV that holds MP3 with an .mp3.
+    assert "remux_mp3_in_wav: false" in config
     (tmp_path / "bin").mkdir()
     (tmp_path / "tmp").mkdir()
     sleep = tmp_path / "bin" / "sleep"
@@ -381,3 +388,33 @@ def test_a_changed_track_is_read_again_once_and_keeps_its_id(tmp_path: Path):
         path.name: (int(path.stat().st_mtime),) for path in files
     }
     assert _items(tmp_path, "mtime")["Bea - Deux.mp3"] == (OLD,)
+
+
+def _mp3_in_wav(path: Path) -> None:
+    """A WAV that holds an MP3 stream (WAVE_FORMAT_MPEGLAYER3)."""
+    mp3 = TRACK.read_bytes()
+    # format, channels, rate, bytes per second, block align, bits per sample
+    fmt = struct.pack("<HHIIHH", 0x55, 2, 44100, 16000, 1, 0)
+    chunks = (
+        b"WAVE"
+        + b"fmt "
+        + struct.pack("<I", len(fmt))
+        + fmt
+        + b"data"
+        + struct.pack("<I", len(mp3))
+        + mp3
+        + b"\0" * (len(mp3) % 2)
+    )
+    path.write_bytes(b"RIFF" + struct.pack("<I", len(chunks)) + chunks)
+
+
+def test_a_wav_that_holds_mp3_stays_a_wav(tmp_path: Path):
+    media = _station(tmp_path)
+    rotation = media / "10-rotation"
+    _mp3_in_wav(rotation / "Ada - Un.wav")
+    _turn(tmp_path)
+    _turn(tmp_path)
+
+    # Beets 2.10 and later would write an .mp3 next to it, and delete the WAV
+    assert sorted(path.name for path in rotation.iterdir()) == ["Ada - Un.wav"]
+    assert _items(tmp_path)["Ada - Un.wav"][2] == "rotation"
