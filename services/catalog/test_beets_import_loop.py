@@ -1,18 +1,27 @@
-"""python test_beets_import_loop.py — la boucle indexe aussi un fichier arrivé après coup.
+"""python test_beets_import_loop.py — la bibliothèque Beets suit le disque.
+
+La boucle indexe un fichier arrivé après coup, retire un fichier disparu, relit
+un fichier changé, et réindexe un fichier remis au même chemin.
 
 Un faux beet joue Beets, sur la bibliothèque et l'historique d'import de
 BEETSDIR, dans les formats du vrai : library.db et state.pickle. Comme lui avec
 `incremental`, il saute ce que son historique connaît déjà : un dossier quand il
-importe par album, un fichier quand il importe par titre (-s). Le passage avec
-le vrai Beets est dans engine/tests/test_beets_import_loop.py.
+importe par album, un fichier quand il importe par titre (-s). Le contenu d'un
+fichier lui tient lieu de titre. Le passage avec le vrai Beets est dans
+engine/tests/test_beets_import_loop.py.
+
+Le faux update fait comme le vrai, 2.5.1 : il ne relit qu'un fichier plus récent
+que la date notée, et ne note pas la nouvelle. Devant un fichier disparu, il
+retire le titre et élague les dossiers vidés jusqu'à la racine de la
+bibliothèque, la banque, sauf si `-d` en donne une autre.
 
 Un lancement du script fait un tour : le faux sleep arrête la boucle. Elle
 n'indexe un dossier que s'il n'a pas bougé pendant sa pause. Un dépôt demande
 donc deux tours : elle le voit, puis l'indexe.
 
-Le faux modify touche à chaque appel les fichiers de ses titres. Comme les tags
-que Beets et promote-inbox.sh écrivent, ce que la boucle écrit pendant son tour
-ne doit pas la faire attendre.
+Comme le vrai, le faux modify écrit dans les fichiers des titres qu'il change,
+et note leur nouvelle date. Comme ces tags, et ceux de promote-inbox.sh, ce que
+la boucle écrit pendant son tour ne doit pas la faire attendre.
 """
 
 from __future__ import annotations
@@ -20,11 +29,13 @@ from __future__ import annotations
 import json
 import os
 import pickle
+import shutil
 import sqlite3
 import stat
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from contextlib import closing
 from pathlib import Path
@@ -34,6 +45,10 @@ SCRIPT = SCRIPTS / "beets-import-loop.sh"
 AUDIO = {".mp3", ".flac", ".ogg", ".opus", ".m4a"}
 # Le code du faux sleep : il arrête la boucle, un lancement fait un tour.
 ONE_TURN = 7
+# Au-delà, SQLite refuse la requête du vrai beet : « Expression tree is too large ».
+MOST_IDS = 998
+# La date d'un fichier copié avec la sienne, plus ancienne que celle que Beets a notée.
+OLD = 1_600_000_000
 
 
 def write_bin(directory: Path, name: str, body: str) -> None:
@@ -46,15 +61,40 @@ def open_library(beetsdir: Path) -> sqlite3.Connection:
     con = sqlite3.connect(beetsdir / "library.db")
     con.execute(
         "create table if not exists items"
-        " (id integer primary key, path blob, album_id integer, grouping text, genre text)"
+        " (id integer primary key, path blob, album_id integer, grouping text, genre text, title text, mtime real)"
     )
     return con
 
 
-def fake_beet(beetsdir: Path, args: list[str]) -> int:
-    """Le faux beet : import et modify, tels que la boucle les lance."""
+def read_file(path: bytes) -> dict[str, object]:
+    """Ce que le faux beet lit d'un fichier : son contenu tient lieu de titre. Il
+    n'a ni regroupement ni genre."""
+    title = Path(os.fsdecode(path)).read_bytes().decode("utf-8", "replace")
+    return {"title": title, "grouping": None, "genre": None}
+
+
+def under(path: bytes, top: bytes) -> bool:
+    return path == top or path.startswith(top + b"/")
+
+
+def prune(folder: bytes, root: bytes) -> None:
+    """Comme Beets : les dossiers vidés, de folder jusqu'à root, qui reste."""
+    root = os.path.normpath(root)
+    folder = os.path.normpath(folder)
+    while folder.startswith(root + b"/") and os.path.isdir(folder) and not os.listdir(folder):
+        os.rmdir(folder)
+        folder = os.path.dirname(folder)
+
+
+def fake_beet(beetsdir: Path, args: list[str]) -> int:  # noqa: PLR0911, PLR0912
+    """Le faux beet : import, modify, update et remove, tels que la boucle les lance."""
     with (beetsdir / "beet.log").open("a", encoding="utf-8") as log:
         log.write(json.dumps(args) + "\n")
+    # La racine de la bibliothèque : la banque, comme la règle init-radiotomate.sh.
+    directory = os.fsencode(os.environ["MEDIA_ROOT"])
+    if args[:1] == ["-d"] and len(args) > 2:
+        directory = os.fsencode(args[1])
+        args = args[2:]
     if args[:3] == ["import", "-A", "-q"] and args[3:-1] in ([], ["-s"]):
         singletons = args[3:-1] == ["-s"]
         top = args[-1]
@@ -92,7 +132,15 @@ def fake_beet(beetsdir: Path, args: list[str]) -> int:
                     if not singletons:
                         album = con.execute("select coalesce(max(album_id), 0) + 1 from items").fetchone()[0]
                     for path in paths:
-                        con.execute("insert into items (path, album_id) values (?, ?)", (os.fsencode(path), album))
+                        con.execute(
+                            "insert into items (path, album_id, title, mtime) values (?, ?, ?, ?)",
+                            (
+                                os.fsencode(path),
+                                album,
+                                read_file(os.fsencode(path))["title"],
+                                int(os.stat(path).st_mtime),
+                            ),
+                        )
                     history.add(entry)
                     imported += 1
         state_path.write_bytes(pickle.dumps(state))
@@ -109,21 +157,80 @@ def fake_beet(beetsdir: Path, args: list[str]) -> int:
         top = os.fsencode(args[-1].removeprefix("path:"))
         with closing(open_library(beetsdir)) as con, con:
             found = [
-                (item_id, path)
-                for item_id, path in con.execute("select id, path from items")
-                if path == top or path.startswith(top + b"/")
+                (item_id, path, {"grouping": grouping, "genre": genre})
+                for item_id, path, grouping, genre in con.execute("select id, path, grouping, genre from items")
+                if under(path, top)
             ]
             if not found:
                 print("error: No matching items found.", file=sys.stderr)
                 return 1
-            for field, value in fields.items():
-                con.executemany(f"update items set {field} = ? where id = ?", [(value, item_id) for item_id, _ in found])
-        for _, path in found:
-            if os.path.exists(path):
-                os.utime(path)
+            for item_id, path, values in found:
+                if all(values[field] == value for field, value in fields.items()):
+                    continue
+                for field, value in fields.items():
+                    con.execute(f"update items set {field} = ? where id = ?", (value, item_id))
+                # Il écrit les tags dans le fichier, et note sa nouvelle date.
+                if os.path.exists(path):
+                    os.utime(path)
+                    con.execute("update items set mtime = ? where id = ?", (int(os.stat(path).st_mtime), item_id))
+        return 0
+    if args[:2] == ["update", "-M"] and len(args) > 2 and args[-1].startswith("path:"):
+        flags = args[2:-1]
+        excluded = set(flags[1::2])
+        if len(flags) % 2 or set(flags[::2]) - {"-e"} or excluded - {"grouping", "genre"}:
+            print(f"faux beet, update inattendu : {args}", file=sys.stderr)
+            return 2
+        # Ce que le test fait arriver pendant que Beets relit le dossier.
+        during = beetsdir / "pendant-update"
+        if during.exists():
+            subprocess.run(["sh", str(during)], check=True)
+            during.unlink()
+        top = os.fsencode(args[-1].removeprefix("path:"))
+        with closing(open_library(beetsdir)) as con, con:
+            found = [row for row in con.execute("select id, path, mtime from items") if under(row[1], top)]
+            for item_id, path, mtime in found:
+                if not os.path.exists(path):
+                    con.execute("delete from items where id = ?", (item_id,))
+                    prune(os.path.dirname(path), directory)
+                    print(f"{os.fsdecode(path)}\n  deleted")
+                    continue
+                if int(os.stat(path).st_mtime) <= (mtime or 0):
+                    continue
+                read = {field: value for field, value in read_file(path).items() if field not in excluded}
+                # La date relue n'est pas notée : elle n'est pas un champ du fichier.
+                con.execute(
+                    f"update items set {', '.join(f'{field} = ?' for field in read)} where id = ?",
+                    (*read.values(), item_id),
+                )
+                with (beetsdir / "relus.log").open("a", encoding="utf-8") as reads:
+                    reads.write(os.fsdecode(path) + "\n")
+        return 0
+    if args[:2] == ["remove", "-f"] and len(args) % 2:
+        # id:1 , id:2 : la virgule seule sépare les requêtes, qui s'ajoutent.
+        terms = args[2:]
+        if any(term != "," for term in terms[1::2]) or not all(term.startswith("id:") for term in terms[::2]):
+            print(f"faux beet, remove inattendu : {args}", file=sys.stderr)
+            return 2
+        ids = [int(term.removeprefix("id:")) for term in terms[::2]]
+        if len(ids) > MOST_IDS:
+            print("sqlite3.OperationalError: Expression tree is too large (maximum depth 1000)", file=sys.stderr)
+            return 1
+        # Sans -d : les fichiers restent.
+        with closing(open_library(beetsdir)) as con, con:
+            con.executemany("delete from items where id = ?", [(item_id,) for item_id in ids])
         return 0
     print(f"faux beet, appel inattendu : {args}", file=sys.stderr)
     return 2
+
+
+def note_selection(beetsdir: Path) -> None:
+    """Après chaque appel, le regroupement et le genre de chaque titre : ce que
+    les catégories de l'auto-DJ verraient."""
+    with closing(open_library(beetsdir)) as con:
+        rows = con.execute("select path, grouping, genre from items")
+        selection = {os.fsdecode(path): [grouping, genre] for path, grouping, genre in rows}
+    with (beetsdir / "selection.log").open("a", encoding="utf-8") as log:
+        log.write(json.dumps(selection) + "\n")
 
 
 class BeetsImportLoopTest(unittest.TestCase):
@@ -205,9 +312,28 @@ class BeetsImportLoopTest(unittest.TestCase):
     def items(self) -> dict[str, dict[str, object]]:
         with closing(open_library(self.beetsdir)) as con:
             con.row_factory = sqlite3.Row
-            rows = con.execute("select id, path, album_id, grouping, genre from items").fetchall()
+            rows = con.execute("select id, path, album_id, grouping, genre, title from items").fetchall()
         prefix = len(str(self.media)) + 1
         return {os.fsdecode(row["path"])[prefix:]: {key: row[key] for key in row.keys() if key != "path"} for row in rows}
+
+    def rereads(self) -> list[str]:
+        """Les fichiers que beet update a relus, une ligne par lecture."""
+        log = self.beetsdir / "relus.log"
+        if not log.exists():
+            return []
+        prefix = len(str(self.media)) + 1
+        return sorted(line[prefix:] for line in log.read_text(encoding="utf-8").splitlines())
+
+    def selections_seen(self) -> list[dict[str, list[object]]]:
+        """Le regroupement et le genre de chaque titre, après chaque appel à beet."""
+        log = self.beetsdir / "selection.log"
+        if not log.exists():
+            return []
+        prefix = len(str(self.media)) + 1
+        return [
+            {path[prefix:]: fields for path, fields in json.loads(line).items()}
+            for line in log.read_text(encoding="utf-8").splitlines()
+        ]
 
     def groupings(self) -> dict[str, object]:
         return {path: item["grouping"] for path, item in self.items().items()}
@@ -421,9 +547,173 @@ class BeetsImportLoopTest(unittest.TestCase):
         del after["10-rotation/Cy - Trois.mp3"]
         self.assertEqual(after, before)
 
+    def test_a_file_removed_from_the_disk_leaves_the_library(self) -> None:
+        (self.rotation / "Ada - Un.mp3").write_bytes(b"un")
+        (self.rotation / "Bea - Deux.mp3").write_bytes(b"deux")
+        jazz = self.media / "20-archives" / "jazz"
+        jazz.mkdir()
+        (jazz / "Cy - Live.flac").write_bytes(b"live")
+        blues = self.media / "20-archives" / "blues"
+        blues.mkdir()
+        (blues / "Dan - Live.flac").write_bytes(b"live")
+        self.turn()
+        self.turn()
+        before = self.items()
+        self.assertEqual(len(before), 4)
+
+        # Un titre supprimé, une banque vidée, une autre supprimée en entier.
+        (self.rotation / "Bea - Deux.mp3").unlink()
+        (jazz / "Cy - Live.flac").unlink()
+        shutil.rmtree(blues)
+        removed = self.turn()
+
+        # Au tour suivant, sans attendre que les dossiers se calment.
+        self.assertEqual(self.items(), {"10-rotation/Ada - Un.mp3": before["10-rotation/Ada - Un.mp3"]})
+        self.assertIn("3 titre(s) retiré(s)", removed.stdout)
+        # La banque vidée garde son dossier.
+        self.assertTrue(jazz.is_dir())
+
+    def test_nothing_leaves_the_library_while_its_folder_is_missing(self) -> None:
+        (self.rotation / "Ada - Un.mp3").write_bytes(b"un")
+        archives = self.media / "20-archives"
+        (archives / "jazz").mkdir()
+        (archives / "jazz" / "Cy - Live.flac").write_bytes(b"live")
+        self.turn()
+        self.turn()
+        before = self.items()
+        self.assertEqual(len(before), 2)
+
+        # Une banque qui n'est pas montée : ses dossiers manquent, ses fichiers ne
+        # sont pas partis.
+        away = self.root / "pas-monte"
+        away.mkdir()
+        archives.rename(away / "20-archives")
+        self.rotation.rename(away / "10-rotation")
+        self.turn()
+        self.assertEqual(self.items(), before)
+
+        (away / "20-archives").rename(archives)
+        (away / "10-rotation").rename(self.rotation)
+        self.turn()
+        self.turn()
+        self.assertEqual(self.items(), before)
+
+    def test_a_file_put_back_at_the_same_path_is_indexed_again(self) -> None:
+        ada = self.rotation / "Ada - Un.mp3"
+        ada.write_bytes(b"un")
+        (self.rotation / "Bea - Deux.mp3").write_bytes(b"deux")
+        self.turn()
+        self.turn()
+        before = self.items()
+        ada.unlink()
+        self.turn()
+        self.assertNotIn("10-rotation/Ada - Un.mp3", self.items())
+
+        ada.write_bytes(b"un")
+        self.turn()
+        self.turn()
+
+        after = self.items()
+        self.assertEqual(after.pop("10-rotation/Ada - Un.mp3")["grouping"], "rotation")
+        self.assertEqual(after, {"10-rotation/Bea - Deux.mp3": before["10-rotation/Bea - Deux.mp3"]})
+
+    def test_a_file_put_back_before_the_loop_saw_it_missing_keeps_its_id(self) -> None:
+        ada = self.rotation / "Ada - Un.mp3"
+        ada.write_bytes(b"un")
+        self.turn()
+        self.turn()
+        before = self.items()
+
+        # Retiré puis remis pendant une seule pause.
+        self.between_two_turns(f'rm "{ada}"\nprintf un > "{ada}"\n')
+        self.turn()
+        self.turn()
+
+        self.assertEqual(self.items(), before)
+
+    def test_a_changed_file_is_read_again_once_and_keeps_its_id(self) -> None:
+        ada = self.rotation / "Ada - Un.mp3"
+        ada.write_bytes(b"un")
+        (self.rotation / "Bea - Deux.mp3").write_bytes(b"deux")
+        jazz = self.media / "20-archives" / "jazz"
+        jazz.mkdir()
+        cy = jazz / "Cy - Live.flac"
+        cy.write_bytes(b"live")
+        self.turn()
+        self.turn()
+        before = self.items()
+        seen = len(self.selections_seen())
+
+        # Un tag corrigé sur place, plus tard. Un fichier remplacé par une copie
+        # qui garde sa date, plus ancienne que celle que Beets a notée.
+        ada.write_bytes(b"un, corrige")
+        later = int(time.time()) + 60
+        os.utime(ada, (later, later))
+        cy.write_bytes(b"live, remasterise")
+        os.utime(cy, (OLD, OLD))
+        self.turn()
+        # Les dossiers ont bougé pendant la pause : rien n'est encore relu.
+        self.assertEqual(self.items(), before)
+        self.turn()
+
+        after = self.items()
+        self.assertEqual(after["10-rotation/Ada - Un.mp3"], {**before["10-rotation/Ada - Un.mp3"], "title": "un, corrige"})
+        # Le regroupement et le genre d'une banque viennent de son dossier.
+        self.assertEqual(
+            after["20-archives/jazz/Cy - Live.flac"],
+            {**before["20-archives/jazz/Cy - Live.flac"], "title": "live, remasterise"},
+        )
+        self.assertEqual(after["10-rotation/Bea - Deux.mp3"], before["10-rotation/Bea - Deux.mp3"])
+        # À aucun moment un titre relu ne quitte la sélection de l'auto-DJ.
+        for selection in self.selections_seen()[seen:]:
+            self.assertEqual(selection["10-rotation/Ada - Un.mp3"][0], "rotation")
+            self.assertEqual(selection["20-archives/jazz/Cy - Live.flac"], ["jazz", "Archive"])
+
+        # Relus une fois : la boucle note la date que Beets ne note pas.
+        self.turn()
+        self.turn()
+        self.assertEqual(self.rereads(), ["10-rotation/Ada - Un.mp3", "20-archives/jazz/Cy - Live.flac"])
+
+    def test_a_file_deleted_while_beets_reads_its_folder_does_not_take_the_folder(self) -> None:
+        jazz = self.media / "20-archives" / "jazz"
+        jazz.mkdir()
+        cy = jazz / "Cy - Live.flac"
+        cy.write_bytes(b"live")
+        self.turn()
+        self.turn()
+        cy.write_bytes(b"live, remasterise")
+        os.utime(cy, (OLD, OLD))
+        self.turn()
+
+        # Beets retire alors le titre, et élague les dossiers vidés jusqu'à la
+        # racine de sa bibliothèque : la banque.
+        (self.beetsdir / "pendant-update").write_text(f'rm "{cy}"\n', encoding="utf-8")
+        self.turn()
+
+        self.assertEqual(self.items(), {})
+        self.assertTrue(jazz.is_dir())
+
+    def test_a_whole_bank_removed_at_once_leaves_the_library(self) -> None:
+        bank = self.media / "20-archives" / "jazz"
+        bank.mkdir()
+        # Plus que SQLite n'en prend dans une requête : la boucle les retire par paquets.
+        count = MOST_IDS + 2
+        for number in range(count):
+            (bank / f"Cy - Live {number}.flac").write_bytes(b"%d" % number)
+        self.index_by_folder(bank, "grouping=jazz", "genre=Archive")
+        self.assertEqual(len(self.items()), count)
+
+        shutil.rmtree(bank)
+        removed = self.turn()
+
+        self.assertEqual(self.items(), {})
+        self.assertIn(f"{count} titre(s) retiré(s)", removed.stdout)
+
 
 if __name__ == "__main__":
     # Le faux beet, posé par setUp, rappelle ce fichier.
     if sys.argv[1:2] == ["beet"]:
-        sys.exit(fake_beet(Path(sys.argv[2]), sys.argv[3:]))
+        code = fake_beet(Path(sys.argv[2]), sys.argv[3:])
+        note_selection(Path(sys.argv[2]))
+        sys.exit(code)
     unittest.main()
