@@ -71,6 +71,7 @@ C'est un seul fichier, sans extension, celui de la commande posée dans `/usr/lo
   - De faux outils jouent la machine : ceux de `tests/fakes/`, et `tests/docker`, que la machine n'a que si le test le pose.
   - `STATION_ROOT` met les fichiers du système, comme `/etc/os-release` ou `/usr/local/bin`, dans un dossier temporaire.
   - Le script se lit aussi avec `source` : ses fonctions se définissent sans rien lancer, et un test peut remplacer `interactive` ou `terminal`.
+  - Une vraie installation tourne aussi en CI, le job `install` de `station.yml` : sur un runner Ubuntu 24.04 sans Docker, `station install --yes --tls internal`, avec les images `:main`. Puis une relance, qui ne doit changer ni un fichier du dossier, hors `data/` et `media/`, ni un conteneur. Voir [docs/developpement.md](../docs/developpement.md#vérifier-avant-de-proposer-un-changement).
 - **ShellCheck** passe sur le script et sur ses tests : ils sont dans la liste de `shellcheck.yml`.
 
 ## Pièges
