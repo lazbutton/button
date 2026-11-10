@@ -2,6 +2,7 @@ from datetime import datetime
 from unittest.mock import AsyncMock
 
 import httpx
+import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session as ormSession
 
@@ -10,6 +11,7 @@ from radiotomate.domain.execution import item_status_code, rundown_summary
 from radiotomate.enums import CommandStatus
 from radiotomate.models import (
     Clock,
+    ClockPosition,
     MetadataLog,
     PlayoutCommand,
     RundownItem,
@@ -26,7 +28,15 @@ from radiotomate.scheduler.execution import (
 from radiotomate.scheduler.outbox import dispatch_command, enqueue_command
 from radiotomate.scheduler.playout import PlayoutGateway
 from radiotomate.services.carts import sync_cart_display_titles
-from tests.scheduler.test_clock import JOURNEE_20, NIGHT, _client, _live
+from tests.scheduler.test_clock import (
+    JOURNEE_20,
+    NIGHT,
+    _client,
+    _live,
+    _pushed_ids,
+)
+
+MONDAY_1010 = datetime(2026, 9, 14, 10, 10, tzinfo=PARIS)
 
 
 def test_rundown_summary_counts_upcoming_rescue_and_skip():
@@ -373,6 +383,173 @@ async def test_soft_anchor_glides_in_rundown(
     ]
     assert soft
     assert soft[0].get("reason") == "glissement"
+
+
+async def _pub_anchor(
+    dbsession: ormSession, sync: str, minute: int = 20
+) -> ClockPosition:
+    """The 10:20 pub of « Journée pubs », hard or soft, on ``minute``."""
+    clock = await Clock.from_name(dbsession, "Journée pubs")
+    clock = await Clock.from_id(dbsession, clock.id)
+    pos = next(pos for pos in clock.anchored_positions() if pos.minute == 20)
+    pos.sync = sync
+    pos.minute = minute
+    await dbsession.commit()
+    return pos
+
+
+def _planned_for(data: dict, pos: ClockPosition) -> list[dict]:
+    return [item for item in data["items"] if item["position_id"] == pos.id]
+
+
+def _anchor_due(time: str, sync: str) -> dict:
+    """
+    The antenna as an anchor goes: a hard one cuts a title far from over, a soft
+    one has waited for its last second. The queues ask for nothing else.
+    """
+    return _live(
+        time,
+        source="autodj",
+        remaining="180" if sync == "dure" else "1",
+        next_jingle={"rid": 1},
+        next_autodj={"rid": 1},
+        jingles_queued=2,
+        autodj_queued=3,
+    )
+
+
+def _fired(sync: str, minute: int) -> str:
+    return f"{'anchor' if sync == 'dure' else 'soft'}:{minute}"
+
+
+@pytest.mark.parametrize(
+    ("sync", "minute", "planned_at", "ticked_at"),
+    [
+        ("molle", 20, "10:22:16", "10:22:15"),
+        ("molle", 20, "10:22:16", "10:20:40"),
+        ("molle", 20, "10:22:16", "10:24:09"),
+        ("molle", 22, "10:22:16", "10:22:15"),
+        ("dure", 20, "10:20:00", "10:20:05"),
+    ],
+    ids=["glissee", "titre-plus-court", "titre-plus-long", "dans-sa-minute", "dure"],
+)
+async def test_anchor_pushes_its_planned_line(  # noqa: PLR0913
+    dbsession: ormSession,
+    jingles_cart,
+    pubs_cart,
+    beets_integration: BeetsIntegration,
+    sync: str,
+    minute: int,
+    planned_at: str,
+    ticked_at: str,
+):
+    """
+    The antenna pushes the line the conducteur has planned for an anchor, and no
+    other sound of the cart beside it. A soft anchor is planned at the end of
+    the title astride its minute, « glissement »: past that minute most of the
+    time, and that title may well end sooner or later than planned.
+    """
+    pos = await _pub_anchor(dbsession, sync, minute)
+    data = await ensure_forecast(
+        dbsession, beets_integration, now=MONDAY_1010, cursor=0
+    )
+    (planned,) = _planned_for(data, pos)
+    assert planned["at"] == f"2026-09-14T{planned_at}"
+
+    client = _client()
+    live = _anchor_due(f"2026-09-14T{ticked_at}", sync)
+    assert _fired(sync, minute) in await tick(
+        dbsession, live, client, beets_integration
+    )
+    assert _pushed_ids(client) == [planned["id"]]
+    lines = await dbsession.scalars(
+        select(RundownItem).where(RundownItem.clock_position_id == pos.id)
+    )
+    assert [(line.id, line.status) for line in lines] == [(planned["id"], "in_queue")]
+
+
+@pytest.mark.parametrize(
+    ("sync", "day", "hour"),
+    [("molle", 15, 10), ("molle", 14, 11), ("dure", 15, 10)],
+    ids=["molle-veille", "molle-heure-d-avant", "dure-veille"],
+)
+async def test_anchor_leaves_the_line_of_an_earlier_hour(  # noqa: PLR0913
+    dbsession: ormSession,
+    jingles_cart,
+    pubs_cart,
+    beets_integration: BeetsIntegration,
+    sync: str,
+    day: int,
+    hour: int,
+):
+    """
+    A line planned for the same anchor the day before, or the hour before, never
+    went: a live held the antenna, say. It stays planned, and it is not the line
+    of this hour: the antenna pushes its own.
+    """
+    planned_at, ticked_at = ("20:00", "20:05") if sync == "dure" else ("22:16", "22:15")
+    pos = await _pub_anchor(dbsession, sync)
+    lines = []
+    for now in (MONDAY_1010, datetime(2026, 9, day, hour, 10, tzinfo=PARIS)):
+        data = await ensure_forecast(dbsession, beets_integration, now=now, cursor=0)
+        lines += _planned_for(data, pos)
+    earlier, planned = lines
+    assert earlier["at"] == f"2026-09-14T10:{planned_at}"
+    assert planned["at"] == f"2026-09-{day}T{hour}:{planned_at}"
+
+    client = _client()
+    live = _anchor_due(f"2026-09-{day}T{hour}:{ticked_at}", sync)
+    assert _fired(sync, 20) in await tick(dbsession, live, client, beets_integration)
+    assert _pushed_ids(client) == [planned["id"]]
+    assert (await dbsession.get(RundownItem, earlier["id"])).status == "planned"
+
+
+@pytest.mark.parametrize(
+    ("sync", "forecast_at", "moved_to", "ticked_at"),
+    [("molle", (10, 21), 20, "10:22:15"), ("dure", (10, 10), 50, "10:50:05")],
+    ids=["prevision-apres-la-minute", "ancre-deplacee"],
+)
+async def test_anchor_without_a_line_of_its_own_draws_from_its_cart(  # noqa: PLR0913
+    dbsession: ormSession,
+    jingles_cart,
+    pubs_cart,
+    beets_integration: BeetsIntegration,
+    sync: str,
+    forecast_at: tuple[int, int],
+    moved_to: int,
+    ticked_at: str,
+):
+    """
+    Nothing is planned for this occurrence of the anchor: the forecast started
+    past its minute, or the anchor went to another minute after the forecast.
+    The lines of the hours to come, or of the minute it has left, are not its
+    own: they stay planned, and the antenna draws a sound from the cart, as it
+    does with no forecast at all.
+    """
+    pos = await _pub_anchor(dbsession, sync)
+    data = await ensure_forecast(
+        dbsession,
+        beets_integration,
+        now=datetime(2026, 9, 14, *forecast_at, tzinfo=PARIS),
+        horizon_min=120,
+        cursor=0,
+    )
+    others = [item["id"] for item in _planned_for(data, pos)]
+    assert others
+    pos.minute = moved_to
+    await dbsession.commit()
+
+    client = _client()
+    live = _anchor_due(f"2026-09-14T{ticked_at}", sync)
+    assert _fired(sync, moved_to) in await tick(
+        dbsession, live, client, beets_integration
+    )
+    (pushed,) = _pushed_ids(client)
+    assert pushed not in others
+    lines = await dbsession.scalars(
+        select(RundownItem).where(RundownItem.id.in_(others))
+    )
+    assert {line.status for line in lines} == {"planned"}
 
 
 async def test_as_run_links_rundown_item(
