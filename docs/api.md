@@ -196,7 +196,11 @@ Le catalogue demande une session sur toutes ses routes, sauf `/health`, `/health
 
 `GET /library/search?q=&limit=&kind=&grouping=&folder=&top=` est le service catalogue (`services/catalog`). Réponse : `{hits:[{id, path, title, artist, kind, grouping, folder, top, duration}], estimatedTotalHits}`. Une liste séparée par des virgules fait un OU : `grouping=ntf1,ntf2`. `top` est le dossier de premier niveau : `top=20-archives` donne toutes les banques d'archives.
 
-`GET /inbox.json` (via `/library/inbox.json`) : `{destinations, quota:{used, limit}, queue, rejected, progress}`. L’envoi reprend par tus sur `/tus/`, pas par Radiotomate.
+`GET /inbox.json` (via `/library/inbox.json`) : `{destinations, quota:{used, limit}, disk:{total, used, free}, queue, rejected, progress}`. L’envoi reprend par tus sur `/tus/`, pas par Radiotomate.
+
+`quota` : `used` compte les fichiers de `00-inbox`, `10-rotation` et `20-archives`, `limit` vient de `INBOX_QUOTA_BYTES`. `disk` est le disque sous la banque, comme le voit `df`, en octets. Il vaut `null` quand le catalogue ne le lit pas, et manque dans un catalogue plus ancien. La console montre la limite qu'un envoi rencontre en premier : le disque, ou le quota s'il laisse moins de place.
+
+Un envoi, de la Banque ou d'un invité de l'Agenda, arrive d'abord dans le dossier de tusd, puis il est copié dans la banque. Le catalogue le refuse, « pas assez de place sur le disque », quand il ne tient pas sur le disque, quel que soit le quota. Au début de l'envoi, il doit y tenir deux fois si tusd est sur le même disque que la banque ; à son arrivée, une fois, pour la copie. Une copie coupée ne laisse rien dans la banque, et un envoi refusé quitte le dossier de tusd. Un envoi de la Banque qui ferait passer `used` au-dessus de `limit` est refusé, « quota dépassé ». Chaque envoi se juge seul : des envois lancés ensemble ne se comptent pas entre eux.
 
 `destinations` : `[{id, label, group, folder}]`. D'abord `rotation`, puis une banque par dossier de `20-archives` (sauf ceux qui commencent par `.` ou `_`). `id` est le nom du dossier, et la métadonnée `destination` de l'envoi tus. `label` vient du fichier `.banque.json` du dossier (`{"nom": "…"}`), sinon du nom du dossier.
 

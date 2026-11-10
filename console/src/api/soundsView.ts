@@ -70,6 +70,32 @@ export function formatBytes(value: number): string {
   return `${next.toFixed(digits).replace(".", ",")} ${units[index]}`;
 }
 
+/** The station's quota, as the catalogue counts it: 00-inbox, 10-rotation and 20-archives. */
+export type InboxQuota = { used: number; limit: number };
+/** The disk under the bank, as df sees it. */
+export type InboxDisk = { total: number; used: number; free: number };
+/** What the Banque meter shows: the disk or the quota, whichever an upload meets first. */
+export type BankRoom = { kind: "disque" | "quota"; used: number; total: number; free: number };
+
+function isBytes(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+/**
+ * The catalogue refuses a file bigger than the free disk, or one past the quota:
+ * the meter shows whichever leaves less room. An older catalogue sends no disk.
+ */
+export function bankRoom(quota?: InboxQuota | null, disk?: InboxDisk | null): BankRoom | null {
+  let room: BankRoom | null = null;
+  if (quota && isBytes(quota.used) && isBytes(quota.limit) && quota.limit > 0) {
+    room = { kind: "quota", used: quota.used, total: quota.limit, free: Math.max(0, quota.limit - quota.used) };
+  }
+  if (disk && isBytes(disk.total) && isBytes(disk.used) && isBytes(disk.free) && disk.total > 0) {
+    if (!room || disk.free <= room.free) room = { kind: "disque", used: disk.used, total: disk.total, free: disk.free };
+  }
+  return room;
+}
+
 export function relayHost(url: string | null | undefined): string {
   if (!url) return "";
   try {

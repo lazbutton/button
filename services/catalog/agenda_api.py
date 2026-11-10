@@ -109,7 +109,9 @@ def engine_call(base_url: str, token: str) -> Engine:
     return call
 
 
-def pre_create(event: dict, token: str, media: Path, engine: Engine) -> dict:
+def pre_create(
+    event: dict, token: str, media: Path, engine: Engine, tusd_dir: Path | None = None
+) -> dict:
     """Accept or refuse a guest's upload; remember where it will go."""
     upload, meta = _upload(event)
     name = inbox_api.safe_name(str(meta.get("filename") or ""))
@@ -133,8 +135,15 @@ def pre_create(event: dict, token: str, media: Path, engine: Engine) -> dict:
         nbytes = int(size) if size is not None else 0
     except (TypeError, ValueError):
         nbytes = 0
-    if nbytes and inbox_api.used_bytes(media) + nbytes > inbox_api.quota_limit():
-        return inbox_api.reject_body("quota dépassé")
+    if nbytes:
+        reason = inbox_api.size_refusal(
+            nbytes,
+            used=inbox_api.used_bytes(media),
+            limit=inbox_api.quota_limit(),
+            free=inbox_api.upload_free(media, tusd_dir),
+        )
+        if reason:
+            return inbox_api.reject_body(reason)
     changed = {
         **{str(key): str(value) for key, value in meta.items()},
         "agenda_folder": str(answer.get("folder") or ""),
@@ -179,9 +188,18 @@ def finish(event: dict, token: str, media: Path, tusd_dir: Path, engine: Engine)
     target_dir = media / folder
     if not _inside(media, target_dir):
         return {"error": "dossier refusé"}
+    # The set already sits in tusd's folder: only its copy is left to make. A
+    # refused set leaves tusd too, or it would keep the room it takes.
+    free = inbox_api.disk_free(media)
+    if free is not None and storage.stat().st_size > free:
+        inbox_api.drop_upload(storage)
+        return {"error": "pas assez de place sur le disque"}
     target_dir.mkdir(parents=True, exist_ok=True)
     target = _unique(target_dir / filename)
-    shutil.move(str(storage), str(target))
+    reason = inbox_api.move_in(storage, target)
+    if reason:
+        inbox_api.drop_upload(storage)
+        return {"error": reason}
     info = Path(str(storage) + ".info")
     if info.is_file():
         info.unlink()

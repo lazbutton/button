@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import errno
 import json
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 import inbox_api
+
+# A disk with 1 000 bytes left.
+SMALL_DISK = SimpleNamespace(total=40_000, used=39_000, free=1_000)
 
 
 class InboxApiTest(unittest.TestCase):
@@ -30,6 +36,103 @@ class InboxApiTest(unittest.TestCase):
         )
         self.assertEqual(inbox_api.safe_name("../x.mp3"), "x.mp3")
         self.assertEqual(inbox_api.safe_name(".secret.mp3"), "")
+
+    def test_the_disk_limits_before_the_quota(self) -> None:
+        def judge(size: int, used: int, free: int | None) -> str | None:
+            return inbox_api.judge_upload(
+                "a.mp3", "rotation", size, used=used, limit=100, in_inbox=False, in_bank=False, free=free
+            )
+
+        # A new station: an empty bank, a quota bigger than the disk.
+        self.assertEqual(judge(50, used=0, free=40), "pas assez de place sur le disque")
+        self.assertIsNone(judge(40, used=0, free=40))
+        # Both short: the disk comes first, raising the quota would not help.
+        self.assertEqual(judge(50, used=80, free=40), "pas assez de place sur le disque")
+        self.assertEqual(judge(30, used=80, free=40), "quota dépassé")
+        # A disk that cannot be read leaves the quota alone.
+        self.assertIsNone(judge(50, used=0, free=None))
+
+    def test_status_gives_the_disk_under_the_bank(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            media = Path(raw)
+            disk = inbox_api.inbox_status(media, None)["disk"]
+            self.assertEqual(set(disk), {"total", "used", "free"})
+            self.assertEqual(disk["total"], shutil.disk_usage(media).total)
+            with mock.patch.object(inbox_api.shutil, "disk_usage", side_effect=FileNotFoundError):
+                self.assertIsNone(inbox_api.inbox_status(media, None)["disk"])
+
+    def test_hooks_refuse_what_the_disk_cannot_hold(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            media = root / "media"
+            tusd = root / "tusd"
+            tusd.mkdir()
+            meta = {"filename": "Artiste - Titre.mp3", "destination": "rotation"}
+            with mock.patch.object(inbox_api.shutil, "disk_usage", return_value=SMALL_DISK):
+                _status, body = inbox_api.hook_decision({"Upload": {"Size": 4096, "MetaData": meta}}, media, tusd)
+                self.assertEqual(body["HTTPResponse"]["Body"], "pas assez de place sur le disque")
+                # No room left by the end of the upload: tusd's copy goes, and its room with it.
+                stored = tusd / "abc"
+                stored.write_bytes(b"x" * 4096)
+                event = {"Upload": {"ID": "abc", "Size": 4096, "MetaData": meta, "Storage": {"Path": str(stored)}}}
+                _status, body = inbox_api.finish_upload(event, media, tusd)
+            self.assertEqual(body, {"error": "pas assez de place sur le disque"})
+            self.assertFalse(stored.exists())
+            self.assertFalse((media / "00-inbox" / "rotation" / "Artiste - Titre.mp3").exists())
+
+    def test_pre_create_counts_the_copy_through_tusd(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            media = Path(raw) / "media"
+            tusd = Path(raw) / "tusd"
+            media.mkdir()
+            tusd.mkdir()
+            meta = {"filename": "set.wav", "destination": "rotation"}
+
+            def body(size: int) -> dict:
+                return inbox_api.hook_decision({"Upload": {"Size": size, "MetaData": meta}}, media, tusd)[1]
+
+            # One disk: tusd's copy, then the bank's, before tusd's goes. 3 000 bytes hold 1 500 twice.
+            disk = SimpleNamespace(total=10_000, used=7_000, free=3_000)
+            with mock.patch.object(inbox_api.shutil, "disk_usage", return_value=disk):
+                self.assertEqual(body(2_000)["HTTPResponse"]["Body"], "pas assez de place sur le disque")
+                self.assertEqual(body(1_500), {})
+
+            # Two disks: each must hold it once.
+            def usage(path: Path) -> SimpleNamespace:
+                free = 1_000 if Path(path) == tusd else 3_000
+                return SimpleNamespace(total=10_000, used=10_000 - free, free=free)
+
+            with (
+                mock.patch.object(inbox_api.shutil, "disk_usage", side_effect=usage),
+                mock.patch.object(inbox_api, "same_disk", return_value=False),
+            ):
+                self.assertEqual(body(1_500)["HTTPResponse"]["Body"], "pas assez de place sur le disque")
+                self.assertEqual(body(1_000), {})
+
+    def test_a_copy_cut_short_leaves_no_half_file(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            media = Path(raw) / "media"
+            tusd = Path(raw) / "tusd"
+            tusd.mkdir()
+            stored = tusd / "abc"
+            stored.write_bytes(b"audio")
+            (tusd / "abc.info").write_text("{}")
+            target = media / "00-inbox" / "rotation" / "Artiste - Titre.mp3"
+
+            def full(_src: str, dst: str) -> None:
+                Path(dst).write_bytes(b"au")
+                raise OSError(errno.ENOSPC, "No space left on device")
+
+            meta = {"filename": target.name, "destination": "rotation"}
+            event = {"Upload": {"ID": "abc", "Size": 5, "MetaData": meta, "Storage": {"Path": str(stored)}}}
+            with mock.patch.object(inbox_api.shutil, "move", side_effect=full):
+                _status, body = inbox_api.finish_upload(event, media, tusd)
+            self.assertEqual(body, {"error": "pas assez de place sur le disque"})
+            self.assertFalse(target.exists())
+            self.assertFalse(stored.exists())
+            self.assertFalse((tusd / "abc.info").exists())
+            reasons = {row["name"]: row["reason"] for row in inbox_api.read_rejets(media)}
+            self.assertEqual(reasons[target.name], "pas assez de place sur le disque")
 
     def test_queue_and_sitting_rejets(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

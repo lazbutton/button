@@ -6,6 +6,7 @@ import {
   bacKind,
   bankFolderOf,
   bankProblem,
+  bankRoom,
   destinationLabel,
   filterDestinations,
   type BankDestination,
@@ -61,6 +62,30 @@ test("sizes, hosts, destinations and progress", () => {
   assert.equal(relayHost("pas une url"), "");
   assert.equal(percentOf(31, 48), 65);
   assert.equal(percentOf(5, 0), 0);
+});
+
+test("the Banque meter shows the limit an upload meets first", () => {
+  const GO = 1024 ** 3;
+  const quota = { used: 0, limit: 100 * GO };
+  // A new station on a 40 Go disk: an empty bank, a quota the disk cannot hold.
+  const disk = { total: 39 * GO, used: 19 * GO, free: 18 * GO };
+  assert.deepEqual(bankRoom(quota, disk), { kind: "disque", used: 19 * GO, total: 39 * GO, free: 18 * GO });
+  assert.equal(formatBytes(bankRoom(quota, disk)?.free ?? 0), "18 Go");
+  // A big disk: the quota comes first.
+  const big = { total: 8000 * GO, used: 2000 * GO, free: 6000 * GO };
+  assert.deepEqual(bankRoom({ used: 85 * GO, limit: 100 * GO }, big), {
+    kind: "quota",
+    used: 85 * GO,
+    total: 100 * GO,
+    free: 15 * GO,
+  });
+  assert.equal(bankRoom({ used: 120 * GO, limit: 100 * GO }, big)?.free, 0);
+  // An older catalogue sends no disk; one that cannot read it sends null.
+  assert.equal(bankRoom(quota)?.kind, "quota");
+  assert.equal(bankRoom(quota, null)?.free, 100 * GO);
+  assert.equal(bankRoom(null, disk)?.kind, "disque");
+  assert.equal(bankRoom({ used: 0, limit: 0 }, { total: 0, used: 0, free: 0 }), null);
+  assert.equal(bankRoom(quota, { total: 39 * GO, used: 19 * GO, free: Number.NaN })?.kind, "quota");
 });
 
 test("relative times stay short", () => {
