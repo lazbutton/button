@@ -98,10 +98,8 @@ jobs:
           # A default ACL on /opt passes to /opt/button, and overrides the
           # umask with which station install writes .env: 666, not 600. A
           # usual VPS has none.
-          if getfacl -p --default /opt 2>/dev/null | grep -q '^default:'; then
-            getfacl -p --default /opt
-            sudo setfacl -k /opt
-          fi
+          getfacl -p /opt
+          sudo setfacl -k /opt
       - name: Install
         # Well under the job's limit: a run that hangs fails here, and its
         # logs are still uploaded.
