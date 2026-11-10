@@ -30,16 +30,16 @@ updates:
     groups:
       engine:
         patterns: ["*"]
-  # The base images of the seven published images, one pull request per image
+  # The base images of the published images, one pull request per image
   # across directories. The CI does not follow on its own: a Python bump goes
   # with python-version in the workflows, a Node bump with node-version in
   # console.yml and e2e.yml, a Liquidsoap bump with liquidsoap-check
   # (engine.yml) and scripts/verifier.sh. A Debian image named only by its
-  # release (bookworm-slim) gets no update.
+  # release (bookworm-slim) gets no update. The engine's image has its own
+  # block, below.
   - package-ecosystem: docker
     directories:
       - /console
-      - /engine
       - /engine/playout
       - /services/catalog
       - /services/icecast
@@ -50,3 +50,17 @@ updates:
     groups:
       images:
         group-by: dependency-name
+  # The engine's image keeps the Python its tests run on (python-version in
+  # engine.yml and e2e.yml). On python:3.15, two compiled packages of
+  # poetry.lock, jellyfish for Beets and cffi for argon2, failed to build,
+  # and so did the image. Python moves by hand here, with the workflows,
+  # once poetry.lock installs on the new version.
+  - package-ecosystem: docker
+    directory: /engine
+    schedule:
+      interval: monthly
+    ignore:
+      - dependency-name: python
+        update-types:
+          - version-update:semver-major
+          - version-update:semver-minor
