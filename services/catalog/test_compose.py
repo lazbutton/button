@@ -27,6 +27,11 @@ def compose_config() -> dict:
     return json.loads(result.stdout)
 
 
+def volume_at(service: dict, target: str) -> str | None:
+    """Ce qui est monté à ``target`` dans le service : un volume nommé, ou un chemin."""
+    return next((v["source"] for v in service.get("volumes", []) if v["target"] == target), None)
+
+
 @unittest.skipUnless(shutil.which("docker"), "docker absent")
 class ComposeTest(unittest.TestCase):
     def test_who_mounts_the_engine_yaml_waits_for_init(self) -> None:
@@ -59,12 +64,22 @@ class ComposeTest(unittest.TestCase):
         self.assertEqual(catalog["user"], "0:0")
         self.assertEqual(environment["TUSD_USER"], tusd["user"])
 
-        def volume_at(service: dict, target: str) -> str | None:
-            return next((v["source"] for v in service["volumes"] if v["target"] == target), None)
-
         upload_dir = next(arg.split("=", 1)[1] for arg in tusd["command"] if arg.startswith("-upload-dir="))
         self.assertEqual(volume_at(tusd, upload_dir), "tusd-data")
         self.assertEqual(volume_at(catalog, environment["TUSD_DIR"]), "tusd-data")
+
+    def test_the_catalog_opens_the_share_volume_to_the_beets_loop(self) -> None:
+        # Le volume naît à root, et la boucle Beets du moteur, qui y écrit les
+        # rôles du dossier partagé, ne tourne pas en root : le catalogue, en
+        # root, l'ouvre au démarrage. Sinon, l'export échoue à chaque tour.
+        services = compose_config()["services"]
+        catalog, loop, share = services["catalog"], services["radiotomate-dropbox"], services["share"]
+        self.assertEqual(catalog["user"], "0:0")
+        self.assertEqual(volume_at(catalog, catalog["environment"]["SHARE_PRIVATE"]), "share-private")
+        # export_share_roles.py écrit dans SHARE_PRIVATE, /share-private sans lui.
+        roles_dir = loop["environment"].get("SHARE_PRIVATE", "/share-private")
+        self.assertEqual(volume_at(loop, roles_dir), "share-private")
+        self.assertEqual(volume_at(share, share["environment"]["SHARE_PRIVATE"]), "share-private")
 
 
 if __name__ == "__main__":

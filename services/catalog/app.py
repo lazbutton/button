@@ -970,6 +970,10 @@ def main() -> None:
     warning = inbox_api.give_tusd_dir(TUSD_DIR, TUSD_USER)
     if warning:
         print(warning, flush=True)
+    # La boucle Beets du moteur écrit les rôles du dossier partagé à chaque tour.
+    warning = volume_api.open_share_private(Path(os.environ.get("SHARE_PRIVATE", "/share-private")))
+    if warning:
+        print(warning, flush=True)
     ensure_index()
     full_scan()
     observer = Observer()

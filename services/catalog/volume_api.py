@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import stat
 from pathlib import Path
 
 USERNAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$")
@@ -44,6 +45,29 @@ def password_problem(password: str) -> str | None:
 
 def published(host: str, root: Path) -> bool:
     return bool((host or "").strip()) and root.is_dir()
+
+
+def open_share_private(root: Path) -> str | None:
+    """Ouvre SHARE_PRIVATE à la boucle Beets, comme /tmp. Rend un avertissement, ou None.
+
+    Docker crée ce volume au nom de root, et la boucle Beets du moteur, qui y
+    écrit roles.json, ne tourne pas en root. En 1777, comme le laisse aussi le
+    service share : elle y ajoute ses fichiers, mais ne peut ni retirer ni
+    déplacer ceux de root, où passent les mots de passe. Propriétaire du
+    volume, elle le pourrait.
+    """
+    if not root.is_dir():
+        return None
+    try:
+        if stat.S_IMODE(root.stat().st_mode) != 0o1777:
+            os.chmod(root, 0o1777)
+    except OSError as exc:
+        return (
+            f"Attention : {root} n'a pas pu être ouvert à la boucle Beets : {exc}. "
+            "Les rôles des comptes n'arriveront pas au dossier partagé : voir "
+            "docs/exploitation/dossier-reseau.md, « Si les rôles n'arrivent pas au dossier »."
+        )
+    return None
 
 
 def queue_password(root: Path, username: str, password: str | None) -> None:
