@@ -705,18 +705,20 @@ class CatalogHandler(BaseHTTPRequestHandler):
             json_response(self, {"error": "Ce compte n'a pas le dossier."}, 400)
             return
         if clear:
-            volume_api.queue_password(root, username, None)
-            json_response(self, {"ok": True})
+            password = None
+        else:
+            password = body.get("password")
+            if not isinstance(password, str):
+                json_response(self, {"error": "Mot de passe manquant."}, 400)
+                return
+            problem = volume_api.password_problem(password)
+            if problem:
+                json_response(self, {"error": problem}, 400)
+                return
+        refused = volume_api.queue_password(root, username, password)
+        if refused:
+            json_response(self, {"error": refused}, 503)
             return
-        password = body.get("password")
-        if not isinstance(password, str):
-            json_response(self, {"error": "Mot de passe manquant."}, 400)
-            return
-        problem = volume_api.password_problem(password)
-        if problem:
-            json_response(self, {"error": problem}, 400)
-            return
-        volume_api.queue_password(root, username, password)
         json_response(self, {"ok": True})
 
     def do_POST(self) -> None:  # noqa: N802
