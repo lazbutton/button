@@ -165,6 +165,9 @@ jobs:
             echo "::error title=Mot de passe admin::la sortie de la relance le contient, sans terminal."
             exit 1
           fi
+          echo "::group::Ce que la relance n'a pas changé"
+          cat "$RUNNER_TEMP/out/avant.txt"
+          echo "::endgroup::"
       - name: Logs of the station
         if: failure()
         run: |
