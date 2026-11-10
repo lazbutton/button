@@ -9,16 +9,20 @@ name: station
 # does not follow the image: bump it by hand. ShellCheck checks the script and
 # its tests (shellcheck.yml).
 #
-# install: a real install, on a fresh runner, of what the fakes cannot see.
+# install: a real install, of what the fakes cannot see, in two cases.
+# neuf: the runner, like a fresh VPS, has no Docker: station install puts the
+# current one, from Docker's repository. deja-la: the runner keeps its Docker,
+# with a Compose v2, like a VPS that had one before: station install installs
+# nothing.
 # The folder of the station is packed from this checkout, as for a version
 # (scripts/version.py station main); the images are the :main ones of the
 # registry, not built here: a pull request that changes an image and the
 # folder together is only checked whole once merged. Then the smoke check,
 # and a second install, which must change no file of the folder and no
-# container. The runner keeps the default ACL of /opt, open to every account:
-# station install must keep it off .env and off the folder. It pulls about
-# 3 GB of images: hence the paths below, what a real install runs, and not
-# every pull request.
+# container. In both cases, the runner keeps the default ACL of /opt, open to
+# every account: station install must keep it off .env and off the folder.
+# Each case pulls about 3 GB of images: hence the paths below, what a real
+# install runs, and not every pull request.
 
 on:
   push:
@@ -62,14 +66,20 @@ jobs:
     # Not ubuntu-latest: station install takes Ubuntu 24.04, not the next one.
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    strategy:
+      # One case that fails says nothing of the other: both go to the end.
+      fail-fast: false
+      matrix:
+        docker: [neuf, deja-la]
     permissions:
       contents: read
       # The images still private on ghcr.io: the GITHUB_TOKEN reads them
       # through --github-token-file, as a station's own token does.
       packages: read
-    # A new commit cancels the install of the one before: 3 GB each.
+    # A new commit cancels the install of the one before, in the same case:
+    # 3 GB each.
     concurrency:
-      group: station-install-${{ github.ref }}
+      group: station-install-${{ matrix.docker }}-${{ github.ref }}
       cancel-in-progress: true
     defaults:
       run:
@@ -80,13 +90,13 @@ jobs:
       - name: Files of a station, from this checkout
         run: python3 scripts/version.py station main "$RUNNER_TEMP/station"
       - name: A machine like a fresh VPS
+        if: matrix.docker == 'neuf'
         run: |
           # No Docker: station install puts the current one, from Docker's
           # repository, as on a fresh VPS. The runner's own goes, Compose 2.38
-          # included: services.yml reads compose.yml with a Compose v2. So do
-          # the plugins the image adds by hand, and its source of Docker's
-          # repository: a second one, with another key, would stop apt-get
-          # update.
+          # included: deja-la keeps it. So do the plugins the image adds by
+          # hand, and its source of Docker's repository: a second one, with
+          # another key, would stop apt-get update.
           dpkg-query -W -f '${db:Status-Abbrev} ${Package}\n' |
             awk '$1 == "ii" && $2 ~ /^(docker|containerd|moby)/ { print $2 }' > "$RUNNER_TEMP/docker-packages"
           echo "Docker du runner : $(tr '\n' ' ' < "$RUNNER_TEMP/docker-packages")"
@@ -96,6 +106,18 @@ jobs:
           if command -v docker; then
             echo "::error title=Docker::docker est encore sur le runner."
             exit 1
+          fi
+      - name: A machine with Docker already
+        if: matrix.docker == 'deja-la'
+        run: |
+          # The runner's Docker stays, as on a VPS that had one before:
+          # station install installs nothing. Its Compose is a v2, 2.38 today,
+          # as a station may still have: neuf gets the current one.
+          docker version
+          compose=$(docker compose version --short)
+          echo "Compose du runner : $compose"
+          if [[ $compose != 2.* ]]; then
+            echo "::warning title=Compose::le runner a Compose $compose : ce cas ne vérifie plus d'installation avec un Compose v2."
           fi
       - name: Install
         # Well under the job's limit: a run that hangs fails here, and its
@@ -200,6 +222,6 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: installation-${{ github.run_attempt }}
+          name: installation-${{ matrix.docker }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/out/
           retention-days: 14

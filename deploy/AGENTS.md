@@ -74,7 +74,7 @@ C'est un seul fichier, sans extension, celui de la commande posée dans `/usr/lo
   - De faux outils jouent la machine : ceux de `tests/fakes/`, puis `tests/docker` et `tests/setfacl`, que la machine n'a que si le test les pose.
   - `STATION_ROOT` met les fichiers du système, comme `/etc/os-release` ou `/usr/local/bin`, dans un dossier temporaire.
   - Le script se lit aussi avec `source` : ses fonctions se définissent sans rien lancer, et un test peut remplacer `interactive` ou `terminal`.
-  - Une vraie installation tourne aussi en CI, le job `install` de `station.yml` : sur un runner Ubuntu 24.04 sans Docker, dont `/opt` a une ACL par défaut ouverte à tous, `station install --yes --tls internal`, avec les images `:main`. Puis une relance, qui ne doit changer ni un fichier du dossier, hors `data/` et `media/`, ni un conteneur. Voir [docs/developpement.md](../docs/developpement.md#vérifier-avant-de-proposer-un-changement).
+  - Une vraie installation tourne aussi en CI, le job `install` de `station.yml` : `station install --yes --tls internal`, avec les images `:main`, sur un runner Ubuntu 24.04 dont `/opt` a une ACL par défaut ouverte à tous, dans deux cas. `neuf` : le runner n'a plus Docker, que `station install` installe. `deja-la` : il garde le sien, avec un Compose v2, et `station install` n'installe rien. Puis une relance, qui ne doit changer ni un fichier du dossier, hors `data/` et `media/`, ni un conteneur. Voir [docs/developpement.md](../docs/developpement.md#vérifier-avant-de-proposer-un-changement).
 - **ShellCheck** passe sur le script et sur ses tests : ils sont dans la liste de `shellcheck.yml`.
 
 ## Pièges
