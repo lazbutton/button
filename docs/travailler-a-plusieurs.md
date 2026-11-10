@@ -52,7 +52,7 @@ Les tests, eux, tournent en parallèle sans souci : pytest travaille dans des do
 | `deploy/compose.yml`, `deploy/.env.example` | Chaque service, chaque variable | Une fiche à la fois |
 | `engine/radiotomate/interface_app.py` | La liste des blueprints | Ajouter sa ligne à la fin |
 | `console/src/App.tsx`, `engine/radiotomate/interface/spa.py` | Les pages de premier niveau | Les deux dans la même fiche |
-| `CHANGELOG.md` | Tout le monde y écrit | Une ligne à la fin de « Non publié ». Un conflit s'y règle en gardant les deux lignes |
+| `CHANGELOG.md` | Tout le monde y écrit | Une ligne à la fin de « Non publié ». Un conflit s'y règle en gardant les deux lignes. Après la coupe d'une version, la ligne d'une branche plus ancienne tombe sous la version coupée en fusionnant `main` : la remettre sous « Non publié ». La CI le vérifie |
 | Les tableaux de la feuille de route | Tout le monde y passerait | Seule la personne qui fusionne les modifie |
 | `console/src/pages/ImporterPage.tsx`, `lib/useMonitor.ts`, `components/agenda/DiffusionDialog.tsx`, `pages/AntennePage.tsx`, `pages/AgendaPage.tsx`, `pages/SemainePage.tsx` | Des centaines de lignes, beaucoup de dépendances | Un agent à la fois sur chacun |
 | `engine/radiotomate/scheduler/clock.py` (`tick`), `scheduler/rundown.py` (`build_rundown`) | Toute l'antenne en dépend | Un agent à la fois, et les tests du scheduler en entier avant de fusionner |

@@ -34,16 +34,16 @@ Karim n'est presque jamais au local. Il connaît la station par ses journaux et 
 
 ## Son parcours
 
-1. **Installer.** `git clone`, `deploy/.env` copié de l'exemple, chaque `change-me` remplacé, `docker compose up -d`. Sur un secret d'exemple, la station refuse de démarrer, et le journal de `radiotomate-init` nomme la variable : [deploiement.md](../deploiement.md).
+1. **Installer.** `git clone`, le dossier à la plus haute version publiée, `deploy/.env` copié de l'exemple avec cette version et chaque `change-me` remplacé, `docker compose up -d`. Sur un secret d'exemple, la station refuse de démarrer, et le journal de `radiotomate-init` nomme la variable : [deploiement.md](../deploiement.md).
 2. **Fermer.** `BIND_ADDRESS=127.0.0.1` derrière le reverse proxy de la machine. Le dossier partagé n'écoute que sur l'adresse Tailscale : [dossier-reseau.md](../exploitation/dossier-reseau.md).
 3. **Contrôler.** Depuis `deploy/`, `scripts/smoke.sh <console> <flux>` dit sans compte si l'antenne tourne, et quel journal lire au premier point qui échoue.
-4. **Mettre à jour.** Une archive avec `backup-radiotomate.sh`, le nouveau `RT_TAG` dans `.env`, `docker compose up -d`, puis le contrôle. Le moteur copie lui-même la base avant chaque migration.
-5. **Revenir en arrière.** L'ancien `RT_TAG`. Si le schéma a migré, le redescendre d'abord, ou remettre la copie d'avant la migration : [sauvegarde.md](../exploitation/sauvegarde.md).
+4. **Mettre à jour.** Les notes de la version, une archive avec `backup-radiotomate.sh`, le dossier et `BUTTON_VERSION` à la nouvelle version (`git checkout vX.Y.Z`), `docker compose pull` et `up -d`, puis le contrôle. Le numéro lui dit si la version peut migrer le schéma. Le moteur copie lui-même la base avant chaque migration.
+5. **Revenir en arrière.** La version d'avant, dans le dossier et dans `BUTTON_VERSION`. Si le schéma a migré, le redescendre d'abord, ou remettre la copie d'avant la migration : [deploiement.md](../deploiement.md#revenir-en-arrière).
 6. **Réparer.** Suivre l'ordre de [le-flux-est-tombe.md](../exploitation/le-flux-est-tombe.md), et recréer les trois services du moteur ensemble.
 
 ## Le moment qui compte
 
-Dimanche, 23 h. Karim met la station à jour. `radiotomate-init` s'arrête : une migration du schéma a échoué, et le journal dit « rolled back ». Le moteur ne démarre pas, et l'antenne est coupée. C'était la première migration due : la base n'a pas bougé. Karim remet l'ancien `RT_TAG`, relance la station, puis le contrôle. Onze minutes sans antenne.
+Dimanche, 23 h. Karim met la station à jour. `radiotomate-init` s'arrête : une migration du schéma a échoué, et le journal dit « rolled back ». Le moteur ne démarre pas, et l'antenne est coupée. C'était la première migration due : la base n'a pas bougé. Karim remet la version d'avant, relance la station, puis le contrôle. Onze minutes sans antenne.
 
 Il aurait voulu que la mise à jour revienne seule en arrière, et le lui dise : c'est MAJ-05. Et qu'elle refuse de partir si un direct commençait dans la demi-heure : c'est MAJ-04.
 
@@ -55,14 +55,14 @@ Il aurait voulu que la mise à jour revienne seule en arrière, et le lui dise :
 - Les ports publiés écoutent sur `BIND_ADDRESS`, et la console pose ses en-têtes de sécurité.
 - Les essais de connexion sont limités par adresse, dans le moteur et dans nginx. Derrière un reverse proxy, l'adresse comptée est celle du client.
 - Des sondes de santé sur les trois services du moteur, des alertes vers un webhook ou Vikunja, des métriques.
-- Des images taguées par date : `RT_TAG` remet le moteur et le playout à une version précise. Les autres images suivent `main` jusqu'à MAJ-01.
+- Des versions publiées, sur le canal `stable` : `BUTTON_VERSION` met les sept images à une version précise, et le numéro dit si elle peut migrer le schéma ou demande une action.
 
 ## Ce qui coince encore
 
 Toute la priorité [P1](../feuille-de-route/P1-mise-en-prod.md) est écrite pour lui. Tant qu'une fiche P1 reste ouverte, une installation sur un VPS est un essai, pas une production :
 
 - **HTTPS** par un reverse proxy : INS-01. **Installer en une commande** : INS-02. **Des commandes d'exploitation** : INS-03.
-- **Des versions et un canal stable** : MAJ-01. **Une commande de mise à jour** : MAJ-04. **Un retour arrière automatique** : MAJ-05.
+- **Une commande de mise à jour** : MAJ-04. **Un retour arrière automatique** : MAJ-05.
 - **Des sauvegardes hors de la machine** : SAV-01. **Des alertes sur le téléphone et par e-mail** : SUR-01.
 - **Un guide d'installation sur VPS** : DOC-01.
 
