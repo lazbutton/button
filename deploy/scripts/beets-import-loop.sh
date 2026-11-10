@@ -13,43 +13,229 @@ PROMOTE="${PROMOTE_INBOX:-/promote-inbox.sh}"
 # Par dossier, il ne retenait que le dossier, et un titre déposé ensuite, à plat
 # dans 10-rotation ou dans une banque, n'entrait jamais dans la bibliothèque.
 #
-# Une bibliothèque indexée par dossier n'a pas ses fichiers dans l'historique.
-# Sans eux, Beets les réimporterait tous : nouveaux identifiants, ReplayGain
-# recalculé, et un titre qu'il n'a pas pu taguer sortirait de sa sélection le
-# temps de l'import. Avant chaque import, l'historique reprend donc les fichiers
-# que la bibliothèque connaît déjà. Perdu ou illisible, il se refait de même.
-resume_history() {
-  python3 - <<'PY'
+# Avant chaque import, la bibliothèque et l'historique suivent le disque :
+# - Un fichier disparu de 10-rotation ou de 20-archives quitte la bibliothèque
+#   (beet remove, qui ne touche pas au disque), sans attendre que son dossier se
+#   calme : le retrait ne lit rien du fichier. Seul « n'existe pas » compte, pas
+#   une erreur de droits ou de disque.
+# - Rien ne sort d'un dossier de tête absent, ni d'un dossier de tête dont aucun
+#   des fichiers indexés n'est plus là : c'est ce que laisse un disque qui n'est
+#   pas monté, car setup-media-tree.sh recrée l'arbre vide à chaque démarrage.
+#   Une rotation vidée exprès sort donc de la bibliothèque une fois un nouveau
+#   titre indexé.
+# - L'historique reprend les fichiers que la bibliothèque connaît. Une
+#   bibliothèque indexée par dossier n'y a pas les siens, et Beets les
+#   réimporterait tous : nouveaux identifiants, ReplayGain recalculé, et un titre
+#   qu'il n'a pas pu taguer sortirait de sa sélection le temps de l'import.
+#   Perdu ou illisible, il se refait de même.
+# - Il oublie un fichier disparu que la bibliothèque ne connaît plus : remis au
+#   même chemin, le fichier est réindexé, sous un nouvel identifiant.
+follow_disk() {
+  python3 - "$MEDIA" <<'PY'
 import os
 import pickle
 import sqlite3
+import subprocess
+import sys
 from contextlib import closing
 from pathlib import Path
 
+media = os.fsencode(sys.argv[1])
 beetsdir = Path(os.environ.get("BEETSDIR", ""))
 library = beetsdir / "library.db"
 state_path = beetsdir / "state.pickle"
-known = set()
-if library.is_file():
+
+
+def items():
+    if not library.is_file():
+        return {}
     # Ouverte en écriture, comme par Beets : SQLite y finit d'abord une
     # écriture coupée par l'arrêt du conteneur.
     with closing(sqlite3.connect(library)) as con:
-        if con.execute("select 1 from sqlite_master where name = 'items'").fetchone():
-            rows = con.execute("select path from items where path is not null")
-            known = {(os.fsencode(path),) for (path,) in rows}
+        if not con.execute("select 1 from sqlite_master where name = 'items'").fetchone():
+            return {}
+        rows = con.execute("select id, path from items where path is not null")
+        return {item_id: os.fsencode(path) for item_id, path in rows}
+
+
+def missing(path):
+    """Le fichier n'existe plus. Une autre erreur, de droits ou de disque, ne le dit pas."""
+    try:
+        os.stat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return True
+    except OSError:
+        return False
+    return False
+
+
+before = items()
+tops = []
+for name in (b"10-rotation", b"20-archives"):
+    top = os.path.join(media, name, b"")
+    if not os.path.isdir(top):
+        continue
+    indexed = [path for path in before.values() if path.startswith(top)]
+    if indexed and all(missing(path) for path in indexed):
+        print(
+            f"Bibliothèque Beets : aucun des {len(indexed)} titre(s) indexé(s) dans {os.fsdecode(top)}"
+            " n'est sur le disque. Rien n'en sort : un disque qui n'est pas monté ressemble à ça."
+            " Vérifier le montage de la banque. S'ils ont été supprimés exprès, ils sortiront"
+            " quand un nouveau titre y sera indexé.",
+            file=sys.stderr,
+        )
+        continue
+    tops.append(top)
+tops = tuple(tops)
+
+
+def gone(path):
+    """Le fichier n'existe plus, dans un dossier de tête où la boucle peut retirer."""
+    return isinstance(path, bytes) and path.startswith(tops) and missing(path)
+
+
+removed = [item_id for item_id, path in before.items() if gone(path)]
+# Par paquets : au-delà d'un millier, SQLite refuse la requête.
+for start in range(0, len(removed), 200):
+    query = []
+    for item_id in removed[start : start + 200]:
+        query += [f"id:{item_id}", ","]
+    if subprocess.run(["beet", "remove", "-f", *query[:-1]]).returncode:
+        print(
+            "Bibliothèque Beets : retrait impossible, l'erreur est au-dessus. Les titres"
+            " disparus y restent, et l'auto-DJ peut encore les choisir. La boucle"
+            " réessaie au prochain tour.",
+            file=sys.stderr,
+        )
+        break
+after = items()
+left = [item_id for item_id in removed if item_id not in after]
+if left:
+    print(f"Bibliothèque Beets : {len(left)} titre(s) retiré(s), leur fichier a disparu.")
+
+known = {(path,) for path in after.values()}
 try:
     state = pickle.loads(state_path.read_bytes())
-    missing = known - state.setdefault("taghistory", set())
+    history = state.setdefault("taghistory", set())
+    missing_entries = known - history
 except Exception:
     # Comme Beets : un état absent ou illisible vaut un état vide.
     state = {"taghistory": set()}
-    missing = known
-if missing:
-    state["taghistory"] |= missing
+    history = state["taghistory"]
+    missing_entries = known
+forgotten = {
+    entry
+    for entry in history
+    if isinstance(entry, tuple) and entry and entry not in known and all(gone(path) for path in entry)
+}
+if missing_entries or forgotten:
+    state["taghistory"] = (history | missing_entries) - forgotten
     partial = state_path.with_name(".state.partial.pickle")
     partial.write_bytes(pickle.dumps(state))
     partial.replace(state_path)
-    print(f"Historique Beets : {len(missing)} fichier(s) déjà indexé(s) repris.")
+if missing_entries:
+    print(f"Historique Beets : {len(missing_entries)} fichier(s) déjà indexé(s) repris.")
+if forgotten:
+    print(f"Historique Beets : {len(forgotten)} fichier(s) disparu(s) oublié(s). Remis au même chemin, ils seront réindexés.")
+PY
+}
+
+# Un fichier changé sur place, tag corrigé ou fichier remplacé, est relu (beet
+# update), dans un dossier resté le même pendant la pause, comme pour l'import :
+# Beets lirait sinon ses tags et sa durée sur un morceau. beet update ne fait que
+# lire. Il ne relit qu'un fichier plus récent que la date qu'il a notée, et 2.5.1
+# ne note pas la date de ce qu'il relit : il relirait le fichier à chaque tour,
+# et ne relirait jamais une copie qui garde sa date d'origine, plus ancienne
+# (Finder, cp -p). La boucle compare donc les dates elle-même, à la seconde comme
+# Beets. Pour un fichier changé, elle met à 0 la date de la bibliothèque, puis y
+# écrit celle qu'elle a vue, une fois Beets passé.
+# - Les titres changés seulement (id:…), pas tout le dossier : devant un fichier
+#   disparu, beet update retire le titre, que l'historique garderait. La boucle
+#   oublie d'ailleurs, dans l'historique, un titre changé qu'il a retiré.
+# - Un titre changé quitte d'abord son album, s'il en a un : une bibliothèque
+#   indexée par dossier fait un album de chaque dossier. Après la relecture d'un
+#   titre, beet update donne à l'album les champs d'album du premier titre, genre
+#   et année compris, et l'album les donne à tous ses titres.
+# - -e : les champs que la boucle pose d'après le dossier ne se relisent pas.
+#   Relu, le regroupement sortirait le titre de sa sélection jusqu'au beet modify
+#   qui suit.
+# - -d : devant un fichier disparu entre-temps, Beets efface aussi les dossiers
+#   vidés jusqu'à la racine de sa bibliothèque, la banque : une banque vidée de
+#   son dernier titre disparaîtrait, et 20-archives avec elle. Avec une racine
+#   hors de la banque, il n'efface rien.
+# - -M : rien ne se déplace.
+# Le gain ReplayGain se relit aussi dans les tags. Un fichier remplacé qui n'en a
+# pas n'en a plus : le moteur le mesure avant de l'envoyer à l'antenne.
+reread() { # dossier champ… (ceux que la boucle pose)
+  python3 - "$@" <<'PY'
+import os
+import pickle
+import sqlite3
+import subprocess
+import sys
+from contextlib import closing
+from pathlib import Path
+
+folder, *kept = sys.argv[1:]
+beetsdir = os.environ.get("BEETSDIR", "")
+library = Path(beetsdir) / "library.db"
+state_path = Path(beetsdir) / "state.pickle"
+top = os.path.join(os.fsencode(os.path.normpath(folder)), b"")
+if not beetsdir or not library.is_file():
+    sys.exit(0)
+with closing(sqlite3.connect(library)) as con:
+    if not con.execute("select 1 from sqlite_master where name = 'items'").fetchone():
+        sys.exit(0)
+    changed = {}
+    for item_id, path, noted in con.execute("select id, path, mtime from items where path is not null"):
+        path = os.fsencode(path)
+        if not path.startswith(top):
+            continue
+        try:
+            seen = int(os.stat(path).st_mtime)
+        except OSError:
+            continue
+        if seen != int(noted or 0):
+            changed[item_id] = (path, seen)
+    if not changed:
+        sys.exit(0)
+    with con:
+        con.executemany(
+            "update items set album_id = null, mtime = 0 where id = ?",
+            [(item_id,) for item_id in changed],
+        )
+    excluded = [arg for field in kept for arg in ("-e", field)]
+    ids = list(changed)
+    # Par paquets : au-delà d'un millier, SQLite refuse la requête.
+    for start in range(0, len(ids), 200):
+        query = []
+        for item_id in ids[start : start + 200]:
+            query += [f"id:{item_id}", ","]
+        if subprocess.run(["beet", "-d", beetsdir, "update", "-M", *excluded, *query[:-1]]).returncode:
+            print(
+                f"{folder} : relecture impossible, l'erreur de Beets est au-dessus. La boucle réessaie au prochain tour.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+    with con:
+        con.executemany(
+            "update items set mtime = ? where id = ?",
+            [(seen, item_id) for item_id, (_, seen) in changed.items()],
+        )
+    still = {item_id for (item_id,) in con.execute("select id from items")}
+lost = {(path,) for item_id, (path, _) in changed.items() if item_id not in still}
+if lost:
+    try:
+        state = pickle.loads(state_path.read_bytes())
+        state["taghistory"] -= lost
+    except Exception:
+        # Illisible : follow_disk le refait au prochain tour, sans eux.
+        pass
+    else:
+        partial = state_path.with_name(".state.partial.pickle")
+        partial.write_bytes(pickle.dumps(state))
+        partial.replace(state_path)
+print(f"{folder} : {len(changed)} fichier(s) changé(s), relu(s).")
 PY
 }
 
@@ -114,8 +300,9 @@ while true; do
   if [ -f /refresh_volume.py ]; then
     python3 /refresh_volume.py || true
   fi
-  if resume_history; then
+  if follow_disk; then
     if [ -d "$MEDIA/10-rotation" ] && folder_state same "$MEDIA/10-rotation"; then
+      reread "$MEDIA/10-rotation" grouping || true
       beet import -A -q -s "$MEDIA/10-rotation" || true
       beet modify -y grouping=rotation "path:$MEDIA/10-rotation" || true
     fi
@@ -126,6 +313,7 @@ while true; do
       ed=$(basename "$dir")
       case "$ed" in .*|_*) continue ;; esac
       folder_state same "$dir" || continue
+      reread "$dir" grouping genre || true
       beet import -A -q -s "$dir" || true
       beet modify -y grouping="$ed" genre=Archive "path:$dir" || true
     done

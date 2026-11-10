@@ -3,7 +3,9 @@
 that `deploy/scripts/init-radiotomate.sh` writes: a track dropped in a folder
 that is already indexed enters the library, a library indexed folder by folder,
 as the loop did before, is not imported again, a file that is still being
-copied waits, and a WAV that holds MP3 stays as it is.
+copied waits, and a WAV that holds MP3 stays as it is. The library follows
+the disk: a removed file leaves it, and comes back when put back at the same
+path, and a changed file is read again, under the same Beets id.
 The loop also runs against a fake `beet` in
 `services/catalog/test_beets_import_loop.py`, which the CI runs when the script
 changes.
@@ -19,8 +21,11 @@ import shutil
 import sqlite3
 import struct
 import subprocess
+import time
 from contextlib import closing
 from pathlib import Path
+
+from mediafile import MediaFile
 
 SCRIPTS = Path(__file__).parents[2] / "deploy" / "scripts"
 TRACK = Path(__file__).parent / "assets" / "ohradiotomateoh.mp3"
@@ -32,6 +37,8 @@ MACHINE_SECRETS = [
 ]
 # exit code of the fake sleep
 ONE_TURN = 7
+# the date of a file copied with its own, older than the one Beets noted
+OLD = 1_600_000_000
 # The fake sleep ends the loop. When the test left something to happen between
 # two turns, it runs it first, once, and the loop takes a second turn.
 FAKE_SLEEP = """#!/bin/sh
@@ -138,16 +145,25 @@ def _odd_name(folder: Path) -> list[str]:
     return [name]
 
 
-def _items(tmp_path: Path) -> dict[str, tuple]:
-    """The library, by file name: Beets id, album, grouping, genre and gain."""
+def _items(
+    tmp_path: Path, fields: str = "id, album_id, grouping, genre, rg_track_gain, title"
+) -> dict[str, tuple]:
+    """The library, by file name: Beets id, album, grouping, genre, gain and title."""
     library = tmp_path / "data" / "Beets" / "library.db"
     if not library.exists():
         return {}
     with closing(sqlite3.connect(library)) as con:
-        rows = con.execute(
-            "select path, id, album_id, grouping, genre, rg_track_gain from items"
-        ).fetchall()
-    return {Path(os.fsdecode(path)).name: tuple(fields) for path, *fields in rows}
+        rows = con.execute(f"select path, {fields} from items").fetchall()
+    return {Path(os.fsdecode(path)).name: tuple(values) for path, *values in rows}
+
+
+def _retag(path: Path, when: int, **tags: str) -> None:
+    """Tags fixed in place, by hand, with a date of their own."""
+    track = MediaFile(path)
+    for tag, value in tags.items():
+        setattr(track, tag, value)
+    track.save()
+    os.utime(path, (when, when))
 
 
 def test_a_track_dropped_in_an_indexed_folder_is_indexed(tmp_path: Path):
@@ -288,6 +304,130 @@ def test_nothing_is_indexed_while_the_history_cannot_be_resumed(tmp_path: Path):
     after = _items(tmp_path)
     assert after.pop("Cy - Trois.mp3")[2] == "rotation"
     assert after == before
+
+
+def test_a_removed_track_leaves_the_library_and_comes_back_when_put_back(
+    tmp_path: Path,
+):
+    media = _station(tmp_path)
+    rotation = media / "10-rotation"
+    jazz = media / "20-archives" / "jazz"
+    soul = media / "20-archives" / "soul"
+    soul.mkdir()
+    shutil.copy(TRACK, rotation / "Ada - Un.mp3")
+    shutil.copy(TRACK, rotation / "Bea - Deux.mp3")
+    shutil.copy(TRACK, jazz / "Cy - Live.mp3")
+    shutil.copy(TRACK, soul / "Dan - Live.mp3")
+    _turn(tmp_path)
+    _turn(tmp_path)
+    before = _items(tmp_path)
+    assert sorted(before) == [
+        "Ada - Un.mp3",
+        "Bea - Deux.mp3",
+        "Cy - Live.mp3",
+        "Dan - Live.mp3",
+    ]
+
+    (rotation / "Bea - Deux.mp3").unlink()
+    (jazz / "Cy - Live.mp3").unlink()
+    removed = _turn(tmp_path)
+
+    # on the next turn, with no wait for the folders to settle
+    kept = ["Ada - Un.mp3", "Dan - Live.mp3"]
+    assert _items(tmp_path) == {name: before[name] for name in kept}
+    assert "2 titre(s) retiré(s)" in removed.stdout
+    # beet update would have pruned the emptied bank, and 20-archives with it
+    assert jazz.is_dir()
+
+    # put back at the same path: the history has forgotten them
+    shutil.copy(TRACK, rotation / "Bea - Deux.mp3")
+    shutil.copy(TRACK, jazz / "Cy - Live.mp3")
+    _turn(tmp_path)
+    _turn(tmp_path)
+
+    items = _items(tmp_path)
+    assert {name: items.pop(name) for name in kept} == {
+        name: before[name] for name in kept
+    }
+    assert {name: fields[2:4] for name, fields in items.items()} == {
+        "Bea - Deux.mp3": ("rotation", ""),
+        "Cy - Live.mp3": ("jazz", "Archive"),
+    }
+
+
+def test_a_changed_track_is_read_again_once_and_keeps_its_id(tmp_path: Path):
+    media = _station(tmp_path)
+    rotation = media / "10-rotation"
+    jazz = media / "20-archives" / "jazz"
+    for name in ("Ada - Un.mp3", "Bea - Deux.mp3", "Cy - Trois.mp3"):
+        shutil.copy(TRACK, rotation / name)
+    shutil.copy(TRACK, jazz / "Dan - Live.mp3")
+    _turn(tmp_path)
+    _turn(tmp_path)
+    # the gain that Beets measures at import, and writes into the files
+    _beet(tmp_path, "modify", "-y", "rg_track_gain=-3.25", f"path:{media}")
+    _turn(tmp_path)
+    before = _items(tmp_path)
+
+    later = int(time.time()) + 60
+    # a tag fixed in place, a while later
+    _retag(rotation / "Ada - Un.mp3", later, title="Un, corrigé", genre="Jazz")
+    # a bank sets its own genre
+    _retag(jazz / "Dan - Live.mp3", later, title="Live, remasterisé", genre="Rock")
+    # a file replaced by another one, copied with its own date, older than the
+    # one Beets noted: no gain in its tags
+    shutil.copy(TRACK, rotation / "Bea - Deux.mp3")
+    os.utime(rotation / "Bea - Deux.mp3", (OLD, OLD))
+    _turn(tmp_path)
+    # the folders moved while the loop slept: nothing is read yet
+    assert _items(tmp_path) == before
+    _turn(tmp_path)
+
+    items = _items(tmp_path)
+    ada, bea, cy, dan = (before[name] for name in sorted(before))
+    assert items == {
+        "Ada - Un.mp3": (*ada[:3], "Jazz", -3.25, "Un, corrigé"),
+        # the engine measures a gain that is missing
+        "Bea - Deux.mp3": (*bea[:4], None, ""),
+        "Cy - Trois.mp3": cy,
+        "Dan - Live.mp3": (*dan[:5], "Live, remasterisé"),
+    }
+    # Beets 2.5.1 does not note the date of what it reads: the loop does, so a
+    # file is read once, and not at every turn
+    files = [*rotation.iterdir(), *jazz.iterdir()]
+    assert _items(tmp_path, "mtime") == {
+        path.name: (int(path.stat().st_mtime),) for path in files
+    }
+    assert _items(tmp_path, "mtime")["Bea - Deux.mp3"] == (OLD,)
+
+
+def test_a_changed_track_of_a_folder_album_leaves_the_others_alone(tmp_path: Path):
+    media = _station(tmp_path)
+    rotation = media / "10-rotation"
+    for name, genre, year in (
+        ("Ada - Un.mp3", "Rock", 1990),
+        ("Bea - Deux.mp3", "Jazz", 2001),
+        ("Cy - Trois.mp3", "Funk", 2010),
+    ):
+        shutil.copy(TRACK, rotation / name)
+        _retag(rotation / name, OLD, genre=genre, year=year)
+    # as the loop did before: the folder is one album
+    _index_by_folder(tmp_path, rotation)
+    fields = "id, album_id, genre, year, title"
+    before = _items(tmp_path, fields)
+    assert len({values[1] for values in before.values()}) == 1
+
+    _retag(rotation / "Cy - Trois.mp3", int(time.time()) + 60, title="Trois, corrigé")
+    _turn(tmp_path)
+    _turn(tmp_path)
+
+    # beet update would give the album fields of its first track to all of them
+    after = _items(tmp_path, fields)
+    assert after["Ada - Un.mp3"] == before["Ada - Un.mp3"]
+    assert after["Bea - Deux.mp3"] == before["Bea - Deux.mp3"]
+    # read out of its album, under the same id
+    cy_id = before["Cy - Trois.mp3"][0]
+    assert after["Cy - Trois.mp3"] == (cy_id, None, "Funk", 2010, "Trois, corrigé")
 
 
 def _mp3_in_wav(path: Path) -> None:
