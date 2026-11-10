@@ -6,6 +6,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import inbox_api
 
@@ -128,6 +129,31 @@ class InboxApiTest(unittest.TestCase):
                 ("", "vide", 400),
             ]:
                 self.assertEqual(inbox_api.create_bank(media, label, folder)[0], code, (label, folder))
+
+    def test_the_tusd_volume_goes_to_tusd(self) -> None:
+        # Docker crée le volume au nom de root, et tusd ne tourne pas en root.
+        with tempfile.TemporaryDirectory() as raw:
+            tusd = Path(raw)
+            mine = tusd.stat()
+            with mock.patch.object(inbox_api.os, "chown") as chown:
+                self.assertIsNone(inbox_api.give_tusd_dir(tusd, f"{mine.st_uid + 1}:{mine.st_gid + 1}"))
+                chown.assert_called_once_with(tusd, mine.st_uid + 1, mine.st_gid + 1)
+                chown.reset_mock()
+                # Déjà à tusd, ou sans dossier, comme en dev : rien ne change.
+                self.assertIsNone(inbox_api.give_tusd_dir(tusd, f"{mine.st_uid}:{mine.st_gid}"))
+                self.assertIsNone(inbox_api.give_tusd_dir(tusd / "absent", "1000:1000"))
+                chown.assert_not_called()
+
+    def test_a_tusd_volume_left_to_root_is_said(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            tusd = Path(raw)
+            mine = tusd.stat()
+            refused = PermissionError(1, "Operation not permitted")
+            with mock.patch.object(inbox_api.os, "chown", side_effect=refused):
+                warning = inbox_api.give_tusd_dir(tusd, f"{mine.st_uid + 1}:{mine.st_gid + 1}")
+            self.assertIn(f"{tusd} n'a pas pu être donné à tusd", warning or "")
+            self.assertIn("« Si un envoi échoue »", warning or "")
+            self.assertIn("n'a pas pu être donné", inbox_api.give_tusd_dir(tusd, "tusd") or "")
 
 
 if __name__ == "__main__":
