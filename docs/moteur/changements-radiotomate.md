@@ -40,6 +40,8 @@ Une playlist simple (`playlist`) passée en entier reprend au début, comme une 
 
 `POST /schedule/<id>/now` sur un cart sans suite à l’horloge, aléatoire ou d’une autre file que `carts`, ne met plus qu’un son en file. Il en mettait deux, tirés au hasard pour un cart aléatoire.
 
+Un cart aléatoire tire sans redite (`services/cart_draw.py`) : chaque son prêt passe une fois par tour, dans un ordre tiré au sort, et d’un tour à l’autre la moitié passée en dernier attend. L’horloge, la prévision du conducteur et `POST /schedule/<id>/now` tirent ainsi. Les sons passés dans le tour sont notés quand le playout les dit à l’antenne (`POST /metadata_log`), dans la clé `cart_drawn` de la table `settings` : pas de migration. Le réglage `features.random_no_repeat`, à faux, rend le tirage de l’amont, `Cart.next_sound_random`, qui n’a pas changé.
+
 Un titre Beets sans `rg_track_gain` est analysé à la prévision (`analyze_item_soon`), puis au push si le gain manque encore (`ensure_item_gain`). Rien n’est poussé sans gain.
 
 Une ligne de l’horloge retirée au pupitre (`suppress_at`) ne part plus à l’antenne. Le retrait ne faisait que la masquer dans la file, et l’horloge la poussait quand même à son tour. `_load_pushable_sequential` laisse maintenant de côté les lignes qu’un retrait masque (`desk.removed_clock_ids`) : par leur identifiant, ou par leur heure pour un retrait posé par un moteur plus ancien. Quand le retrait expire, 30 s après l’heure de sa ligne, `expire_past_desk_items` la marque `skipped`. Sinon, plus rien ne la masquant, elle partirait en retard. Le réglage `features.skip_removed_lines`, à faux, rend le comportement d’avant.
@@ -148,4 +150,4 @@ Les tests nouveaux couvrent l’horloge, le conducteur, les alertes, le harbor, 
 
 ## Ce qui n’a pas bougé
 
-Le choix d’un son dans un cart (playlist, boucle, aléatoire, relais), à part une playlist simple passée en entier, les filtres Beets de l’auto-DJ, le harbor et les droits des comptes, à part le jeton d’encodeur, les sorties Icecast, PulseAudio et ALSA, et le rendu serveur HTMX. L’installateur Podman et les quadlets restent le chemin d’installation de l’amont, avec les sondes et le montage de banque en plus.
+Le choix d’un son dans un cart (playlist, boucle, relais), à part une playlist simple passée en entier et le tirage sans redite d’un cart aléatoire, les filtres Beets de l’auto-DJ, le harbor et les droits des comptes, à part le jeton d’encodeur, les sorties Icecast, PulseAudio et ALSA, et le rendu serveur HTMX. L’installateur Podman et les quadlets restent le chemin d’installation de l’amont, avec les sondes et le montage de banque en plus.

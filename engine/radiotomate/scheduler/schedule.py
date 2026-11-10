@@ -23,6 +23,7 @@ from radiotomate.scheduler.playout import (
     gateway_for,
     gesture_gateway_for,
 )
+from radiotomate.services.cart_draw import next_cart_sound
 
 _log = logging.getLogger(__name__)
 
@@ -135,7 +136,10 @@ async def _push_cart_sound(
     cart_round = CartRound.start(cart)
     results: list[PlayoutResult] = []
     for _ in range(2 if cart_round else 1):
-        sound = cart_round.next_sound(cart) if cart_round else cart.next_sound()
+        if cart_round:
+            sound = cart_round.next_sound(cart)
+        else:
+            sound = await next_cart_sound(session, cart)
         if not sound:
             break
         result = await _enqueue_sound(cart, sound, gateway, current_app)
