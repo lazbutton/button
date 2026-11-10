@@ -62,7 +62,7 @@ La commande procède dans l'ordre :
 - un fichier changé est remis à la version, et l'ancien est gardé à côté, en `.local-…` ;
 - une variable qui manque à `.env` s'ajoute.
 
-Elle ne change jamais une valeur de `.env`, ni la version : changer de version, c'est la commande `update`, à venir. Une installation interrompue reprend où elle en était. Une installation finie, relancée, ne change rien.
+Elle ne change jamais une valeur de `.env`, ni la version : changer de version, c'est la commande `update`, à venir, et changer un réglage, `station config`. Une installation interrompue reprend où elle en était. Une installation finie, relancée, ne change rien.
 
 ### Les options
 
@@ -96,6 +96,34 @@ Puis, sur la machine :
 ```bash
 sudo bash station install --from station.tar.gz --github-token-file <fichier du jeton>
 ```
+
+### Exploiter la station
+
+Une fois installée, la station s'exploite par la même commande, en root : `sudo station <commande>`. `station help` les liste, et `station help <commande>` donne les options de chacune.
+
+| Commande | Pour |
+|---|---|
+| `status` | l'état de la station : sa version et la plus haute publiée, ses services, la place sur le disque, le prochain direct, la dernière sauvegarde, et les mises à jour, bloquées ou non. Elle sort en erreur quand un service ne va pas |
+| `logs [service]` | les journaux, les 200 dernières lignes. `-f` les suit |
+| `backup [archive]` | une sauvegarde, sans couper l'antenne. `--with-media` y met la banque de sons |
+| `restore <archive>` | remettre une sauvegarde, sur la même machine ou sur une autre. `--without-media` garde la banque de sons en place |
+| `config` | voir ou changer le domaine, l'e-mail du compte Let's Encrypt, les mises à jour et leur heure |
+| `hold [raison]`, `unhold` | bloquer, puis débloquer les mises à jour |
+| `cli <commande>` | une commande du moteur, par exemple `station cli users add studio --admin` |
+| `uninstall` | désinstaller, en gardant les données |
+
+Sauvegarder et restaurer : voir [`exploitation/sauvegarde.md`](exploitation/sauvegarde.md#avec-la-commande-station).
+
+**Changer le domaine.** D'abord, faire mener le nouveau domaine à la machine, dans le DNS. Puis `sudo station config --domain nouveau.example` :
+
+- la commande vérifie que chaque adresse du domaine mène à la machine, comme `install`. Caddy s'arrête le temps de la vérification, pour libérer le port 80 : le flux se coupe un moment. Si le domaine ne mène pas ici, rien ne change, et Caddy repart ;
+- elle pose `DOMAIN` dans `.env`, puis recrée Caddy, qui demande le certificat ;
+- les adresses publiques de **Réglages → Station** qui suivaient l'ancien domaine passent au nouveau. Celles qu'un admin a changées restent ;
+- les encodeurs du direct se branchent ensuite sur le nouveau domaine.
+
+**Les mises à jour.** `station config --updates manual` les passe à la main, `--update-time 03:30` change leur heure, à celle de la station, 04:00 par défaut. La commande `update`, à venir, les fera. `station hold la grille de Noël` les bloque : elle pose le fichier `HOLD` dans le dossier de la station, avec la date et la raison. `station unhold` le retire.
+
+**Désinstaller.** `sudo station uninstall` arrête la station, et retire ses conteneurs, ses images, les fichiers de sa version et la commande `station`. Restent `.env`, `data/`, `media/` et `backups/` : le script d'une version publiée, `sudo bash station install`, reprend la même station. `sudo station uninstall --purge` efface tout le dossier, données et sauvegardes comprises, une fois le mot `effacer` tapé. Ce qui vit hors du dossier, comme une banque de sons ailleurs (`BUTTON_MEDIA`), reste, et la commande le dit. Docker reste installé, avec le jeton du registre s'il y en a un : `docker logout ghcr.io` le retire.
 
 ## Installer
 
