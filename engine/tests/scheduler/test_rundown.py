@@ -6,7 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session as ormSession
 
 from radiotomate.beets import BeetsIntegration
-from radiotomate.enums import CartMode, ScheduleMode
+from radiotomate.enums import CartMode, RundownStatus, ScheduleMode
 from radiotomate.models import (
     AutoDJSlot,
     Cart,
@@ -25,6 +25,7 @@ from radiotomate.scheduler.clock import (
     restore_sequencer_state,
     tick,
 )
+from radiotomate.scheduler.execution import ensure_forecast
 from radiotomate.scheduler.rundown import (
     MAX_HORIZON_MIN,
     build_rundown,
@@ -33,6 +34,7 @@ from radiotomate.scheduler.rundown import (
     rest_of_day_minutes,
 )
 from radiotomate.services.autodj import create_clock
+from tests.scheduler.test_cart_draw import _conducteur_line, _music_on_air, _spots
 from tests.scheduler.test_clock import NIGHT, _client, _live
 
 TUESDAY_1019 = datetime(2026, 9, 15, 10, 19, tzinfo=PARIS)
@@ -529,6 +531,159 @@ async def test_rundown_rotates_playlist_jingles(
         if item.get("kind") == "jingle" and item.get("status") != "manquant"
     ]
     assert len(set(names)) >= 2, names[:8]
+
+
+async def _spots_in_order(
+    dbsession: ormSession,
+    cart: Cart,
+    mode: CartMode,
+    heard: tuple[int, ...] = (),
+) -> list[Sound]:
+    """
+    Three spots a cart plays in order: « Spot test », « Spot 2 », « Spot 3 ».
+    ``heard`` are the ranks of those that have played, the oldest first.
+    """
+    spots = await _spots(dbsession, cart, 3)
+    cart.mode = mode
+    for minute, rank in enumerate(heard):
+        spots[rank - 1].last_played = datetime(2026, 9, 14, 9, minute)
+    await dbsession.commit()
+    return spots
+
+
+@pytest.mark.parametrize("mode", [CartMode.PLAYLIST_LOOP, CartMode.PLAYLIST])
+async def test_rundown_goes_on_after_the_last_sound_of_an_ordered_cart(
+    dbsession: ormSession,
+    jingles_cart,
+    pubs_cart,
+    beets_integration: BeetsIntegration,
+    mode: CartMode,
+):
+    """
+    A cart that plays in order has played all its sounds, the second one last.
+    A new forecast goes on with the third, break after break, as the cart does
+    when the clock draws from it (``Cart.next_sound``): not with the first again.
+    """
+    await _spots_in_order(dbsession, pubs_cart, mode, heard=(3, 1, 2))
+    forecast = await build_rundown(
+        dbsession,
+        beets_integration,
+        now=MONDAY_1010,
+        horizon_min=170,
+    )
+    planned = [item["title"] for item in forecast["items"] if item["kind"] == "pub"]
+    assert planned[:5] == ["Spot 3", "Spot test", "Spot 2", "Spot 3", "Spot test"]
+    # The very order of the cart: what it gives, each sound played in its turn.
+    cart = await Cart.from_id(dbsession, pubs_cart.id, load_sounds=True)
+    drawn = []
+    for minute in range(len(planned)):
+        sound = cart.next_sound()
+        sound.last_played = datetime(2026, 9, 14, 10, minute)
+        drawn.append(sound.title)
+    assert planned == drawn
+
+
+@pytest.mark.parametrize(
+    ("mode", "heard", "expected"),
+    [
+        (
+            CartMode.PLAYLIST_LOOP,
+            (3, 1, 2),
+            ["Spot 3", "Spot test", "Spot 2", "Spot 3", "Spot test"],
+        ),
+        (
+            CartMode.PLAYLIST,
+            (),
+            ["Spot test", "Spot 2", "Spot 3", "Spot test", "Spot 2"],
+        ),
+    ],
+    ids=["boucle", "une-fois-jamais-passee"],
+)
+async def test_rundown_grown_piece_by_piece_keeps_an_ordered_cart_in_order(  # noqa: PLR0913
+    dbsession: ormSession,
+    jingles_cart,
+    pubs_cart,
+    beets_integration: BeetsIntegration,
+    mode: CartMode,
+    heard: tuple[int, ...],
+    expected: list[str],
+):
+    """
+    The conducteur grows piece by piece, each one built with nothing in hand.
+    A piece goes on after the sounds of the cart the pieces before have planned,
+    which have not played yet: it does not plan them again.
+    """
+    await _spots_in_order(dbsession, pubs_cart, mode, heard=heard)
+    for minutes in range(0, 130, 10):
+        await ensure_forecast(
+            dbsession,
+            beets_integration,
+            now=MONDAY_1010 + timedelta(minutes=minutes),
+            horizon_min=30,
+        )
+    breaks = await dbsession.scalars(
+        select(RundownItem)
+        .where(RundownItem.kind == "pub")
+        .order_by(RundownItem.planned_at)
+    )
+    assert [line.resource for line in breaks][:5] == expected
+
+
+async def test_rundown_goes_on_after_a_sound_sent_and_not_heard_yet(
+    dbsession: ormSession,
+    jingles_cart,
+    pubs_cart,
+    beets_integration: BeetsIntegration,
+):
+    """
+    A spot is on its way to the antenna: the conducteur holds it, whatever the
+    cart knows of it, and plans the spot after it, not the same one again.
+    """
+    spots = await _spots_in_order(
+        dbsession, pubs_cart, CartMode.PLAYLIST_LOOP, heard=(1, 2, 3)
+    )
+    await _conducteur_line(dbsession, spots[0], 0, RundownStatus.SENT)
+    forecast = await build_rundown(
+        dbsession,
+        beets_integration,
+        now=MONDAY_1010,
+        horizon_min=60,
+    )
+    planned = [item["title"] for item in forecast["items"] if item["kind"] == "pub"]
+    assert planned[:2] == ["Spot 2", "Spot 3"]
+
+
+@pytest.mark.parametrize("mode", [CartMode.PLAYLIST_LOOP, CartMode.PLAYLIST])
+async def test_clock_sends_an_ordered_cart_in_order_break_after_break(
+    dbsession: ormSession,
+    jingles_cart,
+    pubs_cart,
+    beets_integration: BeetsIntegration,
+    mode: CartMode,
+):
+    """
+    Each pub break is planned a few minutes ahead, then sent as planned. Three
+    spots that play in order are heard in order, round after round: the antenna
+    gets what the cart would have given had the clock drawn at each break.
+    """
+    await _spots_in_order(dbsession, pubs_cart, mode)
+    sent: list[str] = []
+    for hour in (10, 11, 12):
+        for minute in (20, 40):
+            client = _client()
+            for moment in (f"{minute - 5}:00", f"{minute}:05"):
+                await tick(
+                    dbsession,
+                    _music_on_air(f"2026-09-14T{hour}:{moment}+02:00"),
+                    client,
+                    beets_integration,
+                )
+            sent += [
+                call.kwargs["json"]["title"]
+                for call in client.post.call_args_list
+                if call.args[0] == "/queue/carts"
+            ]
+    assert sent == ["Spot test", "Spot 2", "Spot 3"] * 2
 
 
 async def test_reset_sequencer_reloads_after_process_restart(
