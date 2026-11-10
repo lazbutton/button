@@ -10,6 +10,7 @@ from radiotomate.beets import BeetsIntegration
 from radiotomate.domain.execution import item_status_code, rundown_summary
 from radiotomate.enums import CommandStatus
 from radiotomate.models import (
+    AutoDJSlot,
     Clock,
     ClockPosition,
     MetadataLog,
@@ -480,6 +481,105 @@ async def test_anchor_pushes_its_planned_line(  # noqa: PLR0913
         select(RundownItem).where(RundownItem.clock_position_id == pos.id)
     )
     assert [(line.id, line.status) for line in lines] == [(planned["id"], "in_queue")]
+
+
+async def _journee_pubs_through_midnight(dbsession: ormSession) -> None:
+    """Monday evening and Tuesday morning run « Journée pubs » too."""
+    clock = await Clock.from_name(dbsession, "Journée pubs")
+    for day, minute in ((0, 18 * 60), (1, 0)):
+        slot = await AutoDJSlot.from_time(dbsession, minute, day, exact=True)
+        slot.clock_id = clock.id
+    await dbsession.commit()
+
+
+@pytest.mark.parametrize(
+    ("hour_before", "next_hour", "through_midnight"),
+    [
+        ("2026-09-14T10", "2026-09-14T11", False),
+        ("2026-09-14T17", "2026-09-14T18", False),
+        ("2026-09-14T23", "2026-09-15T00", True),
+    ],
+    ids=["heure", "changement-de-creneau", "minuit"],
+)
+async def test_soft_anchor_astride_the_hour_pushes_its_planned_line(  # noqa: PLR0913
+    dbsession: ormSession,
+    jingles_cart,
+    pubs_cart,
+    beets_integration: BeetsIntegration,
+    hour_before: str,
+    next_hour: str,
+    through_midnight: bool,
+):
+    """
+    A soft anchor waits for the end of the title astride its minute, and that
+    title may end past the hour: in the next daypart, on the next day. The
+    conducteur plans the anchor there, « glissement », and the antenna pushes
+    that line once the title ends.
+    """
+    pos = await _pub_anchor(dbsession, "molle", 58)
+    if through_midnight:
+        await _journee_pubs_through_midnight(dbsession)
+    data = await ensure_forecast(
+        dbsession,
+        beets_integration,
+        now=datetime.fromisoformat(f"{hour_before}:51").replace(tzinfo=PARIS),
+        cursor=0,
+    )
+    (planned,) = _planned_for(data, pos)
+    assert planned["at"] == f"{next_hour}:00:16"
+
+    client = _client()
+    waiting = {**_anchor_due(f"{hour_before}:58:30", "molle"), "remaining": "106"}
+    assert "soft:58" not in await tick(dbsession, waiting, client, beets_integration)
+    live = _anchor_due(f"{next_hour}:00:15", "molle")
+    assert "soft:58" in await tick(dbsession, live, client, beets_integration)
+    assert _pushed_ids(client) == [planned["id"]]
+    assert (await dbsession.get(RundownItem, planned["id"])).status == "in_queue"
+
+
+@pytest.mark.parametrize(
+    ("hour_before", "first_at", "source", "first_action", "then_at"),
+    [
+        ("14T10", "14T10:59:30", "autodj", "soft:58", "14T11:00:15"),
+        ("14T10", "14T11:00:05", "stream", "anchor:58:hold", "14T11:10:15"),
+        ("14T23", "14T23:59:00", "stream", "anchor:58:hold", "15T00:10:15"),
+    ],
+    ids=["passee-dans-son-heure", "retenue-par-un-direct", "retenue-avant-minuit"],
+)
+async def test_soft_anchor_astride_the_hour_goes_once(  # noqa: PLR0913
+    dbsession: ormSession,
+    jingles_cart,
+    pubs_cart,
+    beets_integration: BeetsIntegration,
+    hour_before: str,
+    first_at: str,
+    source: str,
+    first_action: str,
+    then_at: str,
+):
+    """
+    The anchor of the hour before goes once. The title astride it ended before
+    the hour: it went then. A live took the antenna, before the hour or past it:
+    it held the anchor, and the title that ends after the live does not bring it
+    back, on the next day either.
+    """
+    await _pub_anchor(dbsession, "molle", 58)
+    await _journee_pubs_through_midnight(dbsession)
+    forecast_at = datetime.fromisoformat(f"2026-09-{hour_before}:51")
+    await ensure_forecast(
+        dbsession,
+        beets_integration,
+        now=forecast_at.replace(tzinfo=PARIS),
+        cursor=0,
+    )
+    client = _client()
+    first = {**_anchor_due(f"2026-09-{first_at}", "molle"), "source": source}
+    assert first_action in await tick(dbsession, first, client, beets_integration)
+    pushed = _pushed_ids(client)
+
+    then = _anchor_due(f"2026-09-{then_at}", "molle")
+    assert "soft:58" not in await tick(dbsession, then, client, beets_integration)
+    assert _pushed_ids(client) == pushed
 
 
 @pytest.mark.parametrize(
