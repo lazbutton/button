@@ -7,8 +7,8 @@
 # - 00-inbox/rotation        -> 10-rotation
 # - 00-inbox/archives/<banque> -> 20-archives/<banque>, pour chaque dossier de 20-archives
 # - 10-rotation et 20-archives : un fichier déjà là est tagué sur place.
-#   wav / aiff deviennent du flac dans le même dossier. Un mp3 ou un flac
-#   déjà tagué n'est pas réécrit.
+#   wav / aiff deviennent du flac dans le même dossier. Un fichier n'est
+#   réécrit que si son nom lui donne un tag qu'il n'a pas.
 # - Sans BROADCAST_CODEC : MP3 / FLAC / OGG / M4A déplacés tels quels ;
 #   WAV / AIFF convertis en FLAC ; l'original part dans 00-inbox/_sources.
 # - BROADCAST_CODEC=mp3 ou opus (petit disque) : tout fichier accepté est réencodé
@@ -28,7 +28,22 @@ esac
 run() { if [ "$DRY" = 1 ]; then echo "+ $*"; else "$@"; fi; }
 
 tag_of() { # tag_of <file> <artist|title>
-  ffprobe -v error -show_entries "format_tags=$2" -of default=nw=1:nk=1 "$1" 2>/dev/null | head -n1
+  tag=$(ffprobe -v error -show_entries "format_tags=$2" -of default=nw=1:nk=1 "$1" 2>/dev/null | head -n1)
+  # Opus et Ogg gardent leurs tags dans le flux audio, pas dans le fichier. Le
+  # premier flux audio seulement : la pochette, un flux image, a parfois son title.
+  if [ -z "$tag" ]; then
+    tag=$(ffprobe -v error -select_streams a:0 -show_entries "stream_tags=$2" -of default=nw=1:nk=1 "$1" 2>/dev/null | head -n1)
+  fi
+  printf '%s\n' "$tag"
+}
+
+# Les tags à écrire : ceux du fichier, complétés par son nom. Vrai si le nom
+# n'ajoute rien, par exemple un fichier sans artiste dont le nom n'a pas de
+# « Artiste - Titre » : le réécrire ne changerait que sa date, à chaque tour.
+adds_nothing() { # après have_artist, have_title, artist et title
+  meta_artist=${have_artist:-$artist}
+  meta_title=${have_title:-$title}
+  [ "$meta_artist" = "$have_artist" ] && [ "$meta_title" = "$have_title" ]
 }
 
 promoted=0
@@ -87,11 +102,11 @@ promote_dir() {
         if [ -e "$target" ]; then echo "déjà là : $name"; skipped=$((skipped+1)); continue; fi
         have_artist=$(tag_of "$src" artist)
         have_title=$(tag_of "$src" title)
-        if [ -n "$have_artist" ] && [ -n "$have_title" ]; then
+        if adds_nothing; then
           run mv "$src" "$target"
         else
           run ffmpeg -v error -y -i "$src" -map 0:a -c copy \
-            -metadata artist="${have_artist:-$artist}" -metadata title="${have_title:-$title}" \
+            -metadata artist="$meta_artist" -metadata title="$meta_title" \
             "$target"
           run mv "$src" "$SOURCES/$name"
         fi
@@ -152,12 +167,8 @@ tag_in_place() {
       mp3|flac|ogg|opus|m4a)
         have_artist=$(tag_of "$src" artist)
         have_title=$(tag_of "$src" title)
-        if [ -n "$have_artist" ] && [ -n "$have_title" ]; then
-          continue
-        fi
+        adds_nothing && continue
         partial="$dest/.$stem.retag.$ext"
-        meta_artist=${have_artist:-$artist}
-        meta_title=${have_title:-$title}
         if [ "$DRY" = 1 ]; then
           echo "+ ffmpeg -v error -y -i $src -map 0:a -c copy -metadata artist=$meta_artist -metadata title=$meta_title $partial"
         elif ! ffmpeg -v error -y -i "$src" -map 0:a -c copy \

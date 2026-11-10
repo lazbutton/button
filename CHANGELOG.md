@@ -6,6 +6,8 @@ Le détail des changements du moteur par rapport à l'amont : [docs/moteur/chang
 
 ## Non publié
 
+- Corrigé : la boucle Beets réécrivait certains fichiers de la banque à chaque tour, toutes les 45 s, sans rien y changer que leur date. Un Opus ou un Ogg garde ses tags dans son flux audio, que `promote-inbox.sh` ne lisait pas : il le croyait sans artiste ni titre. Une station en `BROADCAST_CODEC=opus` réécrivait ainsi toute sa banque à chaque tour. Pareil pour un fichier sans artiste dont le nom n'a pas de « Artiste - Titre ». Un fichier n'est plus réécrit que si son nom lui donne un tag qu'il n'a pas. Rien à faire après la mise à jour.
+
 ## 0.2.0
 
 Le schéma de la base reste en v18 : aucune migration.

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import stat
 import subprocess
@@ -16,6 +17,89 @@ def write_bin(directory: Path, name: str, body: str) -> None:
     path = directory / name
     path.write_text(body, encoding="utf-8")
     path.chmod(path.stat().st_mode | stat.S_IEXEC)
+
+
+# Un faux ffprobe qui lit les tags de chaque fichier dans TAGS, un JSON :
+# {"nom": {"format": {...}, "streams": [{"type": "audio", "tags": {...}}]}}.
+# Comme le vrai, -select_streams a:0 ne garde que le premier flux audio.
+FAKE_FFPROBE = """#!/usr/bin/env python3
+import json, os, sys
+args = sys.argv[1:]
+section, key = args[args.index("-show_entries") + 1].split("=")
+info = json.load(open(os.environ["TAGS"])).get(os.path.basename(args[-1]), {})
+if section == "format_tags":
+    tags = [info.get("format", {})]
+else:
+    streams = info.get("streams", [])
+    if "-select_streams" in args:
+        streams = [s for s in streams if s["type"] == "audio"][:1]
+    tags = [s.get("tags", {}) for s in streams]
+for found in tags:
+    for name, value in found.items():
+        if name.lower() == key:
+            print(value)
+"""
+
+# Un faux ffmpeg qui note ses arguments, une ligne JSON par appel, et échoue
+# sur un fichier dont le nom commence par « Faux », en laissant une moitié.
+FAKE_FFMPEG = """#!/usr/bin/env python3
+import json, os, sys
+args = sys.argv[1:]
+with open(os.environ["FFMPEG_LOG"], "a") as log:
+    log.write(json.dumps(args) + "\\n")
+source = args[args.index("-i") + 1]
+if os.path.basename(source).startswith("Faux"):
+    sys.stderr.write("Invalid data found when processing input\\n")
+    open(args[-1], "w").write("moitié")
+    sys.exit(1)
+open(args[-1], "w").write("done")
+"""
+
+
+class Bench:
+    """Une banque temporaire, avec de faux ffprobe et ffmpeg."""
+
+    def __init__(self, root: Path, tags: dict | None = None) -> None:
+        self.root = root
+        self.media = root / "media"
+        self.media.mkdir()
+        self.bindir = root / "bin"
+        self.bindir.mkdir()
+        write_bin(self.bindir, "ffprobe", FAKE_FFPROBE)
+        write_bin(self.bindir, "ffmpeg", FAKE_FFMPEG)
+        (root / "tags.json").write_text(json.dumps(tags or {}), encoding="utf-8")
+        self.log = root / "ffmpeg.log"
+        self.env = os.environ.copy()
+        self.env.update(
+            PATH=f"{self.bindir}{os.pathsep}{self.env.get('PATH', '')}",
+            MEDIA_ROOT=str(self.media),
+            TAGS=str(root / "tags.json"),
+            FFMPEG_LOG=str(self.log),
+            PROMOTE_SETTLE="0",
+        )
+
+    def put(self, relative: str, body: bytes = b"audio") -> Path:
+        path = self.media / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(body)
+        return path
+
+    def run(self) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["sh", str(SCRIPT)], env=self.env, cwd=self.root, capture_output=True, text=True
+        )
+
+    def outputs(self) -> list[str]:
+        """Le fichier écrit par chaque appel à ffmpeg, par son nom."""
+        if not self.log.exists():
+            return []
+        lines = self.log.read_text(encoding="utf-8").splitlines()
+        return [Path(json.loads(line)[-1]).name for line in lines]
+
+    def calls(self) -> list[list[str]]:
+        if not self.log.exists():
+            return []
+        return [json.loads(line) for line in self.log.read_text(encoding="utf-8").splitlines()]
 
 
 class PromoteInPlaceTest(unittest.TestCase):
@@ -112,6 +196,57 @@ class PromoteInPlaceTest(unittest.TestCase):
                 [path.name for path in (media / "00-inbox" / "_sources").iterdir()],
                 ["Eve - Hit.FLAC"],
             )
+
+
+class RewriteOnlyToAddTest(unittest.TestCase):
+    """Un fichier n'est réécrit que si la réécriture lui ajoute un tag."""
+
+    # Opus et Ogg n'ont rien au niveau du fichier : les tags sont dans le flux.
+    # La pochette passe avant le flux audio, avec son propre title.
+    TAGS = {
+        "Ada - Song.opus": {
+            "streams": [
+                {"type": "video", "tags": {"title": "Cover"}},
+                {"type": "audio", "tags": {"ARTIST": "Ada", "TITLE": "Song"}},
+            ]
+        },
+        "Cy - Tune.opus": {
+            "streams": [
+                {"type": "video", "tags": {"title": "Cover"}},
+                {"type": "audio", "tags": {"artist": "Cyril"}},
+            ]
+        },
+        "Untitled.mp3": {"format": {"title": "Untitled"}},
+        "Dee - Hit.ogg": {"streams": [{"type": "audio", "tags": {"artist": "Dee", "title": "Hit"}}]},
+    }
+
+    def test_stream_tags_count_and_a_name_without_artist_adds_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            bench = Bench(Path(raw), self.TAGS)
+            tagged = bench.put("10-rotation/Ada - Song.opus", b"opus")
+            bare = bench.put("10-rotation/Untitled.mp3", b"mp3")
+            inbox = bench.put("00-inbox/rotation/Dee - Hit.ogg", b"ogg")
+            for _ in range(2):
+                result = bench.run()
+                self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(tagged.read_bytes(), b"opus")
+            self.assertEqual(bare.read_bytes(), b"mp3")
+            # Déjà tagué : déplacé tel quel, sans copie dans _sources.
+            self.assertFalse(inbox.exists())
+            self.assertEqual((bench.media / "10-rotation" / "Dee - Hit.ogg").read_bytes(), b"ogg")
+            self.assertEqual(list((bench.media / "00-inbox" / "_sources").glob("*")), [])
+            self.assertEqual(bench.calls(), [])
+
+    def test_the_title_comes_from_the_first_audio_stream_not_the_cover(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            bench = Bench(Path(raw), self.TAGS)
+            bench.put("10-rotation/Cy - Tune.opus", b"opus")
+            result = bench.run()
+            self.assertEqual(result.returncode, 0, result.stderr)
+            [call] = bench.calls()
+            # L'artiste du flux audio, pas celui du nom ; le titre du nom, pas celui de la pochette.
+            self.assertIn("artist=Cyril", call)
+            self.assertIn("title=Tune", call)
 
 
 if __name__ == "__main__":
