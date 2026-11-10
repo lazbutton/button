@@ -52,6 +52,8 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
+          # Same interpreter as the images of the catalogue and nowplaying
+          # (python:3.13-slim-bookworm)
           python-version: "3.13"
       - run: pip install -r requirements.txt
       - run: python test_inbox_api.py

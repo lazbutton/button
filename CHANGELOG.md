@@ -6,6 +6,8 @@ Le détail des changements du moteur par rapport à l'amont : [docs/moteur/chang
 
 ## Non publié
 
+- Corrigé : depuis le 31 octobre, les images du catalogue et de nowplaying tournaient sur Python 3.15, que la CI ne teste pas : les tests du catalogue tournent en 3.13. Dependabot y avait monté Python avec celui du moteur. Elles reviennent à Python 3.13, celui des tests et du moteur, et Dependabot n'y monte plus Python : ce changement se fait à la main, avec la CI.
+
 ## 0.1.0
 
 La première version publiée. Le schéma de la base est en v18.

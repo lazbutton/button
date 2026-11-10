@@ -150,7 +150,7 @@ Sur `main`, la CI publie aussi les images Docker, seulement si tout est vert. Un
 
 ## Dépendances, licences et failles
 
-Dependabot propose chaque mois les mises à jour ([`.github/dependabot.yml`](../.github/dependabot.yml)) : les actions GitHub, les dépendances de la console, du catalogue et du moteur, et les images de base des sept images. Pour le moteur, il ne déplace que `poetry.lock` : les contraintes de `pyproject.toml` suivent Radiotomate et Liquidsoap, et changent à la main. Quand il monte la version de Python d'une image de base, `python-version` des workflows suit à la main ; pour Liquidsoap, le job `liquidsoap-check` d'`engine.yml` et `scripts/verifier.sh`.
+Dependabot propose chaque mois les mises à jour ([`.github/dependabot.yml`](../.github/dependabot.yml)) : les actions GitHub, les dépendances de la console, du catalogue et du moteur, et les images de base des sept images. Pour le moteur, il ne déplace que `poetry.lock` : les contraintes de `pyproject.toml` suivent Radiotomate et Liquidsoap, et changent à la main. Il ne monte pas Python dans les images du moteur, du catalogue et de nowplaying, qui gardent celui de la CI : ce changement se fait à la main, avec `python-version` des workflows. Quand il monte Liquidsoap, le job `liquidsoap-check` d'`engine.yml` et `scripts/verifier.sh` suivent à la main.
 
 ### Les licences
 
