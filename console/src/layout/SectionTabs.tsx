@@ -11,6 +11,24 @@ export type SectionTab = {
   advanced?: boolean;
 };
 
+/**
+ * L'onglet ouvert, gardé dans l'adresse (`?onglet=`) : un lien mène à un onglet, et
+ * un rechargement le garde. Le premier onglet n'y figure pas. Un onglet inconnu, ou
+ * que le rôle ne voit pas, ouvre le premier.
+ */
+export function useOnglet(ids: readonly string[]): [string, (id: string) => void] {
+  const [params, setParams] = useSearchParams();
+  const requested = params.get("onglet");
+  const current = requested && ids.includes(requested) ? requested : ids[0];
+  const select = (id: string) => {
+    const next = new URLSearchParams(params);
+    if (id === ids[0]) next.delete("onglet");
+    else next.set("onglet", id);
+    setParams(next, { replace: true });
+  };
+  return [current, select];
+}
+
 export function SectionTabs({
   title,
   description,
@@ -20,24 +38,14 @@ export function SectionTabs({
   description?: string;
   tabs: SectionTab[];
 }) {
-  const [params, setParams] = useSearchParams();
-  const requested = params.get("onglet");
-  const current = tabs.some((tab) => tab.id === requested) ? requested! : tabs[0].id;
+  const [current, select] = useOnglet(tabs.map((tab) => tab.id));
   const primary = tabs.filter((tab) => !tab.advanced);
   const advanced = tabs.filter((tab) => tab.advanced);
 
   return (
     <div className="ui-page section-page">
       {title || description ? <PageHeader title={title} description={description} /> : null}
-      <Tabs.Root
-        value={current}
-        onValueChange={(value) => {
-          const next = new URLSearchParams(params);
-          if (value === tabs[0].id) next.delete("onglet");
-          else next.set("onglet", value);
-          setParams(next, { replace: true });
-        }}
-      >
+      <Tabs.Root value={current} onValueChange={select}>
         <Tabs.List className="section-tabs">
           {primary.map((tab) => (
             <Tabs.Trigger key={tab.id} value={tab.id}>

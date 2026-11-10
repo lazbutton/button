@@ -321,7 +321,7 @@ test("le menu du compte : qui est connecté, « Mon compte », puis la déconnex
   // Le menu se ferme. Rouvert avant la fin de sa fermeture, il se refermerait aussitôt.
   await expect(menu).toBeHidden();
   await expect(page).toHaveURL(/\/reglages\?onglet=compte$/);
-  await expect(page.getByRole("tabpanel", { name: "Mon compte" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Mon compte", level: 2 })).toBeVisible();
 
   await barre(page).getByRole("button", { name: "PR, compte programmateur : menu" }).click();
   await page.getByRole("menuitem", { name: "Se déconnecter" }).click();

@@ -19,7 +19,7 @@ En dev, Vite relaie `/api` vers le moteur, `/library` vers le catalogue et `/tus
 |---|---|
 | `src/App.tsx` | Les routes. Chaque écran a sa route, et aucune route ne redirige |
 | `src/pages/` | Une page par écran |
-| `src/components/<domaine>/` | Les composants d'un domaine : `agenda`, `antenne`, `banque`, `carts`, `programmation`, `topbar` |
+| `src/components/<domaine>/` | Les composants d'un domaine : `agenda`, `antenne`, `banque`, `carts`, `programmation`, `reglages`, `topbar` |
 | `src/ui/` | Les briques communes : `DataState`, `EmptyState`, `ConfirmDialog`, `FormField`, `Panel`, `AppToast`… |
 | `src/api/client.ts` | Le seul chemin vers le moteur : `apiGet`, `apiPostJson`, `apiPut`, `apiPatch`, `apiDeleteJson`, `apiUpload`… |
 | `src/api/<domaine>.ts` | Les appels et la logique pure d'un domaine, testée à côté (`*.test.ts`) |

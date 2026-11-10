@@ -7,21 +7,21 @@ const ROLES = {
   animateur: {
     libelle: "Animateur",
     pages: ["Antenne", "Conducteur", "Réglages"],
-    reglages: ["Mon compte"],
+    reglages: [],
     programme: false,
     admin: false,
   },
   programmateur: {
     libelle: "Programmateur",
     pages: ["Antenne", "Conducteur", "Programmation", "Sons", "Réglages"],
-    reglages: ["Mon compte"],
+    reglages: [],
     programme: true,
     admin: false,
   },
   admin: {
     libelle: "Admin",
     pages: ["Antenne", "Conducteur", "Programmation", "Sons", "Réglages"],
-    reglages: ["Comptes", "Station", "Mon compte", "Automate"],
+    reglages: ["Comptes", "Station", "Automate", "Mon compte"],
     programme: true,
     admin: true,
   },
@@ -51,8 +51,11 @@ for (const role of ["animateur", "programmateur", "admin"] as const) {
     await expect(detail.getByRole("link", { name: "Diagnostic automate" })).toHaveCount(vu.admin ? 1 : 0);
     await page.keyboard.press("Escape");
 
-    // Radix double le nom d'un onglet dans un texte caché : seul le texte visible compte.
+    // Réglages : l'admin a un menu, la station d'abord, puis son compte. Les autres
+    // rôles n'ont que leur compte, sans menu. Radix double le nom d'un onglet dans un
+    // texte caché : seul le texte visible compte.
     await navigation.getByRole("link", { name: "Réglages" }).click();
+    await expect(page.getByRole("heading", { name: vu.admin ? "Comptes" : "Mon compte", level: 2 })).toBeVisible();
     await expect(page.getByRole("tablist").getByRole("tab")).toHaveText([...vu.reglages], { useInnerText: true });
 
     // Programmation et Sons : réservées aux programmateurs, même par l'adresse.

@@ -1,5 +1,5 @@
 import { Button, Spinner, Text, TextField } from "@radix-ui/themes";
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   ApiAuthError,
   ApiForbiddenError,
@@ -13,18 +13,19 @@ import {
   publicStation,
   STATION_FIELDS,
   stationBody,
+  stationChanged,
   stationForm,
   type StationField,
   type StationForm,
 } from "../api/station";
 import type { StationSettings } from "../api/types";
+import { SettingsHead } from "../components/reglages/SettingsCard";
 import { DEFAULT_SOURCE_URL, type Brand } from "../lib/brand";
 import { useStationBinding } from "../lib/BrandContext";
 import { monitorSources } from "../lib/monitorSource";
 import { LoadingState } from "../ui/DataState";
 import { FormField } from "../ui/FormField";
-import { Panel, SectionHeader } from "../ui/Panel";
-import "../styles/pages/admin.css";
+import "../styles/pages/reglages.css";
 
 type Loaded =
   | { status: "loading" }
@@ -72,6 +73,9 @@ const GROUPS: { legend: string; description: string; fields: FieldSpec[] }[] = [
   },
 ];
 
+const HEAD_DESCRIPTION =
+  "Ce que les auditeurs et l’équipe voient de la radio. Un champ vide garde la valeur grisée : celle de l’image de la console (brand.json).";
+
 function isField(name: string | undefined): name is StationField {
   return (STATION_FIELDS as readonly string[]).includes(name ?? "");
 }
@@ -117,6 +121,7 @@ export function StationPage() {
   const [fieldError, setFieldError] = useState<{ field: StationField; message: string } | null>(null);
   const [error, setError] = useState("");
   const [done, setDone] = useState("");
+  const saveButton = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -151,40 +156,49 @@ export function StationPage() {
   if (loaded.status === "loading") return <LoadingState label="Lecture des réglages…" />;
   if (loaded.status === "outdated") {
     return (
-      <div className="admin-page admin-page--embedded">
-        <Panel>
-          <SectionHeader title="Station" />
-          <p className="admin-account-line" role="status">
+      <div className="reglages-section">
+        <SettingsHead title="Station" description={HEAD_DESCRIPTION} />
+        <div className="reglages-card reglages-notice">
+          <p role="status">
             Mets à jour le moteur pour régler la station ici. En attendant, la console garde les réglages de son image
             (brand.json).
           </p>
-        </Panel>
+        </div>
       </div>
     );
   }
   if (loaded.status === "failed" || !form) {
     return (
-      <div className="admin-page admin-page--embedded">
-        <Panel>
-          <SectionHeader title="Station" />
+      <div className="reglages-section">
+        <SettingsHead title="Station" description={HEAD_DESCRIPTION} />
+        <div className="reglages-card reglages-notice">
           <Text as="p" size="2" color="red" role="alert">
             {loaded.status === "failed" ? loaded.message : "Les réglages ne répondent pas."}
           </Text>
-          <div className="admin-account-actions station-actions">
+          <div className="reglages-actions">
             <Button type="button" variant="soft" onClick={() => setAttempt((count) => count + 1)}>
               Réessayer
             </Button>
           </div>
-        </Panel>
+        </div>
       </div>
     );
   }
 
   const placeholders = fallbacks(imageBrand);
+  const dirty = stationChanged(form, loaded.settings);
   const edit = (key: StationField, value: string) => {
     setForm((current) => (current ? { ...current, [key]: value } : current));
     setDone("");
     if (fieldError?.field === key) setFieldError(null);
+  };
+  const revert = () => {
+    setForm(stationForm(loaded.settings));
+    setFieldError(null);
+    setError("");
+    setDone("");
+    // Le bouton « Annuler » disparaît avec les modifications : le focus passe à « Enregistrer ».
+    saveButton.current?.focus();
   };
 
   const submit = async (event: FormEvent) => {
@@ -217,76 +231,80 @@ export function StationPage() {
   };
 
   return (
-    <div className="admin-page admin-page--embedded">
-      <Panel>
-        <SectionHeader title="Station" />
-        {/* Le même texte que la description de chaque groupe, plus bas. */}
-        <p className="station-group-description">
-          Un champ vide garde la valeur grisée : celle de l’image de la console (brand.json).
-        </p>
-        <form className="station-form" noValidate onSubmit={(event) => void submit(event)}>
-          {GROUPS.map((group) => (
-            <fieldset key={group.legend} className="station-group">
-              <legend className="admin-account-title">{group.legend}</legend>
-              <p className="station-group-description">{group.description}</p>
-              <div className="station-fields">
-                {group.fields.map((field) => {
-                  const invalid = fieldError?.field === field.key;
-                  return (
-                    <FormField
-                      key={field.key}
-                      label={field.label}
-                      htmlFor={`station-${field.key}`}
-                      error={
-                        invalid ? (
-                          <Text size="1" color="red">
-                            {fieldError.message}
-                          </Text>
-                        ) : undefined
-                      }
-                    >
-                      <TextField.Root
-                        id={`station-${field.key}`}
-                        className="ui-field-control"
-                        type={field.kind === "url" ? "url" : "text"}
-                        inputMode={field.kind === "port" ? "numeric" : undefined}
-                        autoComplete="off"
-                        spellCheck={false}
-                        value={form[field.key]}
-                        placeholder={placeholders[field.key] || undefined}
-                        aria-invalid={invalid || undefined}
-                        onChange={(event) => edit(field.key, event.target.value)}
-                      />
-                    </FormField>
-                  );
-                })}
-              </div>
-            </fieldset>
-          ))}
-          <fieldset className="station-group">
-            <legend className="admin-account-title">Fuseau</legend>
-            <p className="station-group-description">
-              <span className="station-timezone">{loaded.settings.timezone}</span>. Il se règle à l’installation : c’est la
-              variable TZ des conteneurs.
-            </p>
+    <div className="reglages-section">
+      <SettingsHead title="Station" description={HEAD_DESCRIPTION} />
+      <form className="reglages-stack reglages-stack--form" noValidate onSubmit={(event) => void submit(event)}>
+        {GROUPS.map((group, index) => (
+          <fieldset key={group.legend} className="reglages-card reglages-fieldset">
+            <legend className="reglages-card-title">{group.legend}</legend>
+            <p className="reglages-card-description">{group.description}</p>
+            <div className="reglages-fields">
+              {group.fields.map((field) => {
+                const invalid = fieldError?.field === field.key;
+                return (
+                  <FormField
+                    key={field.key}
+                    label={field.label}
+                    htmlFor={`station-${field.key}`}
+                    error={
+                      invalid ? (
+                        <Text size="1" color="red">
+                          {fieldError.message}
+                        </Text>
+                      ) : undefined
+                    }
+                  >
+                    <TextField.Root
+                      id={`station-${field.key}`}
+                      className="ui-field-control"
+                      type={field.kind === "url" ? "url" : "text"}
+                      inputMode={field.kind === "port" ? "numeric" : undefined}
+                      autoComplete="off"
+                      spellCheck={false}
+                      value={form[field.key]}
+                      placeholder={placeholders[field.key] || undefined}
+                      aria-invalid={invalid || undefined}
+                      onChange={(event) => edit(field.key, event.target.value)}
+                    />
+                  </FormField>
+                );
+              })}
+            </div>
+            {index === 0 ? (
+              <p className="reglages-readonly">
+                <span className="reglages-readonly-label">Fuseau</span>{" "}
+                <span className="reglages-readonly-value">{loaded.settings.timezone}</span>{" "}
+                <span className="reglages-readonly-hint">Il se règle à l’installation : c’est la variable TZ des conteneurs.</span>
+              </p>
+            ) : null}
           </fieldset>
-          {error ? (
-            <Text as="p" size="2" color="red" role="alert">
-              {error}
-            </Text>
-          ) : null}
-          <p className="station-done" role="status">
-            {done}
-          </p>
-          <div className="admin-account-actions">
+        ))}
+        <div className={`reglages-savebar${dirty ? " is-dirty" : ""}`}>
+          <div className="reglages-savebar-copy">
+            {error ? (
+              <Text as="p" size="2" color="red" role="alert">
+                {error}
+              </Text>
+            ) : null}
+            {/* Toujours là, même vide : une région live annonce ce qu'on y écrit ensuite. */}
+            <p className="reglages-savebar-status" role="status">
+              {done || (dirty ? "Modifications non enregistrées." : "")}
+            </p>
+          </div>
+          <div className="reglages-actions">
+            {dirty ? (
+              <Button type="button" variant="soft" color="gray" onClick={revert}>
+                Annuler les modifications
+              </Button>
+            ) : null}
             {/* Pas de disabled pendant l'envoi : un bouton désactivé perd le focus du clavier. */}
-            <Button type="submit" highContrast aria-busy={busy}>
+            <Button ref={saveButton} type="submit" highContrast aria-busy={busy}>
               {busy ? <Spinner size="1" /> : null}
               Enregistrer
             </Button>
           </div>
-        </form>
-      </Panel>
+        </div>
+      </form>
     </div>
   );
 }

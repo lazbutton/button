@@ -7,6 +7,7 @@ import {
   publicStation,
   readPublicStation,
   stationBody,
+  stationChanged,
   stationForm,
   withStation,
 } from "./station.ts";
@@ -187,6 +188,17 @@ test("le formulaire : un réglage absent est un champ vide, un champ vide efface
   assert.equal(body.tagline, null);
   assert.equal(body.harbor_port, "8005");
   assert.equal("timezone" in body, false);
+});
+
+test("le formulaire dit s'il reste quelque chose à enregistrer", () => {
+  const form = stationForm(SETTINGS);
+  assert.equal(stationChanged(form, SETTINGS), false);
+  // Des espaces autour ne changent rien : l'enregistrement les retire.
+  assert.equal(stationChanged({ ...form, name: " Radio Moteur  " }, SETTINGS), false);
+  assert.equal(stationChanged({ ...form, name: "Radio Autre" }, SETTINGS), true);
+  // Vider un champ efface le réglage : c'est un changement.
+  assert.equal(stationChanged({ ...form, tagline: "" }, SETTINGS), true);
+  assert.equal(stationChanged(stationForm({ ...SETTINGS, tagline: null }), { ...SETTINGS, tagline: null }), false);
 });
 
 test("après un enregistrement, la console ne garde que ce qu'un auditeur voit", () => {

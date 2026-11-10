@@ -149,6 +149,12 @@ export function stationForm(settings: StationSettings): StationForm {
   ) as StationForm;
 }
 
+/** Un enregistrement changerait les réglages : un champ diffère, espaces autour mis à part. */
+export function stationChanged(form: StationForm, settings: StationSettings): boolean {
+  const saved = stationForm(settings);
+  return STATION_FIELDS.some((key) => form[key].trim() !== saved[key].trim());
+}
+
 /** Le corps du `PUT` : chaque champ. Vide, le réglage s'efface, et la console reprend brand.json. */
 export function stationBody(form: StationForm): Record<StationField, string | null> {
   return Object.fromEntries(STATION_FIELDS.map((key) => [key, form[key].trim() || null])) as Record<
