@@ -7,6 +7,7 @@ Le détail des changements du moteur par rapport à l'amont : [docs/moteur/chang
 ## Non publié
 
 - Corrigé : la boucle Beets réécrivait certains fichiers de la banque à chaque tour, toutes les 45 s, sans rien y changer que leur date. Un Opus ou un Ogg garde ses tags dans son flux audio, que `promote-inbox.sh` ne lisait pas : il le croyait sans artiste ni titre. Une station en `BROADCAST_CODEC=opus` réécrivait ainsi toute sa banque à chaque tour. Pareil pour un fichier sans artiste dont le nom n'a pas de « Artiste - Titre ». Un fichier n'est plus réécrit que si son nom lui donne un tag qu'il n'a pas. Rien à faire après la mise à jour.
+- Corrigé : un seul fichier illisible, comme un faux mp3, arrêtait tout le rangement de la banque, à chaque tour. Les dépôts des inbox suivantes n'étaient jamais rangés, et un dépôt illisible laissait dans la banque un fichier à moitié écrit. Le fichier est maintenant sauté, et le reste du passage continue. Le journal de `radiotomate-dropbox` le nomme, « illisible : », et dit quoi faire : le remplacer par une copie entière, ou le retirer. Voir [docs/exploitation/deposer-un-programme.md](docs/exploitation/deposer-un-programme.md#ce-qui-se-passe-ensuite).
 
 ## 0.2.0
 

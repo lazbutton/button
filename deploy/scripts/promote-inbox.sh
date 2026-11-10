@@ -46,8 +46,32 @@ adds_nothing() { # après have_artist, have_title, artist et title
   [ "$meta_artist" = "$have_artist" ] && [ "$meta_title" = "$have_title" ]
 }
 
+# encode <source> <cible> <arguments de ffmpeg…> : ffmpeg écrit dans un
+# fichier caché à côté de la cible, qui ne prend sa place qu'entier. Si ffmpeg
+# échoue, le fichier est sauté : rien n'est déplacé, et le passage continue.
+encode() {
+  enc_src=$1
+  enc_target=$2
+  shift 2
+  enc_name=$(basename "$enc_target")
+  enc_partial="$(dirname "$enc_target")/.${enc_name%.*}.partial.${enc_name##*.}"
+  if [ "$DRY" = 1 ]; then
+    echo "+ ffmpeg -v error -y -i $enc_src $* $enc_partial"
+    return 0
+  fi
+  if ffmpeg -v error -y -i "$enc_src" "$@" "$enc_partial"; then
+    mv "$enc_partial" "$enc_target"
+    return
+  fi
+  rm -f "$enc_partial"
+  echo "illisible : $(basename "$enc_src"), dans $(dirname "$enc_src"). ffmpeg ne l'a pas lu, son erreur est au-dessus. Le fichier reste où il est, et le passage continue sans lui : le remplacer par une copie entière, ou le retirer. Sinon, il sera retenté à chaque tour." >&2
+  failed=$((failed+1))
+  return 1
+}
+
 promoted=0
 skipped=0
+failed=0
 
 promote_dir() {
   inbox=$1
@@ -79,19 +103,11 @@ promote_dir() {
         codec_args="-c:a libmp3lame -b:a 320k"
       fi
       if [ -e "$target" ]; then echo "déjà là : $name"; skipped=$((skipped+1)); continue; fi
-      partial="$dest/.$stem.partial.${target##*.}"
       # Sans guillemets exprès : codec_args donne plusieurs arguments à ffmpeg.
       # shellcheck disable=SC2086
-      if [ "$DRY" = 1 ]; then
-        echo "+ ffmpeg -v error -y -i $src -map 0:a $codec_args -metadata artist=$artist -metadata title=$title $partial"
-      elif ! ffmpeg -v error -y -i "$src" -map 0:a $codec_args \
-        -metadata artist="$artist" -metadata title="$title" "$partial"; then
-        rm -f "$partial"
-        exit 1
-      else
-        mv "$partial" "$target"
-        rm -f "$src"
-      fi
+      encode "$src" "$target" -map 0:a $codec_args \
+        -metadata artist="$artist" -metadata title="$title" || continue
+      run rm -f "$src"
       echo "promu : $name -> $dest/$(basename "$target") (${BROADCAST_CODEC}, original effacé)"
       promoted=$((promoted+1))
       continue
@@ -105,9 +121,8 @@ promote_dir() {
         if adds_nothing; then
           run mv "$src" "$target"
         else
-          run ffmpeg -v error -y -i "$src" -map 0:a -c copy \
-            -metadata artist="$meta_artist" -metadata title="$meta_title" \
-            "$target"
+          encode "$src" "$target" -map 0:a -c copy \
+            -metadata artist="$meta_artist" -metadata title="$meta_title" || continue
           run mv "$src" "$SOURCES/$name"
         fi
         echo "promu : $name -> $dest/$(basename "$target")"
@@ -116,8 +131,8 @@ promote_dir() {
       wav|aif|aiff)
         target="$dest/$stem.flac"
         if [ -e "$target" ]; then echo "déjà là : $name"; skipped=$((skipped+1)); continue; fi
-        run ffmpeg -v error -y -i "$src" -map 0:a -c:a flac -compression_level 5 \
-          -metadata artist="$artist" -metadata title="$title" "$target"
+        encode "$src" "$target" -map 0:a -c:a flac -compression_level 5 \
+          -metadata artist="$artist" -metadata title="$title" || continue
         run mv "$src" "$SOURCES/$name"
         echo "promu : $name -> $dest/$(basename "$target") (original dans _sources)"
         promoted=$((promoted+1))
@@ -150,17 +165,9 @@ tag_in_place() {
       wav|aif|aiff)
         target="$dest/$stem.flac"
         if [ -e "$target" ]; then echo "déjà là : $name"; skipped=$((skipped+1)); continue; fi
-        partial="$dest/.$stem.partial.flac"
-        if [ "$DRY" = 1 ]; then
-          echo "+ ffmpeg -v error -y -i $src -map 0:a -c:a flac -compression_level 5 -metadata artist=$artist -metadata title=$title $partial"
-        elif ! ffmpeg -v error -y -i "$src" -map 0:a -c:a flac -compression_level 5 \
-          -metadata artist="$artist" -metadata title="$title" "$partial"; then
-          rm -f "$partial"
-          exit 1
-        else
-          mv "$partial" "$target"
-          rm -f "$src"
-        fi
+        encode "$src" "$target" -map 0:a -c:a flac -compression_level 5 \
+          -metadata artist="$artist" -metadata title="$title" || continue
+        run rm -f "$src"
         echo "sur place : $name -> $dest/$(basename "$target")"
         promoted=$((promoted+1))
         ;;
@@ -168,16 +175,8 @@ tag_in_place() {
         have_artist=$(tag_of "$src" artist)
         have_title=$(tag_of "$src" title)
         adds_nothing && continue
-        partial="$dest/.$stem.retag.$ext"
-        if [ "$DRY" = 1 ]; then
-          echo "+ ffmpeg -v error -y -i $src -map 0:a -c copy -metadata artist=$meta_artist -metadata title=$meta_title $partial"
-        elif ! ffmpeg -v error -y -i "$src" -map 0:a -c copy \
-          -metadata artist="$meta_artist" -metadata title="$meta_title" "$partial"; then
-          rm -f "$partial"
-          exit 1
-        else
-          mv "$partial" "$src"
-        fi
+        encode "$src" "$src" -map 0:a -c copy \
+          -metadata artist="$meta_artist" -metadata title="$meta_title" || continue
         echo "sur place : $name"
         promoted=$((promoted+1))
         ;;
@@ -197,4 +196,7 @@ for bank in "$MEDIA"/20-archives/*/; do
   tag_in_place "$MEDIA/20-archives/$ed"
 done
 tag_in_place "$MEDIA/10-rotation"
-echo "promotion : $promoted promu(s), $skipped ignoré(s). Index Beets au prochain tour (${BEETS_IMPORT_INTERVAL:-45} s)."
+echo "promotion : $promoted promu(s), $skipped ignoré(s), $failed illisible(s). Index Beets au prochain tour (${BEETS_IMPORT_INTERVAL:-45} s)."
+# Un fichier sauté se voit aussi au code de sortie, pour qui lance le script à
+# la main. La boucle Beets passe outre et continue.
+[ "$failed" = 0 ]

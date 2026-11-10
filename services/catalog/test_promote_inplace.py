@@ -146,7 +146,7 @@ class PromoteInPlaceTest(unittest.TestCase):
             self.assertEqual((bank / "Bea - Live.flac").read_bytes(), b"done")
             called = log.read_text(encoding="utf-8")
             self.assertNotIn("Keep", called)
-            self.assertIn(".Ada - Song.retag.mp3", called)
+            self.assertIn(".Ada - Song.partial.mp3", called)
             self.assertIn(".Bea - Live.partial.flac", called)
 
     def test_dry_run_does_not_replace_the_file(self) -> None:
@@ -247,6 +247,55 @@ class RewriteOnlyToAddTest(unittest.TestCase):
             # L'artiste du flux audio, pas celui du nom ; le titre du nom, pas celui de la pochette.
             self.assertIn("artist=Cyril", call)
             self.assertIn("title=Tune", call)
+
+
+class UnreadableFileTest(unittest.TestCase):
+    """Un fichier que ffmpeg ne lit pas est sauté ; le passage continue."""
+
+    def assert_skipped(self, result: subprocess.CompletedProcess[str], name: str) -> None:
+        # Le passage va au bout, puis dit qu'un fichier est resté.
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn(f"illisible : {name}", result.stderr)
+        self.assertIn("le remplacer", result.stderr)
+        self.assertIn("promotion :", result.stdout)
+
+    def test_a_bad_file_in_one_bank_leaves_the_others_promoted(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            bench = Bench(Path(raw))
+            bad = bench.put("20-archives/a/Faux - Mp3.mp3", b"bad")
+            bench.put("20-archives/b/.keep", b"")
+            inbox = bench.put("00-inbox/archives/b/Bob - Ok.mp3", b"mp3")
+            result = bench.run()
+            self.assert_skipped(result, "Faux - Mp3.mp3")
+            self.assertEqual(bad.read_bytes(), b"bad")
+            self.assertFalse(inbox.exists())
+            self.assertEqual((bench.media / "20-archives" / "b" / "Bob - Ok.mp3").read_bytes(), b"done")
+            self.assertEqual(sorted(p.name for p in (bench.media / "20-archives" / "a").iterdir()), ["Faux - Mp3.mp3"])
+
+    def test_a_bad_inbox_file_stays_in_the_inbox_without_a_half_target(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            bench = Bench(Path(raw))
+            bad_wav = bench.put("00-inbox/rotation/Faux - Live.wav", b"bad")
+            bad_mp3 = bench.put("00-inbox/rotation/Faux - Song.mp3", b"bad")
+            bench.put("00-inbox/rotation/Gus - Calm.wav", b"wav")
+            result = bench.run()
+            self.assert_skipped(result, "Faux - Live.wav")
+            self.assert_skipped(result, "Faux - Song.mp3")
+            self.assertEqual(bad_wav.read_bytes(), b"bad")
+            self.assertEqual(bad_mp3.read_bytes(), b"bad")
+            # Rien de Faux dans la rotation, ni moitié de fichier, ni copie cachée.
+            self.assertEqual(sorted(p.name for p in (bench.media / "10-rotation").iterdir()), ["Gus - Calm.flac"])
+
+    def test_a_bad_file_is_skipped_when_reencoding(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            bench = Bench(Path(raw))
+            bench.env["BROADCAST_CODEC"] = "opus"
+            bad = bench.put("00-inbox/rotation/Faux - Song.mp3", b"bad")
+            bench.put("00-inbox/rotation/Gus - Calm.mp3", b"mp3")
+            result = bench.run()
+            self.assert_skipped(result, "Faux - Song.mp3")
+            self.assertEqual(bad.read_bytes(), b"bad")
+            self.assertEqual(sorted(p.name for p in (bench.media / "10-rotation").iterdir()), ["Gus - Calm.opus"])
 
 
 if __name__ == "__main__":
