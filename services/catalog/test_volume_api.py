@@ -58,6 +58,91 @@ class VolumeApiTest(unittest.TestCase):
             self.assertIn(f"{root} n'a pas pu être ouvert à la boucle Beets", warning or "")
             self.assertIn("« Si les rôles n'arrivent pas au dossier »", warning or "")
 
+    def test_root_takes_its_folders_before_opening_the_volume(self) -> None:
+        # Ouvert d'abord, le volume laisserait la boucle Beets créer pending/
+        # ou samba/ avant root.
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            os.chmod(root, 0o755)
+            inside = []
+            chmod = os.chmod
+
+            def opening(path, mode, *args, **kwargs) -> None:
+                inside.append(sorted(child.name for child in Path(path).iterdir()))
+                chmod(path, mode, *args, **kwargs)
+
+            with mock.patch.object(volume_api.os, "chmod", side_effect=opening):
+                self.assertIsNone(volume_api.open_share_private(root))
+            self.assertEqual(inside, [["pending", "samba"]])
+            for name in volume_api.PRIVATE_DIRS:
+                self.assertEqual(stat.S_IMODE((root / name).stat().st_mode), 0o700)
+
+    def test_a_folder_of_root_is_closed_and_kept(self) -> None:
+        # samba/ naissait en 755, avec la base de Samba dedans.
+        with tempfile.TemporaryDirectory() as raw:
+            samba = Path(raw) / "samba"
+            samba.mkdir()
+            os.chmod(samba, 0o755)
+            (samba / "passdb.tdb").write_bytes(b"base")
+            self.assertIsNone(volume_api.claim_dir(samba))
+            self.assertEqual(stat.S_IMODE(samba.stat().st_mode), 0o700)
+            self.assertEqual((samba / "passdb.tdb").read_bytes(), b"base")
+
+    def test_a_link_or_a_file_never_stands_for_a_folder(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            elsewhere = root / "ailleurs"
+            elsewhere.mkdir()
+            os.chmod(elsewhere, 0o755)
+            (root / "pending").symlink_to(elsewhere)
+            (root / "samba").write_text("x", encoding="utf-8")
+            for name in volume_api.PRIVATE_DIRS:
+                self.assertIn(f"{root / name} n'est pas un dossier", volume_api.claim_dir(root / name) or "")
+            refused = volume_api.queue_password(root, "bea", "secret-long")
+            self.assertIn("Rien n'est enregistré", refused or "")
+            self.assertIn("« Si pending/ ou samba/ n'est pas à root »", refused or "")
+            # Ni suivis, ni retirés.
+            self.assertTrue((root / "pending").is_symlink())
+            self.assertEqual(list(elsewhere.iterdir()), [])
+            self.assertEqual(stat.S_IMODE(elsewhere.stat().st_mode), 0o755)
+            self.assertEqual((root / "samba").read_text(encoding="utf-8"), "x")
+            # Le catalogue le dit au démarrage, et ouvre quand même le volume.
+            warning = volume_api.open_share_private(root)
+            self.assertIn("Ni le catalogue ni le service share ne s'en servent", warning or "")
+            self.assertEqual(stat.S_IMODE(root.stat().st_mode), 0o1777)
+
+    def test_a_folder_of_the_loop_is_taken_back_while_empty(self) -> None:
+        # La boucle Beets a créé pending/ avant root. Le test ne tourne pas en
+        # root : root y est un autre uid, et chown est simulé.
+        with tempfile.TemporaryDirectory() as raw:
+            pending = Path(raw) / "pending"
+            pending.mkdir()
+            os.chmod(pending, 0o777)
+            root_uid = os.geteuid() + 1
+            with (
+                mock.patch.object(volume_api.os, "geteuid", return_value=root_uid),
+                mock.patch.object(volume_api.os, "fchown") as fchown,
+            ):
+                self.assertIsNone(volume_api.claim_dir(pending))
+                fchown.assert_called_once_with(mock.ANY, root_uid, os.getegid())
+            self.assertEqual(stat.S_IMODE(pending.stat().st_mode), 0o700)
+
+    def test_what_the_loop_left_keeps_its_folder_refused(self) -> None:
+        # Un fichier que la boucle garde ouvert lui ferait lire ce que root y écrit.
+        with tempfile.TemporaryDirectory() as raw:
+            samba = Path(raw) / "samba"
+            samba.mkdir()
+            (samba / "passdb.tdb").write_bytes(b"")
+            with (
+                mock.patch.object(volume_api.os, "geteuid", return_value=os.geteuid() + 1),
+                mock.patch.object(volume_api.os, "fchown"),
+            ):
+                # Repris, il reste refusé : le fichier de la boucle y est encore.
+                for _ in range(2):
+                    problem = volume_api.claim_dir(samba)
+                    self.assertIn("contient des fichiers qui ne sont pas à root : passdb.tdb", problem or "")
+            self.assertEqual(stat.S_IMODE(samba.stat().st_mode), 0o700)
+
 
 class CatalogVolumeHttpTest(unittest.TestCase):
     def test_programmer_deposits_but_cannot_create_a_bank(self) -> None:
@@ -183,6 +268,18 @@ class CatalogVolumeHttpTest(unittest.TestCase):
                     expect=400,
                 )
                 self.assertEqual(animator["error"], "Ce compte n'a pas le dossier.")
+
+                # Un lien à la place de pending/ : rien ne part, et la console le dit.
+                (share / "pending").rename(share / "vu")
+                (share / "pending").symlink_to(share / "vu")
+                refused = _json(
+                    base + "/volume-password.json",
+                    cookie="admin=1",
+                    payload={"username": "bea", "clear": True},
+                    expect=503,
+                )
+                self.assertIn("Rien n'est enregistré", refused["error"])
+                self.assertEqual(json.loads((share / "vu" / "bea.json").read_text(encoding="utf-8"))["action"], "set")
             finally:
                 server.shutdown()
                 automate.shutdown()

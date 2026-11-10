@@ -13,6 +13,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 from pathlib import Path
 
@@ -24,6 +25,10 @@ SHARE_UID = 2052
 USERNAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$")
 EMISSION_KEEP = {"entiere", "podcasts"}
 HABILLAGE_SLUGS = [slug for slug, _title in refresh_volume.HABILLAGE]
+# Les dossiers de root dans SHARE_PRIVATE : les mots de passe en attente, et la
+# base de Samba (private dir).
+PRIVATE_DIRS = ("pending", "samba")
+PRIVATE_DIRS_DOC = "docs/exploitation/dossier-reseau.md, « Si pending/ ou samba/ n'est pas à root »"
 
 
 def share_name(raw: str) -> str:
@@ -116,6 +121,66 @@ def smb_conf(station: str) -> str:
    wide links = yes
    veto files = /.*/
 """
+
+
+def claim_dir(path: Path) -> str | None:
+    """Crée ce dossier de SHARE_PRIVATE à root, en 700, ou le reprend. Rend ce qui en empêche l'usage, ou None.
+
+    Ouvert comme /tmp, le volume laisse la boucle Beets y créer pending/ ou
+    samba/ avant root, ou y poser un lien. Root ne suit pas un lien et ne
+    retire rien. Il reprend un dossier qui n'est pas à lui : chown, puis 700.
+    Mais ce qu'un autre y a laissé reste à l'autre, et pourrait lui servir à
+    lire ce que root y écrit : tant qu'il en reste, le dossier ne sert pas.
+
+    Même code que claim_dir dans services/catalog/volume_api.py : test_share.py
+    vérifie qu'ils s'accordent.
+    """
+    uid, gid = os.geteuid(), os.getegid()
+    try:
+        os.mkdir(path, 0o700)
+    except FileExistsError:
+        pass
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        return f"{path} n'est pas un dossier : un lien ou un fichier porte son nom."
+    try:
+        found = os.fstat(fd)
+        if (found.st_uid, found.st_gid) != (uid, gid):
+            os.fchown(fd, uid, gid)
+        if stat.S_IMODE(found.st_mode) != 0o700:
+            os.fchmod(fd, 0o700)
+        # À root, dans un volume à root avec le sticky bit, il ne bouge plus.
+        # Avant, son propriétaire a pu le remplacer.
+        now = os.lstat(path)
+        if (now.st_dev, now.st_ino) != (found.st_dev, found.st_ino):
+            return f"{path} a été remplacé pendant que root le reprenait."
+        with os.scandir(fd) as entries:
+            strangers = sorted(entry.name for entry in entries if entry.stat(follow_symlinks=False).st_uid != uid)
+    except OSError as exc:
+        return f"{path} n'a pas pu être repris par root : {exc}."
+    finally:
+        os.close(fd)
+    if strangers:
+        names = ", ".join(strangers[:5]) + ("…" if len(strangers) > 5 else "")
+        return f"{path} contient des fichiers qui ne sont pas à root : {names}."
+    return None
+
+
+def open_private(private: Path) -> list[str]:
+    """Ouvre SHARE_PRIVATE à la boucle Beets, comme /tmp. Rend ce qui empêche de s'en servir.
+
+    Même geste que volume_api.open_share_private, au démarrage du catalogue :
+    le volume reste à root, qui y prend pending/ et samba/ avant de l'ouvrir.
+    """
+    private.mkdir(parents=True, exist_ok=True)
+    uid, gid = os.geteuid(), os.getegid()
+    found = private.stat()
+    if (found.st_uid, found.st_gid) != (uid, gid):
+        os.chown(private, uid, gid)
+    problems = [problem for problem in (claim_dir(private / name) for name in PRIVATE_DIRS) if problem]
+    os.chmod(private, 0o1777)
+    return problems
 
 
 def write_smb_conf() -> None:
@@ -345,9 +410,10 @@ def _roles(path: Path) -> dict[str, str] | None:
 
 def sync_once() -> None:
     private = Path(os.environ.get("SHARE_PRIVATE", "/share-private"))
-    private.mkdir(parents=True, exist_ok=True)
-    os.chmod(private, 0o1777)
-    (private / "samba").mkdir(parents=True, exist_ok=True)
+    problems = open_private(private)
+    if problems:
+        # Samba garde sa base dans samba/ : au démarrage, smbd ne se lance pas.
+        raise SystemExit(" ".join(problems) + f" Le service share ne s'en sert pas : voir {PRIVATE_DIRS_DOC}.")
     media = Path(os.environ.get("MEDIA_ROOT", "/media"))
     volume = refresh_volume.refresh(media)
     _lock_view(volume)
