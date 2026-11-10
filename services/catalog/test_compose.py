@@ -50,6 +50,22 @@ class ComposeTest(unittest.TestCase):
                 condition = services[name].get("depends_on", {}).get(INIT, {}).get("condition")
                 self.assertEqual(condition, "service_completed_successfully")
 
+    def test_the_catalog_hands_the_uploads_volume_to_tusd(self) -> None:
+        # Le volume naît à root, et tusd ne tourne pas en root : le catalogue,
+        # en root, le donne à tusd au démarrage. Sinon, chaque envoi échoue.
+        services = compose_config()["services"]
+        tusd, catalog = services["tusd"], services["catalog"]
+        environment = catalog["environment"]
+        self.assertEqual(catalog["user"], "0:0")
+        self.assertEqual(environment["TUSD_USER"], tusd["user"])
+
+        def volume_at(service: dict, target: str) -> str | None:
+            return next((v["source"] for v in service["volumes"] if v["target"] == target), None)
+
+        upload_dir = next(arg.split("=", 1)[1] for arg in tusd["command"] if arg.startswith("-upload-dir="))
+        self.assertEqual(volume_at(tusd, upload_dir), "tusd-data")
+        self.assertEqual(volume_at(catalog, environment["TUSD_DIR"]), "tusd-data")
+
 
 if __name__ == "__main__":
     unittest.main()

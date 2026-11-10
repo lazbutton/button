@@ -18,6 +18,7 @@ Pour essayer Icecast et nowplaying seuls : [deploy/local/](../deploy/local/READM
 - `inbox_api.py` range les envois du navigateur. `agenda_api.py` reçoit les sets des invités de l'Agenda. `volume_api.py` gère les mots de passe du dossier partagé.
 - Le catalogue demande au moteur qui est connecté : `account_permissions` lit `/account.json` avec le cookie du navigateur. Il ne stocke aucun compte.
 - Toutes les routes demandent une session, sauf `/health`, `/health/live` et `/tus-hook`, qu'appelle tusd. Le contrôle est en tête de `do_GET` : tous les rôles cherchent et pré-écoutent. Les routes `POST` demandent un admin (`session_admin`). nginx demande aussi la session devant `/library/`, mais le port du catalogue se joint sans lui : ne pas compter sur nginx seul.
+- Au démarrage, avant de servir, le catalogue donne `TUSD_DIR` à `TUSD_USER`, l'utilisateur de tusd (`give_tusd_dir`) : Docker crée ce volume au nom de root. Sans `TUSD_USER`, comme dans le `compose.yml` d'une version d'avant, c'est `1000:1000`, l'utilisateur de l'image de tusd.
 - tusd 2.8 envoie ses hooks sur `POST /tus-hook`, sans en-tête `Hook-Name`. Le corps est `{"Type", "Event": {"Upload", "HTTPRequest"}}` : lire le type avec `hook_event` (`agenda_api.py`).
 - Pour un dépôt d'invité, le catalogue appelle les routes internes du moteur (`/internal/agenda/…`) avec l'en-tête `X-Auth-Token`. Le jeton de l'invité ne voyage qu'en en-tête, jamais dans une adresse.
 - L'image se construit depuis la racine du dépôt : elle embarque aussi `deploy/scripts/setup-media-tree.sh`.
