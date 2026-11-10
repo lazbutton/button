@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from time import perf_counter
 from typing import TYPE_CHECKING
 
@@ -676,12 +676,19 @@ async def _planned_anchor_item(
             or (row.details or {}).get("minute") == pos.minute
         )
     ]
+    # A soft anchor is planned at the end of the title astride its minute, often
+    # past that minute: its line carries the minute in its details. Within the
+    # hour after this occurrence, it cannot be the line of another one.
+    occurrence = now.replace(minute=pos.minute, second=0, microsecond=0, tzinfo=None)
     for row in pool:
         planned = row.planned_at
         if (
             planned is not None
-            and planned.hour == now.hour
-            and planned.minute == pos.minute
+            and occurrence <= planned < occurrence + timedelta(hours=1)
+            and (
+                planned.minute == pos.minute
+                or (row.details or {}).get("minute") == pos.minute
+            )
         ):
             return row
     return None
