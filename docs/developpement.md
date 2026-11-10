@@ -54,7 +54,7 @@ Le script lance les mêmes commandes que la CI ([`.github/workflows/`](../.githu
 | `console` | `npm test`, puis `tsc` et `vite build` | Node 22, `npm install` fait |
 | `services` | les douze tests du catalogue listés dans `services.yml` | `services/catalog/.venv`, voir plus bas |
 | `nginx` | `nginx -t` sur `console/docker/nginx.conf.template` et ses en-têtes de sécurité, rendus par le script de démarrage de l'image | Docker |
-| `deploy` | `docker compose config` avec `.env.example`, puis ShellCheck sur les scripts du dépôt, comme la CI | Docker |
+| `deploy` | `docker compose config` avec `.env.example`, aussi sur le `compose.yml` d'une station, sans ses `build:`. Puis ShellCheck sur les scripts du dépôt, et les tests `bats` de `deploy/station`, comme la CI | Docker, Python 3 |
 | `version` | les tests de `scripts/version.py`, qui lisent aussi le CHANGELOG et `compose.yml`, puis les lignes du CHANGELOG ajoutées depuis `origin/main` ([plus bas](#publier-une-version)) | Python 3 |
 | `e2e` | les parcours dans un navigateur, par `scripts/e2e.sh` ([plus bas](#les-parcours-dans-un-navigateur)) | Node 22 et Poetry, `npm install` et `poetry install` faits |
 
@@ -62,7 +62,9 @@ Sans argument, une partie à qui il manque un outil est sautée, et le résumé 
 
 Sans argument, les parcours tournent aussi : la CI les lance sur chaque pull request qui touche la console ou le moteur, et un parcours cassé doit se voir avant elle. Ils prennent quelques minutes. Pour vérifier vite une partie, la nommer : `./scripts/verifier.sh moteur console`.
 
-La partie `deploy` passe ShellCheck avec l'image et sur la liste de [`shellcheck.yml`](../.github/workflows/shellcheck.yml), le workflow qui lance le même contrôle en CI, sur chaque pull request qui touche un script. La liste prend `scripts/`, `deploy/scripts/`, `deploy/share/entrypoint.sh` et les scripts de démarrage des images de la console et d'Icecast. Un script ailleurs s'y ajoute, sinon personne ne le vérifie. `engine/dev.sh` et `engine/install.sh` viennent de l'amont, Radiotomate : ils restent dehors. L'image est épinglée, et Dependabot ne la suit pas : la monter à la main, puis corriger ce que la nouvelle version signale.
+La partie `deploy` passe ShellCheck avec l'image et sur la liste de [`shellcheck.yml`](../.github/workflows/shellcheck.yml), le workflow qui lance le même contrôle en CI, sur chaque pull request qui touche un script. La liste prend `scripts/`, `deploy/station` et ses tests, `deploy/scripts/`, `deploy/share/entrypoint.sh` et les scripts de démarrage des images de la console et d'Icecast. Un script ailleurs s'y ajoute, sinon personne ne le vérifie.
+
+Les tests de `deploy/station` tournent avec `bats`, dans l'image officielle, épinglée dans [`station.yml`](../.github/workflows/station.yml), le workflow qui les lance en CI. De faux outils y jouent la machine : `docker`, `curl`, `apt-get`, `ss`… Voir [deploy/AGENTS.md](../deploy/AGENTS.md#la-commande-station). `engine/dev.sh` et `engine/install.sh` viennent de l'amont, Radiotomate : ils restent dehors. L'image est épinglée, et Dependabot ne la suit pas : la monter à la main, puis corriger ce que la nouvelle version signale.
 
 Les dépendances du catalogue vont dans un environnement à part, une fois :
 
@@ -212,7 +214,9 @@ Pour publier :
    git push origin vX.Y.Z
    ```
 
-3. Le workflow [`version`](../.github/workflows/version.yml) fait le reste. Il vérifie d'abord, sans rien construire, les notes de la version, qu'aucune version plus haute n'est dans l'histoire du commit, et qu'un correctif n'ajoute aucune migration. Puis il lance les tests du moteur, de la console et des services, et publie les sept images en `X.Y.Z`. Une fois les sept publiées, il crée la page de la version, avec ses notes, puis pose `X.Y` et `stable` sur ces mêmes images. Trivy analyse enfin les sept images, sans rien retenir.
+3. Le workflow [`version`](../.github/workflows/version.yml) fait le reste. Il vérifie d'abord, sans rien construire, les notes de la version, qu'aucune version plus haute n'est dans l'histoire du commit, et qu'un correctif n'ajoute aucune migration. Puis il lance les tests du moteur, de la console et des services, et publie les sept images en `X.Y.Z`. Une fois les sept publiées, il crée la page de la version, avec ses notes. Il y joint les fichiers d'une station, que `station install` télécharge : `station`, `station.tar.gz` et `SHA256SUMS` ([décision 0016](decisions/0016-le-dossier-vient-de-sa-version.md)). Puis il pose `X.Y` et `stable` sur ces mêmes images. Trivy analyse enfin les sept images, sans rien retenir.
+
+Pour voir ces fichiers avant de publier, ou pour essayer `main` sur une machine jetable : `python3 scripts/version.py station main /tmp/station`. Le `compose.yml` de l'archive n'a plus ses sections `build:`.
 
 `stable` ne recule jamais : un correctif d'une ancienne version, publié après une plus récente, ne déplace que son `X.Y`. Seule la plus haute version reçoit d'office les correctifs ([SECURITY.md](../SECURITY.md)) : une ancienne n'en reçoit qu'au cas par cas. Un tel correctif part du tag de sa ligne, jamais de `main`, qui porte déjà la version suivante. Par exemple, une branche `version/0.1` tirée de `v0.1.1` reçoit la correction et la partie `## 0.1.2` de son CHANGELOG, puis le tag `v0.1.2` se pose sur son commit.
 

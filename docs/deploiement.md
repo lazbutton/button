@@ -8,7 +8,96 @@ Une station complète tient dans [`deploy/compose.yml`](../deploy/compose.yml) :
 - De la place pour la banque de sons.
 - Pour un accès public, un domaine qui pointe sur la machine, et ses ports 80 et 443 libres. Caddy, dans `compose.yml`, s'occupe du HTTPS : voir [HTTPS](#https).
 
+## Installer sur un VPS
+
+Sur un VPS neuf, une commande installe la station. Elle installe Docker s'il manque, pose les fichiers de la version et `.env` avec ses secrets, met la station en HTTPS derrière Caddy, puis la contrôle.
+
+### Avant de commencer
+
+- Un VPS sous Debian 12 ou 13, ou Ubuntu 24.04, en x86-64, avec 10 Go de libre au moins.
+- Son domaine, qui pointe déjà sur lui : un enregistrement A, et AAAA s'il a une adresse IPv6.
+- Ses ports 80, 443 et 6800 ouverts dans le pare-feu de l'hébergeur.
+
+### Lancer l'installation
+
+Sur le VPS :
+
+```bash
+curl -fsSLO https://github.com/lazbutton/button/releases/latest/download/station
+sudo bash station install
+```
+
+La commande procède dans l'ordre :
+
+1. **Elle vérifie la machine** : les droits root, le système, le processeur, les ports 80, 443 et 6800, et la place. Elle vérifie aussi Docker et Compose v2, et propose de les installer depuis le dépôt de Docker.
+2. **Elle pose les questions.** Entrée garde la valeur proposée :
+   - le nom de la station ;
+   - son domaine ;
+   - l'e-mail du compte Let's Encrypt ;
+   - le fuseau ;
+   - l'identifiant du compte admin ;
+   - si les mises à jour seront automatiques. La commande `update` qui les fera n'existe pas encore.
+3. **Elle vérifie que chaque adresse du domaine mène à la machine**, sur le port 80. Elle le fait avant que Caddy demande un certificat : Let's Encrypt refuse un domaine un moment après quelques échecs.
+4. **Elle pose la station dans `/opt/button`** :
+   - les fichiers de la plus haute version publiée, vérifiés par leur somme : `compose.yml`, le `Caddyfile`, les scripts ;
+   - `.env`, en droits 600, avec la version épinglée (`BUTTON_VERSION`), des secrets tirés par `openssl rand`, et les réglages du HTTPS : `COMPOSE_PROFILES=vps`, `DOMAIN`, `BIND_ADDRESS=127.0.0.1` ;
+   - les dossiers des données, sous `data/` et `media/` ;
+   - la commande `station`, dans `/usr/local/bin`.
+5. **Elle démarre la station** : elle tire les images, démarre, attend le certificat, puis lance le [contrôle](#mettre-à-jour) sur les adresses publiques.
+6. **Elle règle la station** :
+   - au premier démarrage, `radiotomate-init` ferme le harbor au mot de passe du compte : seuls les jetons d'encodeur y entrent, voir [le direct](#le-direct) ;
+   - la commande remplit **Réglages → Station** : le nom de la station et ses adresses publiques, c'est-à-dire le flux, `now.json`, le statut et l'hôte du direct.
+7. **Elle affiche l'adresse de la console**, avec l'identifiant et le mot de passe du compte admin.
+   - Le mot de passe ne s'affiche qu'une fois, et seulement dans un terminal, jamais dans un journal.
+   - Il quitte ensuite `.env`.
+   - Il se change dans la console, **Mon compte**.
+
+### Relancer
+
+`sudo station install` se relance sans danger :
+
+- un fichier de la version qui manque revient ;
+- un fichier changé est remis à la version, et l'ancien est gardé à côté, en `.local-…` ;
+- une variable qui manque à `.env` s'ajoute.
+
+Elle ne change jamais une valeur de `.env`, ni la version : changer de version, c'est la commande `update`, à venir. Une installation interrompue reprend où elle en était. Une installation finie, relancée, ne change rien.
+
+### Les options
+
+Chaque réponse a son option, pour installer sans question, en CI par exemple : `--name`, `--domain`, `--email`, `--timezone`, `--admin`, `--updates auto` ou `--updates manual`. Les autres options :
+
+| Option | Pour |
+|---|---|
+| `--yes` | ne rien demander : les options répondent, sinon les valeurs par défaut. Docker s'installe s'il manque |
+| `--github-token-file <fichier>` | les images encore privées : un jeton GitHub qui lit les paquets (`read:packages`). Docker le garde, pour les mises à jour |
+| `--version X.Y.Z` | une autre version publiée que la plus haute |
+| `--dir <dossier>` | un autre dossier que `/opt/button` |
+| `--tls internal` | un essai sans domaine public. Caddy signe lui-même le certificat, que les navigateurs refusent, et le domaine n'est pas vérifié |
+| `--from <archive>` | prendre les fichiers de la station dans une archive `station.tar.gz`, plutôt que sur GitHub |
+| `--no-domain-check` | ne pas vérifier le domaine, quand la machine ne se joint pas elle-même par son adresse publique |
+
+### D'où viennent les fichiers
+
+Ils viennent de la page de chaque version publiée : `station`, `station.tar.gz` et `SHA256SUMS`. Pourquoi : voir la décision [0016](decisions/0016-le-dossier-vient-de-sa-version.md).
+
+Une version publiée avant la commande `station`, comme la 0.1.0, n'a pas ces fichiers. Elle s'installe [à la main](#installer).
+
+Pour essayer `main`, fabriquer l'archive depuis un clone, puis la copier sur la machine avec le script :
+
+```bash
+python3 scripts/version.py station main /tmp/station
+scp /tmp/station/station /tmp/station/station.tar.gz <machine>:
+```
+
+Puis, sur la machine :
+
+```bash
+sudo bash station install --from station.tar.gz --github-token-file <fichier du jeton>
+```
+
 ## Installer
+
+À la main, depuis un clone du dépôt : sur un réseau privé, pour plusieurs stations sur une machine, ou pour une version publiée avant la commande `station`.
 
 ```bash
 git clone https://github.com/lazbutton/button.git

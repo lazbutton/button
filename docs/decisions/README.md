@@ -21,6 +21,7 @@ Une décision s'écrit quand un choix coûte cher à défaire, ou quand quelqu'u
 | [0013](0013-bloquer-l-adresse-jamais-le-compte.md) | Un échec de connexion bloque l'adresse, jamais le compte |
 | [0014](0014-interrupteur-avant-le-moteur.md) | Avant le moteur, l'interrupteur est dans `.env` |
 | [0015](0015-le-flux-passe-par-caddy.md) | Le flux passe par Caddy, sur le domaine de la console |
+| [0016](0016-le-dossier-vient-de-sa-version.md) | Le dossier d'une station vient des fichiers joints à sa version |
 
 ## Le gabarit
 
