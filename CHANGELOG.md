@@ -6,6 +6,8 @@ Le détail des changements du moteur par rapport à l'amont : [docs/moteur/chang
 
 ## Non publié
 
+- Corrigé : un titre déposé dans la Rotation ou dans une banque d'archives après le premier lot n'entrait jamais dans la bibliothèque de Beets. L'auto-DJ ne le jouait donc jamais, alors que la recherche de la console le montrait. Beets retenait le dossier comme déjà importé et n'y regardait plus : seul un nouveau sous-dossier entrait. La boucle d'indexation importe maintenant titre par titre, au tour qui suit l'arrivée du fichier : un dossier où quelque chose a bougé pendant la pause de la boucle attend, et un fichier encore en cours de copie n'est pas pris à moitié. Le correctif est un script du dossier de la station : il arrive avec le dossier de cette version, pas avec les images. Sur une station existante, rien d'autre à faire : après le redémarrage de `radiotomate-dropbox`, les titres sautés jusque-là entrent au deuxième tour, et les titres déjà indexés gardent leur identifiant, leur ReplayGain et leur regroupement. Beets mesure alors le gain de chaque titre entré : avec beaucoup de titres en retard, ce tour est long, et les nouveaux dépôts attendent sa fin. Pour voir ce que Beets connaît : [docs/exploitation/deposer-un-programme.md](docs/exploitation/deposer-un-programme.md#ce-qui-se-passe-ensuite).
+
 ## 0.2.0
 
 Le schéma de la base reste en v18 : aucune migration.
