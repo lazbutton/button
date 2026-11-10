@@ -1,13 +1,18 @@
 """
 A full run of `deploy/scripts/init-radiotomate.sh` with the real CLI: at every
-start, it warns while the admin account still has the example password (SEC-06).
+start, it warns while the admin account still has the example password (SEC-06),
+and a new installation refuses the account password at the harbor.
 The secrets check itself is tested in `services/catalog/test_init_secrets.py`.
 """
 
 import os
 import secrets
+import sqlite3
 import subprocess
+from contextlib import closing
 from pathlib import Path
+
+from radiotomate.services.stream_token import SETTING_ACCOUNT_PASSWORD, SETTING_OFF
 
 INIT = Path(__file__).parents[2] / "deploy" / "scripts" / "init-radiotomate.sh"
 MACHINE_SECRETS = [
@@ -63,3 +68,48 @@ def test_warns_while_the_admin_keeps_the_example_password(tmp_path: Path):
     quiet = _init(tmp_path, "admin", "")
     assert quiet.returncode == 0, quiet.stderr
     assert WARNING not in quiet.stderr
+
+
+def _setting(tmp_path: Path, key: str) -> str | None:
+    with closing(sqlite3.connect(tmp_path / "data" / "radiotomate.db")) as con:
+        row = con.execute("select value from settings where key=?", (key,)).fetchone()
+    return row[0] if row else None
+
+
+def test_a_new_installation_refuses_the_account_password_at_the_harbor(tmp_path: Path):
+    first = _init(tmp_path, "admin", "un mot de passe")
+    assert first.returncode == 0, first.stderr
+    assert "le harbor n'accepte que les jetons d'encodeur" in first.stdout
+    assert _setting(tmp_path, SETTING_ACCOUNT_PASSWORD) == "0"
+    assert "0" in SETTING_OFF
+
+    # turned back on by the admin: a restart keeps it
+    with closing(sqlite3.connect(tmp_path / "data" / "radiotomate.db")) as con, con:
+        con.execute(
+            "update settings set value='1' where key=?", (SETTING_ACCOUNT_PASSWORD,)
+        )
+    again = _init(tmp_path, "admin", "")
+    assert again.returncode == 0, again.stderr
+    assert _setting(tmp_path, SETTING_ACCOUNT_PASSWORD) == "1"
+
+
+def test_an_existing_station_without_the_key_keeps_the_account_password(tmp_path: Path):
+    assert _init(tmp_path, "admin", "un mot de passe").returncode == 0
+    # a station installed before the key existed: accounts, and no key
+    with closing(sqlite3.connect(tmp_path / "data" / "radiotomate.db")) as con, con:
+        con.execute("delete from settings where key=?", (SETTING_ACCOUNT_PASSWORD,))
+    again = _init(tmp_path, "admin", "")
+    assert again.returncode == 0, again.stderr
+    assert "jetons d'encodeur" not in again.stdout
+    assert _setting(tmp_path, SETTING_ACCOUNT_PASSWORD) is None
+
+
+def test_an_interrupted_installation_still_gets_the_key(tmp_path: Path):
+    assert _init(tmp_path, "admin", "un mot de passe").returncode == 0
+    # stopped after the schema, before the admin account: no account yet
+    with closing(sqlite3.connect(tmp_path / "data" / "radiotomate.db")) as con, con:
+        con.execute("delete from settings where key=?", (SETTING_ACCOUNT_PASSWORD,))
+        con.execute("delete from users")
+    again = _init(tmp_path, "admin", "un mot de passe")
+    assert again.returncode == 0, again.stderr
+    assert _setting(tmp_path, SETTING_ACCOUNT_PASSWORD) == "0"

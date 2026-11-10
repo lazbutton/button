@@ -27,12 +27,13 @@ docker compose ps        # attendre radiotomate-scheduler « healthy »
 
 Au premier démarrage, `radiotomate-init` prépare tout, et peut être relancé sans danger :
 
-- vérifie d'abord les secrets : avec ceux de `.env.example`, il s'arrête, et ni le moteur, ni Icecast, ni nowplaying ne démarrent ;
+- vérifie d'abord les secrets : avec ceux de `.env.example`, il s'arrête, et ni le moteur, ni Icecast, ni nowplaying, ni le catalogue ne démarrent ;
 - crée `radiotomate.yaml`, la base, et applique les migrations du schéma ;
 - crée l'arborescence de la banque de sons ;
 - configure Beets (ReplayGain) ;
 - branche la sortie Icecast et le relais des métadonnées vers nowplaying ;
 - règle le cookie de session : `Secure`, sauf avec `RT_COOKIE_SECURE=false` ;
+- sur une installation neuve, sans aucun compte, ferme le harbor au mot de passe du compte : voir [le direct](#le-direct) ;
 - crée le compte admin `RT_ADMIN_USER` s'il n'existe pas.
 
 | Service | Adresse par défaut |
@@ -119,11 +120,11 @@ Le harbor, l'entrée du direct, est publié sur le port 6800 de la machine, ou s
 
 Pour l'écouter sur une seule adresse, la mettre devant le port : `HARBOR_PORT=127.0.0.1:6800` le ferme aux autres machines. Un ancien `compose.override.yml` qui publiait le harbor se retire **avant** la mise à jour : s'il le publiait sur une adresse précise, le port est pris deux fois, et le playout ne démarre plus.
 
-Le harbor ne chiffre rien : l'identifiant et le mot de passe de l'encodeur passent en clair. Sur une machine exposée à Internet, il ne doit donc accepter que les jetons d'encodeur, qui n'ouvrent que le harbor, et refuser le mot de passe du compte : `features.allow_account_password` à faux. Une station neuve le règle tout de suite, une station en service quand chaque encodeur a son jeton. La marche à suivre : [refuser le mot de passe du compte](exploitation/passer-en-direct.md#refuser-le-mot-de-passe-du-compte).
+Le harbor ne chiffre rien : l'identifiant et le mot de passe de l'encodeur passent en clair. Sur une machine exposée à Internet, il ne doit donc accepter que les jetons d'encodeur, qui n'ouvrent que le harbor, et refuser le mot de passe du compte : `features.allow_account_password` à faux. Une station neuve le règle dès son installation : `radiotomate-init` le pose, et chaque encodeur entre avec le jeton de son compte. Une station en service le règle quand chaque encodeur a son jeton. La marche à suivre : [refuser le mot de passe du compte](exploitation/passer-en-direct.md#refuser-le-mot-de-passe-du-compte).
 
 ## Les secrets
 
-`.env` porte cinq secrets. Les quatre secrets de machine, que personne ne tape, sont `ICECAST_SOURCE_PASSWORD`, `ICECAST_ADMIN_PASSWORD`, `RT_NOWPLAYING_SECRET` et `MEILI_MASTER_KEY`. Vide, l'un d'eux arrête déjà `docker compose`, qui le nomme. Ensuite, à chaque démarrage et avant de toucher à la base, `radiotomate-init` les vérifie. Il s'arrête si un secret vaut `change-me`, la valeur de `.env.example`, connue de tous, ou si un secret de machine fait moins de 24 caractères. Le moteur, Icecast et nowplaying l'attendent : aucun ne démarre, et l'antenne reste coupée. Pour tirer un secret :
+`.env` porte cinq secrets. Les quatre secrets de machine, que personne ne tape, sont `ICECAST_SOURCE_PASSWORD`, `ICECAST_ADMIN_PASSWORD`, `RT_NOWPLAYING_SECRET` et `MEILI_MASTER_KEY`. Vide, l'un d'eux arrête déjà `docker compose`, qui le nomme. Ensuite, à chaque démarrage et avant de toucher à la base, `radiotomate-init` les vérifie. Il s'arrête si un secret vaut `change-me`, la valeur de `.env.example`, connue de tous, ou si un secret de machine fait moins de 24 caractères. Le moteur, Icecast, nowplaying et le catalogue l'attendent : aucun ne démarre, et l'antenne reste coupée. Pour tirer un secret :
 
 ```bash
 openssl rand -hex 24
