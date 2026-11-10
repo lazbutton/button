@@ -103,7 +103,7 @@ if [[ "$ARCHIVE" == *.db ]]; then
   fi
   rm -f "$DB-shm"
   mv "$INCOMING" "$DB"
-  echo "restored schema version: $version. Pin the engine image of that version (RT_TAG) before starting it, or radiotomate-init migrates it again." >&2
+  echo "restored schema version: $version. Pin the BUTTON version that had this schema (BUTTON_VERSION in .env) before starting it, or radiotomate-init migrates it again." >&2
   echo "$DB"
   exit 0
 fi
