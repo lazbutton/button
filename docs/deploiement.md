@@ -27,7 +27,7 @@ docker compose ps        # attendre radiotomate-scheduler « healthy »
 
 Au premier démarrage, `radiotomate-init` prépare tout, et peut être relancé sans danger :
 
-- vérifie d'abord les secrets : avec ceux de `.env.example`, il s'arrête, et ni le moteur, ni Icecast, ni nowplaying ne démarrent ;
+- vérifie d'abord les secrets : avec ceux de `.env.example`, il s'arrête, et ni le moteur, ni Icecast, ni nowplaying, ni le catalogue ne démarrent ;
 - crée `radiotomate.yaml`, la base, et applique les migrations du schéma ;
 - crée l'arborescence de la banque de sons ;
 - configure Beets (ReplayGain) ;
@@ -123,7 +123,7 @@ Le harbor ne chiffre rien : l'identifiant et le mot de passe de l'encodeur passe
 
 ## Les secrets
 
-`.env` porte cinq secrets. Les quatre secrets de machine, que personne ne tape, sont `ICECAST_SOURCE_PASSWORD`, `ICECAST_ADMIN_PASSWORD`, `RT_NOWPLAYING_SECRET` et `MEILI_MASTER_KEY`. Vide, l'un d'eux arrête déjà `docker compose`, qui le nomme. Ensuite, à chaque démarrage et avant de toucher à la base, `radiotomate-init` les vérifie. Il s'arrête si un secret vaut `change-me`, la valeur de `.env.example`, connue de tous, ou si un secret de machine fait moins de 24 caractères. Le moteur, Icecast et nowplaying l'attendent : aucun ne démarre, et l'antenne reste coupée. Pour tirer un secret :
+`.env` porte cinq secrets. Les quatre secrets de machine, que personne ne tape, sont `ICECAST_SOURCE_PASSWORD`, `ICECAST_ADMIN_PASSWORD`, `RT_NOWPLAYING_SECRET` et `MEILI_MASTER_KEY`. Vide, l'un d'eux arrête déjà `docker compose`, qui le nomme. Ensuite, à chaque démarrage et avant de toucher à la base, `radiotomate-init` les vérifie. Il s'arrête si un secret vaut `change-me`, la valeur de `.env.example`, connue de tous, ou si un secret de machine fait moins de 24 caractères. Le moteur, Icecast, nowplaying et le catalogue l'attendent : aucun ne démarre, et l'antenne reste coupée. Pour tirer un secret :
 
 ```bash
 openssl rand -hex 24

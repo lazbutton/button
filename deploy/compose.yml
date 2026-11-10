@@ -255,8 +255,15 @@ services:
       - ${RT_DATA:-./data/radiotomate}/radiotomate.yaml:/config/radiotomate.yaml:ro
     ports:
       - "${BIND_ADDRESS:-}${BIND_ADDRESS:+:}${CATALOG_PORT:-30127}:30127"
+    # radiotomate-init écrit radiotomate.yaml. Un service qui monte ce fichier
+    # démarre après lui : sinon, Docker crée à sa place un dossier vide, et le
+    # premier `docker compose up` échoue. Le contrôle des secrets, dont
+    # MEILI_MASTER_KEY, passe ainsi avant le catalogue.
     depends_on:
-      - meilisearch
+      meilisearch:
+        condition: service_started
+      radiotomate-init:
+        condition: service_completed_successfully
 
   tusd:
     image: tusproject/tusd:v2.8.0

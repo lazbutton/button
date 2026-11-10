@@ -58,6 +58,7 @@ jobs:
       - run: python test_icecast_config.py
       - run: python test_smoke.py
       - run: python test_cloud_sync.py
+      - run: python test_compose.py
 
   docker:
     name: build & push images
