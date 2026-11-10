@@ -293,6 +293,15 @@ class StationTest(unittest.TestCase):
                 self.assertEqual(members["compose.yml"].mode, 0o644)
                 self.assertEqual({(m.uid, m.gid, m.uname, m.gname, m.mtime) for m in members.values()}, {(0, 0, "", "", 0)})
 
+    def test_station_uninstall_knows_the_files_of_a_version(self) -> None:
+        # station uninstall retire les fichiers de la version : VERSION_FILES,
+        # dans deploy/station, nomme ce que l'archive pose au premier niveau.
+        script = (version.DEPLOY / "station").read_text(encoding="utf-8")
+        listed = re.search(r"^VERSION_FILES=\(([^)]*)\)$", script, re.MULTILINE)
+        self.assertIsNotNone(listed, "VERSION_FILES manque dans deploy/station.")
+        top = {name.split("/", 1)[0] for name in version.station_files("main")}
+        self.assertEqual(set(listed.group(1).split()), top)
+
     def test_a_version_or_main(self) -> None:
         self.assertEqual(version.station_files("main")["VERSION"][0], b"main\n")
         with self.assertRaises(ValueError):

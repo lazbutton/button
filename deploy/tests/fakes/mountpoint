@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Un faux mountpoint -q : un dossier est un point de montage s'il est dans
+# $FAKE_STATE/mounts, un par ligne.
+[[ ${1:-} == -q ]] && shift
+grep -qxF -- "$1" "$FAKE_STATE/mounts" 2>/dev/null

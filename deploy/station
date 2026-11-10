@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
 # station : installer une station BUTTON sur un VPS, puis l'exploiter. En root.
 #   station install [options]   installer la station, ou la réparer
-#   station help                l'aide
+#   station status              son état ; logs, backup, restore, config,
+#                               hold, unhold, cli et uninstall : station help
 # Sur un VPS neuf, ce script se télécharge seul, depuis la plus haute version
 # publiée. Il prend les fichiers de la station dans la même version, vérifiés
 # par leur somme :
 #   curl -fsSLO https://github.com/lazbutton/button/releases/latest/download/station
 #   sudo bash station install
 # Ensuite, il est dans le dossier de la station, et /usr/local/bin/station y
-# mène. Voir docs/deploiement.md, « Installer sur un VPS ».
+# mène. Voir docs/deploiement.md, « Installer sur un VPS » et « Exploiter la
+# station ».
 #
-# Les autres commandes de l'exploitation viendront ici, une fonction cmd_<nom>
-# chacune, avec les mêmes aides : status, logs, backup, restore, config, hold,
-# unhold, cli et uninstall (INS-03), update (MAJ-04), rollback (MAJ-05).
+# Une commande, une fonction cmd_<nom>, avec les mêmes aides. Viendront ici
+# update (MAJ-04) et rollback (MAJ-05).
 set -euo pipefail
 
 # Le dépôt dont chaque version publiée joint station, station.tar.gz et
@@ -34,10 +35,55 @@ PROBE=button-verification-domaine
 # Le mount public du flux, celui qu'écrit init-radiotomate.sh. Quand GEN-02
 # le rendra réglable, il se lira dans .env, ici seulement.
 MOUNT=button.mp3
-# Ce que cleanup retire en sortant : le dossier de travail, et le conteneur
-# de la vérification s'il tourne encore.
+# Le format des archives de station backup. restore lit celui-ci et les plus
+# anciens : une version plus récente de la commande lit encore une archive
+# d'aujourd'hui, et un format nouveau prend le numéro suivant. Dans chaque
+# format, l'archive commence par MANIFEST, qui le dit, puis SHA256SUMS, qui
+# nomme les autres fichiers : voir backup_station.
+BACKUP_FORMAT=1
+# Les fichiers d'une archive de ce format, que SHA256SUMS couvre. Puis, avec
+# les sons, la banque, sous son nom.
+BACKUP_FILES=(MANIFEST radiotomate.tar.gz env caddy.tar.gz)
+# La marge de place demandée par une sauvegarde ou une restauration, en Ko.
+SPACE_MARGIN_KB=1048576
+# Les dossiers de données de la station, que compose.yml monte : la variable
+# de .env, et son défaut.
+DATA_DIRS=(RT_DATA:./data/radiotomate NOWPLAYING_DATA:./data/nowplaying MEILI_DATA:./data/meilisearch
+  CADDY_DATA:./data/caddy BUTTON_MEDIA:./media)
+# Les fichiers qu'une version pose dans le dossier, ceux de station.tar.gz :
+# station_files, dans scripts/version.py, que test_version.py compare à
+# cette liste. uninstall les retire.
+VERSION_FILES=(VERSION compose.yml Caddyfile .env.example station scripts)
+# Le projet Compose, name dans compose.yml : ses conteneurs et ses volumes
+# portent son nom.
+PROJECT=button
+# Le verrou des commandes qui changent la station, install comprise, hors de
+# son dossier, qui peut ne pas exister encore. Dans /run, à root : pas dans
+# /run/lock, où tous les comptes écrivent.
+LOCK=$ROOT/run/button-station.lock
+# Une restauration en cours d'échange l'écrit dans le dossier de la station,
+# et l'efface à la fin : resté là, il dit quoi remettre (status le montre).
+JOURNAL=restauration-en-cours
+# L'heure des mises à jour automatiques, à celle de la station (TZ), quand
+# BUTTON_UPDATE_TIME manque à .env. La commande update (MAJ-04) la lira.
+UPDATE_TIME=04:00
+# Ce que cleanup défait en sortant : le dossier de travail ; le conteneur de
+# la vérification du domaine s'il tourne encore ; Caddy, arrêté pour elle ;
+# une archive à moitié écrite ; une restauration interrompue ; ce qu'elle
+# préparait. caddy_stopped et station_stopped portent le dossier de la
+# station : cleanup ne voit pas toujours les variables locales des commandes.
 work=""
 probe_started=""
+caddy_stopped=""
+partial=""
+station_stopped=""
+swapped=()
+prepared=()
+restart_others=()
+# Sans --yes, une question se pose au clavier. Une interruption au clavier
+# dit ce message.
+assume_yes=""
+aborted="Installation interrompue : rien n'est écrit. Relancer station install."
 
 say() { printf '%s\n' "$@"; }
 warn() { printf 'Attention : %s\n' "$@" >&2; }
@@ -46,12 +92,139 @@ die() {
   printf '%s\n' "$@" >&2
   exit 1
 }
+# L'aide à lire : celle de la commande en cours, que main pose.
+help_topic=""
 usage_error() {
-  printf '%s\n' "$1" "Voir : station help." >&2
+  printf '%s\n' "$1" "Voir : station help${help_topic:+ $help_topic}." >&2
   exit 2
 }
 
 usage() {
+  cat <<'EOF'
+Usage : station COMMANDE [options]
+
+La commande d'une station BUTTON sur un VPS, en root.
+
+  install        installer la station, ou la réparer
+  status         son état : version, services, disque, prochain direct
+  logs           ses journaux
+  backup         la sauvegarder, sans couper l'antenne
+  restore        remettre une sauvegarde, ici ou sur une autre machine
+  config         voir ou changer le domaine, l'e-mail, les mises à jour
+  hold, unhold   bloquer, débloquer les mises à jour
+  cli            une commande du moteur, radiotomate
+  uninstall      la désinstaller
+
+L'aide d'une commande : station help COMMANDE. Chacune prend --dir DOSSIER,
+pour une station ailleurs que dans le dossier de la commande ou /opt/button.
+
+Voir docs/deploiement.md, « Exploiter la station ».
+EOF
+}
+
+# L'aide d'une commande.
+usage_command() { # commande
+  case $1 in
+    install) usage_install ;;
+    status)
+      cat <<'EOF'
+Usage : station status [--dir DOSSIER]
+
+L'état de la station, sans rien changer : sa version et la plus haute
+publiée, ses services, la place sur le disque, le prochain direct, la
+dernière sauvegarde, et les mises à jour, bloquées ou non. Sort en erreur
+quand un service ne va pas.
+EOF
+      ;;
+    logs)
+      cat <<'EOF'
+Usage : station logs [SERVICE…] [options] [--dir DOSSIER]
+
+Les journaux de la station, ou de ses services nommés : les 200 dernières
+lignes. Les options vont à docker compose logs : -f les suit, --tail 50 ou
+--since 1h en prennent d'autres. Les services : station status.
+EOF
+      ;;
+    backup)
+      cat <<'EOF'
+Usage : station backup [ARCHIVE] [--with-media] [--dir DOSSIER]
+
+Sauvegarde la station sans couper l'antenne : la base, avec les comptes, les
+horloges, l'Agenda et les réglages, radiotomate.yaml, .env et les certificats
+de Caddy. --with-media y met aussi la banque de sons.
+
+ARCHIVE : le fichier à écrire, ou un dossier où l'écrire. Sinon, backups/,
+dans le dossier de la station, sous le nom button-AAAAMMJJTHHMMSSZ.tar.
+L'archive est en droits 600, à root : elle porte les secrets de .env, hors du
+mot de passe admin. Elle se remet par station restore.
+EOF
+      ;;
+    restore)
+      cat <<'EOF'
+Usage : station restore ARCHIVE [--without-media] [--yes] [--dir DOSSIER]
+
+Remet une sauvegarde de station backup, sur cette station ou sur une autre
+machine, après station install. La base, les certificats de Caddy et, s'ils y
+sont, les sons, remplacent ceux de la station : les données en place sont
+gardées à côté. De .env, seuls le fuseau (TZ) et le compte admin viennent de
+la sauvegarde : le reste est celui de cette machine, domaine compris. L'antenne
+se coupe le temps de redémarrer. Si la station ne repart pas, celle d'avant
+revient.
+
+--without-media : garder la banque de sons en place, même si l'archive en a.
+--yes : sans confirmation, pour un script.
+EOF
+      ;;
+    config)
+      cat <<'EOF'
+Usage : station config [options] [--dir DOSSIER]
+
+Sans option : les réglages de la station. Avec, les change dans .env :
+  --domain DOMAINE        le domaine, qui mène déjà à cette machine
+  --email E-MAIL          l'e-mail du compte Let's Encrypt, "" pour aucun
+  --updates auto|manual   les mises à jour automatiques
+  --update-time HH:MM     leur heure, à celle de la station (04:00)
+  --no-domain-check       ne pas vérifier que le domaine mène ici
+
+Changer le domaine ou l'e-mail redémarre Caddy : le flux se coupe un instant.
+EOF
+      ;;
+    hold | unhold)
+      cat <<'EOF'
+Usage : station hold [RAISON…] [--dir DOSSIER]
+        station unhold [--dir DOSSIER]
+
+hold bloque les mises à jour : il pose le fichier HOLD dans le dossier de la
+station, avec la date et la raison. unhold le retire.
+EOF
+      ;;
+    cli)
+      cat <<'EOF'
+Usage : station cli [--dir DOSSIER] COMMANDE…
+
+Une commande du moteur, radiotomate, dans son conteneur. Par exemple :
+  station cli users add studio --admin
+  station cli maintenance next-live
+Les commandes du moteur : station cli --help.
+EOF
+      ;;
+    uninstall)
+      cat <<'EOF'
+Usage : station uninstall [--purge] [--yes] [--dir DOSSIER]
+
+Désinstalle la station : ses conteneurs, ses images, les fichiers de sa
+version et la commande station s'en vont. Restent .env, data/, media/ et
+backups/ : station install les reprend.
+
+--purge efface tout le dossier, données et sauvegardes comprises.
+--yes : sans confirmation, pour un script.
+EOF
+      ;;
+    *) usage_error "Commande inconnue : $1." ;;
+  esac
+}
+
+usage_install() {
   cat <<'EOF'
 Usage : station install [options]
 
@@ -103,7 +276,7 @@ ask() {
   local answer
   while :; do
     printf '  %s%s : ' "$1" "${2:+ [$2]}" >&2
-    IFS= read -r answer || die "" "Installation interrompue : rien n'est écrit. Relancer station install."
+    IFS= read -r answer || die "" "$aborted"
     answer=$(trim "$answer")
     answer=${answer:-$2}
     if "$3" "$answer"; then
@@ -168,6 +341,12 @@ check_updates() {
   return 1
 }
 
+check_update_time() {
+  [[ $1 =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]] && return
+  echo "  « $1 » : une heure s'écrit HH:MM, comme 04:00." >&2
+  return 1
+}
+
 check_version() {
   local number='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
   [[ $1 =~ $number ]] && return
@@ -214,11 +393,24 @@ env_replace() { # clé, valeur
   mv -f "$tmp" "$env_file"
 }
 
-# Un chemin de .env, comme RT_DATA, relatif au dossier de la station.
+# Pose une variable de .env : change sa valeur, ou l'ajoute à la fin, sous
+# une ligne qui dit quelle commande l'a ajoutée.
+env_set() { # clé, valeur, commande
+  if env_has "$1"; then
+    env_replace "$1" "$2"
+    return
+  fi
+  [[ -z $(tail -c 1 "$env_file") ]] || printf '\n' >>"$env_file"
+  printf '\n# Ajouté par station %s, le %s.\n%s=%s\n' "$3" "$(date +%F)" "$1" "$2" >>"$env_file"
+}
+
+# Un chemin de .env, comme RT_DATA, relatif au dossier de la station, sans
+# barre oblique finale.
 env_path() { # clé, défaut
   local path
   path=$(env_value "$1" "$2")
   [[ $path == /* ]] || path=$dir/${path#./}
+  while [[ $path == ?*/ ]]; do path=${path%/}; done
   printf '%s\n' "$path"
 }
 
@@ -425,9 +617,9 @@ check_ports() {
 
 # La plus haute version publiée : celle où mène la page « latest » de GitHub,
 # que version.yml ne donne qu'à la version qui prend stable.
-latest_version() {
+latest_version() { # [attente en secondes, 30]
   local answer url
-  answer=$(curl --disable -sS -o /dev/null --max-time 30 -w '%{http_code} %{redirect_url}' \
+  answer=$(curl --disable -sS -o /dev/null --max-time "${1:-30}" -w '%{http_code} %{redirect_url}' \
     "https://github.com/$REPO/releases/latest") ||
     die "GitHub ne répond pas." "Vérifier l'accès de la machine à github.com, puis relancer."
   url=${answer#* }
@@ -469,12 +661,13 @@ unpack() { # archive
 # demande un certificat : Let's Encrypt refuse un domaine un moment après
 # quelques échecs. Un conteneur répond un jeton tiré au hasard sur le port 80,
 # et chaque adresse du domaine, A et AAAA, doit le rendre. Les adresses se
-# lisent dans un conteneur : dans le DNS, et non dans /etc/hosts.
-check_domain_here() {
+# lisent dans un conteneur : dans le DNS, et non dans /etc/hosts. L'image est
+# celle de Caddy, lue dans le compose.yml donné.
+check_domain_here() { # compose.yml
   local image addresses address target answer token wrong=""
-  image=$(sed -n 's/^ *image: *\(caddy:[^ ]*\) *$/\1/p' "$work/files/compose.yml" | head -n 1)
+  image=$(sed -n 's/^ *image: *\(caddy:[^ ]*\) *$/\1/p' "$1" | head -n 1)
   [[ -n $image ]] || die "Le compose.yml de la version n'a pas d'image caddy." "Archive inattendue : la télécharger à nouveau."
-  docker pull -q "$image" >/dev/null ||
+  docker image inspect "$image" >/dev/null 2>&1 || docker pull -q "$image" >/dev/null ||
     die "L'image $image ne se tire pas." "Vérifier l'accès de la machine à Docker Hub, puis relancer."
   # Les deux réponses à la suite, chacune après sa ligne « Server: ».
   # shellcheck disable=SC2016
@@ -628,11 +821,9 @@ EOF
 }
 
 make_data_dirs() {
-  local key default
-  for key in RT_DATA:./data/radiotomate NOWPLAYING_DATA:./data/nowplaying \
-    MEILI_DATA:./data/meilisearch CADDY_DATA:./data/caddy BUTTON_MEDIA:./media; do
-    default=${key#*:}
-    mkdir -p "$(env_path "${key%%:*}" "$default")"
+  local key
+  for key in "${DATA_DIRS[@]}"; do
+    mkdir -p "$(env_path "${key%%:*}" "${key#*:}")"
   done
 }
 
@@ -665,32 +856,43 @@ ghcr_login() {
 
 # --- Démarrer et contrôler ---
 
-wait_https() {
+# https://$domain répond-il, avec son certificat ? Jusqu'à HTTPS_WAIT s.
+https_ok() {
   local args=(--disable -sS -o /dev/null --max-time 10) deadline=$((SECONDS + HTTPS_WAIT))
   if [[ $tls == internal ]]; then
     args+=(--cacert "$(env_path CADDY_DATA ./data/caddy)/pki/authorities/local/root.crt" --resolve "$domain:443:127.0.0.1")
   fi
   until curl "${args[@]}" "https://$domain/" 2>/dev/null; do
-    ((SECONDS < deadline)) ||
-      die "https://$domain ne répond pas au bout de $HTTPS_WAIT s : le certificat manque encore." \
-        "Voir pourquoi : cd $dir && docker compose logs caddy. Puis relancer station install."
+    ((SECONDS < deadline)) || return 1
     sleep 5
   done
+}
+
+wait_https() {
+  https_ok ||
+    die "https://$domain ne répond pas au bout de $HTTPS_WAIT s : le certificat manque encore." \
+      "Voir pourquoi : cd $dir && docker compose logs caddy. Puis relancer station install."
   say "HTTPS : https://$domain répond."
 }
 
-smoke() {
+# Le contrôle de la station, smoke.sh : par ses adresses publiques, en HTTPS,
+# ou par les ports de la machine.
+smoke_ok() {
   local console stream
-  if [[ $tls == internal ]]; then
-    # Les navigateurs, et curl, refusent le certificat de Caddy : le contrôle
-    # passe par les ports de la machine.
+  if [[ $tls == internal || -z $domain ]]; then
+    # Les navigateurs, et curl, refusent le certificat de Caddy ; une station
+    # sans domaine n'a que ses ports.
     console=http://127.0.0.1:$(env_value CONSOLE_PORT 30126)
     stream=http://127.0.0.1:$(env_value ICECAST_PORT 18000)/$MOUNT
   else
     console=https://$domain
     stream=https://$domain/$MOUNT
   fi
-  (cd "$dir" && SMOKE_WAIT=${SMOKE_WAIT:-300} scripts/smoke.sh "$console" "$stream") ||
+  (cd "$dir" && SMOKE_WAIT=${SMOKE_WAIT:-300} scripts/smoke.sh "$console" "$stream")
+}
+
+smoke() {
+  smoke_ok ||
     die "" "Le contrôle de la station a échoué : voir plus haut. Une fois réglé, relancer station install, qui reprend où il en était."
 }
 
@@ -754,7 +956,24 @@ admin_password() {
 }
 
 cleanup() {
+  # Ce qui reste à défaire va jusqu'au bout : ni une erreur, ni un message qui
+  # ne s'écrit plus (terminal fermé, | tee arrêté), ni un second Ctrl-C ne
+  # l'arrêtent.
+  set +e
+  trap '' INT TERM HUP PIPE
   [[ -z ${probe_started:-} ]] || docker rm -f "$PROBE" >/dev/null 2>&1 || true
+  if [[ -n ${caddy_stopped:-} ]]; then
+    (cd "$caddy_stopped" && docker compose up -d caddy >/dev/null 2>&1) ||
+      warn "Caddy ne repart pas : cd $caddy_stopped && docker compose up -d caddy."
+  fi
+  [[ -z ${partial:-} ]] || rm -f "$partial"
+  if [[ -n ${station_stopped:-} ]]; then
+    restore_undo
+  fi
+  local path
+  for path in "${prepared[@]}"; do
+    rm -rf "$path"
+  done
   [[ -z ${work:-} ]] || rm -rf "$work"
 }
 
@@ -795,7 +1014,7 @@ cmd_install() {
       --yes) assume_yes=1 ;;
       --no-domain-check) domain_check="" ;;
       -h | --help)
-        usage
+        usage_install
         return 0
         ;;
       *) usage_error "Option inconnue : $option." ;;
@@ -817,6 +1036,7 @@ cmd_install() {
 
   say "BUTTON : installation de la station, dans $dir."
   check_machine
+  lock_station install
   check_acl
   check_docker
   # Le reste d'une vérification du domaine interrompue tiendrait le port 80.
@@ -917,7 +1137,7 @@ cmd_install() {
   elif [[ -z $domain_check ]]; then
     warn "le domaine n'est pas vérifié (--no-domain-check). S'il ne mène pas ici, Let's Encrypt le refusera un moment."
   else
-    check_domain_here
+    check_domain_here "$work/files/compose.yml"
   fi
 
   make_station_dir
@@ -1019,12 +1239,1242 @@ default_dir() {
   printf '%s\n' "$DEFAULT_DIR"
 }
 
+# --- Exploiter la station ---
+
+# Les options d'une commande : un drapeau connu, ou une option connue suivie
+# de sa valeur, --nom VALEUR ou --nom=VALEUR. Elles vont dans le tableau
+# associatif opts de la commande, les autres arguments dans args.
+parse_options() { # "drapeaux…", "options à valeur…", arguments…
+  local flags=" $1 " valued=" $2 " option
+  shift 2
+  while (($#)); do
+    option=$1
+    shift
+    case $option in
+      --*=*)
+        [[ $valued == *" ${option%%=*} "* ]] || usage_error "Option inconnue : ${option%%=*}."
+        opts[${option%%=*}]=${option#*=}
+        ;;
+      -*)
+        if [[ $flags == *" $option "* ]]; then
+          opts[$option]=1
+        elif [[ $valued == *" $option "* ]]; then
+          (($#)) || usage_error "$option attend une valeur."
+          opts[$option]=$1
+          shift
+        else
+          usage_error "Option inconnue : $option."
+        fi
+        ;;
+      *) args+=("$option") ;;
+    esac
+  done
+}
+
+help_asked() { [[ -n ${opts[-h]:-}${opts[--help]:-} ]]; }
+
+# Le dossier de la station d'une commande : --dir, sinon default_dir.
+station_dir() { # --dir donné, ou rien
+  [[ -z $1 || $1 == /* ]] || usage_error "--dir attend un chemin absolu, comme /opt/button."
+  dir=${1:-$(default_dir)}
+  dir=${dir%/}
+  env_file=$dir/.env
+}
+
+need_root() { # commande
+  [[ $(id -u) == 0 ]] ||
+    die "station $1 demande les droits root." "Relancer avec sudo : sudo station $1."
+}
+
+need_station() { # commande
+  local missing=""
+  [[ -f $dir/compose.yml ]] || missing="$missing compose.yml"
+  [[ -f $env_file ]] || missing="$missing .env"
+  [[ -z $missing ]] ||
+    die "Pas de station dans $dir : il y manque$missing." \
+      "L'installer, ou la réparer : station install. Une station ailleurs : station $1 --dir DOSSIER."
+}
+
+# Le début de chaque commande : son dossier, root, sa station, puis .env seul
+# règle docker compose.
+open_station() { # commande, --dir donné, ou rien
+  station_dir "$2"
+  need_root "$1"
+  need_station "$1"
+  env_isolate
+}
+
+# Une commande qui change la station la prend pour elle seule : une
+# restauration, une réparation par install et une mise à jour (MAJ-04) ne se
+# croisent pas. Le verrou tombe avec la commande.
+lock_station() { # commande
+  mkdir -p "${LOCK%/*}"
+  exec 9>>"$LOCK"
+  flock -n 9 ||
+    die "Une autre commande station tourne déjà sur cette machine." "Attendre qu'elle finisse, puis relancer station $1."
+}
+
+# La version de la station : celle que .env épingle, sinon celle du dossier.
+installed_version() {
+  local version
+  version=$(env_value BUTTON_VERSION)
+  if [[ -z $version && -f $dir/VERSION ]]; then
+    version=$(<"$dir/VERSION")
+  fi
+  printf '%s\n' "${version:-inconnue}"
+}
+
+# Une taille en Ko, lisible : 850 Ko, 12 Mo, 3,4 Go.
+human_kb() {
+  awk -v kb="$1" 'BEGIN {
+    if (kb < 1024) { printf "%d Ko\n", kb; exit }
+    if (kb < 1048576) { printf "%d Mo\n", kb / 1024; exit }
+    size = sprintf(kb < 10485760 ? "%.1f" : "%d", kb / 1048576)
+    sub(/\./, ",", size)
+    print size " Go"
+  }'
+}
+
+# Une heure, à celle de la station (TZ de .env) : 10/11/2026 à 13:00.
+station_date() { # secondes depuis 1970
+  TZ=$(env_value TZ Europe/Paris) date -d "@$1" '+%d/%m/%Y à %H:%M'
+}
+
+# Le temps passé depuis, en mots : 12 min, 5 h, 3 jours.
+since() { # secondes depuis 1970
+  local seconds=$(($(date +%s) - $1))
+  if ((seconds < 3600)); then
+    echo "$((seconds < 60 ? 1 : seconds / 60)) min"
+  elif ((seconds < 2 * 86400)); then
+    echo "$((seconds / 3600)) h"
+  else
+    echo "$((seconds / 86400)) jours"
+  fi
+}
+
+# La place libre et la taille, en Ko, et le point de montage, là où vit ce
+# chemin, ou son plus proche parent.
+df_line() { # chemin
+  df -Pk "$(existing_parent "$1")" 2>/dev/null | awk 'NR == 2 { print $4, $2, $6 }'
+}
+
+mount_of() { # chemin
+  local line
+  line=$(df_line "$1")
+  printf '%s\n' "${line##* }"
+}
+
+# Assez de place, là où vit ce chemin, pour y écrire tant de Ko, et la marge ?
+space_for() { # chemin, Ko, que faire sinon
+  local line free need=$(($2 + SPACE_MARGIN_KB))
+  line=$(df_line "$1")
+  free=${line%% *}
+  [[ $free =~ ^[0-9]+$ ]] || return 0
+  ((free >= need)) ||
+    die "Pas assez de place pour $1 : $(human_kb "$free") libres, il en faut $(human_kb "$need")." "$3"
+}
+
+# La taille de ces chemins, en Ko, 0 pour un chemin absent. Un fichier qui
+# bouge pendant le calcul, déposé ou rangé, ne l'arrête pas.
+size_kb() { # chemin…
+  local kb
+  kb=$(du -skc "$@" 2>/dev/null | tail -n 1 | cut -f1) || true
+  [[ $kb =~ ^[0-9]+$ ]] || kb=0
+  printf '%s\n' "$kb"
+}
+
+# Le dossier réel, au bout d'un lien symbolique : celui que tar lit, et que
+# restore remplace.
+real_path() { # chemin
+  readlink -f "$1" 2>/dev/null || printf '%s\n' "$1"
+}
+
+# Un point de montage ne se déplace pas, ni ne se remplace par un dossier.
+mounted() { # chemin
+  command -v mountpoint >/dev/null 2>&1 && mountpoint -q "$1"
+}
+
+# Le nom de la banque de sons dans une archive : celui de son dossier, sans
+# barre oblique ni tiret en tête, et pas celui d'un autre fichier de l'archive.
+media_name_ok() { # nom
+  local member
+  [[ -n $1 && $1 != */* && $1 != -* && $1 != . && $1 != .. && $1 != *$'\n'* ]] || return 1
+  for member in SHA256SUMS "${BACKUP_FILES[@]}"; do
+    [[ $1 != "$member" ]] || return 1
+  done
+}
+
+# Tous les profils de compose.yml, en options, dans le tableau profiles de
+# l'appelant : un conteneur de share ou de cloud lancé à part compte aussi.
+all_profiles() {
+  local profile
+  profiles=()
+  while IFS= read -r profile; do
+    [[ -z $profile ]] || profiles+=(--profile "$profile")
+  done < <(compose config --profiles 2>/dev/null)
+}
+
+# Oui ou non, au clavier ; --yes répond oui. Sans terminal ni --yes, la
+# commande ne se fait pas.
+confirm() { # commande, question
+  [[ -z $assume_yes ]] || return 0
+  interactive ||
+    die "Sans terminal, station $1 attend --yes pour se faire." "Relancer avec --yes, une fois sûr."
+  local answer
+  answer=$(ask "$2" n check_yes_no)
+  [[ ${answer,,} == [oy]* ]] || die "" "$aborted"
+}
+
+# Un mot à taper, pour ce qui ne se défait pas ; --yes le tape.
+confirm_word() { # commande, mot, question
+  [[ -z $assume_yes ]] || return 0
+  interactive ||
+    die "Sans terminal, station $1 attend --yes pour se faire." "Relancer avec --yes, une fois sûr."
+  local answer
+  printf '  %s ' "$3" >&2
+  IFS= read -r answer || die "" "$aborted"
+  [[ $(trim "$answer") == "$2" ]] || die "" "$aborted"
+}
+
+# Un programme dans l'image du moteur, avec ses données : un conteneur de
+# radiotomate-init, en root, qui ne démarre rien d'autre, que la station tourne
+# ou non. L'image a bash, tar et Python : l'hôte n'a besoin ni de sqlite3, ni de
+# Python. Ce qu'il écrit sur sa sortie d'erreur ne s'affiche que s'il échoue.
+engine_run() { # options de docker compose run…
+  compose run --rm --no-deps -T "$@" 2>"$work/moteur.log" || {
+    cat "$work/moteur.log" >&2
+    return 1
+  }
+}
+
+# backup-radiotomate.sh, dans l'image du moteur : la base, copiée sans couper
+# l'antenne, radiotomate.yaml et le reste de RT_DATA, avec leurs sommes. Sa
+# copie de travail va dans le dossier donné, pas dans le /tmp du conteneur.
+engine_backup() { # dossier où écrire radiotomate.tar.gz, dossier de travail
+  engine_run -v "$dir/scripts/backup-radiotomate.sh:/backup-radiotomate.sh:ro" -v "$1:/sauvegarde" \
+    -v "$2:/travail" -e TMPDIR=/travail \
+    --entrypoint bash radiotomate-init /backup-radiotomate.sh /data /sauvegarde/radiotomate.tar.gz >/dev/null
+}
+
+# restore-radiotomate.sh, dans l'image du moteur : l'archive de la base, ses
+# sommes et la base vérifiées, dans un dossier vide.
+engine_restore() { # radiotomate.tar.gz, dossier vide, dossier de travail
+  engine_run -v "$dir/scripts/restore-radiotomate.sh:/restore-radiotomate.sh:ro" \
+    -v "$1:/sauvegarde.tar.gz:ro" -v "$2:/cible" -v "$3:/travail" -e TMPDIR=/travail \
+    --entrypoint bash radiotomate-init /restore-radiotomate.sh /sauvegarde.tar.gz /cible >/dev/null
+}
+
+# La version du schéma de la base en place, puis celle de la base d'un dossier.
+engine_schemas() { # dossier
+  engine_run -v "$1:/cible" --entrypoint python3 radiotomate-init - <<'PY'
+# schémas : la version de la base en place, puis celle de la base remise.
+import sqlite3
+from contextlib import closing
+
+for path in ("/data/radiotomate.db", "/cible/radiotomate.db"):
+    with closing(sqlite3.connect(path)) as con:
+        row = con.execute("select value from settings where key = 'SCHEMA_VERSION'").fetchone()
+    print(row[0] if row else "")
+PY
+}
+
+# Les adresses publiques des réglages Station qui suivaient l'ancien domaine
+# passent au nouveau. Celles qu'un admin a changées dans la console restent.
+# Elles se forment comme dans station_settings. Écrit les clés changées.
+engine_domain_settings() { # ancien domaine, nouveau
+  engine_run -e "BUTTON_OLD=$1" -e "BUTTON_NEW=$2" -e "BUTTON_MOUNT=$MOUNT" \
+    --entrypoint python3 radiotomate-init - <<'PY'
+# domaine : les adresses publiques des réglages Station, de l'ancien au nouveau.
+import os
+import sqlite3
+from contextlib import closing
+
+old, new = os.environ["BUTTON_OLD"], os.environ["BUTTON_NEW"]
+addresses = {
+    "station.public_stream_url": "https://{}/" + os.environ["BUTTON_MOUNT"],
+    "station.now_url": "https://{}/now.json",
+    "station.status_url": "https://{}/status-json.xsl",
+    "station.harbor_host": "{}",
+}
+with closing(sqlite3.connect("/data/radiotomate.db", timeout=30)) as con, con:
+    for key, address in addresses.items():
+        changed = con.execute(
+            "update settings set value = ? where key = ? and value = ?",
+            (address.format(new), key, address.format(old)),
+        ).rowcount
+        if changed:
+            print(key)
+PY
+}
+
+# --- status ---
+
+cmd_status() {
+  local dir="" env_file="" domain healthy=1
+  local -A opts=()
+  local args=()
+  parse_options "-h --help" "--dir" "$@"
+  if help_asked; then
+    usage_command status
+    return 0
+  fi
+  ((${#args[@]} == 0)) || usage_error "Argument inattendu : ${args[0]}."
+  open_station status "${opts[--dir]:-}"
+  domain=$(env_value DOMAIN)
+  say "Station : $dir${domain:+, https://$domain}"
+  journal_report || healthy=""
+  version_report
+  updates_report
+  services_report || healthy=""
+  disk_report
+  next_live_report
+  backup_report
+  [[ -n $healthy ]]
+}
+
+# Une restauration coupée en plein échange, par un arrêt de la machine.
+journal_report() {
+  [[ -f $dir/$JOURNAL ]] || return 0
+  warn "une restauration ne s'est pas finie. $dir/$JOURNAL dit, ligne à ligne, le dossier en place, celui d'avant, mis à côté, et celui de la sauvegarde :"
+  grep -v '^#' "$dir/$JOURNAL" | sed 's/^/  /' >&2
+  say "  Pour revenir à la station d'avant : cd $dir && docker compose stop, remettre chaque dossier d'avant à sa place, effacer $JOURNAL, puis docker compose up -d. Ou relancer station restore."
+  return 1
+}
+
+version_report() {
+  local installed latest
+  installed=$(installed_version)
+  latest=$(latest_version 5 2>/dev/null) || latest=""
+  if [[ -z $latest ]]; then
+    say "Version : $installed. La plus haute publiée ne se lit pas : GitHub ne répond pas."
+  elif [[ $latest == "$installed" ]]; then
+    say "Version : $installed, la plus haute publiée."
+  else
+    say "Version : $installed ; la plus haute publiée : $latest, https://github.com/$REPO/releases"
+  fi
+}
+
+# Les mises à jour, comme install les note : automatiques seulement avec
+# BUTTON_UPDATES=auto, ou sans la ligne.
+updates_label() {
+  local time
+  if [[ $(env_value BUTTON_UPDATES auto) == auto ]]; then
+    time=$(env_value BUTTON_UPDATE_TIME)
+    printf 'automatiques, à %s (%s)\n' "${time:-$UPDATE_TIME}" "$(env_value TZ Europe/Paris)"
+  else
+    printf 'à la main\n'
+  fi
+}
+
+updates_report() {
+  say "Mises à jour : $(updates_label), dès que la commande update existera."
+  if [[ -f $dir/HOLD ]]; then
+    say "  Bloquées, par $dir/HOLD :"
+    sed 's/^/    /' "$dir/HOLD"
+  fi
+}
+
+# Chaque service attendu, avec son état. Échoue si l'un ne va pas.
+services_report() {
+  local services states service line state health code label bad=""
+  services=$(compose config --services 2>/dev/null | sort) || services=""
+  states=$(compose ps -a --format '{{.Name}}|{{.Service}}|{{.State}}|{{.Health}}|{{.ExitCode}}' 2>/dev/null) || states=""
+  if [[ -z $services ]]; then
+    say "Services : la liste ne se lit pas. Voir pourquoi : cd $dir && docker compose config."
+    return 1
+  fi
+  say "Services :"
+  while IFS= read -r service; do
+    # Le conteneur du service, pas celui d'un docker compose run.
+    line=$(awk -F '|' -v service="$service" '$2 == service && $1 !~ /-run-/ { print; exit }' <<<"$states")
+    IFS='|' read -r _ _ state health code <<<"$line"
+    case $state/$health in
+      running/healthy) label="sain" ;;
+      running/) label="en marche" ;;
+      running/starting) label="démarre" ;;
+      running/unhealthy) label="en panne : son contrôle de santé échoue" ;;
+      restarting/*) label="redémarre sans cesse" ;;
+      exited/*)
+        label="arrêté, code $code"
+        [[ $service != radiotomate-init || $code != 0 ]] || label="fait"
+        ;;
+      /) label="absent : pas de conteneur" ;;
+      *) label=$state ;;
+    esac
+    case $label in
+      sain | "en marche" | fait) ;;
+      *) bad="$bad${bad:+,} $service" ;;
+    esac
+    printf '  %-22s %s\n' "$service" "$label"
+  done <<<"$services"
+  [[ -n $bad ]] || return 0
+  if [[ -z $states ]]; then
+    say "  La station ne tourne pas. La démarrer : cd $dir && docker compose up -d."
+  else
+    say "  Ne vont pas :$bad. Leur journal : station logs SERVICE."
+  fi
+  return 1
+}
+
+disk_report() {
+  local path line free total mount seen=" "
+  for path in "$dir" "$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo /var/lib/docker)"; do
+    line=$(df_line "$path")
+    read -r free total mount <<<"$line"
+    if [[ ! $free =~ ^[0-9]+$ || ! $total =~ ^[0-9]+$ ]]; then
+      say "Disque : la place de $path ne se lit pas."
+      continue
+    fi
+    [[ $seen != *" $mount "* ]] || continue
+    seen="$seen$mount "
+    say "Disque : $(human_kb "$free") libres sur $(human_kb "$total"), sur $mount$([[ $path == "$dir" ]] || echo ', pour Docker')."
+    if ((free < MIN_FREE_GB * 1048576)); then
+      warn "moins de $MIN_FREE_GB Go libres sur $mount : en libérer, ou agrandir le disque."
+    fi
+  done
+}
+
+next_live_report() {
+  local live
+  if ! station_running radiotomate-interface; then
+    say "Prochain direct : inconnu, le moteur ne tourne pas."
+  elif live=$(compose exec -T radiotomate-interface radiotomate maintenance next-live </dev/null 2>/dev/null) && [[ -n $live ]]; then
+    say "Prochain direct : $live."
+  else
+    say "Prochain direct : inconnu, le moteur ne le dit pas : il ne répond pas, ou sa version n'a pas radiotomate maintenance next-live."
+  fi
+}
+
+backup_report() {
+  local line made archive size media
+  line=$(grep -v '^#' "$dir/backups.log" 2>/dev/null | tail -n 1) || line=""
+  IFS=$'\t' read -r made archive size media <<<"$line"
+  if [[ ! $made =~ ^[0-9]+$ || ! $size =~ ^[0-9]+$ ]]; then
+    say "Dernière sauvegarde : aucune. En faire une : station backup."
+    return
+  fi
+  say "Dernière sauvegarde : le $(station_date "$made"), il y a $(since "$made"), $(human_kb "$size")$([[ $media != 1 ]] || echo ', avec les sons') : $archive$([[ -f $archive ]] || echo ", qui n'y est plus")."
+}
+
+# --- logs ---
+
+cmd_logs() {
+  local dir="" env_file="" option tail=(--tail 200) args=()
+  while (($#)); do
+    option=$1
+    shift
+    case $option in
+      --dir=*) dir=${option#*=} ;;
+      --dir)
+        (($#)) || usage_error "--dir attend une valeur."
+        dir=$1
+        shift
+        ;;
+      -h | --help)
+        usage_command logs
+        return 0
+        ;;
+      -n | --tail | --tail=* | --since | --since=* | --until | --until=*)
+        tail=()
+        args+=("$option")
+        ;;
+      *) args+=("$option") ;;
+    esac
+  done
+  open_station logs "$dir"
+  compose logs "${tail[@]}" "${args[@]}"
+}
+
+# --- backup ---
+
+cmd_backup() {
+  local dir="" env_file="" archive
+  local -A opts=()
+  local args=()
+  parse_options "--with-media -h --help" "--dir" "$@"
+  if help_asked; then
+    usage_command backup
+    return 0
+  fi
+  ((${#args[@]} <= 1)) || usage_error "Argument inattendu : ${args[1]}. Une seule archive."
+  open_station backup "${opts[--dir]:-}"
+  lock_station backup
+  trap cleanup EXIT
+  archive=${args[0]:-}
+  backup_target
+  backup_station "$archive" "${opts[--with-media]:-}"
+}
+
+# Où écrire l'archive : le fichier donné ; dans le dossier donné ; sinon dans
+# backups/, dans le dossier de la station. Son nom dit l'heure, en UTC. Une
+# sauvegarde ne s'écrit jamais par-dessus un fichier.
+backup_target() {
+  local name
+  name=button-$(date -u +%Y%m%dT%H%M%SZ).tar
+  if [[ -z $archive ]]; then
+    install -d -m 700 "$dir/backups"
+    archive=$dir/backups/$name
+  elif [[ -d $archive ]]; then
+    archive=${archive%/}/$name
+  fi
+  [[ $archive == /* ]] || archive=$PWD/$archive
+  [[ -d ${archive%/*} ]] ||
+    die "Le dossier ${archive%/*} n'existe pas." "Le créer, ou donner un autre chemin à station backup."
+  [[ ! -e $archive && ! -e $archive.part ]] ||
+    die "$archive existe déjà : une sauvegarde ne s'écrit jamais par-dessus un fichier." "Donner un autre nom, ou un dossier."
+}
+
+# La sauvegarde de la station, dans archive, en droits 600 : de quoi la
+# remettre, ici ou sur une autre machine, par station restore, même d'une
+# version plus récente. L'antenne continue. Une ligne de backups.log la note.
+# La commande update (MAJ-04) la fera avant chaque mise à jour. Tout s'écrit
+# à côté de l'archive : son disque est le seul dont la place compte.
+backup_station() { # archive, avec les sons (1) ou non
+  local archive=$1 with_media=$2 stage data caddy media="" data_kb caddy_kb media_kb=0 size_kb
+  data=$(env_path RT_DATA ./data/radiotomate)
+  caddy=$(env_path CADDY_DATA ./data/caddy)
+  [[ -f $data/radiotomate.db ]] ||
+    die "La station n'a pas de base : $data/radiotomate.db manque." \
+      "Finir l'installation : station install. Ou vérifier RT_DATA, dans $env_file."
+  [[ -f $dir/scripts/backup-radiotomate.sh ]] ||
+    die "$dir/scripts/backup-radiotomate.sh manque." "station install le remet. Puis relancer."
+  if [[ -n $with_media ]]; then
+    # La banque elle-même, au bout d'un lien : tar ne suit pas un lien.
+    media=$(real_path "$(env_path BUTTON_MEDIA ./media)")
+    [[ -d $media ]] || die "La banque de sons, $media, n'existe pas." "Vérifier BUTTON_MEDIA, dans $env_file."
+    media_name_ok "${media##*/}" ||
+      die "La banque de sons, $media, ne peut pas entrer dans une archive sous ce nom." \
+        "La renommer, et BUTTON_MEDIA avec elle, dans $env_file : sans tiret en tête, et pas MANIFEST, SHA256SUMS, radiotomate.tar.gz, env ni caddy.tar.gz."
+    media_kb=$(size_kb "$media")
+  fi
+  # Au plus : RT_DATA hors des copies de la base, deux fois, le temps de le
+  # copier puis de le compresser ; Caddy ; les sons.
+  data_kb=$(($(size_kb "$data") - $(size_kb "$data/backups")))
+  caddy_kb=$(size_kb "$caddy")
+  space_for "${archive%/*}" $((2 * data_kb + caddy_kb + media_kb)) \
+    "Libérer de la place, ou écrire la sauvegarde ailleurs : station backup /un/autre/dossier."
+
+  work=$(mktemp -d "${archive%/*}/.station-XXXXXX")
+  stage=$work/sauvegarde
+  mkdir "$stage" "$work/tmp"
+  say "Sauvegarde : la base, sans couper l'antenne."
+  backup_stage "$stage" "$data_kb" "$media" "$media_kb"
+  backup_pack "$stage" "$archive" "$media"
+
+  size_kb=$(size_kb "$archive")
+  if [[ ! -f $dir/backups.log ]]; then
+    printf '%s\n' "# Les sauvegardes de station backup, une par ligne : l'heure, en secondes depuis 1970, l'archive, sa taille en Ko, et 1 si elle a les sons." \
+      >"$dir/backups.log"
+  fi
+  printf '%s\t%s\t%s\t%s\n' "$(date +%s)" "$archive" "$size_kb" "${with_media:-0}" >>"$dir/backups.log"
+  say "Sauvegarde : $archive, $(human_kb "$size_kb"), $([[ -n $media ]] && echo 'avec les sons' || echo 'sans les sons')." \
+    "  En droits 600, à root : elle porte les secrets de .env. En garder une copie hors de cette machine : voir docs/exploitation/sauvegarde.md."
+}
+
+# Ce qu'une sauvegarde porte, hors des sons, dans un dossier : MANIFEST, qui
+# dit son format, sa date, la version de la station, et le nom de la banque
+# de sons si elle y est ; SHA256SUMS, les sommes des autres fichiers ;
+# radiotomate.tar.gz, l'archive de backup-radiotomate.sh ; env, le .env de la
+# station, sans le mot de passe admin ; caddy.tar.gz, ses certificats et son
+# compte Let's Encrypt. Une sauvegarde hors de la machine (SAV-01) peut
+# envoyer ce dossier tel quel.
+backup_stage() { # dossier, taille de RT_DATA en Ko, banque de sons ou rien, sa taille
+  local stage=$1 caddy status=0
+  engine_backup "$stage" "$work/tmp" ||
+    die "La base ne se sauvegarde pas : voir le message plus haut." "Voir l'état de la station, station status, puis relancer."
+  # Le mot de passe admin ne s'écrit que dans .env, jusqu'à son affichage.
+  install -m 600 /dev/null "$stage/env"
+  sed 's/^RT_ADMIN_PASSWORD=.*/RT_ADMIN_PASSWORD=/' "$env_file" >"$stage/env"
+  caddy=$(env_path CADDY_DATA ./data/caddy)
+  if [[ ! -d $caddy ]]; then
+    caddy=$work/vide
+    mkdir "$caddy"
+  fi
+  # 1 : le tar de GNU a vu un fichier changer, un verrou de Caddy par exemple.
+  tar -czf "$stage/caddy.tar.gz" -C "$caddy" . || status=$?
+  ((status <= 1)) ||
+    die "Les certificats de Caddy ne se copient pas : voir le message de tar plus haut." "Vérifier $caddy et la place, puis relancer."
+  cat >"$stage/MANIFEST" <<EOF
+# Une sauvegarde de station BUTTON, faite par station backup : station restore
+# la remet. Les sommes de ses fichiers sont dans SHA256SUMS, sauf celles des sons.
+format=$BACKUP_FORMAT
+date=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+time=$(date +%s)
+version=$(installed_version)
+data_kb=$2
+media=${3##*/}
+media_kb=$4
+EOF
+  (cd "$stage" && sha256sum "${BACKUP_FILES[@]}" >SHA256SUMS)
+}
+
+# L'archive : MANIFEST, SHA256SUMS, les autres fichiers, puis les sons. Une
+# tar sans compression : ses fichiers le sont déjà, les sons aussi, et
+# restore lit MANIFEST sans lire le reste. Elle naît vide, en 600, avant d'y
+# écrire : une ACL par défaut sur le dossier passe outre le umask, mais pas
+# le mode donné à la création.
+backup_pack() { # dossier, archive, banque de sons ou rien
+  local stage=$1 archive=$2 media=$3 parent status=0 members=()
+  members=(-C "$stage" MANIFEST SHA256SUMS "${BACKUP_FILES[@]:1}")
+  if [[ -n $media ]]; then
+    parent=${media%/*}
+    members+=(-C "${parent:-/}" "${media##*/}")
+  fi
+  partial=$archive.part
+  install -m 600 /dev/null "$partial"
+  say "Sauvegarde : l'archive$([[ -z $media ]] || echo ', avec les sons'), dans ${archive%/*}."
+  tar -cf - "${members[@]}" >"$partial" || status=$?
+  if ((status == 1)) && [[ -n $media ]]; then
+    # Le tar de GNU : des fichiers ont changé pendant qu'il les lisait.
+    warn "des sons ont changé pendant la sauvegarde, déposés ou rangés : elle les a tels que tar les a lus."
+  elif ((status != 0)); then
+    die "L'archive ne s'écrit pas : voir le message de tar plus haut." "Vérifier la place, et le dossier ${archive%/*}. Puis relancer."
+  fi
+  mv -f "$partial" "$archive"
+  partial=""
+}
+
+# --- restore ---
+
+cmd_restore() {
+  local dir="" env_file="" archive assume_yes="" aborted="Rien n'est changé."
+  local -A opts=()
+  local args=()
+  parse_options "--yes --without-media -h --help" "--dir" "$@"
+  if help_asked; then
+    usage_command restore
+    return 0
+  fi
+  ((${#args[@]} == 1)) || usage_error "station restore attend une archive, et une seule : station restore ARCHIVE."
+  archive=${args[0]}
+  [[ $archive == /* ]] || archive=$PWD/$archive
+  assume_yes=${opts[--yes]:-}
+  open_station restore "${opts[--dir]:-}"
+  [[ -f $archive && -r $archive ]] ||
+    die "$archive n'existe pas, ou ne se lit pas." "Donner le chemin d'une archive de station backup."
+  lock_station restore
+  trap cleanup EXIT
+  restore_station "$archive" "${opts[--without-media]:-}"
+}
+
+# Une valeur du MANIFEST de la sauvegarde.
+manifest_value() { # clé
+  sed -n "s/^$1=//p" "$work/sauvegarde/MANIFEST" | tail -n 1
+}
+
+# Un nombre du MANIFEST, 0 s'il n'en est pas un : rien d'autre d'une archive
+# ne se calcule.
+manifest_number() { # clé
+  local value
+  value=$(manifest_value "$1")
+  [[ $value =~ ^[0-9]{1,15}$ ]] || value=0
+  printf '%s\n' "$value"
+}
+
+# Une valeur, ou une variable posée, dans un autre .env que celui de la station.
+env_value_in() { # .env, clé, défaut
+  local env_file=$1
+  shift
+  env_value "$@"
+}
+
+env_set_in() { # .env, clé, valeur, commande
+  local env_file=$1
+  shift
+  env_set "$@"
+}
+
+# Ouvre la sauvegarde dans un dossier : MANIFEST et SHA256SUMS d'abord, au
+# début de l'archive, puis les fichiers que SHA256SUMS nomme, vérifiés. Le
+# format se lit avant le reste : une archive d'un format plus ancien se lit
+# aussi. Les sons restent dans l'archive.
+restore_unpack() { # archive, dossier
+  local archive=$1 in=$2 format name listed=()
+  tar -xf "$archive" -C "$in" --occurrence MANIFEST SHA256SUMS 2>"$work/tar.log" ||
+    die "$archive n'est pas une sauvegarde de station, ou elle est abîmée : $(head -n 1 "$work/tar.log")" \
+      "Prendre une archive faite par station backup."
+  format=$(manifest_value format)
+  [[ $format =~ ^[0-9]+$ ]] ||
+    die "$archive n'a pas de MANIFEST lisible : ce n'est pas une sauvegarde de station." "Prendre une archive faite par station backup."
+  ((format <= BACKUP_FORMAT)) ||
+    die "Cette sauvegarde est au format $format, plus récent que celui de cette commande, $BACKUP_FORMAT." \
+      "Prendre la commande station de la version de la sauvegarde, ou d'une plus récente, puis relancer."
+  while read -r _ name; do
+    [[ $name =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] ||
+      die "La sauvegarde est abîmée : SHA256SUMS nomme « $name »." "En prendre une autre."
+    listed+=("$name")
+  done <"$in/SHA256SUMS"
+  tar -xf "$archive" -C "$in" --occurrence "${listed[@]}" 2>"$work/tar.log" ||
+    die "La sauvegarde est abîmée : $(head -n 1 "$work/tar.log")" "En prendre une autre."
+  (cd "$in" && sha256sum -c SHA256SUMS >/dev/null 2>&1) ||
+    die "La sauvegarde est abîmée : un de ses fichiers ne correspond pas à sa somme, dans SHA256SUMS." "En prendre une autre."
+  for name in "${BACKUP_FILES[@]}"; do
+    [[ -f $in/$name ]] || die "La sauvegarde est abîmée : il y manque $name." "En prendre une autre."
+  done
+}
+
+# Une variable de .env qui va avec la base : celle de la sauvegarde, à la
+# place de celle de cette machine, si son contrôle la prend.
+restore_env_value() { # clé, défaut, contrôle ou rien
+  local value
+  value=$(env_value_in "$in/env" "$1" "$2")
+  [[ $value != "$(env_value_in "$new_env" "$1" "$2")" ]] || return 0
+  if [[ -n $3 ]] && ! "$3" "$value" 2>/dev/null; then
+    warn "$1 de la sauvegarde, « $value », ne vaut pas sur cette machine : .env garde le sien."
+    return 0
+  fi
+  env_set_in "$new_env" "$1" "$value" restore
+  [[ $1 == RT_ADMIN_PASSWORD ]] || taken="$taken${taken:+,} $1=$value"
+}
+
+# Remet une sauvegarde de station backup. Tout se prépare à côté, pendant que
+# l'antenne continue : la base vérifiée, Caddy, les sons, .env. Puis la
+# station s'arrête, chacun prend la place du sien, et elle repart. Si elle ne
+# repart pas, cleanup remet celle d'avant (restore_undo).
+restore_station() { # archive, sans les sons (1) ou non
+  local archive=$1 without_media=$2 in stamp version saved_at media media_kb data_kb path
+  local data caddy media_dir new_data new_caddy="" new_media="" new_env schemas current restored
+  local listing saved_domain differs="" taken="" key domain tls entry aside keys="" profiles=()
+  stamp=$(date -u +%Y%m%dT%H%M%SZ)
+  # Les dossiers réels, au bout d'un lien.
+  data=$(real_path "$(env_path RT_DATA ./data/radiotomate)")
+  caddy=$(real_path "$(env_path CADDY_DATA ./data/caddy)")
+  media_dir=$(real_path "$(env_path BUTTON_MEDIA ./media)")
+  [[ -f $data/radiotomate.db ]] ||
+    die "La station de $dir n'a pas encore de base : $data/radiotomate.db manque." \
+      "Finir l'installation, station install, puis relancer la restauration."
+  [[ -f $dir/scripts/restore-radiotomate.sh ]] ||
+    die "$dir/scripts/restore-radiotomate.sh manque." "station install le remet. Puis relancer."
+  # Le travail, sur le disque des données : la base s'y ouvre.
+  work=$(mktemp -d "${data%/*}/.station-XXXXXX")
+  in=$work/sauvegarde
+  mkdir "$in" "$work/tmp"
+  say "Restauration : lecture de $archive."
+  restore_unpack "$archive" "$in"
+  version=$(manifest_value version)
+  saved_at=$(manifest_number time)
+  media=$(manifest_value media)
+  media_kb=$(manifest_number media_kb)
+  data_kb=$(manifest_number data_kb)
+  [[ -z $media ]] || media_name_ok "$media" ||
+    die "Le MANIFEST de la sauvegarde nomme mal la banque de sons : « $media »." "En prendre une autre."
+  if [[ -n $media && -n $without_media ]]; then
+    say "Restauration : sans les sons de la sauvegarde (--without-media), la banque en place reste."
+    media=""
+  fi
+  # Un point de montage ne se déplace pas : restore ne le remplace pas.
+  for path in "$data" "$caddy"; do
+    if mounted "$path"; then
+      die "$path est un point de montage : restore ne sait pas le remplacer. Rien n'a changé." \
+        "Restaurer à la main, avec les scripts : voir docs/exploitation/sauvegarde.md, « Avec les scripts »."
+    fi
+  done
+  if [[ -n $media ]] && mounted "$media_dir"; then
+    die "La banque de sons, $media_dir, est un point de montage : restore ne sait pas la remplacer. Rien n'a changé." \
+      "Restaurer sans les sons, station restore --without-media, puis y remettre ceux de la sauvegarde : tar -xf ARCHIVE -C $media_dir --strip-components=1 $media."
+  fi
+  say "Sauvegarde du $(station_date "$saved_at"), d'une station en version ${version:-inconnue}$([[ -z $media ]] || echo ', avec ses sons')."
+  confirm restore "Remplacer les données de la station de $dir par celles de la sauvegarde ? Celles d'aujourd'hui restent à côté, et l'antenne se coupe le temps de redémarrer. (o/n)"
+  # La place : la base deux fois à côté de la sienne, le temps de la vérifier ;
+  # les sons à côté de la banque.
+  if [[ -n $media && $(mount_of "$data") == "$(mount_of "$media_dir")" ]]; then
+    space_for "$data" $((2 * data_kb + media_kb)) "Libérer de la place, ou agrandir le disque. Puis relancer."
+  else
+    space_for "$data" $((2 * data_kb)) "Libérer de la place, ou agrandir le disque. Puis relancer."
+    [[ -z $media ]] || space_for "$media_dir" "$media_kb" "Libérer de la place, ou agrandir le disque. Puis relancer."
+  fi
+
+  # La base, vérifiée, à côté de celle en place, sur le même disque.
+  new_data=$data.restauration-$stamp
+  prepared+=("$new_data")
+  mkdir "$new_data"
+  say "Restauration : la base de la sauvegarde, vérifiée, à côté de celle en place."
+  engine_restore "$in/radiotomate.tar.gz" "$new_data" "$work/tmp" ||
+    die "La base de la sauvegarde ne se remet pas : voir le message plus haut. Rien n'a changé." "En prendre une autre."
+  schemas=$(engine_schemas "$new_data") ||
+    die "La version du schéma des bases ne se lit pas : voir le message plus haut. Rien n'a changé." "Voir l'état de la station : station status."
+  current=$(sed -n 1p <<<"$schemas")
+  restored=$(sed -n 2p <<<"$schemas")
+  [[ $current =~ ^[0-9]+$ && $restored =~ ^[0-9]+$ ]] ||
+    die "La version du schéma des bases ne se lit pas : « $current », « $restored ». Rien n'a changé." "Voir l'état de la station : station status."
+  ((restored <= current)) ||
+    die "La sauvegarde vient de la version ${version:-inconnue} : sa base est au schéma v$restored, que cette station, en $(installed_version), ne sait pas lire. Rien n'a changé." \
+      "La remettre sur une station de la même version, ou d'une plus récente : sur une machine neuve, station install --version ${version:-X.Y.Z}."
+
+  # Caddy : ses certificats et son compte, s'il y en a.
+  listing=$(tar -tzf "$in/caddy.tar.gz") ||
+    die "Les certificats de Caddy de la sauvegarde ne se lisent pas. Rien n'a changé." "En prendre une autre."
+  if grep -qvE '^\./?$' <<<"$listing"; then
+    new_caddy=$caddy.restauration-$stamp
+    prepared+=("$new_caddy")
+    mkdir "$new_caddy"
+    tar -xzf "$in/caddy.tar.gz" -C "$new_caddy" ||
+      die "Les certificats de Caddy de la sauvegarde ne s'extraient pas : voir le message de tar plus haut. Rien n'a changé." "Vérifier la place, puis relancer."
+  fi
+  # Les sons, sous leur nom dans l'archive, à côté de la banque en place.
+  if [[ -n $media ]]; then
+    new_media=$media_dir.restauration-$stamp
+    prepared+=("$new_media")
+    mkdir "$new_media"
+    say "Restauration : les sons de la sauvegarde, $(human_kb "$media_kb"), à côté de la banque en place."
+    tar -xf "$archive" -C "$new_media" "$media" ||
+      die "Les sons de la sauvegarde ne s'extraient pas : voir le message de tar plus haut. Rien n'a changé." "Vérifier la place, puis relancer."
+  fi
+  # .env : celui de cette machine, sa version, son domaine, ses ports et ses
+  # secrets ; de la sauvegarde, le fuseau et le compte admin, qui vont avec la
+  # base. Les autres différences se disent.
+  new_env=$env_file.restauration-$stamp
+  prepared+=("$new_env")
+  install -m 600 /dev/null "$new_env"
+  cat "$env_file" >"$new_env"
+  restore_env_value TZ Europe/Paris check_timezone
+  restore_env_value RT_ADMIN_USER button check_admin
+  restore_env_value RT_ADMIN_PASSWORD "" ""
+  while IFS= read -r key; do
+    case $key in
+      TZ | RT_ADMIN_USER | RT_ADMIN_PASSWORD | BUTTON_VERSION | DOMAIN | *PASSWORD* | *SECRET* | *_KEY) continue ;;
+    esac
+    [[ $(env_value_in "$in/env" "$key") == "$(env_value_in "$new_env" "$key")" ]] || differs="$differs${differs:+,} $key"
+  done < <(sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' "$in/env" "$new_env" | sort -u)
+  saved_domain=$(env_value_in "$in/env" DOMAIN)
+
+  # Tous les profils s'arrêtent, share compris s'il est lancé à part : sinon,
+  # il garderait la banque mise de côté. Ceux qui tournaient repartent.
+  say "Restauration : la station s'arrête, le temps d'échanger les données."
+  all_profiles
+  mapfile -t restart_others < <(compose "${profiles[@]}" ps --services --status running 2>/dev/null)
+  station_stopped=$dir
+  printf '%s\n' "# station restore, le $(station_date "$(date +%s)") : pas finie, tant que ce fichier est là." \
+    "# Chaque ligne : le dossier en place|celui d'avant, mis à côté|celui de la sauvegarde." >"$dir/$JOURNAL"
+  compose "${profiles[@]}" stop ||
+    die "La station ne s'arrête pas : voir le message de docker compose plus haut." "Voir pourquoi, puis relancer la restauration."
+  swap "$data" "$new_data" "$stamp"
+  [[ -z $new_caddy ]] || swap "$caddy" "$new_caddy" "$stamp"
+  [[ -z $new_media ]] || swap "$media_dir" "$new_media/$media" "$stamp"
+  swap "$env_file" "$new_env" "$stamp"
+  env_isolate
+  domain=$(env_value DOMAIN)
+  # La station garde son domaine : les adresses publiques de la base qui
+  # suivaient celui de la sauvegarde passent au sien.
+  if [[ -n $saved_domain && -n $domain && $saved_domain != "$domain" ]]; then
+    keys=$(engine_domain_settings "$saved_domain" "$domain") ||
+      warn "les adresses de Réglages → Station ne suivent pas $domain : les changer dans la console."
+  fi
+  say "Restauration : la station repart, sur les données de la sauvegarde."
+  compose up -d ||
+    die "La station ne démarre pas sur la sauvegarde : voir le message de docker compose plus haut." \
+      "La restauration s'annule. Voir pourquoi : cd $dir && docker compose logs radiotomate-init."
+  restart_others_up ||
+    die "Les services lancés à part ne repartent pas : voir le message de docker compose plus haut." \
+      "La restauration s'annule. Voir pourquoi, puis relancer station restore."
+  tls=$(env_value CADDY_TLS acme)
+  if [[ -n $domain && ,$(env_value COMPOSE_PROFILES), == *,vps,* ]]; then
+    https_ok ||
+      die "https://$domain ne répond pas au bout de $HTTPS_WAIT s, sur la sauvegarde." \
+        "La restauration s'annule. Voir pourquoi : cd $dir && docker compose logs caddy."
+  fi
+  smoke_ok ||
+    die "Le contrôle de la station restaurée a échoué : voir plus haut." \
+      "La restauration s'annule. Une fois réglé, relancer station restore."
+  station_stopped=""
+  rm -f "$dir/$JOURNAL"
+
+  # Le .env d'avant garde à côté le mot de passe admin d'une installation qui
+  # ne l'a pas affiché : il ne sert plus, et ne s'écrit que dans .env.
+  aside=$env_file.avant-restauration-$stamp
+  if [[ -f $aside && -n $(env_value_in "$aside" RT_ADMIN_PASSWORD) ]]; then
+    env_set_in "$aside" RT_ADMIN_PASSWORD "" restore
+  fi
+  say "" "La station est restaurée : celle de la sauvegarde du $(station_date "$saved_at"), qui tourne ici en $(installed_version)."
+  if ((restored < current)); then
+    say "  Sa base, au schéma v$restored, est passée en v$current en démarrant. La copie d'avant est dans $data/backups."
+  fi
+  say "  Les comptes sont ceux de la sauvegarde : le mot de passe admin de cette installation ne sert plus."
+  [[ -z $taken ]] || say "  De la sauvegarde, dans .env :$taken."
+  if [[ -n $saved_domain && $saved_domain != "$domain" ]]; then
+    if [[ -n $keys ]]; then
+      say "  La sauvegarde servait $saved_domain : la station garde $domain, et les adresses de Réglages → Station qui suivaient $saved_domain passent à $domain."
+    else
+      say "  La sauvegarde servait $saved_domain : la station garde $domain. Vérifier les adresses de Réglages → Station, dans la console."
+    fi
+    say "  Pour reprendre $saved_domain : station config --domain $saved_domain."
+  fi
+  [[ -z $differs ]] ||
+    say "  Gardés de cette machine, autres dans la sauvegarde :$differs. Leurs valeurs : tar -xOf $archive --occurrence env."
+  say "  Les données d'avant restent à côté, à effacer une fois la station vérifiée :"
+  for entry in "${swapped[@]}"; do
+    aside=${entry#*|}
+    aside=${aside%%|*}
+    [[ ! -e $aside ]] || say "    $aside"
+  done
+  swapped=()
+}
+
+# Met new à la place de current, et current à côté, en
+# current.avant-restauration-<heure>. Chaque échange s'écrit d'abord dans le
+# journal ; restore_undo les défait.
+swap() { # en place, nouveau, heure
+  local aside=$1.avant-restauration-$3
+  printf '%s|%s|%s\n' "$1" "$aside" "$2" >>"$dir/$JOURNAL"
+  if [[ -e $1 ]]; then
+    mv "$1" "$aside" ||
+      die "$1 ne se met pas de côté : voir le message plus haut. La restauration s'annule." "Voir pourquoi, puis relancer station restore."
+  fi
+  swapped+=("$1|$aside|$2")
+  mv "$2" "$1" ||
+    die "$2 ne prend pas la place de $1 : voir le message plus haut. La restauration s'annule." "Voir pourquoi, puis relancer station restore."
+}
+
+# Les services qui tournaient avant la restauration et que up n'a pas
+# relancés : ceux d'un profil que .env n'allume pas, comme share lancé à part.
+restart_others_up() {
+  local running service extra=() profiles=()
+  running=" $(compose ps --services --status running 2>/dev/null | tr '\n' ' ') "
+  for service in "${restart_others[@]}"; do
+    [[ $running == *" $service "* ]] || extra+=("$service")
+  done
+  ((${#extra[@]})) || return 0
+  all_profiles
+  compose "${profiles[@]}" up -d "${extra[@]}"
+}
+
+# Une restauration arrêtée après l'arrêt de la station : chacun reprend sa
+# place, et la station d'avant repart. Le journal reste si un dossier ne
+# revient pas.
+restore_undo() {
+  local dir=$station_stopped env_file=$station_stopped/.env i current aside new left="" profiles=()
+  station_stopped=""
+  warn "la restauration s'annule : la station d'avant reprend sa place, et repart."
+  all_profiles
+  compose "${profiles[@]}" stop >/dev/null 2>&1
+  for ((i = ${#swapped[@]} - 1; i >= 0; i--)); do
+    IFS='|' read -r current aside new <<<"${swapped[i]}"
+    if [[ -e $current ]] && ! mv "$current" "$new"; then
+      warn "$current ne revient pas en $new : le remettre à la main."
+      left=1
+    fi
+    if [[ -e $aside ]] && ! mv "$aside" "$current"; then
+      warn "$aside ne reprend pas sa place, $current : l'y remettre à la main."
+      left=1
+    fi
+  done
+  swapped=()
+  [[ -n $left ]] || rm -f "$dir/$JOURNAL"
+  env_isolate
+  if compose up -d >/dev/null 2>&1; then
+    restart_others_up >/dev/null 2>&1
+  else
+    warn "la station d'avant ne repart pas. Voir pourquoi : cd $dir && docker compose up -d."
+  fi
+}
+
+# --- config ---
+
+cmd_config() {
+  local dir="" env_file="" domain="" email="" old="" changed=""
+  local -A opts=()
+  local args=()
+  parse_options "--no-domain-check -h --help" "--dir --domain --email --updates --update-time" "$@"
+  if help_asked; then
+    usage_command config
+    return 0
+  fi
+  ((${#args[@]} == 0)) || usage_error "Argument inattendu : ${args[0]}."
+  if [[ -n ${opts[--domain]+x} ]]; then
+    domain=${opts[--domain],,}
+    check_domain "$domain" || exit 2
+  fi
+  if [[ -n ${opts[--email]+x} ]]; then
+    email=${opts[--email]}
+    check_email "$email" || exit 2
+  fi
+  [[ -z ${opts[--updates]+x} ]] || check_updates "${opts[--updates]}" || exit 2
+  [[ -z ${opts[--update-time]+x} ]] || check_update_time "${opts[--update-time]}" || exit 2
+  open_station config "${opts[--dir]:-}"
+  if [[ -z ${opts[--domain]+x}${opts[--email]+x}${opts[--updates]+x}${opts[--update-time]+x} ]]; then
+    config_report
+    return 0
+  fi
+  lock_station config
+  work=$(mktemp -d)
+  trap cleanup EXIT
+  old=$(env_value DOMAIN)
+  # Le domaine se vérifie avant tout : s'il ne mène pas ici, rien ne change.
+  [[ -z ${opts[--domain]+x} || $domain == "$old" ]] || domain_verify
+  [[ -z ${opts[--updates]+x} ]] || config_set BUTTON_UPDATES "${opts[--updates]}"
+  [[ -z ${opts[--update-time]+x} ]] || config_set BUTTON_UPDATE_TIME "${opts[--update-time]}"
+  [[ -z ${opts[--email]+x} ]] || config_set ACME_EMAIL "$email"
+  if [[ -n ${opts[--domain]+x} && $domain != "$old" ]]; then
+    domain_apply "$old"
+  elif [[ $changed == *ACME_EMAIL* ]] && station_running caddy; then
+    # Caddy lit l'e-mail à son démarrage : recréé, il s'en sert pour les
+    # prochains certificats.
+    compose up -d caddy || die "Caddy ne repart pas : voir le message de docker compose plus haut." "Voir pourquoi : cd $dir && docker compose logs caddy."
+    say "Caddy : redémarré, avec l'e-mail ${email:-vide}. Le flux s'est coupé un instant."
+  fi
+  if [[ -n $changed ]]; then
+    say "Changé dans $env_file :$changed."
+  else
+    say "Rien à changer : $env_file a déjà ces réglages."
+  fi
+}
+
+# Pose une variable de .env si elle change, et la note.
+config_set() { # clé, valeur
+  if ! env_has "$1" || [[ $(env_value "$1") != "$2" ]]; then
+    env_set "$1" "$2" config
+    changed="$changed${changed:+,} $1"
+  fi
+}
+
+config_report() {
+  local domain email
+  domain=$(env_value DOMAIN)
+  email=$(env_value ACME_EMAIL)
+  say "Réglages de la station, dans $env_file :" \
+    "  Domaine : ${domain:-aucun}" \
+    "  E-mail du compte Let's Encrypt : ${email:-aucun}" \
+    "  Mises à jour : $(updates_label)" \
+    "Pour en changer : station config --domain DOMAINE, --email E-MAIL, --updates auto|manual ou --update-time HH:MM."
+}
+
+# Le nouveau domaine, $domain, mène-t-il ici ? Comme install : Caddy s'arrête
+# le temps de libérer le port 80, et cleanup le relance si la vérification
+# échoue.
+domain_verify() {
+  if [[ $(env_value CADDY_TLS acme) == internal ]]; then
+    say "Domaine : pas vérifié, Caddy signe lui-même le certificat (CADDY_TLS=internal)."
+  elif [[ -n ${opts[--no-domain-check]:-} ]]; then
+    warn "le domaine n'est pas vérifié (--no-domain-check). S'il ne mène pas ici, Let's Encrypt le refusera un moment."
+  else
+    say "Domaine : vérification de $domain. Caddy s'arrête le temps de la faire, et le flux avec lui."
+    caddy_stopped=$dir
+    compose stop caddy >/dev/null 2>&1 || true
+    check_domain_here "$dir/compose.yml"
+  fi
+}
+
+# Le domaine passe à $domain : .env, Caddy recréé avec lui, puis les adresses
+# publiques des réglages Station qui suivaient l'ancien.
+domain_apply() { # ancien domaine
+  local old=$1 keys tls
+  tls=$(env_value CADDY_TLS acme)
+  env_set DOMAIN "$domain" config
+  changed="$changed${changed:+,} DOMAIN"
+  compose up -d caddy ||
+    die "Caddy ne repart pas avec $domain : voir le message de docker compose plus haut." \
+      "Voir pourquoi : cd $dir && docker compose logs caddy. Pour revenir à l'ancien domaine : station config --domain $old."
+  caddy_stopped=""
+  https_ok ||
+    die "https://$domain ne répond pas au bout de $HTTPS_WAIT s : le certificat manque encore." \
+      "Voir pourquoi : cd $dir && docker compose logs caddy. Pour revenir à l'ancien domaine : station config --domain $old."
+  if keys=$(engine_domain_settings "$old" "$domain"); then
+    if [[ -n $keys ]]; then
+      say "Réglages Station : $(tr '\n' ',' <<<"$keys" | sed 's/,$//; s/,/, /g'), passés à $domain."
+    else
+      say "Réglages Station : aucune adresse ne suivait l'ancien domaine${old:+, $old}. Les vérifier dans la console, Réglages → Station."
+    fi
+  else
+    warn "les réglages Station ne suivent pas : changer leurs adresses dans la console, Réglages → Station."
+  fi
+  say "Domaine : $domain, au lieu de ${old:-aucun}. https://$domain répond." \
+    "  Les encodeurs du direct se branchent maintenant sur $domain, port $(env_value HARBOR_PORT 6800)."
+}
+
+# --- hold, unhold ---
+
+cmd_hold() {
+  local dir="" env_file=""
+  local -A opts=()
+  local args=()
+  parse_options "-h --help" "--dir" "$@"
+  if help_asked; then
+    usage_command hold
+    return 0
+  fi
+  open_station hold "${opts[--dir]:-}"
+  if [[ -f $dir/HOLD ]]; then
+    say "Les mises à jour sont déjà bloquées, par $dir/HOLD :"
+    sed 's/^/  /' "$dir/HOLD"
+    return 0
+  fi
+  hold_write "Bloquées par station hold" "${args[*]:-aucune donnée}"
+  say "Mises à jour bloquées : aucune ne passe tant que $dir/HOLD est là. Les débloquer : station unhold."
+}
+
+# HOLD bloque les mises à jour, avec la date et la raison, jusqu'à ce qu'une
+# personne le retire : station unhold. MAJ-05 le pose aussi, après un retour
+# arrière.
+hold_write() { # qui, raison
+  printf '%s, le %s.\nRaison : %s\nPour les débloquer : station unhold.\n' \
+    "$1" "$(station_date "$(date +%s)")" "$2" >"$dir/HOLD"
+}
+
+cmd_unhold() {
+  local dir="" env_file=""
+  local -A opts=()
+  local args=()
+  parse_options "-h --help" "--dir" "$@"
+  if help_asked; then
+    usage_command unhold
+    return 0
+  fi
+  ((${#args[@]} == 0)) || usage_error "Argument inattendu : ${args[0]}."
+  open_station unhold "${opts[--dir]:-}"
+  if [[ ! -f $dir/HOLD ]]; then
+    say "Les mises à jour ne sont pas bloquées."
+    return 0
+  fi
+  say "Mises à jour débloquées. $dir/HOLD disait :"
+  sed 's/^/  /' "$dir/HOLD"
+  rm -f "$dir/HOLD"
+}
+
+# --- cli ---
+
+cmd_cli() {
+  local dir="" env_file="" tty=()
+  # Seul --dir, en tête, est à station : le reste va au moteur.
+  while (($#)); do
+    case $1 in
+      --dir=*)
+        dir=${1#*=}
+        shift
+        ;;
+      --dir)
+        (($# >= 2)) || usage_error "--dir attend une valeur."
+        dir=$2
+        shift 2
+        ;;
+      --)
+        shift
+        break
+        ;;
+      *) break ;;
+    esac
+  done
+  open_station cli "$dir"
+  station_running radiotomate-interface ||
+    die "Le moteur ne tourne pas : station cli passe par lui." "Voir pourquoi : station status. Puis le démarrer : cd $dir && docker compose up -d."
+  [[ -t 0 && -t 1 ]] || tty=(-T)
+  compose exec "${tty[@]}" radiotomate-interface radiotomate "$@"
+}
+
+# --- uninstall ---
+
+cmd_uninstall() {
+  local dir="" env_file="" purge assume_yes="" aborted="Rien n'est désinstallé." file
+  local -A opts=()
+  local args=()
+  parse_options "--purge --yes -h --help" "--dir" "$@"
+  if help_asked; then
+    usage_command uninstall
+    return 0
+  fi
+  ((${#args[@]} == 0)) || usage_error "Argument inattendu : ${args[0]}."
+  purge=${opts[--purge]:-}
+  assume_yes=${opts[--yes]:-}
+  station_dir "${opts[--dir]:-}"
+  need_root uninstall
+  [[ -f $env_file || -f $dir/compose.yml ]] ||
+    die "Pas de station dans $dir : ni .env, ni compose.yml." "Une station ailleurs : station uninstall --dir DOSSIER."
+  # Effacer un dossier de premier niveau, comme /opt, n'est pas l'affaire de
+  # cette commande.
+  [[ -z $purge || $dir == /?*/?* ]] ||
+    die "station uninstall --purge n'efface pas $dir, un dossier de premier niveau." "Effacer à la main ce qui doit l'être."
+  env_isolate
+  if [[ -z $purge && ! -f $dir/compose.yml ]]; then
+    say "La station de $dir est déjà désinstallée : restent .env et ses données. Pour tout effacer : station uninstall --purge."
+    return 0
+  fi
+  if [[ -n $purge ]]; then
+    uninstall_purge_report
+    confirm_word uninstall effacer "Pour tout effacer, taper effacer :"
+  else
+    say "Désinstaller la station de $dir : ses conteneurs, ses images, les fichiers de sa version et la commande station s'en vont." \
+      "Restent .env, data/, media/ et backups/ : station install les reprend, pour la même station."
+    confirm uninstall "Désinstaller ? (o/n)"
+  fi
+  lock_station uninstall
+
+  if [[ -f $dir/compose.yml ]]; then
+    local profiles=() images=() image down=(down --remove-orphans)
+    all_profiles
+    mapfile -t images < <(compose "${profiles[@]}" config --images 2>/dev/null | sort -u)
+    [[ -z $purge ]] || down+=(--volumes)
+    say "Désinstallation : arrêt de la station."
+    compose "${profiles[@]}" "${down[@]}" ||
+      die "La station ne s'arrête pas : voir le message de docker compose plus haut." "Voir pourquoi, puis relancer station uninstall."
+    # Une image qu'un autre conteneur prend encore reste.
+    for image in "${images[@]}"; do
+      docker image rm "$image" >/dev/null 2>&1 || true
+    done
+  fi
+  # Ce que le projet garde encore, par son étiquette : après une
+  # désinstallation qui gardait les données, compose.yml n'est plus là.
+  [[ -z $purge ]] || project_leftovers
+  if [[ -L $BIN && $(readlink "$BIN") == "$dir/station" ]]; then
+    rm -f "$BIN"
+  fi
+  if [[ -n $purge ]]; then
+    rm -rf "${dir:?}"
+    say "" "La station est effacée : $dir n'existe plus. Docker reste installé."
+  else
+    for file in "${VERSION_FILES[@]}"; do
+      rm -rf "${dir:?}/$file"
+    done
+    say "" "La station est désinstallée. Restent, dans $dir : .env, data/, media/ et backups/." \
+      "  La réinstaller, la même : station install --dir $dir, avec le script d'une version publiée. Docker reste installé."
+  fi
+}
+
+# Les conteneurs et les volumes du projet, que compose.yml ne nomme plus.
+project_leftovers() {
+  local ids=()
+  mapfile -t ids < <(docker ps -aq --filter "label=com.docker.compose.project=$PROJECT" 2>/dev/null)
+  ((${#ids[@]} == 0)) || docker rm -f "${ids[@]}" >/dev/null 2>&1 || true
+  mapfile -t ids < <(docker volume ls -q --filter "label=com.docker.compose.project=$PROJECT" 2>/dev/null)
+  ((${#ids[@]} == 0)) || docker volume rm "${ids[@]}" >/dev/null 2>&1 ||
+    warn "des volumes du projet $PROJECT restent : docker volume ls, puis docker volume rm."
+}
+
+# Ce que --purge efface, et ce qu'il laisse, hors du dossier.
+uninstall_purge_report() {
+  local key path outside="" count=0 media
+  if [[ -d $dir/backups ]]; then
+    count=$(find "$dir/backups" -maxdepth 1 -name 'button-*.tar' | wc -l)
+  fi
+  media=$(env_path BUTTON_MEDIA ./media)
+  say "Tout effacer : la station de $dir, ses conteneurs, ses images, ses volumes, et son dossier entier. Rien ne se récupère ensuite :" \
+    "  .env, avec ses secrets ;" \
+    "  data/ : la base, avec les comptes, les horloges, l'Agenda et les réglages ;"
+  if [[ $media == "$dir"/* && -d $media ]]; then
+    say "  ${media#"$dir"/}/ : la banque de sons, $(human_kb "$(size_kb "$media")") ;"
+  fi
+  say "  backups/ : $((count)) sauvegarde(s)."
+  for key in "${DATA_DIRS[@]}" CLOUD_SYNC_CONFIG:./data/rclone; do
+    path=$(env_path "${key%%:*}" "${key#*:}")
+    [[ $path == "$dir"/* ]] || outside="$outside ${key%%:*} ($path)"
+  done
+  [[ -z $outside ]] || say "Hors du dossier, rien ne s'efface :$outside."
+  say "Une sauvegarde d'abord, copiée hors de cette machine : station backup --with-media."
+}
+
 main() {
   local command=${1:-help}
   (($# == 0)) || shift
   case $command in
-    install) cmd_install "$@" ;;
-    help | -h | --help) usage ;;
+    install | status | logs | backup | restore | config | hold | unhold | cli | uninstall)
+      help_topic=$command
+      "cmd_$command" "$@"
+      ;;
+    help | -h | --help)
+      if (($#)); then
+        usage_command "$1"
+      else
+        usage
+      fi
+      ;;
     *) usage_error "Commande inconnue : $command." ;;
   esac
 }

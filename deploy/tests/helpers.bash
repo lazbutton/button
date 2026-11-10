@@ -17,6 +17,11 @@ make_release() { # version, dossier
   cat >"$files/scripts/smoke.sh" <<'EOF'
 #!/usr/bin/env bash
 echo "smoke $* SMOKE_WAIT=${SMOKE_WAIT:-} dans $PWD" >>"$FAKE_STATE/log"
+# Un échec, une fois : $FAKE_STATE/smoke-fails.
+if [[ -e $FAKE_STATE/smoke-fails ]]; then
+  rm "$FAKE_STATE/smoke-fails"
+  exit 1
+fi
 EOF
   chmod 755 "$files/scripts/smoke.sh"
   echo "$1" >"$files/VERSION"
@@ -96,4 +101,35 @@ snapshot() {
   (cd "$DIR" && find . -type f | sort | while read -r file; do
     printf '%s %s %s\n' "$(stat -c %a "$file")" "$(sha256sum "$file" | cut -d' ' -f1)" "$file"
   done)
+}
+
+# Une commande de station, sans terminal.
+station() {
+  run bash "$STATION" "$@"
+}
+
+# Une commande de station au clavier, dans un terminal : l'entrée standard
+# donne les réponses.
+station_at_keyboard() {
+  # shellcheck disable=SC2016
+  run bash -c 'source "$1"; shift; interactive() { [[ -z $assume_yes ]]; }; terminal() { true; }; main "$@"' \
+    _ "$STATION" "$@"
+}
+
+# Une station installée, sans terminal, et un journal vide.
+installed() { # options d'install
+  install_station --domain radio.example "$@"
+  assert_success
+  : >"$FAKE_STATE/log"
+}
+
+# Une autre machine neuve, à la place de la première.
+new_machine() {
+  rm -rf "$ROOT" "$FAKE_STATE"
+  setup_machine
+}
+
+# Les dossiers et fichiers d'une restauration, préparés ou mis de côté.
+leftovers() { # motif
+  find "$DIR" -name "$1" 2>/dev/null
 }
