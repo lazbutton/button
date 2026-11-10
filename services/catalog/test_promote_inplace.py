@@ -42,6 +42,7 @@ for found in tags:
 
 # Un faux ffmpeg qui note ses arguments, une ligne JSON par appel, et échoue
 # sur un fichier dont le nom commence par « Faux », en laissant une moitié.
+# Il donne au fichier écrit les tags de ses -metadata, pour le faux ffprobe.
 FAKE_FFMPEG = """#!/usr/bin/env python3
 import json, os, sys
 args = sys.argv[1:]
@@ -53,6 +54,13 @@ if os.path.basename(source).startswith("Faux"):
     open(args[-1], "w").write("moitié")
     sys.exit(1)
 open(args[-1], "w").write("done")
+# Comme le vrai, le fichier écrit porte ses -metadata, sous son nom final.
+name = os.path.basename(args[-1])
+if name.startswith(".") and ".partial." in name:
+    name = name[1:].replace(".partial.", ".")
+tags = json.load(open(os.environ["TAGS"]))
+tags[name] = {"format": dict(arg.split("=", 1) for arg in args[args.index("-y"):] if "=" in arg)}
+json.dump(tags, open(os.environ["TAGS"], "w"))
 """
 
 
@@ -139,6 +147,7 @@ class PromoteInPlaceTest(unittest.TestCase):
             env = os.environ.copy()
             env["PATH"] = f"{bindir}{os.pathsep}{env.get('PATH', '')}"
             env["MEDIA_ROOT"] = str(media)
+            env["PROMOTE_SETTLE"] = "0"
             subprocess.run(["sh", str(SCRIPT)], check=True, env=env, cwd=root)
             self.assertEqual((rotation / "Keep - Me.mp3").read_bytes(), b"tagged")
             self.assertEqual((rotation / "Ada - Song.mp3").read_bytes(), b"done")
@@ -158,6 +167,7 @@ class PromoteInPlaceTest(unittest.TestCase):
             (rotation / "Ada - Song.wav").write_bytes(b"wav")
             env = os.environ.copy()
             env["MEDIA_ROOT"] = str(media)
+            env["PROMOTE_SETTLE"] = "0"
             subprocess.run(["sh", str(SCRIPT), "--dry-run"], check=True, env=env, cwd=root)
             self.assertEqual((rotation / "Ada - Song.wav").read_bytes(), b"wav")
             self.assertFalse((rotation / "Ada - Song.flac").exists())
@@ -186,6 +196,7 @@ class PromoteInPlaceTest(unittest.TestCase):
             env = os.environ.copy()
             env["PATH"] = f"{bindir}{os.pathsep}{env.get('PATH', '')}"
             env["MEDIA_ROOT"] = str(media)
+            env["PROMOTE_SETTLE"] = "0"
             subprocess.run(["sh", str(SCRIPT)], check=True, env=env, cwd=root)
             # Les noms, pas exists() : le disque du Mac ignore la casse.
             self.assertEqual(
@@ -296,6 +307,78 @@ class UnreadableFileTest(unittest.TestCase):
             self.assert_skipped(result, "Faux - Song.mp3")
             self.assertEqual(bad.read_bytes(), b"bad")
             self.assertEqual(sorted(p.name for p in (bench.media / "10-rotation").iterdir()), ["Gus - Calm.opus"])
+
+
+# Un faux sleep : la copie continue pendant l'attente du passage. Il ajoute un
+# octet à chaque fichier de MOVING, une liste JSON, et note qu'il a attendu.
+FAKE_SLEEP = """#!/usr/bin/env python3
+import json, os
+with open(os.environ["SLEEP_LOG"], "a") as log:
+    log.write("sleep\\n")
+for path in json.loads(os.environ.get("MOVING", "[]")):
+    with open(path, "ab") as copy:
+        copy.write(b"+")
+"""
+
+
+class CopyInProgressTest(unittest.TestCase):
+    """Un fichier qui s'écrit encore attend le passage suivant."""
+
+    def bench(self, root: Path) -> Bench:
+        bench = Bench(root, {"Kim - Done.mp3": {"format": {"artist": "Kim", "title": "Done"}}})
+        write_bin(bench.bindir, "sleep", FAKE_SLEEP)
+        bench.sleeps = root / "sleep.log"
+        bench.env["SLEEP_LOG"] = str(bench.sleeps)
+        return bench
+
+    def test_a_file_still_written_waits_for_the_next_pass(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            bench = self.bench(Path(raw))
+            in_place = bench.put("10-rotation/Eve - Long.mp3", b"mp3")
+            wav = bench.put("20-archives/jazz/Ivy - Long.wav", b"wav")
+            inbox = bench.put("00-inbox/rotation/Fay - Long.mp3", b"mp3")
+            inbox_wav = bench.put("00-inbox/rotation/Hal - Long.wav", b"wav")
+            still = bench.put("10-rotation/Gus - Calm.mp3", b"mp3")
+            bench.env["MOVING"] = json.dumps([str(p) for p in (in_place, wav, inbox, inbox_wav)])
+            result = bench.run()
+            self.assertEqual(result.returncode, 0, result.stderr)
+            for name in ("Eve - Long.mp3", "Ivy - Long.wav", "Fay - Long.mp3", "Hal - Long.wav"):
+                self.assertIn(f"en cours de copie : {name}", result.stdout)
+            # Rien n'est touché : la copie finit dans le fichier, entière.
+            self.assertEqual(in_place.read_bytes(), b"mp3+")
+            self.assertEqual(wav.read_bytes(), b"wav+")
+            self.assertEqual(inbox.read_bytes(), b"mp3+")
+            self.assertEqual(inbox_wav.read_bytes(), b"wav+")
+            self.assertFalse((bench.media / "20-archives" / "jazz" / "Ivy - Long.flac").exists())
+            self.assertEqual(still.read_bytes(), b"done")
+            self.assertEqual(bench.outputs(), [".Gus - Calm.partial.mp3"])
+            # La copie finie, le passage suivant les prend.
+            bench.env["MOVING"] = "[]"
+            result = bench.run()
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotIn("en cours de copie :", result.stdout)
+            self.assertEqual(in_place.read_bytes(), b"done")
+            self.assertFalse(wav.exists())
+            self.assertFalse(inbox.exists())
+            self.assertFalse(inbox_wav.exists())
+            self.assertEqual(
+                sorted(p.name for p in (bench.media / "10-rotation").iterdir()),
+                ["Eve - Long.mp3", "Fay - Long.mp3", "Gus - Calm.mp3", "Hal - Long.flac"],
+            )
+
+    def test_no_wait_when_there_is_nothing_to_do(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            bench = self.bench(Path(raw))
+            bench.put("10-rotation/Kim - Done.mp3", b"mp3")
+            result = bench.run()
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse(bench.sleeps.exists())
+            bench.put("00-inbox/rotation/Lou - New.mp3", b"mp3")
+            bench.put("10-rotation/Max - Bare.mp3", b"mp3")
+            result = bench.run()
+            self.assertEqual(result.returncode, 0, result.stderr)
+            # Une seule attente par passage, quel que soit le nombre de fichiers.
+            self.assertEqual(bench.sleeps.read_text(encoding="utf-8"), "sleep\n")
 
 
 if __name__ == "__main__":

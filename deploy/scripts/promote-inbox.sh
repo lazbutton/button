@@ -14,6 +14,7 @@
 # - BROADCAST_CODEC=mp3 ou opus (petit disque) : tout fichier accepté est réencodé
 #   (MP3 320 ou Opus 192) et l'original est effacé. Pas de masters sur le volume.
 # Rejouable : une cible déjà présente est ignorée.
+# Un fichier modifié pendant le passage attend le suivant : voir settled.
 set -eu
 MEDIA="${MEDIA_ROOT:-/media}"
 SOURCES="$MEDIA/00-inbox/_sources"
@@ -69,9 +70,35 @@ encode() {
   return 1
 }
 
+# Un fichier encore en cours de copie n'est pas touché : retagué ou converti,
+# il garderait sa moitié, et la suite de la copie serait perdue. Le catalogue
+# copie un envoi dans l'inbox sous son nom final, et le dossier partagé écrit sur
+# place. Avant le premier fichier à écrire ou à déplacer, le passage attend
+# PROMOTE_SETTLE secondes, une fois ; un fichier modifié depuis le début du
+# passage attend le suivant. L'attente se fait dans le passage, et non d'un
+# passage à l'autre : la boucle Beets indexe un dossier resté immobile pendant
+# sa pause, et un fichier repoussé d'un tour y entrerait sans ses tags.
+SETTLE="${PROMOTE_SETTLE:-5}"
+started=$(mktemp "${TMPDIR:-/tmp}/promote-inbox.XXXXXX")
+trap 'rm -f "$started"' EXIT
+waited=0
+settled() { # settled <fichier>
+  if [ "$waited" = 0 ]; then
+    sleep "$SETTLE"
+    waited=1
+  fi
+  if [ -f "$1" ] && [ -z "$(find "$1" -newer "$started")" ]; then
+    return 0
+  fi
+  echo "en cours de copie : $(basename "$1"). Repris au prochain passage, une fois la copie finie."
+  moving=$((moving+1))
+  return 1
+}
+
 promoted=0
 skipped=0
 failed=0
+moving=0
 
 promote_dir() {
   inbox=$1
@@ -103,6 +130,7 @@ promote_dir() {
         codec_args="-c:a libmp3lame -b:a 320k"
       fi
       if [ -e "$target" ]; then echo "déjà là : $name"; skipped=$((skipped+1)); continue; fi
+      settled "$src" || continue
       # Sans guillemets exprès : codec_args donne plusieurs arguments à ffmpeg.
       # shellcheck disable=SC2086
       encode "$src" "$target" -map 0:a $codec_args \
@@ -116,6 +144,7 @@ promote_dir() {
       mp3|flac|ogg|opus|m4a)
         target="$dest/$stem.$ext"
         if [ -e "$target" ]; then echo "déjà là : $name"; skipped=$((skipped+1)); continue; fi
+        settled "$src" || continue
         have_artist=$(tag_of "$src" artist)
         have_title=$(tag_of "$src" title)
         if adds_nothing; then
@@ -131,6 +160,7 @@ promote_dir() {
       wav|aif|aiff)
         target="$dest/$stem.flac"
         if [ -e "$target" ]; then echo "déjà là : $name"; skipped=$((skipped+1)); continue; fi
+        settled "$src" || continue
         encode "$src" "$target" -map 0:a -c:a flac -compression_level 5 \
           -metadata artist="$artist" -metadata title="$title" || continue
         run mv "$src" "$SOURCES/$name"
@@ -165,6 +195,7 @@ tag_in_place() {
       wav|aif|aiff)
         target="$dest/$stem.flac"
         if [ -e "$target" ]; then echo "déjà là : $name"; skipped=$((skipped+1)); continue; fi
+        settled "$src" || continue
         encode "$src" "$target" -map 0:a -c:a flac -compression_level 5 \
           -metadata artist="$artist" -metadata title="$title" || continue
         run rm -f "$src"
@@ -175,6 +206,7 @@ tag_in_place() {
         have_artist=$(tag_of "$src" artist)
         have_title=$(tag_of "$src" title)
         adds_nothing && continue
+        settled "$src" || continue
         encode "$src" "$src" -map 0:a -c copy \
           -metadata artist="$meta_artist" -metadata title="$meta_title" || continue
         echo "sur place : $name"
@@ -196,7 +228,7 @@ for bank in "$MEDIA"/20-archives/*/; do
   tag_in_place "$MEDIA/20-archives/$ed"
 done
 tag_in_place "$MEDIA/10-rotation"
-echo "promotion : $promoted promu(s), $skipped ignoré(s), $failed illisible(s). Index Beets au prochain tour (${BEETS_IMPORT_INTERVAL:-45} s)."
+echo "promotion : $promoted promu(s), $skipped ignoré(s), $moving en cours de copie, $failed illisible(s). Index Beets au prochain tour (${BEETS_IMPORT_INTERVAL:-45} s)."
 # Un fichier sauté se voit aussi au code de sortie, pour qui lance le script à
 # la main. La boucle Beets passe outre et continue.
 [ "$failed" = 0 ]
