@@ -510,9 +510,11 @@ write_env() {
     admin_icecast=$(secret)
     nowplaying=$(secret)
     meili=$(secret)
-    (
-      umask 077
-      cat >"$env_file" <<EOF
+    # Vide et en 600 avant le moindre secret : une ACL par défaut sur le
+    # dossier, comme celle de /opt sur un runner de GitHub, passe outre le
+    # umask, mais pas le mode donné à la création.
+    install -m 600 /dev/null "$env_file"
+    cat >"$env_file" <<EOF
 # La station, réglée par station install le $(date +%F). Les secrets sont ici :
 # droits 600, et ce fichier n'entre dans aucun dépôt. Toutes les variables :
 # .env.example, dans ce dossier. Une relance de station install n'y change
@@ -543,10 +545,9 @@ MEILI_MASTER_KEY=$meili
 # Les mises à jour : auto, ou manual. La commande update les fera.
 BUTTON_UPDATES=$updates
 EOF
-      if [[ $tls == internal ]]; then
-        printf '\n# Un certificat de Caddy, pour un essai : les navigateurs le refusent.\nCADDY_TLS=internal\n' >>"$env_file"
-      fi
-    )
+    if [[ $tls == internal ]]; then
+      printf '\n# Un certificat de Caddy, pour un essai : les navigateurs le refusent.\nCADDY_TLS=internal\n' >>"$env_file"
+    fi
     return 0
   fi
   chmod 600 "$env_file"

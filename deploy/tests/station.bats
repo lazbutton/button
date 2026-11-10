@@ -128,6 +128,17 @@ setup() {
   [ -z "$(env_of RT_ADMIN_PASSWORD)" ]
 }
 
+@test "une ACL par défaut passe outre le umask : .env naît quand même en 600" {
+  # Une ACL par défaut sur le dossier, comme celle de /opt sur les runners de
+  # GitHub, rend le umask sans effet. Ici, umask ne fait plus rien, et celui
+  # du shell laisse tout passer : .env n'a que le mode donné à sa création.
+  # shellcheck disable=SC2016
+  run bash -c 'umask 000; umask() { :; }; source "$1"; shift; main install "$@"' _ "$STATION" --domain radio.example
+  assert_success
+  [ "$(stat -c %a "$DIR/.env")" = 600 ]
+  [[ $(env_of RT_ADMIN_PASSWORD) =~ ^[A-Za-z0-9_-]{24}$ ]]
+}
+
 @test "--github-token-file passe le jeton à docker login, par l'entrée standard" {
   printf 'jeton-de-test\n' >"$BATS_TEST_TMPDIR/jeton"
   install_station --domain radio.example --github-token-file "$BATS_TEST_TMPDIR/jeton"

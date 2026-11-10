@@ -65,6 +65,7 @@ C'est un seul fichier, sans extension, celui de la commande posée dans `/usr/lo
   - Un fichier que `compose.yml` monte depuis le dossier doit être dans l'archive : sinon, `version.py` refuse, et `test_version.py` échoue.
 - **`.env`.** Il ne se réécrit jamais : une relance n'y ajoute que ce qui manque. Une commande qui change un réglage de `.env`, comme `config` (INS-03), le dit.
 - **Le mot de passe admin.** Il ne s'écrit nulle part ailleurs que dans `.env`, en droits 600, et seulement jusqu'à son affichage, dans un terminal.
+- **Les droits d'un fichier.** Un fichier à protéger, comme `.env`, naît vide avec son mode, avant d'y écrire : `install -m 600 /dev/null`. Le umask ne suffit pas : une ACL par défaut sur le dossier passe outre, comme celle de `/opt` sur un runner de GitHub.
 - **L'environnement du shell.** Ce que `.env` règle n'en vient jamais : `env_isolate` retire ces variables avant `docker compose`. sudo garde `TZ`, par exemple.
 - **Les questions.** Chacune a son option, pour la CI : sans terminal, ou avec `--yes`, rien ne se demande.
 - **Les tests.** Ils sont dans `tests/`, lancés par `bats`, dans l'image officielle épinglée par [`station.yml`](../.github/workflows/station.yml).
