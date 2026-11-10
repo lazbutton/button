@@ -66,10 +66,10 @@ La partie `deploy` passe ShellCheck avec l'image et sur la liste de [`shellcheck
 
 Les tests de `deploy/station` tournent avec `bats`, dans l'image officielle, épinglée dans [`station.yml`](../.github/workflows/station.yml), le workflow qui les lance en CI. De faux outils y jouent la machine : `docker`, `curl`, `apt-get`, `ss`… Voir [deploy/AGENTS.md](../deploy/AGENTS.md#la-commande-station). `engine/dev.sh` et `engine/install.sh` viennent de l'amont, Radiotomate : ils restent dehors. L'image est épinglée, et Dependabot ne la suit pas : la monter à la main, puis corriger ce que la nouvelle version signale.
 
-Le même workflow fait aussi une vraie installation, le job `install`, sur un runner Ubuntu 24.04 : ce que les faux outils ne voient pas. Le runner est d'abord rendu semblable à un VPS neuf : sans Docker, que `station install` installe alors depuis le dépôt de Docker, et sans ACL par défaut sur `/opt`. Le job fabrique l'archive d'une station depuis la branche, comme pour une version (`scripts/version.py station main`). Puis il lance `station install --from`, avec `--tls internal` et les images `:main` du registre. Il vérifie ensuite :
+Le même workflow fait aussi une vraie installation, le job `install`, sur un runner Ubuntu 24.04 : ce que les faux outils ne voient pas. Le runner est d'abord rendu semblable à un VPS neuf : sans Docker, que `station install` installe alors depuis le dépôt de Docker. Il garde l'ACL par défaut de `/opt`, ouverte à tous les comptes, que `station install` doit tenir à l'écart de `.env` et du dossier de la station. Le job fabrique l'archive d'une station depuis la branche, comme pour une version (`scripts/version.py station main`). Puis il lance `station install --from`, avec `--tls internal` et les images `:main` du registre. Il vérifie ensuite :
 
 - le contrôle de la station, `smoke.sh`, sur les ports locaux ;
-- `.env`, en droits 600, et la commande `station`, dans `/usr/local/bin` ;
+- `.env`, en droits 600 ; le dossier de la station, en 755 et sans ACL ; la commande `station`, dans `/usr/local/bin` ;
 - le mot de passe admin : sans terminal, il reste dans `.env`, et la sortie ne le montre pas ;
 - la relance : `sudo station install --from …` ne change ni un fichier du dossier, hors `data/` et `media/`, ni un conteneur.
 

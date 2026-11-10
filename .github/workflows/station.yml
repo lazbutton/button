@@ -15,8 +15,10 @@ name: station
 # registry, not built here: a pull request that changes an image and the
 # folder together is only checked whole once merged. Then the smoke check,
 # and a second install, which must change no file of the folder and no
-# container. It pulls about 3 GB of images: hence the paths below, what a
-# real install runs, and not every pull request.
+# container. The runner keeps the default ACL of /opt, open to every account:
+# station install must keep it off .env and off the folder. It pulls about
+# 3 GB of images: hence the paths below, what a real install runs, and not
+# every pull request.
 
 on:
   push:
@@ -95,11 +97,6 @@ jobs:
             echo "::error title=Docker::docker est encore sur le runner."
             exit 1
           fi
-          # A default ACL on /opt passes to /opt/button, and overrides the
-          # umask with which station install writes .env: 666, not 600. A
-          # usual VPS has none.
-          getfacl -p /opt
-          sudo setfacl -k /opt
       - name: Install
         # Well under the job's limit: a run that hangs fails here, and its
         # logs are still uploaded.
@@ -121,6 +118,14 @@ jobs:
           mode=$(sudo stat -c '%a %U' .env)
           if [ "$mode" != "600 root" ]; then
             echo "::error title=.env::/opt/button/.env est en $mode : il faut 600, à root."
+            exit 1
+          fi
+          # The default ACL of /opt stays off the folder: what is written there
+          # later, by the containers too, follows the umask.
+          folder=$(stat -c '%a %U' .)
+          if [ "$folder" != "755 root" ] || [ -n "$(getfacl -ps .)" ]; then
+            echo "::error title=Dossier::/opt/button est en $folder, ou garde une ACL : il faut 755, à root, sans ACL."
+            getfacl -p .
             exit 1
           fi
           if [ "$(readlink /usr/local/bin/station)" != /opt/button/station ]; then
