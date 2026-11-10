@@ -60,7 +60,7 @@ Une fonction risquée se coupe par une clé de la table `settings` (modèle `Set
 
 ## Pièges
 
-- `radiotomate update` sert déjà aux migrations. Une nouvelle commande d'exploitation va sous `radiotomate maintenance …`, groupe à créer dans `commands/` à la première commande.
+- `radiotomate update` sert déjà aux migrations. Une nouvelle commande d'exploitation va sous `radiotomate maintenance …`, dans `commands/maintenance.py`. La commande `station` les lance par `docker compose exec`, et montre ce qu'elles écrivent : en français, comme le reste de sa sortie. Leurs tests sont dans `tests/test_maintenance.py`.
 - Dans un service, une fonction nommée `update` masque le `update` de SQLAlchemy. Importer `update as sql_update` ; ruff le signale (F811).
 - Les ports par défaut : 6811 pour l'interface, 6822 pour le scheduler, 6833 pour le playout. `interface --port` et `scheduler --port` changent les deux premiers, et la démo suit le port de l'interface. Mais l'interface appelle toujours le scheduler sur 6822 (`scheduler_api.py`), et le scheduler le playout sur 6833 (`scheduler_app.py`) : voir DEV-01.
 - Liquidsoap 2.4 ne fond pas les transitions de `fallback` (savonet/liquidsoap#4179). Le script s'amende, il ne se réécrit pas. `liquidsoap --check` demande un `RTCONFIG` minimal : `scripts/verifier.sh liquidsoap` le fournit.

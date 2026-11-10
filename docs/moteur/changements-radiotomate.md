@@ -105,6 +105,8 @@ Le scheduler surveille l’antenne (`scheduler/alerts.py`) : silence, playout in
 
 `radiotomate interface --port` et `radiotomate scheduler --port` changent le port d’écoute, 6811 et 6822 par défaut. En démo, l’interface tient lieu de scheduler sur son propre port : deux bancs tournent sur une machine.
 
+`radiotomate maintenance` regroupe les commandes d’exploitation d’une station, que lance la commande `station` (`commands/maintenance.py`). `maintenance next-live` dit le prochain direct, une émission hebdomadaire ou un direct de l’Agenda, comme la page Antenne de la console : `station status` l’affiche.
+
 `beets/compat.py` corrige l’import de Beets 2.5 sous Python 3.14 : l’ioctl de taille de terminal demandait 4 octets, le noyau en écrit 8.
 
 L’image du playout passe `apt-get upgrade` sur celle de Liquidsoap, que ses auteurs ne reconstruisent pas quand Debian publie un correctif. Liquidsoap garde la version de son tag.
@@ -136,7 +138,7 @@ L’amont s’arrête à v6. Les versions suivantes :
 
 Horloges et antenne : `scheduler/clock.py`, `timing.py`, `music_rules.py`, `desk.py`, `execution.py`, `rundown.py`, `playout.py`, `antenne.py`, `timers.py`, `queue_cleaner.py`, `bank_sync.py`, `outbox.py`.
 
-Exploitation : `alerts.py`, `metrics.py`, `retention.py`, `health.py`, et `interface/health.py`.
+Exploitation : `alerts.py`, `metrics.py`, `retention.py`, `health.py`, `interface/health.py`, et `commands/maintenance.py`.
 
 Métier : `domain/`, `services/` (carts, auto-DJ, émissions, banque, grille NTF, jeton d’encodeur), `models/clock.py`, `emission.py`, `execution.py`, `music_category.py`.
 
