@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Un faux systemctl, qui note seulement.
+echo "systemctl $*" >>"$FAKE_STATE/log"

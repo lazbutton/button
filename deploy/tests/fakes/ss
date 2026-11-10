@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Un faux ss -H -l -n -p --tcp "sport = :80" : un port est pris s'il est dans
+# $FAKE_STATE/ports, une ligne « tcp 80 apache2 » chacun.
+set -euo pipefail
+echo "ss $*" >>"$FAKE_STATE/log"
+proto="" port=""
+for arg; do
+  case $arg in
+    --tcp) proto=tcp ;;
+    --udp) proto=udp ;;
+    "sport = :"*) port=${arg##*:} ;;
+  esac
+done
+[[ -f $FAKE_STATE/ports ]] || exit 0
+while read -r taken_proto taken_port name; do
+  if [[ $taken_proto == "$proto" && $taken_port == "$port" ]]; then
+    printf 'LISTEN 0 4096 0.0.0.0:%s 0.0.0.0:* users:(("%s",pid=42,fd=3))\n' "$port" "$name"
+  fi
+done <"$FAKE_STATE/ports"

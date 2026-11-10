@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Un faux id -u : root, ou l'utilisateur de $FAKE_STATE/uid. Le reste va au vrai.
+if [[ $* == -u ]]; then
+  cat "$FAKE_STATE/uid" 2>/dev/null || echo 0
+else
+  PATH=/usr/local/bin:/usr/bin:/bin exec id "$@"
+fi

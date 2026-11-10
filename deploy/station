@@ -1,0 +1,980 @@
+#!/usr/bin/env bash
+# station : installer une station BUTTON sur un VPS, puis l'exploiter. En root.
+#   station install [options]   installer la station, ou la réparer
+#   station help                l'aide
+# Sur un VPS neuf, ce script se télécharge seul, depuis la plus haute version
+# publiée. Il prend les fichiers de la station dans la même version, vérifiés
+# par leur somme :
+#   curl -fsSLO https://github.com/lazbutton/button/releases/latest/download/station
+#   sudo bash station install
+# Ensuite, il est dans le dossier de la station, et /usr/local/bin/station y
+# mène. Voir docs/deploiement.md, « Installer sur un VPS ».
+#
+# Les autres commandes de l'exploitation viendront ici, une fonction cmd_<nom>
+# chacune, avec les mêmes aides : status, logs, backup, restore, config, hold,
+# unhold, cli et uninstall (INS-03), update (MAJ-04), rollback (MAJ-05).
+set -euo pipefail
+
+# Le dépôt dont chaque version publiée joint station, station.tar.gz et
+# SHA256SUMS : scripts/version.py station. BUTTON_REPO : celui d'un fork.
+REPO=${BUTTON_REPO:-lazbutton/button}
+# Pour les tests : une racine à la place de /, pour les fichiers du système.
+ROOT=${STATION_ROOT:-}
+# Le dossier d'une station, sauf --dir, et la commande posée sur la machine.
+DEFAULT_DIR=$ROOT/opt/button
+BIN=$ROOT/usr/local/bin/station
+# La place libre demandée, en Go : les images en prennent 3 environ, et la
+# banque de sons grandit. INS-04 mesurera mieux.
+MIN_FREE_GB=10
+# L'attente du certificat, en secondes. Celle de la santé du moteur est celle
+# de smoke.sh, 300 s ici, ou SMOKE_WAIT.
+HTTPS_WAIT=180
+# Le conteneur qui répond sur le port 80 pendant la vérification du domaine.
+PROBE=button-verification-domaine
+# Ce que cleanup retire en sortant : le dossier de travail, et le conteneur
+# de la vérification s'il tourne encore.
+work=""
+probe_started=""
+
+say() { printf '%s\n' "$@"; }
+warn() { printf 'Attention : %s\n' "$@" >&2; }
+# Un échec : ce qui ne va pas, puis quoi faire.
+die() {
+  printf '%s\n' "$@" >&2
+  exit 1
+}
+usage_error() {
+  printf '%s\n' "$1" "Voir : station help." >&2
+  exit 2
+}
+
+usage() {
+  cat <<'EOF'
+Usage : station install [options]
+
+Installe une station BUTTON sur cette machine, en root : Debian 12 ou 13, ou
+Ubuntu 24.04, en x86-64. Relancée, la commande répare ce qui manque, sans
+changer ni .env, ni les données, ni la version.
+
+Les réponses, demandées au clavier quand l'option manque :
+  --name NOM                  le nom de la station, dans la console (BUTTON)
+  --domain DOMAINE            son domaine, qui pointe déjà sur cette machine
+  --email E-MAIL              l'e-mail du compte Let's Encrypt (aucun)
+  --timezone FUSEAU           le fuseau de la station (Europe/Paris)
+  --admin IDENTIFIANT         l'identifiant du compte admin (admin)
+  --updates auto|manual       les mises à jour automatiques (auto)
+
+Les autres options :
+  --version X.Y.Z             une version publiée, au lieu de la plus haute
+  --dir DOSSIER               le dossier de la station (/opt/button)
+  --github-token-file FICHIER un jeton GitHub qui lit les images privées
+                              (read:packages), pour docker login
+  --from ARCHIVE              les fichiers de la station depuis cette archive,
+                              station.tar.gz, plutôt que de GitHub
+  --tls internal              un certificat de Caddy, pour un essai : les
+                              navigateurs le refusent
+  --no-domain-check           ne pas vérifier que le domaine mène ici
+  --yes                       ne rien demander : les options, sinon les
+                              valeurs par défaut, et Docker installé s'il manque
+
+Voir docs/deploiement.md, « Installer sur un VPS ».
+EOF
+}
+
+# Une question se pose au clavier seulement : sans terminal, ou avec --yes,
+# les options et les valeurs par défaut répondent.
+interactive() { [[ -z $assume_yes && -t 0 ]]; }
+# Le mot de passe admin ne s'affiche que dans un terminal : jamais dans un
+# journal, ni dans la sortie d'une CI.
+terminal() { [[ -t 1 ]]; }
+
+trim() {
+  local text=$1
+  text=${text#"${text%%[![:space:]]*}"}
+  printf '%s' "${text%"${text##*[![:space:]]}"}"
+}
+
+# ask <question> <défaut> <contrôle> : la réponse lue au clavier, ou le défaut
+# sur Entrée, reposée tant que le contrôle la refuse. Le contrôle dit pourquoi.
+ask() {
+  local answer
+  while :; do
+    printf '  %s%s : ' "$1" "${2:+ [$2]}" >&2
+    IFS= read -r answer || die "" "Installation interrompue : rien n'est écrit. Relancer station install."
+    answer=$(trim "$answer")
+    answer=${answer:-$2}
+    if "$3" "$answer"; then
+      printf '%s\n' "$answer"
+      return
+    fi
+  done
+}
+
+check_yes_no() {
+  case ${1,,} in
+    o | oui | y | yes | n | non | no) return ;;
+  esac
+  echo "  Répondre o ou n." >&2
+  return 1
+}
+
+check_name() {
+  if [[ -z $1 || ${#1} -gt 80 || $1 == *[[:cntrl:]]* ]]; then
+    echo "  Le nom : une ligne, de 80 caractères au plus." >&2
+    return 1
+  fi
+}
+
+check_domain() {
+  local label='[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?'
+  local name="^$label(\\.$label)+\$"
+  if [[ ${#1} -gt 253 || ! ${1,,} =~ $name ]]; then
+    echo "  « $1 » n'est pas un nom de domaine. Le nom seul, comme radio.example, sans http:// ni chemin." >&2
+    return 1
+  fi
+  if [[ $1 =~ \.[0-9]+$ ]]; then
+    echo "  « $1 » est une adresse IP : Let's Encrypt ne certifie que des noms de domaine." >&2
+    return 1
+  fi
+}
+
+check_email() {
+  local address='^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$'
+  [[ -z $1 || $1 =~ $address ]] && return
+  echo "  « $1 » n'est pas un e-mail. Rien, pour un compte Let's Encrypt sans e-mail." >&2
+  return 1
+}
+
+check_timezone() {
+  local zone='^[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+)*$'
+  [[ $1 =~ $zone && -f $ROOT/usr/share/zoneinfo/$1 ]] && return
+  echo "  « $1 » n'est pas un fuseau connu de cette machine, comme Europe/Paris ou America/Montreal." >&2
+  return 1
+}
+
+check_admin() {
+  local id='^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$'
+  [[ $1 =~ $id ]] && return
+  echo "  « $1 » : un identifiant de 32 caractères au plus, en lettres, chiffres, point, tiret ou soulignement." >&2
+  return 1
+}
+
+check_updates() {
+  [[ $1 == auto || $1 == manual ]] && return
+  echo "  « $1 » : auto ou manual." >&2
+  return 1
+}
+
+check_version() {
+  local number='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+  [[ $1 =~ $number ]] && return
+  echo "  « $1 » : une version s'écrit X.Y.Z, comme 0.1.0. main ne s'installe que depuis une archive : voir --from." >&2
+  return 1
+}
+
+# --- .env ---
+
+# La valeur d'une variable de .env, la dernière, sans les guillemets autour ;
+# le défaut quand la ligne manque. Vide quand elle est vide.
+env_value() { # clé, défaut
+  local line
+  line=$(grep -E "^$1=" "$env_file" 2>/dev/null | tail -n 1) || true
+  if [[ -z $line ]]; then
+    printf '%s\n' "${2:-}"
+    return
+  fi
+  line=${line#*=}
+  if [[ ${#line} -ge 2 && ($line == \"*\" || $line == \'*\') ]]; then
+    line=${line:1:${#line}-2}
+  fi
+  printf '%s\n' "$line"
+}
+
+env_has() { grep -qE "^$1=" "$env_file" 2>/dev/null; }
+
+# Une variable qui manque à .env, à la fin, sous une ligne qui date l'ajout.
+env_add() { # clé, valeur
+  if [[ -z $env_added ]]; then
+    printf '\n# Ajouté par station install, le %s.\n' "$(date +%F)" >>"$env_file"
+  fi
+  printf '%s=%s\n' "$1" "$2" >>"$env_file"
+  env_added="$env_added $1"
+}
+
+# Change la valeur d'une variable déjà dans .env, sans toucher au reste.
+env_replace() { # clé, valeur
+  local tmp
+  tmp=$(mktemp "$env_file.XXXXXX")
+  KEY=$1 VALUE=$2 awk 'index($0, ENVIRON["KEY"] "=") == 1 { print ENVIRON["KEY"] "=" ENVIRON["VALUE"]; next } { print }' \
+    "$env_file" >"$tmp"
+  chmod 600 "$tmp"
+  mv -f "$tmp" "$env_file"
+}
+
+# Un chemin de .env, comme RT_DATA, relatif au dossier de la station.
+env_path() { # clé, défaut
+  local path
+  path=$(env_value "$1" "$2")
+  [[ $path == /* ]] || path=$dir/${path#./}
+  printf '%s\n' "$path"
+}
+
+# Un secret de machine, que personne ne tape : 48 caractères.
+secret() {
+  local value
+  value=$(openssl rand -hex 24)
+  [[ ${#value} -eq 48 ]] || die "openssl ne tire pas de secret." "Vérifier openssl (openssl rand -hex 24), puis relancer."
+  printf '%s\n' "$value"
+}
+
+# Le mot de passe admin, tapé par une personne : 24 caractères, sans + ni /.
+password() {
+  local value
+  value=$(openssl rand -base64 18 | tr '+/' '-_')
+  [[ ${#value} -eq 24 ]] || die "openssl ne tire pas de mot de passe." "Vérifier openssl (openssl rand -base64 18), puis relancer."
+  printf '%s\n' "$value"
+}
+
+# Ce que .env règle ne vient jamais de l'environnement de la commande : docker
+# compose le préférerait à .env, et sudo garde TZ, par exemple.
+env_isolate() {
+  local key
+  unset COMPOSE_FILE COMPOSE_PROJECT_NAME COMPOSE_ENV_FILES
+  [[ -f $env_file ]] || return 0
+  while IFS='=' read -r key _; do
+    case $key in
+      PATH | HOME) ;;
+      *) unset "$key" ;;
+    esac
+  done < <(grep -E '^[A-Za-z_][A-Za-z0-9_]*=' "$env_file")
+}
+
+compose() { (cd "$dir" && docker compose "$@"); }
+
+# --- Vérifications ---
+
+check_machine() {
+  local os_release=$ROOT/etc/os-release id version codename arch
+  [[ $(id -u) == 0 ]] ||
+    die "station install demande les droits root." "Relancer avec sudo : sudo bash station install."
+  [[ -r $os_release ]] || die "$os_release est illisible : système inconnu." "Une station s'installe sur Debian 12 ou 13, ou sur Ubuntu 24.04."
+  id=$(sed -n 's/^ID=//p' "$os_release" | tr -d '"')
+  version=$(sed -n 's/^VERSION_ID=//p' "$os_release" | tr -d '"')
+  codename=$(sed -n 's/^VERSION_CODENAME=//p' "$os_release" | tr -d '"')
+  case "$id $version" in
+    "debian 12" | "debian 13" | "ubuntu 24.04") ;;
+    *)
+      die "Système non pris en charge : ${id:-inconnu} ${version:-}." \
+        "Une station s'installe sur Debian 12 ou 13, ou sur Ubuntu 24.04 : prendre l'un d'eux à la création du VPS."
+      ;;
+  esac
+  os_id=$id
+  os_codename=$codename
+  arch=$(uname -m)
+  [[ $arch == x86_64 ]] ||
+    die "Processeur $arch : les images de BUTTON ne sont construites que pour x86-64 (amd64)." "Prendre un VPS x86-64."
+  local tool missing=""
+  for tool in curl openssl tar sha256sum ss; do
+    command -v "$tool" >/dev/null 2>&1 || missing="$missing $tool"
+  done
+  [[ -z $missing ]] ||
+    die "Outils absents :$missing." "Les installer, par exemple : apt-get install -y curl openssl tar coreutils iproute2. Puis relancer."
+  say "Machine : $id $version ($codename), x86-64."
+}
+
+# Docker et Compose v2, depuis le dépôt de Docker, comme le dit sa
+# documentation : https://docs.docker.com/engine/install/
+install_docker() {
+  local apt=$ROOT/etc/apt failed="L'installation de Docker a échoué : voir le message d'apt-get plus haut."
+  local again="Une fois réglé, relancer station install, ou installer Docker à la main : https://docs.docker.com/engine/install/"
+  export DEBIAN_FRONTEND=noninteractive
+  say "Docker : installation depuis download.docker.com."
+  apt-get update -qq </dev/null || die "$failed" "$again"
+  apt-get install -y -qq ca-certificates curl </dev/null >/dev/null || die "$failed" "$again"
+  install -m 0755 -d "$apt/keyrings"
+  curl --disable -fsSL "https://download.docker.com/linux/$os_id/gpg" -o "$apt/keyrings/docker.asc" ||
+    die "La clé du dépôt de Docker ne se télécharge pas." "Vérifier l'accès de la machine à download.docker.com, puis relancer."
+  chmod a+r "$apt/keyrings/docker.asc"
+  mkdir -p "$apt/sources.list.d"
+  cat >"$apt/sources.list.d/docker.sources" <<EOF
+Types: deb
+URIs: https://download.docker.com/linux/$os_id
+Suites: $os_codename
+Components: stable
+Signed-By: /etc/apt/keyrings/docker.asc
+EOF
+  apt-get update -qq </dev/null || die "$failed" "$again"
+  apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin \
+    </dev/null >/dev/null || die "$failed" "$again"
+  systemctl enable --now docker >/dev/null 2>&1 || true
+}
+
+check_docker() {
+  if ! command -v docker >/dev/null 2>&1; then
+    if [[ -z $assume_yes ]]; then
+      if ! interactive; then
+        die "Docker n'est pas installé." "Relancer avec --yes pour l'installer depuis le dépôt de Docker, ou l'installer d'abord : https://docs.docker.com/engine/install/"
+      fi
+      local answer
+      answer=$(ask "Docker n'est pas installé. L'installer depuis le dépôt de Docker ? (o/n)" o check_yes_no)
+      [[ ${answer,,} == [oy]* ]] ||
+        die "Rien n'est installé : une station a besoin de Docker." "L'installer (https://docs.docker.com/engine/install/), puis relancer."
+    fi
+    install_docker
+  fi
+  docker compose version >/dev/null 2>&1 ||
+    die "Docker est là, mais pas Compose v2 (docker compose)." "Installer le paquet docker-compose-plugin du dépôt de Docker (https://docs.docker.com/compose/install/linux/), puis relancer."
+  if ! docker info >/dev/null 2>&1; then
+    systemctl enable --now docker >/dev/null 2>&1 || true
+    docker info >/dev/null 2>&1 ||
+      die "Docker ne répond pas." "Voir pourquoi : systemctl status docker. Puis relancer."
+  fi
+  say "Docker : $(docker version --format '{{.Server.Version}}' 2>/dev/null || echo présent), Compose $(docker compose version --short 2>/dev/null || echo v2)."
+}
+
+# Le plus proche dossier qui existe : celui de la station n'existe pas encore.
+existing_parent() {
+  local path=$1
+  until [[ -e $path || $path == / || -z $path ]]; do path=${path%/*}; done
+  printf '%s\n' "${path:-/}"
+}
+
+# Une installation neuve s'arrête faute de place. Une station déjà là, dont la
+# banque a grandi, se répare quand même : la place manque, mais elle tourne.
+check_disk() {
+  local path free low=""
+  for path in "$dir" "$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo /var/lib/docker)"; do
+    path=$(existing_parent "$path")
+    free=$(df -Pk "$path" 2>/dev/null | awk 'NR == 2 { print int($4 / 1048576) }') || free=""
+    if [[ -z $free ]]; then
+      warn "la place libre de $path ne se lit pas (df -Pk $path) : non vérifiée."
+    elif ((free < MIN_FREE_GB)); then
+      low="$low $path ($free Go)"
+    fi
+  done
+  if [[ -z $low ]]; then
+    say "Place : $MIN_FREE_GB Go libres au moins."
+  elif [[ -f $env_file ]]; then
+    warn "peu de place libre :$low. Une station neuve en demande $MIN_FREE_GB Go : libérer de la place, ou agrandir le disque."
+  else
+    die "Place libre insuffisante :$low. Il en faut $MIN_FREE_GB Go au moins : les images en prennent 3 environ, et la banque de sons grandit." \
+      "Libérer de la place, ou agrandir le disque, puis relancer."
+  fi
+}
+
+# La station de ce dossier a-t-elle déjà son Caddy en marche ? Les ports 80 et
+# 443 sont alors à elle : une relance ne les vérifie pas.
+caddy_running() {
+  [[ -f $dir/compose.yml && -f $env_file ]] || return 1
+  [[ -n $(compose ps -q --status running caddy 2>/dev/null) ]]
+}
+
+check_ports() {
+  local spec proto port listener taken=""
+  local harbor
+  harbor=$(env_value HARBOR_PORT 6800)
+  for spec in tcp/80 tcp/443 udp/443 "tcp/${harbor##*:}"; do
+    proto=${spec%/*}
+    port=${spec#*/}
+    listener=$(ss -H -l -n -p "--$proto" "sport = :$port" 2>/dev/null | head -n 1) || true
+    [[ -n $listener ]] || continue
+    listener=$(grep -o 'users:(("[^"]*' <<<"$listener" | cut -d'"' -f2) || true
+    taken="$taken
+  $port ($proto) : ${listener:-un autre programme}"
+  done
+  [[ -z $taken ]] ||
+    die "Ports déjà pris :$taken" \
+      "Caddy a besoin de 80 et 443, le direct de $harbor. Arrêter ce qui les tient, par exemple systemctl disable --now apache2, puis relancer."
+  say "Ports : 80, 443 et $harbor libres."
+}
+
+# --- Les fichiers de la version ---
+
+# La plus haute version publiée : celle où mène la page « latest » de GitHub,
+# que version.yml ne donne qu'à la version qui prend stable.
+latest_version() {
+  local answer url
+  answer=$(curl --disable -sS -o /dev/null --max-time 30 -w '%{http_code} %{redirect_url}' \
+    "https://github.com/$REPO/releases/latest") ||
+    die "GitHub ne répond pas." "Vérifier l'accès de la machine à github.com, puis relancer."
+  url=${answer#* }
+  case $url in
+    */releases/tag/v*) printf '%s\n' "${url##*/releases/tag/v}" ;;
+    */releases) die "Aucune version publiée de BUTTON ($REPO)." "Pour un essai, installer depuis une archive : voir --from." ;;
+    *) die "GitHub répond ${answer%% *} pour la dernière version de $REPO." "Réessayer dans un moment." ;;
+  esac
+}
+
+# Télécharge station.tar.gz et SHA256SUMS de la version, puis compare.
+fetch_version() { # version
+  local base="https://github.com/$REPO/releases/download/v$1" name expected actual
+  for name in station.tar.gz SHA256SUMS; do
+    curl --disable -fsSL --retry 3 --max-time 120 -o "$work/$name" "$base/$name" ||
+      die "La version $1 n'a pas de fichier $name sur GitHub : elle n'existe pas, ou elle date d'avant la commande station." \
+        "Les versions publiées : https://github.com/$REPO/releases. En prendre une plus récente avec --version ; pour un essai, installer depuis une archive avec --from."
+  done
+  expected=$(awk '$2 == "station.tar.gz" { print $1 }' "$work/SHA256SUMS")
+  actual=$(sha256sum "$work/station.tar.gz" | cut -d' ' -f1)
+  [[ -n $expected && $actual == "$expected" ]] ||
+    die "station.tar.gz de la version $1 ne correspond pas à sa somme, dans SHA256SUMS : rien n'est écrit." \
+      "Relancer : un téléchargement peut s'abîmer. Si l'erreur revient, ne pas installer, et le signaler."
+}
+
+# Ouvre l'archive dans $work/files, et vérifie ce qu'elle porte.
+unpack() { # archive
+  local name
+  mkdir -p "$work/files"
+  tar -xzf "$1" -C "$work/files" ||
+    die "$1 ne s'ouvre pas : archive abîmée, ou qui n'est pas station.tar.gz." "La télécharger à nouveau, puis relancer."
+  for name in VERSION compose.yml Caddyfile station scripts/smoke.sh; do
+    [[ -f $work/files/$name ]] ||
+      die "$name manque dans $1 : ce n'est pas l'archive d'une station." "Prendre station.tar.gz d'une version publiée, ou le fabriquer : python3 scripts/version.py station main <dossier>."
+  done
+}
+
+# Le domaine mène-t-il à cette machine, sur le port 80 ? Avant que Caddy
+# demande un certificat : Let's Encrypt refuse un domaine un moment après
+# quelques échecs. Un conteneur répond un jeton tiré au hasard sur le port 80,
+# et chaque adresse du domaine, A et AAAA, doit le rendre. Les adresses se
+# lisent dans un conteneur : dans le DNS, et non dans /etc/hosts.
+check_domain_here() {
+  local image addresses address target answer token wrong=""
+  image=$(sed -n 's/^ *image: *\(caddy:[^ ]*\) *$/\1/p' "$work/files/compose.yml" | head -n 1)
+  [[ -n $image ]] || die "Le compose.yml de la version n'a pas d'image caddy." "Archive inattendue : la télécharger à nouveau."
+  docker pull -q "$image" >/dev/null ||
+    die "L'image $image ne se tire pas." "Vérifier l'accès de la machine à Docker Hub, puis relancer."
+  addresses=$(
+    for kind in a aaaa; do
+      docker run --rm "$image" nslookup -type="$kind" "$domain" 2>/dev/null |
+        awk '/^Name:/ { answer = 1; next } answer && /^Address:/ { print $2 }' || true
+    done
+  )
+  [[ -n $addresses ]] ||
+    die "Le domaine $domain ne mène à aucune adresse." \
+      "Chez le registraire du domaine, créer un enregistrement A vers l'adresse IPv4 de cette machine, attendre qu'il se propage, puis relancer."
+  token=$(openssl rand -hex 16)
+  docker rm -f "$PROBE" >/dev/null 2>&1 || true
+  docker run -d --rm --name "$PROBE" -p 80:80 "$image" caddy respond --listen :80 --body "$token" >/dev/null ||
+    die "Le port 80 ne s'ouvre pas pour la vérification." "Voir ce qui le tient : ss -ltnp 'sport = :80'. Puis relancer."
+  probe_started=1
+  for address in $addresses; do
+    target=$address
+    [[ $address != *:* ]] || target="[$address]"
+    # Les reprises laissent au conteneur le temps d'écouter.
+    answer=$(curl --disable -sS --connect-timeout 5 --max-time 10 --retry 3 --retry-delay 1 --retry-connrefused \
+      --resolve "$domain:80:$target" "http://$domain/.well-known/button-$token" 2>/dev/null) || answer=""
+    [[ $answer == "$token" ]] || wrong="$wrong $address"
+  done
+  docker rm -f "$PROBE" >/dev/null 2>&1 || true
+  probe_started=""
+  [[ -z $wrong ]] ||
+    die "Le domaine $domain mène à${wrong}, qui ne répond pas comme cette machine sur le port 80." \
+      "Vérifier ses enregistrements A et AAAA chez le registraire, et le pare-feu de l'hébergeur pour le port 80. Un changement du DNS peut mettre une heure à se propager. Puis relancer."
+  say "Domaine : $domain mène à cette machine ($(tr '\n' ' ' <<<"$addresses" | sed 's/ $//'))."
+}
+
+# --- Le dossier de la station ---
+
+# Les fichiers de la version : ce qui manque est posé, ce qui a changé est
+# remis, et l'ancien gardé à côté. Rien d'autre du dossier n'est touché.
+install_files() {
+  local file mode stamp
+  stamp=$(date +%Y%m%d-%H%M%S)
+  while IFS= read -r file; do
+    file=${file#"$work/files/"}
+    mode=$(stat -c %a "$work/files/$file")
+    if [[ ! -e $dir/$file ]]; then
+      install -D -m "$mode" "$work/files/$file" "$dir/$file"
+      files_added="$files_added $file"
+    elif ! cmp -s "$work/files/$file" "$dir/$file"; then
+      mv -f "$dir/$file" "$dir/$file.local-$stamp"
+      install -D -m "$mode" "$work/files/$file" "$dir/$file"
+      files_restored="$files_restored $file"
+    else
+      chmod "$mode" "$dir/$file"
+    fi
+  done < <(find "$work/files" -type f | sort)
+}
+
+# .env : créé à la première installation, en droits 600. Ensuite, seule une
+# variable qui manque s'ajoute : une valeur posée n'est jamais changée, sauf
+# un mot de passe admin vide quand la base n'existe pas encore.
+write_env() {
+  local key value
+  if [[ ! -e $env_file ]]; then
+    local admin_password source_password admin_icecast nowplaying meili
+    admin_password=$(password)
+    source_password=$(secret)
+    admin_icecast=$(secret)
+    nowplaying=$(secret)
+    meili=$(secret)
+    (
+      umask 077
+      cat >"$env_file" <<EOF
+# La station, réglée par station install le $(date +%F). Les secrets sont ici :
+# droits 600, et ce fichier n'entre dans aucun dépôt. Toutes les variables :
+# .env.example, dans ce dossier. Une relance de station install n'y change
+# rien : elle ajoute seulement ce qui manque.
+
+# La version des images, la même que celle du dossier (VERSION).
+BUTTON_VERSION=$version
+
+# Sur Internet : Caddy devant la console, le flux et now.json, avec un
+# certificat pour DOMAIN. Les autres ports n'écoutent que sur la machine.
+COMPOSE_PROFILES=vps
+DOMAIN=$domain
+ACME_EMAIL=$email
+BIND_ADDRESS=127.0.0.1
+TZ=$timezone
+
+# Le compte admin, créé au premier démarrage. Son mot de passe s'efface d'ici
+# une fois affiché : il se change ensuite dans la console, Mon compte.
+RT_ADMIN_USER=$admin
+RT_ADMIN_PASSWORD=$admin_password
+
+# Les secrets de machine, que personne ne tape.
+ICECAST_SOURCE_PASSWORD=$source_password
+ICECAST_ADMIN_PASSWORD=$admin_icecast
+RT_NOWPLAYING_SECRET=$nowplaying
+MEILI_MASTER_KEY=$meili
+
+# Les mises à jour : auto, ou manual. La commande update les fera.
+BUTTON_UPDATES=$updates
+EOF
+      if [[ $tls == internal ]]; then
+        printf '\n# Un certificat de Caddy, pour un essai : les navigateurs le refusent.\nCADDY_TLS=internal\n' >>"$env_file"
+      fi
+    )
+    return 0
+  fi
+  chmod 600 "$env_file"
+  env_has BUTTON_VERSION || env_add BUTTON_VERSION "$version"
+  env_has COMPOSE_PROFILES || env_add COMPOSE_PROFILES vps
+  env_has DOMAIN || env_add DOMAIN "$domain"
+  env_has ACME_EMAIL || env_add ACME_EMAIL "$email"
+  env_has BIND_ADDRESS || env_add BIND_ADDRESS 127.0.0.1
+  env_has TZ || env_add TZ "$timezone"
+  env_has RT_ADMIN_USER || env_add RT_ADMIN_USER "$admin"
+  # Sans base, radiotomate-init crée le compte admin : il lui faut un mot de
+  # passe, que la fin de l'installation affichera.
+  if [[ -n $first && -z $(env_value RT_ADMIN_PASSWORD) ]]; then
+    value=$(password)
+    if env_has RT_ADMIN_PASSWORD; then
+      env_replace RT_ADMIN_PASSWORD "$value"
+      env_added="$env_added RT_ADMIN_PASSWORD"
+    else
+      env_add RT_ADMIN_PASSWORD "$value"
+    fi
+  fi
+  for key in ICECAST_SOURCE_PASSWORD ICECAST_ADMIN_PASSWORD RT_NOWPLAYING_SECRET MEILI_MASTER_KEY; do
+    if ! env_has "$key"; then
+      value=$(secret)
+      env_add "$key" "$value"
+    fi
+  done
+  env_has BUTTON_UPDATES || env_add BUTTON_UPDATES "$updates"
+}
+
+make_data_dirs() {
+  local key default
+  for key in RT_DATA:./data/radiotomate NOWPLAYING_DATA:./data/nowplaying \
+    MEILI_DATA:./data/meilisearch CADDY_DATA:./data/caddy BUTTON_MEDIA:./media; do
+    default=${key#*:}
+    mkdir -p "$(env_path "${key%%:*}" "$default")"
+  done
+}
+
+# /usr/local/bin/station mène au script du dossier : une mise à jour du
+# dossier met aussi la commande à jour.
+link_command() {
+  local target=$dir/station
+  if [[ -L $BIN ]]; then
+    [[ $(readlink "$BIN") != "$target" ]] || return 0
+    warn "$BIN menait à $(readlink "$BIN") : il mène maintenant à $target."
+  elif [[ -e $BIN ]]; then
+    warn "$BIN existe et n'est pas un lien : laissé tel quel. La commande de cette station est $target."
+    return 0
+  fi
+  mkdir -p "${BIN%/*}"
+  ln -sfn "$target" "$BIN"
+}
+
+ghcr_login() {
+  local registry host user
+  [[ -r $token_file ]] || die "Jeton illisible : $token_file." "Donner le chemin d'un fichier qui contient le jeton GitHub, lisible par root."
+  registry=$(env_value BUTTON_IMAGES ghcr.io/lazbutton)
+  host=${registry%%/*}
+  user=${registry#*/}
+  user=${user%%/*}
+  tr -d '[:space:]' <"$token_file" | docker login "$host" --username "$user" --password-stdin >/dev/null ||
+    die "$host refuse le jeton de $token_file." "Il doit lire les images (read:packages) et ne pas avoir expiré. En créer un autre, puis relancer."
+  say "Registre : connecté à $host. Docker garde le jeton dans /root/.docker/config.json, pour les mises à jour."
+}
+
+# --- Démarrer et contrôler ---
+
+wait_https() {
+  local args=(--disable -sS -o /dev/null --max-time 10) deadline=$((SECONDS + HTTPS_WAIT))
+  if [[ $tls == internal ]]; then
+    args+=(--cacert "$(env_path CADDY_DATA ./data/caddy)/pki/authorities/local/root.crt" --resolve "$domain:443:127.0.0.1")
+  fi
+  until curl "${args[@]}" "https://$domain/" 2>/dev/null; do
+    ((SECONDS < deadline)) ||
+      die "https://$domain ne répond pas au bout de $HTTPS_WAIT s : le certificat manque encore." \
+        "Voir pourquoi : cd $dir && docker compose logs caddy. Puis relancer station install."
+    sleep 5
+  done
+  say "HTTPS : https://$domain répond."
+}
+
+smoke() {
+  local console stream
+  if [[ $tls == internal ]]; then
+    # Les navigateurs, et curl, refusent le certificat de Caddy : le contrôle
+    # passe par les ports de la machine.
+    console=http://127.0.0.1:$(env_value CONSOLE_PORT 30126)
+    stream=http://127.0.0.1:$(env_value ICECAST_PORT 18000)/button.mp3
+  else
+    console=https://$domain
+    stream=https://$domain/button.mp3
+  fi
+  (cd "$dir" && SMOKE_WAIT=${SMOKE_WAIT:-300} scripts/smoke.sh "$console" "$stream") ||
+    die "" "Le contrôle de la station a échoué : voir plus haut. Une fois réglé, relancer station install, qui reprend où il en était."
+}
+
+# Le nom et les adresses publiques, dans les réglages Station du moteur,
+# seulement s'ils manquent : sans eux, la console reprendrait ceux de sa
+# marque par défaut. Comme radiotomate-init pour le harbor, une ligne posée
+# n'est jamais changée. Une fois l'installation finie, ils se changent dans la
+# console, Réglages → Station.
+station_settings() {
+  local harbor written
+  harbor=$(env_value HARBOR_PORT 6800)
+  [[ $harbor =~ ^[0-9]+$ ]] || harbor=""
+  written=$(compose exec -T -e "BUTTON_NAME=$name" -e "BUTTON_DOMAIN=$domain" -e "BUTTON_HARBOR_PORT=$harbor" \
+    radiotomate-interface python3 - <<'PY'
+import os
+import sqlite3
+from contextlib import closing
+
+domain = os.environ["BUTTON_DOMAIN"]
+values = {
+    "station.name": os.environ.get("BUTTON_NAME", ""),
+    "station.public_stream_url": f"https://{domain}/button.mp3",
+    "station.now_url": f"https://{domain}/now.json",
+    "station.status_url": f"https://{domain}/status-json.xsl",
+    "station.harbor_host": domain,
+    "station.harbor_port": os.environ.get("BUTTON_HARBOR_PORT", ""),
+}
+with closing(sqlite3.connect("/data/radiotomate.db")) as con, con:
+    for key, value in values.items():
+        added = con.execute(
+            "insert or ignore into settings (key, value) values (?, ?)", (key, value)
+        ).rowcount if value else 0
+        if added:
+            print(key)
+PY
+  ) || die "Les réglages de la station ne s'écrivent pas." "Voir : cd $dir && docker compose logs radiotomate-interface. Puis relancer station install."
+  if [[ -n $written ]]; then
+    say "Réglages Station : nom et adresses publiques posés."
+  fi
+}
+
+# Le mot de passe admin, une seule fois, dans un terminal. Il s'efface ensuite
+# de .env, et radiotomate-init repasse sans lui : sinon, un compte admin
+# supprimé reviendrait avec ce mot de passe (docs/deploiement.md, « Les secrets »).
+admin_password() {
+  local password restarted=1
+  password=$(env_value RT_ADMIN_PASSWORD)
+  if ! terminal; then
+    say "Mot de passe admin : pas affiché, la sortie n'est pas un terminal. Il reste dans $env_file, en droits 600, jusqu'à ce que station install l'affiche, une fois, dans un terminal."
+    return
+  fi
+  env_replace RT_ADMIN_PASSWORD ""
+  compose up -d >/dev/null 2>&1 || restarted=""
+  say "" "Compte admin : $(env_value RT_ADMIN_USER admin)" \
+    "Mot de passe : $password" \
+    "  Affiché cette fois seulement : le noter maintenant. Il se change dans la console, Mon compte."
+  [[ -n $restarted ]] ||
+    die "La station ne repart pas sans le mot de passe dans .env." "Voir : cd $dir && docker compose logs radiotomate-init. Puis relancer station install."
+}
+
+cleanup() {
+  [[ -z ${probe_started:-} ]] || docker rm -f "$PROBE" >/dev/null 2>&1 || true
+  [[ -z ${work:-} ]] || rm -rf "$work"
+}
+
+# --- install ---
+
+cmd_install() {
+  local dir="" name="" domain="" email="" timezone="" admin="" updates="" version="" from=""
+  local token_file="" tls="" assume_yes="" domain_check=1
+  local given=" " option value
+  while (($#)); do
+    option=$1
+    case $option in
+      --yes | --no-domain-check | -h | --help) shift ;;
+      --*=*)
+        value=${option#*=}
+        option=${option%%=*}
+        shift
+        ;;
+      --*)
+        (($# >= 2)) || usage_error "$option attend une valeur."
+        value=$2
+        shift 2
+        ;;
+      *) usage_error "Argument inattendu : $option." ;;
+    esac
+    case $option in
+      --dir) dir=$value ;;
+      --name) name=$(trim "$value") ;;
+      --domain) domain=${value,,} ;;
+      --email) email=$value ;;
+      --timezone) timezone=$value ;;
+      --admin) admin=$value ;;
+      --updates) updates=$value ;;
+      --version) version=$value ;;
+      --from) from=$value ;;
+      --github-token-file) token_file=$value ;;
+      --tls) tls=$value ;;
+      --yes) assume_yes=1 ;;
+      --no-domain-check) domain_check="" ;;
+      -h | --help)
+        usage
+        return 0
+        ;;
+      *) usage_error "Option inconnue : $option." ;;
+    esac
+    given="$given${option#--} "
+  done
+  [[ -z $tls || $tls == internal || $tls == acme ]] || usage_error "--tls vaut internal, ou acme, la valeur par défaut."
+  [[ -z $dir || $dir == /* ]] || usage_error "--dir attend un chemin absolu, comme /opt/button."
+  [[ -z $from || -f $from ]] || usage_error "--from : $from n'existe pas."
+  if [[ -n $version && $version != stable && -z $from ]]; then
+    check_version "$version" || exit 2
+  fi
+
+  dir=${dir:-$(default_dir)}
+  dir=${dir%/}
+  local env_file=$dir/.env env_added="" files_added="" files_restored="" os_id="" os_codename=""
+  trap cleanup EXIT
+  env_isolate
+
+  say "BUTTON : installation de la station, dans $dir."
+  check_machine
+  check_docker
+  # Le reste d'une vérification du domaine interrompue tiendrait le port 80.
+  docker rm -f "$PROBE" >/dev/null 2>&1 || true
+  check_disk
+  local running=""
+  if caddy_running; then
+    running=1
+    say "Ports : la station tourne déjà, avec son Caddy."
+  else
+    check_ports
+  fi
+
+  # Une installation n'est finie qu'une fois le mot de passe admin affiché, et
+  # effacé de .env. Jusque-là, le nom de la station se demande encore, et les
+  # réglages Station se posent. Une base absente demande aussi un compte admin.
+  local first=""
+  if [[ ! -f $env_file || -n $(env_value RT_ADMIN_PASSWORD) ||
+    ! -f $(env_path RT_DATA ./data/radiotomate)/radiotomate.db ]]; then
+    first=1
+  fi
+  if [[ -f $env_file ]]; then
+    say "Réponses : celles de $env_file, déjà là."
+  elif interactive; then
+    local answer
+    for answer in name domain email timezone admin updates; do
+      if [[ $given != *" $answer "* ]]; then
+        say "" "Quelques questions. Entrée garde la valeur entre crochets."
+        break
+      fi
+    done
+  fi
+  if [[ -n $first ]]; then
+    name=$(choose "" name "$name" BUTTON check_name "Nom de la station")
+  elif [[ $given == *" name "* ]]; then
+    warn "--name n'est pas pris : la station est installée, son nom se change dans la console, Réglages → Station."
+  fi
+  domain=$(choose DOMAIN domain "$domain" "" check_domain "Domaine, qui pointe déjà sur cette machine")
+  domain=${domain,,}
+  email=$(choose ACME_EMAIL email "$email" "" check_email "E-mail du compte Let's Encrypt, facultatif")
+  timezone=$(choose TZ timezone "$timezone" Europe/Paris check_timezone "Fuseau de la station")
+  admin=$(choose RT_ADMIN_USER admin "$admin" admin check_admin "Identifiant du compte admin")
+  updates=$(choose_updates)
+  if [[ -f $env_file ]]; then
+    local current_tls
+    current_tls=$(env_value CADDY_TLS acme)
+    if [[ -n $tls && $tls != "$current_tls" ]]; then
+      warn "--tls $tls n'est pas pris : la station a déjà CADDY_TLS=$current_tls, que station install ne change pas."
+    fi
+    tls=$current_tls
+  fi
+  tls=${tls:-acme}
+
+  work=$(mktemp -d)
+  if [[ -f $env_file ]]; then
+    local installed
+    installed=$(env_value BUTTON_VERSION)
+    [[ -n $installed ]] ||
+      die "BUTTON_VERSION manque dans $env_file." "Y remettre la version de la station, celle du fichier VERSION du dossier, puis relancer."
+    if [[ -n $version && $version != "$installed" ]]; then
+      warn "--version $version n'est pas prise : la station est en $installed, et station install ne change pas de version."
+    fi
+    version=$installed
+  fi
+  if [[ -n $from ]]; then
+    unpack "$from"
+    local packed
+    packed=$(<"$work/files/VERSION")
+    [[ -z $version || $version == "$packed" ]] ||
+      die "$from est la version $packed, et la station la $version." "Prendre l'archive de la version $version."
+    version=$packed
+    say "Version : $version, depuis $from."
+  else
+    if [[ -z $version || $version == stable ]]; then
+      version=$(latest_version)
+      check_version "$version" || die "GitHub donne une version inattendue : ne pas installer, et le signaler."
+      say "Version : $version, la plus haute publiée."
+    else
+      check_version "$version" ||
+        die "La station est en $version : seule une archive de cette version la répare, avec --from."
+      say "Version : $version."
+    fi
+    fetch_version "$version"
+    unpack "$work/station.tar.gz"
+    [[ $(<"$work/files/VERSION") == "$version" ]] ||
+      die "L'archive de la version $version se dit $(<"$work/files/VERSION")." "Archive inattendue : ne pas installer, et le signaler."
+  fi
+
+  if [[ $tls == internal ]]; then
+    say "Domaine : pas vérifié, Caddy signe lui-même le certificat (--tls internal)."
+  elif [[ -n $running ]]; then
+    say "Domaine : pas vérifié, la station a déjà son certificat."
+  elif [[ -z $domain_check ]]; then
+    warn "le domaine n'est pas vérifié (--no-domain-check). S'il ne mène pas ici, Let's Encrypt le refusera un moment."
+  else
+    check_domain_here
+  fi
+
+  mkdir -p "$dir"
+  install_files
+  write_env
+  make_data_dirs
+  link_command
+  env_isolate
+  if [[ -n $files_added$files_restored$env_added ]]; then
+    say "Dossier : $dir, à la version $version."
+    [[ -z $files_restored ]] || say "  Remis à la version :$files_restored. L'ancien est gardé à côté, en .local-… : les changements d'une station vont dans compose.override.yml."
+    [[ -z $env_added ]] || say "  Ajouté à .env :$env_added."
+  else
+    say "Dossier : $dir, rien à réparer."
+  fi
+
+  [[ -z $token_file ]] || ghcr_login
+  # Une station qui tourne garde ses images : seule une image qui manque se
+  # tire, par up. Sinon, une relance prendrait la dernière caddy:2.11-alpine,
+  # et recréerait Caddy.
+  say "Démarrage : les images de la version $version."
+  if [[ -z $running ]]; then
+    compose pull ||
+      die "Les images de la version $version ne se tirent pas." \
+        "Images privées : relancer avec --github-token-file, un jeton GitHub qui a read:packages. Sinon, vérifier l'accès de la machine à ghcr.io, puis relancer."
+  fi
+  compose up -d ||
+    die "La station ne démarre pas : voir le message de docker compose plus haut." \
+      "Si radiotomate-init a échoué : cd $dir && docker compose logs radiotomate-init. Puis relancer station install."
+  wait_https
+  smoke
+  if [[ -n $first ]]; then
+    station_settings
+  fi
+
+  say "" "La station tourne : l'antenne joue."
+  say "  Console : https://$domain$([[ $tls != internal ]] || echo ', avec un certificat que les navigateurs refusent')"
+  say "  Flux : https://$domain/button.mp3"
+  say "  Direct : $domain, port $(env_value HARBOR_PORT 6800), avec le jeton d'encodeur de chaque compte"
+  say "  Dossier : $dir, et la commande : station"
+  if [[ $(env_value BUTTON_UPDATES auto) == auto ]]; then
+    say "  Mises à jour : automatiques, dès que la commande update existera"
+  else
+    say "  Mises à jour : à la main, dès que la commande update existera"
+  fi
+  if [[ -n $first ]]; then
+    admin_password
+  fi
+}
+
+# choose <clé de .env> <option> <valeur de l'option> <défaut> <contrôle> <question>
+# La valeur de .env si elle y est ; sinon celle de l'option ; sinon la réponse
+# au clavier ; sinon le défaut. Une option qui contredit .env ne change rien.
+# Sans défaut ni clavier, l'option est obligatoire.
+choose() {
+  local key=$1 option=$2 value=$3 default=$4 check=$5 question=$6 current
+  if [[ -n $key && -f $env_file ]] && env_has "$key"; then
+    current=$(env_value "$key")
+    if [[ $given == *" $option "* && $value != "$current" ]]; then
+      warn "--$option $value n'est pas pris : la station a déjà $key=$current, que station install ne change pas."
+    fi
+    printf '%s\n' "$current"
+  elif [[ $given == *" $option "* ]]; then
+    "$check" "$value" || exit 2
+    printf '%s\n' "$value"
+  elif interactive; then
+    ask "$question" "$default" "$check"
+  elif [[ -n $default || $option == email ]]; then
+    printf '%s\n' "$default"
+  else
+    die "--$option manque : sans terminal, ou avec --yes, rien ne se demande." "Relancer avec --$option, par exemple --domain radio.example."
+  fi
+}
+
+choose_updates() {
+  local answer
+  if [[ -f $env_file ]] && env_has BUTTON_UPDATES; then
+    choose BUTTON_UPDATES updates "$updates" auto check_updates ""
+  elif [[ $given == *" updates "* ]]; then
+    check_updates "$updates" || exit 2
+    printf '%s\n' "$updates"
+  elif interactive; then
+    answer=$(ask "Mises à jour automatiques, quand la commande update existera ? (o/n)" o check_yes_no)
+    if [[ ${answer,,} == [oy]* ]]; then echo auto; else echo manual; fi
+  else
+    echo auto
+  fi
+}
+
+# Le dossier de la station : celui de ce script s'il est déjà celui d'une
+# station, puisque la commande posée sur la machine y mène ; sinon celui où
+# mène cette commande, pour le script téléchargé, relancé ; sinon /opt/button.
+default_dir() {
+  local script folder
+  for script in "${BASH_SOURCE[0]:-}" "$BIN"; do
+    script=$(readlink -f "$script" 2>/dev/null) || continue
+    folder=${script%/*}
+    if [[ -f $folder/VERSION && -f $folder/compose.yml ]]; then
+      printf '%s\n' "$folder"
+      return
+    fi
+  done
+  printf '%s\n' "$DEFAULT_DIR"
+}
+
+main() {
+  local command=${1:-help}
+  (($# == 0)) || shift
+  case $command in
+    install) cmd_install "$@" ;;
+    help | -h | --help) usage ;;
+    *) usage_error "Commande inconnue : $command." ;;
+  esac
+}
+
+# Lu par les tests avec source, le script ne fait que définir ses fonctions.
+# Lu sur l'entrée standard (curl … | bash -s install), il n'a pas de nom.
+if [[ -z ${BASH_SOURCE[0]:-} || ${BASH_SOURCE[0]} == "$0" ]]; then
+  main "$@"
+fi

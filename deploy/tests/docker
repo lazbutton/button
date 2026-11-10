@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# Un faux docker, hors de fakes/ : la machine des tests ne l'a que si
+# $FAKE_STATE/bin y mène, comme après l'installation de Docker. Il note chaque
+# appel dans $FAKE_STATE/log, et joue une machine où tout va bien, sauf ce que
+# disent les fichiers de $FAKE_STATE.
+set -euo pipefail
+state=$FAKE_STATE
+if [[ $1 == compose ]]; then
+  echo "docker $* (dans $PWD)" >>"$state/log"
+else
+  echo "docker $*" >>"$state/log"
+fi
+
+case $1 in
+  version) echo 27.3.1 ;;
+  info)
+    [[ ! -e $state/docker-down ]] || exit 1
+    [[ ${2:-} != --format ]] || echo /var/lib/docker
+    ;;
+  pull | rm) ;;
+  login) echo "login ${*:2} jeton=$(cat)" >>"$state/login" ;;
+  run)
+    if [[ " $* " == *" caddy respond "* ]]; then
+      # Le jeton de la vérification du domaine : son dernier argument.
+      echo "${*: -1}" >"$state/probe-token"
+      echo probe
+    elif [[ " $* " == *" nslookup "* ]]; then
+      # Comme le nslookup de busybox : $state/dns-a et dns-aaaa, une adresse
+      # par ligne.
+      kind=$(sed -n 's/.* -type=\([a-z]*\) .*/\1/p' <<<" $* ")
+      printf 'Server:\t\t127.0.0.11\nAddress:\t127.0.0.11:53\n\n'
+      if [[ ! -s $state/dns-$kind ]]; then
+        echo "*** Can't find ${*: -1}: No answer"
+        exit 0
+      fi
+      echo "Non-authoritative answer:"
+      while read -r address; do
+        printf 'Name:\t%s\nAddress: %s\n\n' "${*: -1}" "$address"
+      done <"$state/dns-$kind"
+    fi
+    ;;
+  compose)
+    case $2 in
+      version)
+        [[ ! -e $state/no-compose ]] || exit 1
+        [[ ${3:-} != --short ]] || echo 2.29.7
+        ;;
+      ps) [[ ! -e $state/caddy-running ]] || echo caddy ;;
+      pull) [[ ! -e $state/pull-fails ]] || exit 1 ;;
+      up)
+        # Ce que docker compose recevrait du shell, à la place de .env.
+        echo "environnement : TZ=${TZ-absent} DOMAIN=${DOMAIN-absent}" >>"$state/log"
+        [[ -e $state/env-at-first-up ]] || cp .env "$state/env-at-first-up"
+        # radiotomate-init crée la base, et Caddy tourne.
+        mkdir -p data/radiotomate
+        touch data/radiotomate/radiotomate.db "$state/caddy-running"
+        ;;
+      exec)
+        echo "${*:3}" >>"$state/settings"
+        cat >"$state/settings.py"
+        printf 'station.name\nstation.public_stream_url\n'
+        ;;
+    esac
+    ;;
+esac

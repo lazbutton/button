@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Un faux curl : GitHub et ses versions publiées ($FAKE_STATE/latest, puis
+# $FAKE_STATE/releases/vX.Y.Z/), le dépôt de Docker, et la station vue de la
+# machine. Une adresse de $FAKE_STATE/here mène à cette machine.
+set -euo pipefail
+echo "curl $*" >>"$FAKE_STATE/log"
+out="" resolve="" url=""
+while (($#)); do
+  case $1 in
+    -o) out=$2 && shift 2 ;;
+    --resolve) resolve=$2 && shift 2 ;;
+    -w | --max-time | --retry | --retry-delay | --cacert) shift 2 ;;
+    -*) shift ;;
+    *) url=$1 && shift ;;
+  esac
+done
+
+case $url in
+  https://github.com/*/releases/latest)
+    # -w '%{http_code} %{redirect_url}'
+    if [[ -e $FAKE_STATE/github-down ]]; then
+      printf '503 '
+    elif [[ -s $FAKE_STATE/latest ]]; then
+      printf '302 https://github.com/lazbutton/button/releases/tag/v%s' "$(cat "$FAKE_STATE/latest")"
+    else
+      printf '302 https://github.com/lazbutton/button/releases'
+    fi
+    ;;
+  https://github.com/*/releases/download/*)
+    file=$FAKE_STATE/releases/${url#*/releases/download/}
+    [[ -f $file ]] || exit 22
+    cp "$file" "$out"
+    ;;
+  https://download.docker.com/*) echo "la clé du dépôt de Docker" >"$out" ;;
+  http://*/.well-known/button-*)
+    address=${resolve#*:80:}
+    address=${address#[}
+    address=${address%]}
+    grep -qxF "$address" "$FAKE_STATE/here" && [[ -f $FAKE_STATE/probe-token ]] || exit 7
+    cat "$FAKE_STATE/probe-token"
+    ;;
+  https://*) [[ ! -e $FAKE_STATE/https-down ]] || exit 7 ;;
+  *)
+    echo "curl : adresse inattendue, $url" >&2
+    exit 2
+    ;;
+esac
