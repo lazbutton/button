@@ -70,6 +70,7 @@ from radiotomate.scheduler.timing import (  # noqa: F401 — re-exported
     source_id,
     track_would_overflow_anchor,
 )
+from radiotomate.services.cart_draw import next_cart_sound
 
 if TYPE_CHECKING:
     from httpx import AsyncClient
@@ -1126,7 +1127,7 @@ async def _push_cart_to_queue(  # noqa: PLR0913
         if cart_id is None and not title:
             continue
         cart = await _load_cart(session, cart_id=cart_id, title=title)
-        sound = _next_available_sound(cart)
+        sound = await next_cart_sound(session, cart)
         if sound:
             break
     if not sound or not cart:
@@ -1202,14 +1203,6 @@ async def _load_cart(
     if cart is None:
         return None
     return await Cart.from_id(session, cart.id, load_sounds=True)
-
-
-def _next_available_sound(cart: Cart | None) -> Sound | None:
-    # A one-shot playlist played through starts again (Cart.next_sound_playlist):
-    # clock jingle and pub carts keep filling.
-    if cart is None:
-        return None
-    return cart.next_sound()
 
 
 async def _push_autodj_item(

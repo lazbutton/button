@@ -21,6 +21,7 @@ from radiotomate.scheduler.clock import (
     track_would_overflow_anchor,
 )
 from radiotomate.services.agenda import forecast_windows
+from radiotomate.services.cart_draw import CartDraw, cart_draw
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session as ormSession
@@ -226,6 +227,19 @@ async def _cached_cart(
     return cache.get(key)
 
 
+async def _cached_draw(session: ormSession, cache: dict, cart) -> CartDraw | None:
+    """
+    A random cart draws in the forecast as it will on air: one draw for the
+    whole forecast, so that the sounds planned one after the other differ.
+    """
+    if cart is None:
+        return None
+    key = ("draw", cart.id)
+    if key not in cache:
+        cache[key] = await cart_draw(session, cart)
+    return cache[key]
+
+
 def _next_preview_sound(cart, used: set[int]):
     if cart is None:
         return None
@@ -268,7 +282,8 @@ async def _resolve_cart(
             continue
         cart = await _cached_cart(session, carts, cart_id, title)
         used = used_sounds.setdefault(getattr(cart, "id", 0), set()) if cart else set()
-        sound = _next_preview_sound(cart, used)
+        draw = await _cached_draw(session, carts, cart)
+        sound = draw.pick_ahead(cart) if draw else _next_preview_sound(cart, used)
         if sound and cart:
             used.add(sound.id)
             rescue = (primary_id is not None and cart.id != primary_id) or (

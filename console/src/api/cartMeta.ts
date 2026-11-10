@@ -11,7 +11,7 @@ export const MODE_LABELS: Record<CartMode, string> = {
 export const MODE_HELP: Record<CartMode, string> = {
   playlist: "Joue dans l’ordre les sons jamais passés, puis reprend au début.",
   playlist_loop: "Reprend au début après le dernier son.",
-  random: "Tire un son au hasard parmi les pistes actives analysées.",
+  random: "Tire au sort sans redite : chaque son passe une fois par tour, puis un nouveau tour commence.",
   relay: "Diffuse un flux Icecast externe. La durée max. est obligatoire.",
 };
 
