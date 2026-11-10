@@ -77,8 +77,9 @@ IMAGE = re.compile(r"/(button-[a-z0-9-]+):\$\{BUTTON_VERSION\b")
 # Une section build: de compose.yml : un bloc, ou une valeur sur sa ligne.
 BUILD_BLOCK = re.compile(r"( *)build:[ \t]*(#.*)?\n?")
 BUILD_LINE = re.compile(r" *build:[ \t]+[^#\s]")
-# Un fichier du dossier de la station que compose.yml monte dans un conteneur.
-MOUNTED = re.compile(r"^ *- *\"?\./([^:\s\"]+):", re.MULTILINE)
+# Un fichier du dossier de la station que compose.yml monte dans un conteneur,
+# en une ligne (- ./scripts/x.sh:/x.sh:ro) ou en bloc (source: ./x).
+MOUNTED = re.compile(r"^ *(?:- *[\"']?|source: *[\"']?)\./([^:\s\"']+)", re.MULTILINE)
 # Les fichiers joints à une version, dans l'ordre de SHA256SUMS.
 STATION_ASSETS = ("station", "station.tar.gz")
 

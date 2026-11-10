@@ -310,12 +310,15 @@ class StationTest(unittest.TestCase):
                 "    volumes:\n"
                 "      - ${RT_DATA:-./data/radiotomate}:/data\n"
                 "      - ./scripts/a.sh:/a.sh:ro\n"
-                "      - ./share/b.conf:/b.conf:ro\n",
+                "      - ./share/b.conf:/b.conf:ro\n"
+                "      - type: bind\n"
+                "        source: ./share/c.conf\n"
+                "        target: /c.conf\n",
                 encoding="utf-8",
             )
             with self.assertRaises(ValueError) as raised:
                 version.station_files("0.1.0", deploy)
-            self.assertIn("share/b.conf", str(raised.exception))
+            self.assertIn("share/b.conf, share/c.conf.", str(raised.exception))
             self.assertNotIn("data", str(raised.exception))
 
 

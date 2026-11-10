@@ -34,6 +34,11 @@ on:
     paths:
       - "CHANGELOG.md"
       - "deploy/compose.yml"
+      # The files of a station, packed by scripts/version.py station.
+      - "deploy/station"
+      - "deploy/Caddyfile"
+      - "deploy/.env.example"
+      - "deploy/scripts/**"
       - "scripts/version.py"
       - "scripts/test_version.py"
       - ".github/workflows/version.yml"
