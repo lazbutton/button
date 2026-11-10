@@ -1,7 +1,8 @@
 name: engine
 
-# Tests first, images only when green. Stations may follow `:main`
-# continuously, so a red test suite must never reach the registry.
+# Tests first, images only when green. A station may follow `:main`, so a red
+# test suite must never reach the registry. A version tag, vX.Y.Z, runs this
+# workflow through version.yml, which publishes the version.
 
 on:
   push:
@@ -16,6 +17,12 @@ on:
       - "!engine/**/*.md"
       - ".github/workflows/engine.yml"
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      version:
+        description: The version to publish, X.Y.Z. Only version.yml calls this workflow.
+        type: string
+        required: true
 
 permissions:
   contents: read
@@ -80,20 +87,61 @@ jobs:
   docker:
     name: build & push images
     needs: [tests, liquidsoap-check]
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    # From main, or for a version, through version.yml. "Run workflow" has no
+    # version input: it never builds one.
+    if: >-
+      inputs.version != ''
+      || (github.event_name != 'pull_request' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - name: Dated tag
-        id: tag
-        run: echo "dated=$(date -u +%Y%m%d)-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+      - name: Tags
+        id: tags
+        env:
+          REGISTRY: ghcr.io/${{ github.repository_owner }}
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        # From main: main, a dated tag and the full SHA. For a version: X.Y.Z
+        # only; version.yml adds X.Y and stable once the seven images are in.
+        # A published version is never rebuilt: "Re-run all jobs" skips the
+        # build, and version.yml finishes the publication. The run of a tag
+        # moved since builds nothing.
+        run: |
+          if [ -n "$VERSION" ]; then
+            tagged=$(git ls-remote origin "refs/tags/v$VERSION" "refs/tags/v$VERSION^{}" | tail -n 1 | cut -f1)
+            if [ "$tagged" != "$GITHUB_SHA" ]; then
+              echo "::error title=Version $VERSION::v$VERSION ne pointe plus sur le commit de ce run : seul le run du tag actuel publie."
+              exit 1
+            fi
+            if [ "$(gh release view "v$VERSION" --json isDraft --jq .isDraft 2>/dev/null)" = false ]; then
+              echo "::notice title=Version $VERSION::Déjà publiée : rien à reconstruire."
+              echo "published=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            tags=("$VERSION")
+          else
+            VERSION=$(date -u +%Y%m%d)-${GITHUB_SHA::7}
+            tags=(main "$VERSION" "$GITHUB_SHA")
+          fi
+          {
+            echo "version=$VERSION"
+            for image in radiotomate playout; do
+              echo "$image<<EOF"
+              for tag in "${tags[@]}"; do echo "$REGISTRY/button-$image:$tag"; done
+              echo "EOF"
+            done
+          } >> "$GITHUB_OUTPUT"
       - uses: docker/login-action@v4
+        if: steps.tags.outputs.published != 'true'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: docker/setup-buildx-action@v4
+        if: steps.tags.outputs.published != 'true'
       - name: Build and push webapps
+        if: steps.tags.outputs.published != 'true'
         uses: docker/build-push-action@v7
         with:
           context: ./engine
@@ -103,13 +151,14 @@ jobs:
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/button-radiotomate:main
-            ghcr.io/${{ github.repository_owner }}/button-radiotomate:${{ steps.tag.outputs.dated }}
-            ghcr.io/${{ github.repository_owner }}/button-radiotomate:${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.tags.outputs.version }}
+          tags: ${{ steps.tags.outputs.radiotomate }}
           cache-from: type=gha,scope=radiotomate
-          cache-to: type=gha,mode=max,scope=radiotomate
+          # A version reads the cache of main and writes none: a cache written
+          # under a tag serves no other run, and pushes out those of main.
+          cache-to: ${{ inputs.version == '' && 'type=gha,mode=max,scope=radiotomate' || '' }}
       - name: Build and push playout
+        if: steps.tags.outputs.published != 'true'
         uses: docker/build-push-action@v7
         with:
           context: ./engine/playout
@@ -119,18 +168,18 @@ jobs:
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/button-playout:main
-            ghcr.io/${{ github.repository_owner }}/button-playout:${{ steps.tag.outputs.dated }}
-            ghcr.io/${{ github.repository_owner }}/button-playout:${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.tags.outputs.version }}
+          tags: ${{ steps.tags.outputs.playout }}
           cache-from: type=gha,scope=playout
-          cache-to: type=gha,mode=max,scope=playout
+          cache-to: ${{ inputs.version == '' && 'type=gha,mode=max,scope=playout' || '' }}
 
   trivy:
     name: Trivy
     # After the push, never before: a critical vulnerability turns the run red
-    # but does not hold back the images and the fixes they carry.
+    # but does not hold back the images and the fixes they carry. A version is
+    # scanned by version.yml, once published.
     needs: [docker]
+    if: inputs.version == ''
     permissions:
       contents: read
       packages: read

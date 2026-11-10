@@ -3,7 +3,7 @@
 #   ./scripts/verifier.sh                  tout ce qui peut tourner ici
 #   ./scripts/verifier.sh moteur console   seulement ces parties
 # Parties : donnees, licences, moteur, liquidsoap, console, services, nginx,
-# deploy, e2e.
+# deploy, version, e2e.
 # Sans argument, une partie qui manque d'un outil (Docker…) est sautée.
 # Nommée, elle échoue.
 set -euo pipefail
@@ -12,7 +12,7 @@ root=$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd)
 # Homebrew (macOS) : Poetry, Node et Docker y sont souvent installés.
 [ -d /opt/homebrew/bin ] && export PATH="/opt/homebrew/bin:$PATH"
 
-all=(donnees licences moteur liquidsoap console services nginx deploy e2e)
+all=(donnees licences moteur liquidsoap console services nginx deploy version e2e)
 # Code de sortie d'une partie à qui il manque un outil.
 absent=75
 
@@ -262,6 +262,36 @@ check_deploy() {
   echo "ShellCheck : propre"
 }
 
+check_version() {
+  command -v python3 >/dev/null 2>&1 || missing "Python 3 absent : installer Python 3.13, celui de la CI." || return
+  cd "$root"
+  # Comme version.yml sur une pull request : les tests de scripts/version.py,
+  # qui lisent aussi CHANGELOG.md et compose.yml, puis le CHANGELOG fusionné
+  # avec origin/main, comparé à celui d'origin/main : aucune ligne ne doit
+  # s'ajouter sous une version déjà taguée.
+  python3 scripts/test_version.py
+  local base dir conflits
+  base=$(git merge-base HEAD origin/main 2>/dev/null) ||
+    { echo "Pas d'origin/main ici : les lignes du CHANGELOG ne sont pas comparées."; return 0; }
+  dir=$(mktemp -d)
+  git show "$base:CHANGELOG.md" > "$dir/base.md"
+  git show origin/main:CHANGELOG.md > "$dir/main.md"
+  cp CHANGELOG.md "$dir/fusion.md"
+  conflits=0
+  git merge-file -q "$dir/fusion.md" "$dir/base.md" "$dir/main.md" || conflits=$?
+  if [ "$conflits" -ne 0 ]; then
+    rm -rf "$dir"
+    echo "CHANGELOG.md : conflit avec origin/main. Fusionner main, puis relancer." >&2
+    return 1
+  fi
+  # Un tag par mot.
+  # shellcheck disable=SC2046
+  python3 scripts/version.py lignes "$dir/main.md" "$dir/fusion.md" $(git tag --list 'v*') ||
+    { rm -rf "$dir"; return 1; }
+  rm -rf "$dir"
+  echo "CHANGELOG : fusionné avec origin/main, aucune ligne ajoutée sous une version taguée."
+}
+
 check_e2e() {
   command -v node >/dev/null 2>&1 || missing "Node absent : installer Node 22." || return
   command -v poetry >/dev/null 2>&1 ||
@@ -292,7 +322,7 @@ skipped=""
 failed=""
 for part in "${parts[@]}"; do
   case $part in
-    donnees | licences | moteur | liquidsoap | console | services | nginx | deploy | e2e) ;;
+    donnees | licences | moteur | liquidsoap | console | services | nginx | deploy | version | e2e) ;;
     *)
       echo "Partie inconnue : $part. Parties : ${all[*]}." >&2
       exit 64

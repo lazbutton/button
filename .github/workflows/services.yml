@@ -1,7 +1,8 @@
 name: services
 
-# Icecast, nowplaying and the catalogue: the side services of the stack.
-# The catalogue tests run first; the images are pushed only from main.
+# Icecast, nowplaying, the catalogue and the shared folder: the side services
+# of the stack. The catalogue tests run first; the images are pushed only from
+# main, or from a version tag, vX.Y.Z, through version.yml.
 
 on:
   push:
@@ -29,6 +30,12 @@ on:
       # formats. Pull requests only: no service image depends on this file.
       - "engine/radiotomate/services/media_bank.py"
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      version:
+        description: The version to publish, X.Y.Z. Only version.yml calls this workflow.
+        type: string
+        required: true
 
 permissions:
   contents: read
@@ -63,20 +70,61 @@ jobs:
   docker:
     name: build & push images
     needs: [check]
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    # From main, or for a version, through version.yml. "Run workflow" has no
+    # version input: it never builds one.
+    if: >-
+      inputs.version != ''
+      || (github.event_name != 'pull_request' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - name: Dated tag
-        id: tag
-        run: echo "dated=$(date -u +%Y%m%d)-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+      - name: Tags
+        id: tags
+        env:
+          REGISTRY: ghcr.io/${{ github.repository_owner }}
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        # From main: main, a dated tag and the full SHA. For a version: X.Y.Z
+        # only; version.yml adds X.Y and stable once the seven images are in.
+        # A published version is never rebuilt: "Re-run all jobs" skips the
+        # build, and version.yml finishes the publication. The run of a tag
+        # moved since builds nothing.
+        run: |
+          if [ -n "$VERSION" ]; then
+            tagged=$(git ls-remote origin "refs/tags/v$VERSION" "refs/tags/v$VERSION^{}" | tail -n 1 | cut -f1)
+            if [ "$tagged" != "$GITHUB_SHA" ]; then
+              echo "::error title=Version $VERSION::v$VERSION ne pointe plus sur le commit de ce run : seul le run du tag actuel publie."
+              exit 1
+            fi
+            if [ "$(gh release view "v$VERSION" --json isDraft --jq .isDraft 2>/dev/null)" = false ]; then
+              echo "::notice title=Version $VERSION::Déjà publiée : rien à reconstruire."
+              echo "published=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            tags=("$VERSION")
+          else
+            VERSION=$(date -u +%Y%m%d)-${GITHUB_SHA::7}
+            tags=(main "$VERSION" "$GITHUB_SHA")
+          fi
+          {
+            echo "version=$VERSION"
+            for image in icecast nowplaying catalog share; do
+              echo "$image<<EOF"
+              for tag in "${tags[@]}"; do echo "$REGISTRY/button-$image:$tag"; done
+              echo "EOF"
+            done
+          } >> "$GITHUB_OUTPUT"
       - uses: docker/login-action@v4
+        if: steps.tags.outputs.published != 'true'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: docker/setup-buildx-action@v4
+        if: steps.tags.outputs.published != 'true'
       - name: Build and push Icecast
+        if: steps.tags.outputs.published != 'true'
         uses: docker/build-push-action@v7
         with:
           context: ./services/icecast
@@ -85,13 +133,14 @@ jobs:
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/button-icecast:main
-            ghcr.io/${{ github.repository_owner }}/button-icecast:${{ steps.tag.outputs.dated }}
-            ghcr.io/${{ github.repository_owner }}/button-icecast:${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.tags.outputs.version }}
+          tags: ${{ steps.tags.outputs.icecast }}
           cache-from: type=gha,scope=icecast
-          cache-to: type=gha,mode=max,scope=icecast
+          # A version reads the cache of main and writes none: a cache written
+          # under a tag serves no other run, and pushes out those of main.
+          cache-to: ${{ inputs.version == '' && 'type=gha,mode=max,scope=icecast' || '' }}
       - name: Build and push nowplaying
+        if: steps.tags.outputs.published != 'true'
         uses: docker/build-push-action@v7
         with:
           context: ./services/nowplaying
@@ -100,13 +149,12 @@ jobs:
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/button-nowplaying:main
-            ghcr.io/${{ github.repository_owner }}/button-nowplaying:${{ steps.tag.outputs.dated }}
-            ghcr.io/${{ github.repository_owner }}/button-nowplaying:${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.tags.outputs.version }}
+          tags: ${{ steps.tags.outputs.nowplaying }}
           cache-from: type=gha,scope=nowplaying
-          cache-to: type=gha,mode=max,scope=nowplaying
+          cache-to: ${{ inputs.version == '' && 'type=gha,mode=max,scope=nowplaying' || '' }}
       - name: Build and push catalogue
+        if: steps.tags.outputs.published != 'true'
         uses: docker/build-push-action@v7
         with:
           # Repository root: the image also ships deploy/scripts/setup-media-tree.sh.
@@ -117,13 +165,12 @@ jobs:
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/button-catalog:main
-            ghcr.io/${{ github.repository_owner }}/button-catalog:${{ steps.tag.outputs.dated }}
-            ghcr.io/${{ github.repository_owner }}/button-catalog:${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.tags.outputs.version }}
+          tags: ${{ steps.tags.outputs.catalog }}
           cache-from: type=gha,scope=catalog
-          cache-to: type=gha,mode=max,scope=catalog
+          cache-to: ${{ inputs.version == '' && 'type=gha,mode=max,scope=catalog' || '' }}
       - name: Build and push share
+        if: steps.tags.outputs.published != 'true'
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -133,18 +180,18 @@ jobs:
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/button-share:main
-            ghcr.io/${{ github.repository_owner }}/button-share:${{ steps.tag.outputs.dated }}
-            ghcr.io/${{ github.repository_owner }}/button-share:${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.tags.outputs.version }}
+          tags: ${{ steps.tags.outputs.share }}
           cache-from: type=gha,scope=share
-          cache-to: type=gha,mode=max,scope=share
+          cache-to: ${{ inputs.version == '' && 'type=gha,mode=max,scope=share' || '' }}
 
   trivy:
     name: Trivy
     # After the push, never before: a critical vulnerability turns the run red
-    # but does not hold back the images and the fixes they carry.
+    # but does not hold back the images and the fixes they carry. A version is
+    # scanned by version.yml, once published.
     needs: [docker]
+    if: inputs.version == ''
     permissions:
       contents: read
       packages: read

@@ -1,0 +1,233 @@
+name: version
+
+# A version tag, vX.Y.Z, publishes a version of BUTTON, in this order:
+#   1. checks, before anything is built: its notes, its part of CHANGELOG.md;
+#      no newer version in the history of the tagged commit, so a fix of an
+#      older version comes from its own line, not from main; and no new schema
+#      migration in a fix (Z > 0);
+#   2. engine.yml, console.yml and services.yml: their tests, then the images
+#      of deploy/compose.yml, tagged X.Y.Z. A published version is never
+#      rebuilt: they refuse it;
+#   3. once all of them are in the registry, the release page, with the notes,
+#      then X.Y and stable on the same images. stable never moves back to an
+#      older version (scripts/version.py);
+#   4. Trivy on the images: after the publication, never before.
+# A run whose tag was moved since publishes nothing. "Re-run all jobs" on a
+# published version rebuilds nothing, and only finishes the publication. How
+# to publish, and the rule of the numbers: docs/developpement.md, « Publier
+# une version ». A pull request that changes the CHANGELOG, scripts/version.py
+# or a workflow of the chain runs the tests of scripts/version.py, and checks
+# that no line was added under a version already tagged; so does each push to
+# main that changes the CHANGELOG, since the merge button does not run the
+# checks of a pull request again when main has moved.
+
+on:
+  push:
+    branches: [main]
+    # Not evaluated for tags: every version tag runs.
+    paths: ["CHANGELOG.md"]
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+  pull_request:
+    paths:
+      - "CHANGELOG.md"
+      - "deploy/compose.yml"
+      - "scripts/version.py"
+      - "scripts/test_version.py"
+      - ".github/workflows/version.yml"
+      - ".github/workflows/engine.yml"
+      - ".github/workflows/console.yml"
+      - ".github/workflows/services.yml"
+      - ".github/workflows/failles.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  notes:
+    name: notes and checks
+    # A deleted tag publishes nothing, whatever event GitHub sends for it.
+    if: ${{ !github.event.deleted }}
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.checks.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The tags and the history: the version's line, its migrations. On
+          # a pull request, the base of the merge commit.
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          # Same interpreter as the other workflows and scripts/verifier.sh.
+          python-version: "3.13"
+      - name: Tests and CHANGELOG lines
+        if: github.ref_type != 'tag'
+        env:
+          # A pull request: the base of its merge commit. A push to main: the
+          # main it replaced.
+          BEFORE: ${{ github.event_name == 'pull_request' && 'HEAD^1' || github.event.before }}
+        run: |
+          python scripts/test_version.py
+          git show "$BEFORE:CHANGELOG.md" > "$RUNNER_TEMP/CHANGELOG-avant.md"
+          # One tag per word.
+          # shellcheck disable=SC2046
+          python scripts/version.py lignes "$RUNNER_TEMP/CHANGELOG-avant.md" CHANGELOG.md $(git tag --list 'v*')
+      - name: Notes, line and migrations of the version
+        id: checks
+        if: github.ref_type == 'tag'
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          python scripts/version.py notes "$version"
+          reachable=$(git tag --merged HEAD --list 'v*')
+          # One tag per word.
+          # shellcheck disable=SC2086
+          previous=$(python scripts/version.py avant "$version" $reachable)
+          if [ "${version##*.}" != 0 ] && [ -n "$previous" ]; then
+            added=$(git diff --name-only --diff-filter=A "v$previous" HEAD -- \
+              'engine/radiotomate/commands/update/v*.py')
+            if [ -n "$added" ]; then
+              echo "::error title=Version $version::Un correctif ne migre pas le schéma, or $previous → $version ajoute : $added. Publier une version mineure."
+              exit 1
+            fi
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  engine:
+    needs: [notes]
+    if: github.ref_type == 'tag'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/engine.yml
+    with:
+      version: ${{ needs.notes.outputs.version }}
+
+  console:
+    needs: [notes]
+    if: github.ref_type == 'tag'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/console.yml
+    with:
+      version: ${{ needs.notes.outputs.version }}
+
+  services:
+    needs: [notes]
+    if: github.ref_type == 'tag'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/services.yml
+    with:
+      version: ${{ needs.notes.outputs.version }}
+
+  publish:
+    name: release, X.Y and stable
+    needs: [notes, engine, console, services]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    # Versions publish one after the other: each sees the previous one among
+    # the published. Push one tag at a time: a third waiting publish would
+    # cancel the second.
+    concurrency:
+      group: version-publish
+      cancel-in-progress: false
+    outputs:
+      images: ${{ steps.images.outputs.images }}
+    env:
+      VERSION: ${{ needs.notes.outputs.version }}
+      OWNER: ${{ github.repository_owner }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@v4
+      - name: Images
+        id: images
+        run: |
+          # The run of a tag moved since publishes nothing: the run of the
+          # tag as it is now does.
+          tagged=$(git ls-remote origin "refs/tags/$GITHUB_REF_NAME" "refs/tags/$GITHUB_REF_NAME^{}" | tail -n 1 | cut -f1)
+          if [ "$tagged" != "$GITHUB_SHA" ]; then
+            echo "::error title=Version $VERSION::$GITHUB_REF_NAME ne pointe plus sur le commit de ce run : seul le run du tag actuel publie."
+            exit 1
+          fi
+          # The images of deploy/compose.yml that follow BUTTON_VERSION, what
+          # stations pull: all of them must be there before anything moves.
+          names=$(python3 scripts/version.py images)
+          refs=""
+          missing=""
+          for name in $names; do
+            refs="$refs ghcr.io/$OWNER/$name:$VERSION"
+            docker buildx imagetools inspect "ghcr.io/$OWNER/$name:$VERSION" >/dev/null ||
+              missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error title=Version $VERSION::Images absentes en $VERSION :$missing. Relancer les jobs en échec, ou ajouter le build d'une image nouvelle de compose.yml."
+            exit 1
+          fi
+          echo "images=${refs# }" >> "$GITHUB_OUTPUT"
+      - name: Release
+        id: release
+        run: |
+          # Before X.Y and stable move: a version is among the published as
+          # soon as stable may point to it, so a later, older one never moves
+          # stable back.
+          published=$(gh release list --exclude-drafts --exclude-pre-releases \
+            --limit 1000 --json tagName --jq '.[].tagName')
+          # One tag per word.
+          # shellcheck disable=SC2086
+          extra=$(python3 scripts/version.py tags "$VERSION" $published)
+          echo "Tags en plus de $VERSION : ${extra:-aucun}"
+          latest=false
+          case " $extra " in *" stable "*) latest=true ;; esac
+          # Relative links of the CHANGELOG lead nowhere from the release page:
+          # they point to the files of the version.
+          python3 scripts/version.py notes "$VERSION" \
+            --liens "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/" > "$RUNNER_TEMP/notes.md"
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release edit "$GITHUB_REF_NAME" --draft=false --title "BUTTON $VERSION" \
+              --notes-file "$RUNNER_TEMP/notes.md" --latest="$latest"
+          else
+            gh release create "$GITHUB_REF_NAME" --verify-tag --title "BUTTON $VERSION" \
+              --notes-file "$RUNNER_TEMP/notes.md" --latest="$latest"
+          fi
+          echo "extra=$extra" >> "$GITHUB_OUTPUT"
+      - name: X.Y and stable
+        env:
+          EXTRA: ${{ steps.release.outputs.extra }}
+          IMAGES: ${{ steps.images.outputs.images }}
+        run: |
+          # One image after the other: the registry has no move of several
+          # tags at once. A short retry keeps a passing error from leaving
+          # stable split between two versions; re-running the job ends it.
+          for ref in $IMAGES; do
+            args=()
+            for tag in $EXTRA; do args+=(--tag "${ref%:*}:$tag"); done
+            [ "${#args[@]}" -gt 0 ] || continue
+            for attempt in 1 2 3; do
+              docker buildx imagetools create "${args[@]}" "$ref" && break
+              [ "$attempt" -lt 3 ] || exit 1
+              sleep 10
+            done
+          done
+
+  trivy:
+    name: Trivy
+    # After the publication, never before: a critical vulnerability turns the
+    # run red but does not hold back the version and the fixes it carries.
+    needs: [publish]
+    permissions:
+      contents: read
+      packages: read
+    uses: ./.github/workflows/failles.yml
+    with:
+      images: ${{ needs.publish.outputs.images }}
