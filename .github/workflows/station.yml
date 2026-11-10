@@ -1,0 +1,41 @@
+name: station
+
+# The station command, deploy/station: its bats tests, on a machine played by
+# fake tools (deploy/tests/fakes/), without containers or network. In the
+# official bats image, at a pinned version, with its bats-support and
+# bats-assert. scripts/verifier.sh (deploy) runs the same image, read from
+# here: the image alone on its line. Dependabot does not follow the image:
+# bump it by hand. ShellCheck checks the script and its tests (shellcheck.yml).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "deploy/station"
+      - "deploy/tests/**"
+      - "deploy/compose.yml"
+      - "deploy/Caddyfile"
+      - ".github/workflows/station.yml"
+  pull_request:
+    paths:
+      - "deploy/station"
+      - "deploy/tests/**"
+      - "deploy/compose.yml"
+      - "deploy/Caddyfile"
+      - ".github/workflows/station.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bats:
+    name: bats
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: The tests of deploy/station
+        run: >
+          docker run --rm -v "$PWD:/code:ro" -w /code
+          docker.io/bats/bats:1.13.0
+          deploy/tests

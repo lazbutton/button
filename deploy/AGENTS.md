@@ -5,10 +5,10 @@
 ## Vérifier
 
 ```bash
-../scripts/verifier.sh deploy    # docker compose config avec .env.example, puis ShellCheck comme la CI
+../scripts/verifier.sh deploy    # docker compose config avec .env.example, puis ShellCheck et bats comme la CI
 ```
 
-La CI lance ShellCheck sur chaque pull request qui touche un script ([`shellcheck.yml`](../.github/workflows/shellcheck.yml)), et `verifier.sh` lit dans ce workflow la même image et la même liste. Un script nouveau hors de `deploy/scripts/` s'ajoute à la liste. Un avertissement voulu se garde par une directive, sous une ligne qui dit pourquoi, comme dans `promote-inbox.sh`.
+La CI lance ShellCheck sur chaque pull request qui touche un script ([`shellcheck.yml`](../.github/workflows/shellcheck.yml)), et `verifier.sh` lit dans ce workflow la même image et la même liste. Elle lance aussi les tests de `station` ([`station.yml`](../.github/workflows/station.yml)), dont `verifier.sh` lit l'image. Un script nouveau hors de `deploy/scripts/` s'ajoute à la liste. Un avertissement voulu se garde par une directive, sous une ligne qui dit pourquoi, comme dans `promote-inbox.sh`.
 
 `verifier.sh` ne passe pas encore le profil `vps` ni le `Caddyfile`. Après un changement de l'un ou de l'autre :
 
@@ -37,10 +37,10 @@ Rien de ce dossier ne se lance contre une station en service. Les essais se font
 | Où tourne le script | Forme |
 |---|---|
 | Dans un conteneur : `init-radiotomate.sh`, `beets-import-loop.sh`, `promote-inbox.sh`, `setup-media-tree.sh`, `cloud-sync.sh`, `share/entrypoint.sh` | `#!/bin/sh` et `set -eu` : POSIX, sans bash |
-| Sur l'hôte : `backup-radiotomate.sh`, `restore-radiotomate.sh`, `smoke.sh` | `#!/usr/bin/env bash` et `set -euo pipefail` |
+| Sur l'hôte : `backup-radiotomate.sh`, `restore-radiotomate.sh`, `smoke.sh`, et `station`, en root | `#!/usr/bin/env bash` et `set -euo pipefail` |
 
 - Un script se relance sans danger : il ne refait que ce qui manque, et n'écrase rien.
-- Un nouveau script de l'hôte n'a besoin que de Docker, de curl et d'openssl. Les deux scripts de sauvegarde demandent aussi `sqlite3` et `tar` sur l'hôte.
+- Un nouveau script de l'hôte n'a besoin que de Docker, de curl et d'openssl. Les deux scripts de sauvegarde demandent aussi `sqlite3` et `tar` sur l'hôte. `station` demande aussi ce que Debian et Ubuntu ont toujours, `tar`, `sha256sum` et `ss`, et apt pour installer Docker.
 - Chaque message d'erreur dit quoi faire ensuite.
 - ShellCheck passe sur chaque script.
 - Les tests de `restore-radiotomate.sh` sont dans `engine/tests/test_update_backup.py`, avec la copie qu'il remet : après une modification du script, lancer aussi `../scripts/verifier.sh moteur`. La CI du moteur ne se déclenche pas pour `deploy/`.
@@ -49,7 +49,33 @@ Rien de ce dossier ne se lance contre une station en service. Les essais se font
 - Les tests de `smoke.sh`, le contrôle après déploiement, sont aussi dans `services/catalog/` (`test_smoke.py`) : un faux `docker` et un petit serveur HTTP y jouent la station.
 - Les tests de `cloud-sync.sh`, le pont Dropbox, sont aussi dans `services/catalog/` (`test_cloud_sync.py`) : un faux `rclone` y joue Dropbox, sur une banque temporaire avec ses liens `Carts/`. Le script tourne en vrai sous le `sh` de busybox, dans l'image de rclone, et les tests sous celui de la machine : il s'en tient à POSIX, et `file_stat` y lit aussi le `stat` des BSD.
 
+## La commande station
+
+`station` est la commande d'exploitation d'une station sur un VPS. Elle n'a aujourd'hui que `install` (INS-02). Les autres commandes s'y ajouteront, une fonction `cmd_<nom>` chacune, avec les mêmes aides :
+
+- `status`, `logs`, `backup`, `restore`, `config`, `hold`, `unhold`, `cli` et `uninstall` (INS-03) ;
+- `update` (MAJ-04) ;
+- `rollback` (MAJ-05).
+
+C'est un seul fichier, sans extension, celui de la commande posée dans `/usr/local/bin`. Ses règles :
+
+- **Où elle tourne.** Sur l'hôte, en root, sur Debian 12 ou 13 et Ubuntu 24.04 seulement : bash 5, GNU coreutils, iproute2. Elle demande Docker, curl et openssl, comme les autres scripts de l'hôte, puis ce que ces systèmes ont toujours, et apt pour installer Docker.
+- **D'où elle vient.** Pas d'un clone : chaque version publiée la joint à sa page, avec `station.tar.gz`, le dossier d'une station à cette version, et `SHA256SUMS` ([décision 0016](../docs/decisions/0016-le-dossier-vient-de-sa-version.md)).
+  - `scripts/version.py station` les fabrique.
+  - Un fichier que `compose.yml` monte depuis le dossier doit être dans l'archive : sinon, `version.py` refuse, et `test_version.py` échoue.
+- **`.env`.** Il ne se réécrit jamais : une relance n'y ajoute que ce qui manque. Une commande qui change un réglage de `.env`, comme `config` (INS-03), le dit.
+- **Le mot de passe admin.** Il ne s'écrit nulle part ailleurs que dans `.env`, en droits 600, et seulement jusqu'à son affichage, dans un terminal.
+- **L'environnement du shell.** Ce que `.env` règle n'en vient jamais : `env_isolate` retire ces variables avant `docker compose`. sudo garde `TZ`, par exemple.
+- **Les questions.** Chacune a son option, pour la CI : sans terminal, ou avec `--yes`, rien ne se demande.
+- **Les tests.** Ils sont dans `tests/`, lancés par `bats`, dans l'image officielle épinglée par [`station.yml`](../.github/workflows/station.yml).
+  - De faux outils jouent la machine : ceux de `tests/fakes/`, et `tests/docker`, que la machine n'a que si le test le pose.
+  - `STATION_ROOT` met les fichiers du système, comme `/etc/os-release` ou `/usr/local/bin`, dans un dossier temporaire.
+  - Le script se lit aussi avec `source` : ses fonctions se définissent sans rien lancer, et un test peut remplacer `interactive` ou `terminal`.
+- **ShellCheck** passe sur le script et sur ses tests : ils sont dans la liste de `shellcheck.yml`.
+
 ## Pièges
+
+- Une station installée par `station install` n'a pas les sources : son `compose.yml` n'a pas de sections `build:`. Une image qui manque y fait échouer `docker compose`.
 
 - Les scripts que `compose.yml` monte dans les conteneurs, comme `init-radiotomate.sh`, viennent du dossier de la station, pas de l'image. Une station qui suit `X.Y` reçoit les images d'un correctif sans changer de dossier : un correctif marche avec le `compose.yml` et les scripts de la version d'avant.
 - `init-radiotomate.sh` tourne à chaque démarrage : il applique les migrations du schéma. Revenir à une image plus ancienne demande de redescendre le schéma d'abord : [docs/deploiement.md](../docs/deploiement.md#revenir-en-arrière). Une migration ratée ne laisse rien, mais celles passées avant elle au même démarrage restent, et l'image d'avant ne lit plus la base : [docs/exploitation/sauvegarde.md](../docs/exploitation/sauvegarde.md#remettre-la-copie).

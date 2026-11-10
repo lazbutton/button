@@ -8,9 +8,12 @@ name: version
 #   2. engine.yml, console.yml and services.yml: their tests, then the images
 #      of deploy/compose.yml, tagged X.Y.Z. A published version is never
 #      rebuilt: they refuse it;
-#   3. once all of them are in the registry, the release page, with the notes,
-#      then X.Y and stable on the same images. stable never moves back to an
-#      older version (scripts/version.py);
+#   3. once all of them are in the registry, the release page, with the notes
+#      and the files of a station: station, the script, and station.tar.gz,
+#      the station's folder at this version, with their SHA256SUMS. Then X.Y
+#      and stable on the same images. stable never moves back to an older
+#      version (scripts/version.py), and station install takes the files of
+#      the version marked Latest, the one that takes stable;
 #   4. Trivy on the images: after the publication, never before.
 # A run whose tag was moved since publishes nothing. "Re-run all jobs" on a
 # published version rebuilds nothing, and only finishes the publication. How
@@ -31,6 +34,11 @@ on:
     paths:
       - "CHANGELOG.md"
       - "deploy/compose.yml"
+      # The files of a station, packed by scripts/version.py station.
+      - "deploy/station"
+      - "deploy/Caddyfile"
+      - "deploy/.env.example"
+      - "deploy/scripts/**"
       - "scripts/version.py"
       - "scripts/test_version.py"
       - ".github/workflows/version.yml"
@@ -91,6 +99,19 @@ jobs:
             fi
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Files of a station
+        # What station install downloads, checked before anything is built:
+        # its compose.yml, without the build: sections, stays valid.
+        run: |
+          version=main
+          if [ "$GITHUB_REF_TYPE" = tag ]; then version=${GITHUB_REF_NAME#v}; fi
+          python scripts/version.py station "$version" "$RUNNER_TEMP/station"
+          mkdir "$RUNNER_TEMP/station/folder"
+          tar -xzf "$RUNNER_TEMP/station/station.tar.gz" -C "$RUNNER_TEMP/station/folder"
+          for profile in vps share cloud; do
+            docker compose --env-file deploy/.env.example -f "$RUNNER_TEMP/station/folder/compose.yml" \
+              --profile "$profile" config --quiet
+          done
 
   engine:
     needs: [notes]
@@ -193,13 +214,18 @@ jobs:
           # they point to the files of the version.
           python3 scripts/version.py notes "$VERSION" \
             --liens "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/" > "$RUNNER_TEMP/notes.md"
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release edit "$GITHUB_REF_NAME" --draft=false --title "BUTTON $VERSION" \
-              --notes-file "$RUNNER_TEMP/notes.md" --latest="$latest"
-          else
-            gh release create "$GITHUB_REF_NAME" --verify-tag --title "BUTTON $VERSION" \
-              --notes-file "$RUNNER_TEMP/notes.md" --latest="$latest"
+          # The files of a station go on the page while it is a draft: a
+          # version is never public, nor Latest, without them. A re-run
+          # replaces them with the same bytes.
+          python3 scripts/version.py station "$VERSION" "$RUNNER_TEMP/station"
+          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" --verify-tag --draft --title "BUTTON $VERSION" \
+              --notes-file "$RUNNER_TEMP/notes.md"
           fi
+          gh release upload "$GITHUB_REF_NAME" --clobber \
+            "$RUNNER_TEMP/station/station" "$RUNNER_TEMP/station/station.tar.gz" "$RUNNER_TEMP/station/SHA256SUMS"
+          gh release edit "$GITHUB_REF_NAME" --draft=false --title "BUTTON $VERSION" \
+            --notes-file "$RUNNER_TEMP/notes.md" --latest="$latest"
           echo "extra=$extra" >> "$GITHUB_OUTPUT"
       - name: X.Y and stable
         env:

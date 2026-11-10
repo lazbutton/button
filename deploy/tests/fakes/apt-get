@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Un faux apt-get : installer docker-ce pose le faux docker sur la machine.
+set -euo pipefail
+echo "apt-get $*" >>"$FAKE_STATE/log"
+if [[ " $* " == *" docker-ce "* ]]; then
+  ln -sf "$FAKE_DOCKER" "$FAKE_STATE/bin/docker"
+fi

@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Un faux openssl rand, qui tire de /dev/urandom.
+set -euo pipefail
+case "${1:-} ${2:-}" in
+  "rand -hex") head -c "$3" /dev/urandom | od -An -v -tx1 | tr -d ' \n' && echo ;;
+  "rand -base64") head -c "$3" /dev/urandom | base64 | tr -d '\n' && echo ;;
+  *)
+    echo "openssl : appel inattendu, $*" >&2
+    exit 1
+    ;;
+esac

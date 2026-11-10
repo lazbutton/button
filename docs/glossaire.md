@@ -15,6 +15,7 @@ Les mots de la radio et ceux du code. Quand la console et le code n'emploient pa
 | Banque | Les dossiers de fichiers audio de la station : `00-inbox`, `10-rotation`, `20-archives`, `30-habillage`, `40-emissions`, `50-carts`… Une banque d'archives est un dossier de `20-archives` | `BUTTON_MEDIA`, `MEDIA_ROOT` |
 | Catalogue | Le service qui indexe la banque, répond aux recherches et range les envois | `services/catalog/` |
 | Catégorie | Une requête Beets qui choisit des titres, comme `genre:Jazz` | `MusicCategory` |
+| Commande `station` | Le script qui installe une station sur un VPS, puis l'exploite : `station install`. Chaque version publiée le joint à sa page, avec le dossier d'une station à cette version | `deploy/station`, `station.tar.gz`, `/usr/local/bin/station` |
 | Conducteur | Ce qui va passer, puis ce qui est passé, calculé par le scheduler | `rundown_items`, `scheduler/rundown.py` |
 | Console | L'application web de l'équipe | `console/` |
 | Créneau | Une plage de la grille hebdomadaire, qui porte une horloge | `AutoDJSlot` |

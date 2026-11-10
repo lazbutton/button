@@ -2,12 +2,14 @@
 
 | Fichier | Rôle |
 |---|---|
+| [`station`](station) | La commande d'une station sur un VPS : `station install` l'installe en une commande, et la répare. Voir [`docs/deploiement.md`](../docs/deploiement.md#installer-sur-un-vps) |
 | [`compose.yml`](compose.yml) | La station complète : moteur, console, Icecast, titre en cours, catalogue, envoi reprenable |
 | [`.env.example`](.env.example) | Modèle des variables : à copier en `.env`, qui reste hors de git |
 | [`Caddyfile`](Caddyfile) | HTTPS sur Internet : Caddy devant la console, le flux et `now.json`, avec `--profile vps` |
 | [`scripts/`](scripts/) | Initialisation de la station, banque de sons, dossier partagé, pont Dropbox, sauvegarde et restauration |
 | [`share/`](share/) | Image du dossier partagé (Samba), lancée seulement avec `--profile share` |
 | [`local/`](local/README.md) | Banc audio de test : Icecast et titre en cours seuls |
+| [`tests/`](tests/) | Les tests de `station`, avec `bats`, sur une machine jouée par de faux outils |
 
 Le guide complet : [`docs/deploiement.md`](../docs/deploiement.md). Pour travailler dans ce dossier : [AGENTS.md](AGENTS.md).
 

@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Un faux uname -m : x86_64, ou le processeur de $FAKE_STATE/arch. Le reste va
+# au vrai.
+if [[ $* == -m ]]; then
+  cat "$FAKE_STATE/arch" 2>/dev/null || echo x86_64
+else
+  PATH=/usr/local/bin:/usr/bin:/bin exec uname "$@"
+fi
