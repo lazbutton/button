@@ -231,6 +231,12 @@ imp["copy"] = False
 imp["quiet_fallback"] = "asis"
 imp["write"] = True
 imp["incremental"] = True
+# Pour la montée de Beets, sans effet sur la 2.5 du moteur. Dès la 2.7, l'import
+# sans autotag saute pour de bon un titre qui a l'artiste et le titre d'un autre,
+# déjà indexé. Dès la 2.10, il remplace dans la banque un WAV qui contient du MP3
+# par un .mp3, et efface le WAV.
+imp["duplicate_action"] = "keep"
+imp["remux_mp3_in_wav"] = False
 plugins = data.get("plugins") or "info random replaygain"
 if "drop2beets" in str(plugins):
     plugins = " ".join(p for p in str(plugins).split() if p != "drop2beets")

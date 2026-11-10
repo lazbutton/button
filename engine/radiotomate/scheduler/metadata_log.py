@@ -7,6 +7,7 @@ from quart import Blueprint, current_app, g, request
 from radiotomate.auth import token_required
 from radiotomate.models import MetadataLog
 from radiotomate.scheduler.metrics import runtime_metrics
+from radiotomate.services.cart_draw import note_on_air
 from radiotomate.services.emissions import overlay_metadata_if_on_air
 
 _log = logging.getLogger(__name__)
@@ -103,6 +104,7 @@ async def relay_metadata(raw_md: dict) -> None:
 async def post_metadata_log():
     raw_md = await request.get_json()
     relay_copy = dict(raw_md or {})
+    sound_id = relay_copy.get("radiotomate_sound_id")
     await overlay_metadata_if_on_air(g.dbsession, relay_copy)
 
     if current_app.config["RELAY_METADATA_TO"]:
@@ -114,6 +116,16 @@ async def post_metadata_log():
     from radiotomate.scheduler.execution import reconcile_as_run
 
     await reconcile_as_run(g.dbsession, md)
+    if sound_id:
+        await _note_draw(sound_id)
     await g.dbsession.commit()
 
     return "", 200
+
+
+async def _note_draw(sound_id: object) -> None:
+    """Never lets a fault in the draw of a cart lose what went on air."""
+    try:
+        await note_on_air(g.dbsession, sound_id)
+    except Exception:
+        _log.exception("Could not note sound %r as drawn", sound_id)
