@@ -9,6 +9,10 @@ The sounds played in the round under way are kept in the ``settings`` table,
 with the scheduler's other runtime state. They are noted when the playout says
 a sound is on air, whoever sent it: the clock, « Diffuser maintenant » or the
 desk.
+
+A cart that plays in order, a playlist or a loop, keeps the order of
+``Cart.next_sound``. The conducteur plans it ahead from what it already holds
+of the cart: ``CartOrder``.
 """
 
 from __future__ import annotations
@@ -42,6 +46,7 @@ _PLANNED_STATUSES = {RundownStatus.PLANNED.value, RundownStatus.RESCUE.value}
 _AIRED_STATUSES = {RundownStatus.ON_AIR.value, RundownStatus.PLAYED.value}
 # How far back the conducteur is read for what a cart still has to play.
 _HELD_ROWS = 200
+_ORDERED_MODES = {CartMode.PLAYLIST, CartMode.PLAYLIST_LOOP}
 
 
 def draw_without_repeat(
@@ -140,6 +145,51 @@ class CartDraw:
         return sound
 
 
+def next_in_order(cart: Cart, before: Sequence[int] = ()) -> Sound | None:
+    """
+    The sound a cart that plays in order gives once ``before`` have played,
+    oldest first: what ``Cart.next_sound`` will give by then, and what it gives
+    now when nothing plays before.
+    """
+    sounds = {sound.id: sound for sound in cart.sounds}
+    last = next(
+        (sounds[sound_id] for sound_id in reversed(before) if sound_id in sounds),
+        None,
+    )
+    if last is None:
+        return cart.next_sound()
+    ready = [sound for sound in cart.sounds if sound.available]
+    if cart.mode is CartMode.PLAYLIST:
+        # As Cart.next_sound_playlist: first a sound never played, nor about to be.
+        coming = set(before)
+        for sound in ready:
+            if not sound.last_played and sound.id not in coming:
+                return sound
+    # As Cart.next_sound_playlist_loop, after the sound that will have played last.
+    if last.rank:
+        for sound in ready:
+            if sound.rank > last.rank:
+                return sound
+    return ready[0] if ready else None
+
+
+@dataclass
+class CartOrder:
+    """
+    What the conducteur holds of a cart that plays in order: its sounds sent to
+    the antenna and not on air yet, then those it plans.
+    """
+
+    held: list[int] = field(default_factory=list)
+
+    def pick_ahead(self, cart: Cart) -> Sound | None:
+        """A sound the conducteur plans after those it already holds."""
+        sound = next_in_order(cart, self.held)
+        if sound is not None:
+            self.held.append(sound.id)
+        return sound
+
+
 async def no_repeat_enabled(session: ormSession) -> bool:
     """Whether a random cart draws without repeat. A missing key says it does."""
     row = await Setting.from_key(session, SETTING_NO_REPEAT)
@@ -175,6 +225,15 @@ async def cart_draw(session: ormSession, cart: Cart | None) -> CartDraw | None:
         return None
     state = await _drawn_by_cart(session)
     draw = CartDraw(drawn=_ids(state.get(str(cart.id))))
+    draw.engaged, draw.planned = await _held(session, cart)
+    return draw
+
+
+async def _held(session: ormSession, cart: Cart) -> tuple[list[int], list[int]]:
+    """
+    The sounds of a cart the conducteur holds, oldest first: those sent to the
+    antenna and not on air yet, and those it plans.
+    """
     rows = await session.execute(
         select(RundownItem.sound_id, RundownItem.status)
         .where(
@@ -193,9 +252,27 @@ async def cart_draw(session: ormSession, cart: Cart | None) -> CartDraw | None:
             # What comes before a sound heard has played, or was lost on its way.
             break
         held.append((sound_id, status))
+    engaged: list[int] = []
+    planned: list[int] = []
     for sound_id, status in reversed(held):
-        (draw.planned if status in _PLANNED_STATUSES else draw.engaged).append(sound_id)
-    return draw
+        (planned if status in _PLANNED_STATUSES else engaged).append(sound_id)
+    return engaged, planned
+
+
+async def cart_ahead(
+    session: ormSession,
+    cart: Cart | None,
+) -> CartDraw | CartOrder | None:
+    """
+    What the conducteur plans a cart ahead from: the draw of a random cart, or
+    the order of a playlist with what it already holds of it. None for a cart
+    that has neither: a relay, or a random cart with its switch turned off.
+    """
+    draw = await cart_draw(session, cart)
+    if draw is not None or cart is None or cart.mode not in _ORDERED_MODES:
+        return draw
+    engaged, planned = await _held(session, cart)
+    return CartOrder([*engaged, *planned])
 
 
 async def next_cart_sound(session: ormSession, cart: Cart | None) -> Sound | None:
