@@ -7,10 +7,19 @@ name: button
 # Docker rotates stdout/stderr; the interface and scheduler rotate their own
 # log files. playout.log needs a logrotate rule on the host.
 #
+# BUTTON_VERSION choisit la version des sept images de BUTTON, stable par
+# défaut : voir .env.example et docs/deploiement.md, « Mettre à jour ».
+#
 # Console, Icecast, nowplaying et catalogue publient leur port sur BIND_ADDRESS :
 # 127.0.0.1 sur un VPS, où seul le reverse proxy les joint. Vide, le port n'a
 # pas d'adresse et écoute sur toutes les interfaces, en IPv4 et en IPv6 :
 # 0.0.0.0 n'écouterait qu'en IPv4.
+
+# RT_TAG, l'ancienne variable, n'épinglait que le moteur. Posé, il arrête
+# docker compose, qui dit quoi faire : ignoré, il laisserait le moteur repartir
+# sur une autre version, et migrer le schéma. Vide ou absent, ce champ est vide.
+x-rt-tag: "${RT_TAG:+${RT_TAG_N_EST_PLUS_LU:?RT_TAG n'est plus lu. Le retirer de .env, et épingler la version par BUTTON_VERSION. Voir docs/deploiement.md, « Mettre à jour ».}}"
+
 x-logging: &logging
   driver: json-file
   options:
@@ -22,8 +31,7 @@ x-radiotomate-data: &radiotomate-data
   - ${BUTTON_MEDIA:-./media}:/media
 
 x-radiotomate-webapps: &radiotomate-webapps
-  # RT_TAG: `main` = continuous, or a dated tag (20260921-abc1234) to pin/rollback.
-  image: ${BUTTON_IMAGES:-ghcr.io/lazbutton}/button-radiotomate:${RT_TAG:-main}
+  image: ${BUTTON_IMAGES:-ghcr.io/lazbutton}/button-radiotomate:${BUTTON_VERSION:-stable}
   platform: linux/amd64
   build:
     context: ../engine
@@ -41,7 +49,7 @@ x-radiotomate-webapps: &radiotomate-webapps
 
 services:
   console:
-    image: ${BUTTON_IMAGES:-ghcr.io/lazbutton}/button-console:main
+    image: ${BUTTON_IMAGES:-ghcr.io/lazbutton}/button-console:${BUTTON_VERSION:-stable}
     platform: linux/amd64
     build:
       context: ../console
@@ -63,7 +71,7 @@ services:
       - tusd
 
   icecast:
-    image: ${BUTTON_IMAGES:-ghcr.io/lazbutton}/button-icecast:main
+    image: ${BUTTON_IMAGES:-ghcr.io/lazbutton}/button-icecast:${BUTTON_VERSION:-stable}
     platform: linux/amd64
     build:
       context: ../services/icecast
@@ -81,7 +89,7 @@ services:
         condition: service_completed_successfully
 
   nowplaying:
-    image: ${BUTTON_IMAGES:-ghcr.io/lazbutton}/button-nowplaying:main
+    image: ${BUTTON_IMAGES:-ghcr.io/lazbutton}/button-nowplaying:${BUTTON_VERSION:-stable}
     platform: linux/amd64
     build:
       context: ../services/nowplaying
@@ -107,7 +115,7 @@ services:
         condition: service_completed_successfully
 
   radiotomate-init:
-    image: ${BUTTON_IMAGES:-ghcr.io/lazbutton}/button-radiotomate:${RT_TAG:-main}
+    image: ${BUTTON_IMAGES:-ghcr.io/lazbutton}/button-radiotomate:${BUTTON_VERSION:-stable}
     platform: linux/amd64
     build:
       context: ../engine
@@ -137,7 +145,7 @@ services:
     entrypoint: ["/bin/sh", "/init-radiotomate.sh"]
 
   radiotomate-playout:
-    image: ${BUTTON_IMAGES:-ghcr.io/lazbutton}/button-playout:${RT_TAG:-main}
+    image: ${BUTTON_IMAGES:-ghcr.io/lazbutton}/button-playout:${BUTTON_VERSION:-stable}
     platform: linux/amd64
     build:
       context: ../engine/playout
@@ -228,7 +236,7 @@ services:
       - ${MEILI_DATA:-./data/meilisearch}:/meili_data
 
   catalog:
-    image: ${BUTTON_IMAGES:-ghcr.io/lazbutton}/button-catalog:main
+    image: ${BUTTON_IMAGES:-ghcr.io/lazbutton}/button-catalog:${BUTTON_VERSION:-stable}
     platform: linux/amd64
     build:
       # Repository root: the image also ships deploy/scripts/setup-media-tree.sh.
@@ -286,7 +294,7 @@ services:
   # SMB_BIND est l'adresse Tailscale. 0.0.0.0 est refusé au démarrage.
   share:
     profiles: ["share"]
-    image: ${BUTTON_IMAGES:-ghcr.io/lazbutton}/button-share:main
+    image: ${BUTTON_IMAGES:-ghcr.io/lazbutton}/button-share:${BUTTON_VERSION:-stable}
     platform: linux/amd64
     build:
       context: ..

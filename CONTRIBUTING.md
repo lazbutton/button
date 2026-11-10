@@ -6,7 +6,7 @@ Merci de votre intérêt ! Signalements, corrections, documentation, traductions
 
 ## Signaler un problème
 
-Ouvrir une [issue](https://github.com/lazbutton/button/issues/new/choose) avec ce qui s'est passé, ce qui était attendu, et comment le reproduire. Indiquer la version : le tag de l'image (`AAAAMMJJ-sha7`) ou le commit.
+Ouvrir une [issue](https://github.com/lazbutton/button/issues/new/choose) avec ce qui s'est passé, ce qui était attendu, et comment le reproduire. Indiquer la version : son numéro (`0.1.0`), ou, pour `main`, le tag daté de l'image (`AAAAMMJJ-sha7`) ou le commit.
 
 Une faille de sécurité ne se signale pas en public : voir [SECURITY.md](SECURITY.md).
 

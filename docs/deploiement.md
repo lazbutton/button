@@ -12,16 +12,17 @@ Une station complète tient dans [`deploy/compose.yml`](../deploy/compose.yml) :
 
 ```bash
 git clone https://github.com/lazbutton/button.git
-cd button/deploy
+cd button
+git checkout v0.1.0      # la plus haute version publiée
+cd deploy
 cp .env.example .env
 chmod 600 .env
 ```
 
-Dans `.env`, remplacer chaque `change-me` : voir [les secrets](#les-secrets). Puis choisir les chemins des données (`RT_DATA`, `BUTTON_MEDIA`…). Sans HTTPS devant la console, poser aussi `RT_COOKIE_SECURE=false` : voir [le cookie de session](#le-cookie-de-session). Ensuite :
+La version à prendre est la plus haute de la [page des versions](https://github.com/lazbutton/button/releases), marquée « Latest » : la mettre à la place de `v0.1.0`. Un correctif d'une ancienne version peut être publié après elle, sans la remplacer. Le dossier de la station suit la version qu'elle fait tourner, et `.env` la pose aussi : `BUTTON_VERSION=0.1.0`. Voir [mettre à jour](#mettre-à-jour). Dans `.env`, remplacer ensuite chaque `change-me` : voir [les secrets](#les-secrets). Puis choisir les chemins des données (`RT_DATA`, `BUTTON_MEDIA`…). Sans HTTPS devant la console, poser aussi `RT_COOKIE_SECURE=false` : voir [le cookie de session](#le-cookie-de-session). Ensuite :
 
 ```bash
-docker compose pull
-docker compose up -d
+docker compose pull && docker compose up -d
 docker compose ps        # attendre radiotomate-scheduler « healthy »
 ```
 
@@ -134,7 +135,7 @@ openssl rand -hex 24
 
 Quand le contrôle refuse, le journal de `radiotomate-init` nomme chaque variable à changer, et la commande pour repartir : `docker compose logs radiotomate-init`. Il ne montre jamais la valeur d'un secret. Le contrôle passe à chaque `docker compose up`, pas au redémarrage de la machine. Un moteur déjà en marche continue donc de tourner, mais ne repart pas quand il est recréé, par une mise à jour par exemple.
 
-Pour savoir avant une mise à jour si la station démarrera, lancer le contrôle seul, après `git pull` et avant `docker compose up`. Il n'écrit rien et n'arrête rien :
+Pour savoir avant une mise à jour si la station démarrera, lancer le contrôle seul, une fois le dossier passé à la nouvelle version et ses images tirées, avant `docker compose up`. Il n'écrit rien et n'arrête rien :
 
 ```bash
 docker compose run --rm --no-deps -e RT_INIT_CHECK_ONLY=1 radiotomate-init
@@ -210,16 +211,47 @@ Puis `docker compose up -d console`. Une valeur qui contient autre chose que des
 
 ## Mettre à jour
 
-Avant, s'assurer que les secrets laisseront la station démarrer : voir [les secrets](#les-secrets).
+BUTTON se met à jour par versions publiées, numérotées `X.Y.Z`. Chacune a ses notes, sur la [page des versions](https://github.com/lazbutton/button/releases) et dans le [CHANGELOG](../CHANGELOG.md). Son numéro dit ce qu'elle demande :
+
+| Version | Exemple | Ce qu'elle demande |
+|---|---|---|
+| un correctif | `0.1.0` → `0.1.1` | rien : ni migration du schéma, ni action. Revenir en arrière ne touche pas la base |
+| une mineure | `0.1.1` → `0.2.0` | rien non plus, mais elle peut migrer le schéma : revenir en arrière demande alors de le redescendre |
+| une majeure | `0.2.0` → `1.0.0` | une action, dite en tête de ses notes, à faire avant de mettre à jour |
+
+`BUTTON_VERSION`, dans `.env`, choisit les sept images de BUTTON, ensemble :
+
+| `BUTTON_VERSION` | La station tire |
+|---|---|
+| `0.1.0` | cette version, rien d'autre : le choix d'une station à l'antenne, avec son dossier à la même version |
+| absente ou vide | `stable`, la plus haute version publiée : un `docker compose pull` peut alors changer de version sans que le dossier suive |
+| `0.1` | les correctifs de la 0.1, jusqu'à la version suivante. Ensuite, plus rien, pas même un correctif de sécurité |
+| `main` | chaque changement de `main`, pour les essais, jamais à l'antenne |
+
+Le dossier de la station suit la même version que ses images : `compose.yml`, et les scripts qu'il monte dans les conteneurs, comme `init-radiotomate.sh`. Une station à l'antenne épingle donc sa version dans `.env`, et la change à chaque mise à jour, avec son dossier. Les images des autres projets, meilisearch, tusd, rclone et Caddy, sont épinglées dans `compose.yml`, et changent avec lui. Une station qui avait `RT_TAG` dans `.env` retire la ligne : il n'est plus lu, et, posé, il arrête `docker compose`, qui le dit.
+
+Avant de mettre à jour, lire les notes de chaque version sautée, et s'assurer que les secrets laisseront la station démarrer : voir [les secrets](#les-secrets). Puis, depuis le dossier du dépôt, pour passer en `0.2.0` par exemple :
 
 ```bash
-docker compose pull
-docker compose up -d
+git fetch --tags --force
+git checkout v0.2.0
+cd deploy
+# .env : BUTTON_VERSION=0.2.0
+docker compose pull && docker compose up -d
 ```
 
-Sans `RT_TAG`, la station suit `main`. Pour geler une version, mettre un tag daté dans `.env` : `RT_TAG=AAAAMMJJ-sha7`. Les tags existants sont listés sur la page des packages GitHub.
+Si `docker compose pull` échoue, sur une version mal écrite par exemple, ne pas lancer `up` : faute d'image, il la construirait sur la machine, depuis le dossier. Chaque version reconstruit ses sept images : `up -d` recrée tous les services, Icecast compris. L'antenne se coupe le temps du redémarrage du moteur, et les auditeurs se reconnectent.
 
-`RT_TAG` ne gèle que le moteur et le playout. La console, Icecast, nowplaying, le catalogue et le partage suivent `main` tant que les versions publiées n'existent pas : voir MAJ-01 dans la [feuille de route](feuille-de-route/P1-mise-en-prod.md).
+Une station qui suit `main` reste sur la branche `main`, et `git pull` y remplace `git fetch` et `git checkout`. Pour la passer à une version publiée, regarder d'abord si `main` a migré le schéma plus loin que cette version, comme pour [revenir en arrière](#revenir-en-arrière).
+
+Chaque image porte sa version. Pour vérifier celle qui tourne :
+
+```bash
+docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' \
+  "$(docker compose ps -q radiotomate-scheduler)"
+```
+
+Elle répond `0.2.0`, ou pour `main` le tag daté de l'image, `AAAAMMJJ-sha7`.
 
 Ensuite, vérifier que l'antenne tourne, sans compte, depuis le dossier de la station :
 
@@ -239,16 +271,38 @@ Au premier point qui échoue, il s'arrête en erreur, nomme le point et ce qui n
 
 ## Revenir en arrière
 
-`radiotomate-init` applique les migrations à chaque démarrage. Si la version récente a migré le schéma, une image plus ancienne ne sait pas le défaire, et le playout ne démarre plus. Il faut donc redescendre le schéma **avec l'image récente**, puis épingler l'ancienne :
+Revenir à la version d'avant, `0.1.0` par exemple, c'est la reposer : le dossier de la station à `v0.1.0`, et `BUTTON_VERSION=0.1.0` dans `.env`. Le schéma de la base décide du reste. `radiotomate-init` applique les migrations à chaque démarrage, mais une image plus ancienne ne sait pas défaire celles qu'elle ne connaît pas : le playout ne démarre plus.
+
+Le schéma a migré si une copie `avant-vNN-…` de la base est apparue dans `RT_DATA/backups/` depuis la mise à jour : `avant-v19-…` est la base d'avant la migration v19, donc en v18. Les notes d'une version qui migre donnent aussi la version de son schéma. Un correctif ne migre jamais : la CI refuse de le publier.
+
+Sans migration, depuis le dossier du dépôt :
 
 ```bash
-docker compose run --rm --no-deps --entrypoint radiotomate radiotomate-init \
-  -c /data/radiotomate.yaml update --target-version <version de l'ancienne image>
-# .env : RT_TAG=<tag daté de l'ancienne image>
-docker compose up -d
+git checkout v0.1.0
+cd deploy
+# .env : BUTTON_VERSION=0.1.0
+docker compose pull && docker compose up -d
 ```
 
-Une migration défaite perd les données qu'elle avait ajoutées. Sauvegarder avant : voir [`exploitation/sauvegarde.md`](exploitation/sauvegarde.md).
+Avec une migration, il y a deux chemins :
+
+- redescendre le schéma **avec l'image récente**, celle qui tourne. Une migration défaite perd les données qu'elle avait ajoutées ;
+- remettre la copie de la base faite avant la migration : voir [remettre la copie](exploitation/sauvegarde.md#remettre-la-copie). Ce qui a été écrit depuis la mise à jour est perdu.
+
+Pour redescendre le schéma, arrêter le moteur, ses services ensemble, puis le redescendre à la version du schéma de l'ancienne version, avant de reposer celle-ci. Depuis `deploy/`, pour revenir en v18 :
+
+```bash
+docker compose stop radiotomate-scheduler radiotomate-interface radiotomate-playout radiotomate-dropbox
+docker compose run --rm --no-deps --entrypoint radiotomate radiotomate-init \
+  -c /data/radiotomate.yaml update --target-version 18
+git checkout v0.1.0
+# .env : BUTTON_VERSION=0.1.0
+docker compose pull && docker compose up -d
+```
+
+L'antenne reste coupée de l'arrêt du moteur à son redémarrage. Sauvegarder avant : voir [`exploitation/sauvegarde.md`](exploitation/sauvegarde.md).
+
+Une station qui suit `main` ne revient pas à un tag daté : il n'existe que pour les images reconstruites ce jour-là, pas pour les sept. Elle revient à une version publiée, de la même façon.
 
 ## Exploiter
 

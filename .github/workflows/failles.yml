@@ -2,11 +2,13 @@ name: failles
 
 # Trivy on the published images: fails on any critical vulnerability, except
 # those accepted in .trivyignore.yaml, each with its reason and an expiry date.
-# It never holds a publication back: a station that follows :main must keep
-# receiving fixes. console.yml, engine.yml and services.yml call it right after
-# their push. Every Monday it also scans the :main images, since a new
-# vulnerability also hits an image that has not changed. A pull request that
-# changes .trivyignore.yaml scans the :main images too, not its own.
+# It never holds a publication back: a station must keep receiving fixes.
+# console.yml, engine.yml and services.yml call it right after their push from
+# main, and version.yml once a version is published. Every Monday it also
+# scans the images of deploy/compose.yml in :main and in :stable, the version
+# stations run by default, since a new vulnerability also hits an image that
+# has not changed. A pull request that changes .trivyignore.yaml scans them
+# too, not its own.
 
 on:
   workflow_call:
@@ -24,7 +26,7 @@ on:
   workflow_dispatch:
     inputs:
       images:
-        description: Full image references (ghcr.io/<owner>/button-console:main), separated by spaces. Empty, the seven :main images.
+        description: Full image references (ghcr.io/<owner>/button-console:main), separated by spaces. Empty, the images of deploy/compose.yml in :main and :stable.
         type: string
         required: false
 
@@ -65,10 +67,18 @@ jobs:
           TRIVY_DISABLE_TELEMETRY: "true"
           TRIVY_SKIP_VERSION_CHECK: "true"
         run: |
-          # No input (schedule, pull request, by hand): the seven :main images.
+          # No input (schedule, pull request, by hand): the images of
+          # deploy/compose.yml, in :main and in :stable. Before the first
+          # version, :stable does not exist yet.
           if [ -z "$IMAGES" ]; then
-            for name in console radiotomate playout icecast nowplaying catalog share; do
-              IMAGES="$IMAGES ghcr.io/$OWNER/button-$name:main"
+            names=$(python3 scripts/version.py images)
+            for name in $names; do
+              IMAGES="$IMAGES ghcr.io/$OWNER/$name:main"
+              if docker manifest inspect "ghcr.io/$OWNER/$name:stable" >/dev/null 2>&1; then
+                IMAGES="$IMAGES ghcr.io/$OWNER/$name:stable"
+              else
+                echo "::notice title=Trivy::ghcr.io/$OWNER/$name:stable n'existe pas : aucune version publiée."
+              fi
             done
           fi
           failed=""

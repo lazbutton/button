@@ -55,6 +55,7 @@ Le script lance les mêmes commandes que la CI ([`.github/workflows/`](../.githu
 | `services` | les douze tests du catalogue listés dans `services.yml` | `services/catalog/.venv`, voir plus bas |
 | `nginx` | `nginx -t` sur `console/docker/nginx.conf.template` et ses en-têtes de sécurité, rendus par le script de démarrage de l'image | Docker |
 | `deploy` | `docker compose config` avec `.env.example`, puis ShellCheck sur les scripts du dépôt, comme la CI | Docker |
+| `version` | les tests de `scripts/version.py`, qui lisent aussi le CHANGELOG et `compose.yml`, puis les lignes du CHANGELOG ajoutées depuis `origin/main` ([plus bas](#publier-une-version)) | Python 3 |
 | `e2e` | les parcours dans un navigateur, par `scripts/e2e.sh` ([plus bas](#les-parcours-dans-un-navigateur)) | Node 22 et Poetry, `npm install` et `poetry install` faits |
 
 Sans argument, une partie à qui il manque un outil est sautée, et le résumé le dit. Nommée, elle échoue.
@@ -145,7 +146,7 @@ La file bouge aussi quand l'antenne tient : une ligne en sort quand son heure de
 
 Une ligne de la file se désigne par son heure exacte, l'attribut `datetime` de son heure : l'heure affichée, à la seconde, peut être celle de deux lignes. La file ne dit pas d'où vient une ligne, de l'horloge ou du pupitre. Un parcours qui en a besoin le lit au moteur, comme le parcours « Annuler » de `pupitre.spec.ts` : « Annuler » remet une ligne du pupitre retirée à la suite, à une autre heure.
 
-Sur `main`, la CI publie aussi les images Docker, seulement si tout est vert.
+Sur `main`, la CI publie aussi les images Docker, seulement si tout est vert. Un tag `vX.Y.Z` publie une version : voir [plus bas](#publier-une-version).
 
 ## Dépendances, licences et failles
 
@@ -163,14 +164,14 @@ Le moteur se contrôle dans son environnement Poetry. Un paquet que `poetry.lock
 
 ### Les failles des images
 
-Trivy analyse chaque image juste après sa publication depuis `main`, et les sept images `:main` chaque lundi ([`failles.yml`](../.github/workflows/failles.yml)). Le job échoue sur toute faille critique. Il passe après la publication, jamais avant : une station qui suit `main` reçoit ses correctifs, même quand une faille reste ouverte.
+Trivy analyse chaque image juste après sa publication depuis `main`, les sept images d'une version une fois celle-ci publiée, et chaque lundi les sept images en `:main` et en `:stable`, celle que suivent les stations ([`failles.yml`](../.github/workflows/failles.yml)). Le job échoue sur toute faille critique. Il passe après la publication, jamais avant : une station qui suit `main` reçoit ses correctifs, même quand une faille reste ouverte.
 
 Devant un job rouge :
 
 - **Un correctif existe** : prendre la mise à jour qui l'apporte, une image de base plus récente ou un `poetry.lock` à jour. Quand l'image de base a déjà le correctif, relancer le workflow de l'image sur `main` (« Run workflow ») la reconstruit. Un paquet installé par le Dockerfile, comme ffmpeg et ce qu'il tire, garde en revanche sa version du cache de build tant que l'image de base ne change pas : vider d'abord le cache des Actions (`gh cache delete --all`), puis relancer.
 - **Aucun correctif** : accepter la faille dans [`.trivyignore.yaml`](../.trivyignore.yaml), pour les seuls paquets touchés (`purls`), avec sa raison (`statement`) et une expiration à 90 jours au plus (`expired_at`). Passé cette date, le job échoue de nouveau : revoir la faille, puis repousser la date ou corriger.
 
-Le job vérifie aussi que chaque faille acceptée a ses paquets, sa raison et une expiration à 90 jours au plus. Pour analyser une image à la main : « Run workflow » sur `failles`, avec sa référence complète (`ghcr.io/lazbutton/button-console:main`) ; sans référence, les sept images `:main`. Trivy est épinglé dans `failles.yml`, version et empreinte, et Dependabot ne le suit pas : le monter à la main, avec l'empreinte de `trivy_<version>_checksums.txt`.
+Le job vérifie aussi que chaque faille acceptée a ses paquets, sa raison et une expiration à 90 jours au plus. Pour analyser une image à la main : « Run workflow » sur `failles`, avec sa référence complète (`ghcr.io/lazbutton/button-console:main`) ; sans référence, les sept images en `:main` et en `:stable`. Trivy est épinglé dans `failles.yml`, version et empreinte, et Dependabot ne le suit pas : le monter à la main, avec l'empreinte de `trivy_<version>_checksums.txt`.
 
 ## Règles du projet
 
@@ -190,4 +191,31 @@ Elles sont dans le [AGENTS.md](../AGENTS.md) de la racine, communes aux personne
 3. Ajouter son test dans `engine/tests/test_migrations.py` : une base de la version d'avant, avec des données, qui monte puis redescend.
 4. Vérifier l'aller-retour sur une copie de base : `radiotomate update --target-version N-1`, puis `radiotomate update`.
 
-`radiotomate-init` applique les migrations à chaque démarrage. Revenir à une image plus ancienne demande donc de redescendre d'abord le schéma : voir [`deploiement.md`](deploiement.md#revenir-en-arrière).
+`radiotomate-init` applique les migrations à chaque démarrage. Revenir à une image plus ancienne demande donc de redescendre d'abord le schéma : voir [`deploiement.md`](deploiement.md#revenir-en-arrière). C'est pourquoi une migration ne sort jamais dans un correctif : la version qui la porte est une mineure, au moins.
+
+## Publier une version
+
+Les stations installent des versions publiées, pas `main` : voir la décision [0003](decisions/0003-mettre-a-jour-par-des-versions.md). Le numéro `X.Y.Z` d'une version dit ce qu'elle demande aux stations : voir [`deploiement.md`](deploiement.md#mettre-à-jour). Ces règles valent dès `0.1.0`. Pour choisir le numéro :
+
+- un correctif, `0.1.1` : des corrections seulement. Ni migration du schéma, que la CI refuse dans un correctif, ni réglage nouveau. Ses images marchent avec le dossier de station de la version d'avant ;
+- une mineure, `0.2.0` : des fonctions nouvelles, une migration du schéma, un réglage nouveau qui a sa valeur par défaut ;
+- une majeure, `1.0.0` : tout ce que la station doit faire elle-même, changer une variable ou remplacer un fichier par exemple.
+
+Pour publier :
+
+1. Une pull request renomme « Non publié » en `## X.Y.Z` dans le [CHANGELOG](../CHANGELOG.md), et rouvre au-dessus un « Non publié » vide. En tête des notes, ce que la version demande : la version du schéma quand elle migre, l'action pour une majeure. Pour voir les notes telles qu'elles seront publiées : `python3 scripts/version.py notes X.Y.Z`.
+2. Une fois la pull request fusionnée, poser le tag sur son commit de fusion, puis le pousser. Un tag à la fois : attendre la fin du job « release, X.Y and stable » avant le suivant.
+
+   ```bash
+   git switch main && git pull
+   git tag -a vX.Y.Z -m "BUTTON X.Y.Z" <commit de fusion>
+   git push origin vX.Y.Z
+   ```
+
+3. Le workflow [`version`](../.github/workflows/version.yml) fait le reste. Il vérifie d'abord, sans rien construire, les notes de la version, qu'aucune version plus haute n'est dans l'histoire du commit, et qu'un correctif n'ajoute aucune migration. Puis il lance les tests du moteur, de la console et des services, et publie les sept images en `X.Y.Z`. Une fois les sept publiées, il crée la page de la version, avec ses notes, puis pose `X.Y` et `stable` sur ces mêmes images. Trivy analyse enfin les sept images, sans rien retenir.
+
+`stable` ne recule jamais : un correctif d'une ancienne version, publié après une plus récente, ne déplace que son `X.Y`. Seule la plus haute version reçoit d'office les correctifs ([SECURITY.md](../SECURITY.md)) : une ancienne n'en reçoit qu'au cas par cas. Un tel correctif part du tag de sa ligne, jamais de `main`, qui porte déjà la version suivante. Par exemple, une branche `version/0.1` tirée de `v0.1.1` reçoit la correction et la partie `## 0.1.2` de son CHANGELOG, puis le tag `v0.1.2` se pose sur son commit.
+
+Une version publiée ne change plus : une correction fait une nouvelle version, et les workflows d'images refusent de reconstruire une version qui a sa page. Seuls les jobs en échec se relancent, par « Re-run failed jobs ». Tant que la page n'existe pas, rien n'est publié. Si les notes ou un test ont échoué, corriger par une pull request, retirer le tag (`git push origin :refs/tags/vX.Y.Z`), puis le reposer sur le nouveau commit de fusion (`git tag -f -a vX.Y.Z …`) et le pousser : les images déjà poussées en `X.Y.Z` sont reconstruites.
+
+Après la coupe d'une version, une pull request ouverte avant elle range sa ligne du CHANGELOG sous la version coupée en fusionnant `main`. Une fois la version taguée, la CI le refuse, sur la pull request comme après la fusion sur `main` : remettre la ligne à la fin de « Non publié ». Le run d'un tag déplacé depuis ne publie rien : seul le run du tag actuel publie.
