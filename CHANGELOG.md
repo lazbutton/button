@@ -8,6 +8,7 @@ Le détail des changements du moteur par rapport à l'amont : [docs/moteur/chang
 
 - Corrigé : depuis le 31 octobre, les images du catalogue et de nowplaying tournaient sur Python 3.15, que la CI ne teste pas : les tests du catalogue tournent en 3.13. Dependabot y avait monté Python avec celui du moteur. Elles reviennent à Python 3.13, celui des tests et du moteur, et Dependabot n'y monte plus Python : ce changement se fait à la main, avec la CI.
 - La CI refuse aussi, dans le CHANGELOG, d'autres restes d'un conflit mal réglé, qui partiraient sinon dans les notes d'une version : une puce doublée puis allongée, une ligne égarée au milieu d'une liste, un paragraphe de l'en-tête recopié sous une version. Une fusion en avait laissé deux sous la 0.1.0, que les tests laissaient passer. Les paragraphes d'une version se placent donc avant sa liste.
+- Corrigé : chaque envoi de fichier par la console échouait, sons de la banque comme sets d'invités, avec « open /tusd/… : permission denied ». tusd ne tourne pas en root, et Docker crée son volume au nom de root. Le catalogue, qui tourne en root, le lui donne maintenant à chaque démarrage. Sur une station qui n'a pas encore la correction, depuis `deploy/` : `docker compose exec catalog chown 1000:1000 /tusd`. Voir [docs/exploitation/deposer-un-programme.md](docs/exploitation/deposer-un-programme.md#si-un-envoi-échoue).
 
 ## 0.1.0
 

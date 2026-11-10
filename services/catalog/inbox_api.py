@@ -240,6 +240,28 @@ def inbox_status(media: Path, tusd_dir: Path | None) -> dict:
     }
 
 
+def give_tusd_dir(tusd_dir: Path, owner: str) -> str | None:
+    """Hand the upload dir to tusd's ``uid:gid``. Returns a warning, or None.
+
+    Docker creates the named volume as root, and tusd does not run as root:
+    every upload would fail with ``open /tusd/…: permission denied``.
+    """
+    if not tusd_dir.is_dir():
+        return None
+    try:
+        uid, gid = (int(part) for part in owner.split(":"))
+        current = tusd_dir.stat()
+        if (current.st_uid, current.st_gid) != (uid, gid):
+            os.chown(tusd_dir, uid, gid)
+    except (OSError, ValueError) as exc:
+        return (
+            f"Attention : {tusd_dir} n'a pas pu être donné à tusd ({owner}) : {exc}. "
+            "Les envois de fichiers vont échouer : voir "
+            "docs/exploitation/deposer-un-programme.md, « Si un envoi échoue »."
+        )
+    return None
+
+
 def _progress(tusd_dir: Path) -> list[dict]:
     if not tusd_dir.is_dir():
         return []

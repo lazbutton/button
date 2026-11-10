@@ -20,7 +20,7 @@ Index de la banque de sons dans Meilisearch, recherche pour la console, récepti
 
 La console joint le catalogue sous `/library/` : voir [docs/api.md](../docs/api.md#catalogue-service-à-part-du-moteur). Le catalogue demande au moteur qui est connecté, par `/account.json` avec le cookie du navigateur. Toutes ses routes demandent une session, sauf les sondes et `/tus-hook`, qu'appelle tusd.
 
-Variables : `MEDIA_ROOT`, `MEILI_URL`, `MEILI_MASTER_KEY`, `MEILI_INDEX`, `CATALOG_PORT`, `AUTOMATE_URL`, `TUSD_DIR`, `INBOX_QUOTA_BYTES`, `STATION_NAME`, `SMB_HOST`, `SHARE_PRIVATE`.
+Variables : `MEDIA_ROOT`, `MEILI_URL`, `MEILI_MASTER_KEY`, `MEILI_INDEX`, `CATALOG_PORT`, `AUTOMATE_URL`, `TUSD_DIR`, `TUSD_USER`, `INBOX_QUOTA_BYTES`, `STATION_NAME`, `SMB_HOST`, `SHARE_PRIVATE`.
 
 Tests : `./scripts/verifier.sh services` lance les douze fichiers de test de la CI. Un seul : `cd services/catalog && .venv/bin/python test_inbox_api.py`. Ils couvrent aussi les scripts du dossier partagé, rangés dans `deploy/`.
 

@@ -248,6 +248,10 @@ services:
       MEDIA_ROOT: /media
       AUTOMATE_URL: http://radiotomate-playout:6811
       TUSD_DIR: /tusd
+      # Le volume tusd-data naît à root. Au démarrage, le catalogue le donne à
+      # tusd, qui ne tourne pas en root : sinon, chaque envoi échoue en 500,
+      # « open /tusd/… : permission denied ».
+      TUSD_USER: "1000:1000"
       INBOX_QUOTA_BYTES: ${INBOX_QUOTA_BYTES:-107374182400}
       MEILI_URL: http://meilisearch:7700
       MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:?MEILI_MASTER_KEY manquant dans .env}
@@ -276,6 +280,8 @@ services:
   tusd:
     image: tusproject/tusd:v2.8.0
     restart: unless-stopped
+    # L'utilisateur de l'image, pas root : le TUSD_USER du catalogue.
+    user: "1000:1000"
     command:
       - "-host=0.0.0.0"
       - "-port=8080"
