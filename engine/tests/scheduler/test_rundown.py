@@ -1,11 +1,21 @@
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session as ormSession
 
 from radiotomate.beets import BeetsIntegration
-from radiotomate.models import AutoDJSlot, Clock, RundownItem, Setting, User
+from radiotomate.enums import CartMode, ScheduleMode
+from radiotomate.models import (
+    AutoDJSlot,
+    Cart,
+    Clock,
+    RundownItem,
+    Setting,
+    Sound,
+    User,
+)
 from radiotomate.scheduler.clock import (
     PARIS,
     SETTING_CLOCK_SEQ_CLOCK_ID,
@@ -19,13 +29,17 @@ from radiotomate.scheduler.rundown import (
     MAX_HORIZON_MIN,
     build_rundown,
     forecast_still_covers,
+    item_end_at,
     rest_of_day_minutes,
 )
+from radiotomate.services.autodj import create_clock
 from tests.scheduler.test_clock import NIGHT, _client, _live
 
 TUESDAY_1019 = datetime(2026, 9, 15, 10, 19, tzinfo=PARIS)
 MONDAY_1010 = datetime(2026, 9, 14, 10, 10, tzinfo=PARIS)
 MONDAY_1819 = datetime(2026, 9, 14, 18, 19, tzinfo=PARIS)
+SATURDAY_2200 = datetime(2026, 9, 19, 22, 0, tzinfo=PARIS)
+SUNDAY_0000 = datetime(2026, 9, 20, 0, 0, tzinfo=PARIS)
 
 
 def test_rest_of_day_minutes_until_midnight():
@@ -179,6 +193,138 @@ async def test_rundown_short_daypart_skips_1020_pub(
         cursor=0,
     )
     assert _anchored_pubs(data["items"], 20) == []
+
+
+def _at(item: dict) -> datetime:
+    return datetime.fromisoformat(item["at"])
+
+
+async def _live_daypart(
+    dbsession: ormSession,
+    raw_app,
+    sync: str,
+    opening: datetime = SATURDAY_2200,
+) -> None:
+    """One hour from ``opening``: a clock that opens on a live drawn from a bin."""
+    path = raw_app.config["DATA_ROOT"] / "lives"
+    cart = Cart(
+        title="Lives",
+        path=path,
+        mode=CartMode.PLAYLIST,
+        schedule_mode=ScheduleMode.CLOCK,
+    )
+    dbsession.add(cart)
+    await dbsession.flush()
+    dbsession.add(
+        Sound(
+            cart_id=cart.id,
+            path=path / "live.mp3",
+            duration=35 * 60,
+            title="Live du samedi",
+            gain=-1.0,
+            peak=-0.5,
+        )
+    )
+    clock = await create_clock(
+        dbsession,
+        {
+            "name": "Soirée live",
+            "motif": [{"kind": "musique", "category": "Rotation"}],
+            "anchors": [{"kind": "son", "cart_id": cart.id, "minute": 0, "sync": sync}],
+        },
+    )
+    default = await Clock.from_name(dbsession, Clock.DEFAULT_NAME)
+    for start, clock_id in (
+        (opening, clock.id),
+        (opening + timedelta(hours=1), default.id),
+    ):
+        minute = start.hour * 60 + start.minute
+        slot = await AutoDJSlot.from_time(
+            dbsession, minute, start.weekday(), exact=True
+        )
+        if slot is None:
+            slot = AutoDJSlot(
+                day_of_week=start.weekday(),
+                minute=minute,
+                title="live",
+                constraints={},
+            )
+            dbsession.add(slot)
+        slot.clock_id = clock_id
+    await dbsession.commit()
+
+
+@pytest.mark.parametrize("sync", ["dure", "molle"])
+@pytest.mark.parametrize(
+    ("opening", "lead_min", "cursor", "astride"),
+    [
+        (SATURDAY_2200, 10, 0, True),
+        (SATURDAY_2200, 9, 1, False),
+        (SUNDAY_0000, 10, 0, True),
+    ],
+    ids=["titre-a-cheval", "titre-fini-pile", "minuit"],
+)
+async def test_rundown_plans_the_anchor_a_daypart_opens_on(  # noqa: PLR0913
+    dbsession: ormSession,
+    raw_app,
+    jingles_cart,
+    beets_integration: BeetsIntegration,
+    sync: str,
+    opening: datetime,
+    lead_min: int,
+    cursor: int,
+    astride: bool,
+):
+    """
+    A title runs into the start of a daypart, or ends on it: by then the anchor
+    of that minute is behind the forecast, and the antenna still plays it. Hard,
+    it cuts the title; soft, it waits for its end.
+    """
+    await _live_daypart(dbsession, raw_app, sync, opening)
+    data = await build_rundown(
+        dbsession,
+        beets_integration,
+        now=opening - timedelta(minutes=lead_min),
+        horizon_min=60,
+        cursor=cursor,
+    )
+    items = data["items"]
+    title_end = item_end_at([item for item in items if _at(item) < opening][-1])
+    assert title_end >= opening
+    assert (title_end > opening) is astride
+    lives = [item for item in items if item["kind"] == "son"]
+    assert len(lives) == 1, [(item["at"], item["resource"]) for item in items[:12]]
+    live = lives[0]
+    assert _at(live) == (opening if sync == "dure" else title_end)
+    assert (live["when"], live["minute"], live["sync"]) == ("anchored", 0, sync)
+    assert (live["clock"], live["resource"]) == ("Soirée live", "Live du samedi")
+    assert live.get("reason") == ("glissement" if _at(live) > opening else None)
+    assert _at(items[items.index(live) + 1]) == item_end_at(live)
+
+
+@pytest.mark.parametrize("sync", ["dure", "molle"])
+async def test_rundown_ending_astride_a_daypart_start_plans_its_anchor(
+    dbsession: ormSession,
+    raw_app,
+    jingles_cart,
+    beets_integration: BeetsIntegration,
+    sync: str,
+):
+    """
+    The conducteur grows piece by piece, and the piece after this one starts past
+    22:00: the one that ends on the title astride has to carry the anchor.
+    """
+    await _live_daypart(dbsession, raw_app, sync)
+    data = await build_rundown(
+        dbsession,
+        beets_integration,
+        now=SATURDAY_2200 - timedelta(minutes=16),
+        horizon_min=15,
+        cursor=0,
+    )
+    items = data["items"]
+    assert [item for item in items if _at(item) < SATURDAY_2200 < item_end_at(item)]
+    assert items[-1]["kind"] == "son", [(item["at"], item["kind"]) for item in items]
 
 
 async def test_rundown_window_covers_30_min(
