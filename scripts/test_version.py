@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import io
 import re
+import tarfile
+import tempfile
 import unittest
 from collections import Counter
+from pathlib import Path
 
 import version
 
@@ -187,6 +191,134 @@ class LinesTest(unittest.TestCase):
             version.check_lines(CHANGELOG, after)
 
 
+class StationTest(unittest.TestCase):
+    """Les fichiers joints à une version : ce que `station install` télécharge."""
+
+    def test_build_sections_go_and_the_rest_stays(self) -> None:
+        compose = (
+            "x-webapps: &webapps\n"
+            "  image: ghcr.io/lazbutton/button-radiotomate:${BUTTON_VERSION:-stable}\n"
+            "  build:\n"
+            "    context: ../engine\n"
+            "\n"
+            "    dockerfile: Containerfile\n"
+            "  restart: unless-stopped\n"
+            "\n"
+            "services:\n"
+            "  console:\n"
+            "    image: ghcr.io/lazbutton/button-console:${BUTTON_VERSION:-stable}\n"
+            "    build:   # la console\n"
+            "      # Un commentaire du bloc.\n"
+            "      context: ../console\n"
+            "    ports:\n"
+            '      - "30126:80"\n'
+            "  icecast:\n"
+            "    build: ../services/icecast\n"
+            "    image: ghcr.io/lazbutton/button-icecast:${BUTTON_VERSION:-stable}\n"
+            "    # build: un commentaire, pas une section\n"
+            "\n"
+            "  caddy:\n"
+            "    image: caddy:2.11-alpine\n"
+        )
+        self.assertEqual(
+            version.station_compose(compose),
+            "x-webapps: &webapps\n"
+            "  image: ghcr.io/lazbutton/button-radiotomate:${BUTTON_VERSION:-stable}\n"
+            "  restart: unless-stopped\n"
+            "\n"
+            "services:\n"
+            "  console:\n"
+            "    image: ghcr.io/lazbutton/button-console:${BUTTON_VERSION:-stable}\n"
+            "    ports:\n"
+            '      - "30126:80"\n'
+            "  icecast:\n"
+            "    image: ghcr.io/lazbutton/button-icecast:${BUTTON_VERSION:-stable}\n"
+            "    # build: un commentaire, pas une section\n"
+            "\n"
+            "  caddy:\n"
+            "    image: caddy:2.11-alpine\n",
+        )
+
+    def test_a_blank_line_after_a_block_stays(self) -> None:
+        self.assertEqual(version.station_compose("a:\n  build:\n    context: .\n\n"), "a:\n\n")
+
+    def test_the_compose_of_a_station(self) -> None:
+        compose = version.COMPOSE.read_text(encoding="utf-8")
+        station = version.station_compose(compose)
+        self.assertRegex(compose, r"(?m)^ *build:")
+        self.assertNotRegex(station, r"(?m)^ *build:")
+        self.assertEqual(version.images(station), version.images(compose))
+        self.assertEqual(station.count("image:"), compose.count("image:"))
+        # Rien d'autre ne part : chaque ligne gardée vient, dans l'ordre, de
+        # l'original.
+        lines = iter(compose.splitlines())
+        for line in station.splitlines():
+            self.assertIn(line, lines)
+
+    def test_the_files_of_a_version(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            first, second = Path(tmp, "a"), Path(tmp, "b")
+            version.write_station("0.1.0", first)
+            version.write_station("0.1.0", second)
+            names = sorted(path.name for path in first.iterdir())
+            self.assertEqual(names, ["SHA256SUMS", "station", "station.tar.gz"])
+            # Les mêmes octets d'une fois à l'autre : une relance du job ne
+            # change pas les sommes.
+            for name in names:
+                self.assertEqual((first / name).read_bytes(), (second / name).read_bytes(), name)
+            sums = (first / "SHA256SUMS").read_text(encoding="utf-8")
+            for name in version.STATION_ASSETS:
+                digest = hashlib.sha256((first / name).read_bytes()).hexdigest()
+                self.assertIn(f"{digest}  {name}\n", sums)
+            self.assertEqual((first / "station").stat().st_mode & 0o777, 0o755)
+            self.assertEqual((first / "station").read_bytes(), (version.DEPLOY / "station").read_bytes())
+            with tarfile.open(first / "station.tar.gz") as tar:
+                members = {member.name: member for member in tar.getmembers()}
+
+                def read(name: str) -> bytes:
+                    extracted = tar.extractfile(name)
+                    assert extracted is not None
+                    return extracted.read()
+
+                self.assertEqual(read("VERSION"), b"0.1.0\n")
+                self.assertNotRegex(read("compose.yml").decode(), r"(?m)^ *build:")
+                self.assertEqual(read("Caddyfile"), (version.DEPLOY / "Caddyfile").read_bytes())
+                self.assertEqual(read("station"), (version.DEPLOY / "station").read_bytes())
+                for path in (version.DEPLOY / "scripts").iterdir():
+                    self.assertEqual(read(f"scripts/{path.name}"), path.read_bytes(), path.name)
+                self.assertIn(".env.example", members)
+                self.assertNotIn("tests/station.bats", members)
+                self.assertEqual(members["station"].mode, 0o755)
+                self.assertEqual(members["scripts/smoke.sh"].mode, 0o755)
+                self.assertEqual(members["compose.yml"].mode, 0o644)
+                self.assertEqual({(m.uid, m.gid, m.uname, m.gname, m.mtime) for m in members.values()}, {(0, 0, "", "", 0)})
+
+    def test_a_version_or_main(self) -> None:
+        self.assertEqual(version.station_files("main")["VERSION"][0], b"main\n")
+        with self.assertRaises(ValueError):
+            version.station_files("0.1")
+
+    def test_a_mounted_file_outside_the_folder_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            deploy = Path(tmp)
+            (deploy / "scripts").mkdir()
+            for name in ("Caddyfile", ".env.example", "station", "scripts/a.sh"):
+                (deploy / name).write_text("x\n", encoding="utf-8")
+            (deploy / "compose.yml").write_text(
+                "services:\n"
+                "  a:\n"
+                "    volumes:\n"
+                "      - ${RT_DATA:-./data/radiotomate}:/data\n"
+                "      - ./scripts/a.sh:/a.sh:ro\n"
+                "      - ./share/b.conf:/b.conf:ro\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(ValueError) as raised:
+                version.station_files("0.1.0", deploy)
+            self.assertIn("share/b.conf", str(raised.exception))
+            self.assertNotIn("data", str(raised.exception))
+
+
 class MainTest(unittest.TestCase):
     def run_main(self, *args: str) -> tuple[int, str]:
         out = io.StringIO()
@@ -205,6 +337,11 @@ class MainTest(unittest.TestCase):
         self.assertEqual(self.run_main("avant", "0.1.1", "v0.2.0")[0], 1)
         self.assertEqual(self.run_main("notes")[0], 64)
         self.assertEqual(self.run_main("notes", "0.1.0", "--autre", "x")[0], 64)
+        self.assertEqual(self.run_main("station", "0.1.0")[0], 64)
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(self.run_main("station", "0.1", tmp)[0], 1)
+            self.assertEqual(self.run_main("station", "main", tmp), (0, ""))
+            self.assertTrue(Path(tmp, "station.tar.gz").is_file())
 
 
 class RepositoryTest(unittest.TestCase):

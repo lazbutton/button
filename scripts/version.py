@@ -6,6 +6,7 @@
     scripts/version.py avant 0.1.1 [v0.1.0 v0.1.1 …]
     scripts/version.py images
     scripts/version.py lignes <CHANGELOG d'avant> <CHANGELOG d'après> [v0.1.0 …]
+    scripts/version.py station 0.1.0 <dossier>
 
 notes : les notes de la version, sa partie de CHANGELOG.md sans son titre,
 `## 0.1.0`, seul sur sa ligne ou suivi d'une espace. Un `## ` dans un bloc de
@@ -32,19 +33,33 @@ une fusion. Échoue si des lignes de liste s'ajoutent sous une version publiée,
 celle d'un des tags donnés, ou de chaque partie de version sans tag donné. Une
 branche ouverte avant la coupe d'une version y range sinon sa ligne sans le
 voir, et la version suivante la perd. Couper une version, ce qui ajoute son
-titre, passe. Stdlib seule.
+titre, passe.
+
+station : les fichiers joints à la version, écrits dans le dossier donné.
+`station`, le script d'exploitation ; `station.tar.gz`, le dossier d'une
+station à cette version : compose.yml sans ses sections build:, Caddyfile,
+.env.example, scripts/, station et VERSION ; SHA256SUMS, les sommes des deux.
+`station install` les télécharge. La version s'écrit X.Y.Z, ou main pour un
+essai. Échoue si compose.yml monte un fichier du dossier qui n'y est pas.
+
+Stdlib seule.
 """
 
 from __future__ import annotations
 
+import gzip
+import hashlib
+import io
 import re
 import sys
+import tarfile
 from collections import Counter
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 CHANGELOG = ROOT / "CHANGELOG.md"
-COMPOSE = ROOT / "deploy" / "compose.yml"
+DEPLOY = ROOT / "deploy"
+COMPOSE = DEPLOY / "compose.yml"
 
 # X.Y.Z, sans zéro en tête ni préversion : 0.1.0, jamais 0.1 ni 0.1.0-rc.1.
 VERSION = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
@@ -59,6 +74,13 @@ INLINE_LINK = re.compile(r"\]\((<?)" + _LOCAL)
 REFERENCE_LINK = re.compile(r"^( {0,3}\[[^\]]+\]:[ \t]*<?)(?=[^ \t<])" + _LOCAL)
 # Une image de BUTTON dans compose.yml : …/button-<nom>:${BUTTON_VERSION…}.
 IMAGE = re.compile(r"/(button-[a-z0-9-]+):\$\{BUTTON_VERSION\b")
+# Une section build: de compose.yml : un bloc, ou une valeur sur sa ligne.
+BUILD_BLOCK = re.compile(r"( *)build:[ \t]*(#.*)?\n?")
+BUILD_LINE = re.compile(r" *build:[ \t]+[^#\s]")
+# Un fichier du dossier de la station que compose.yml monte dans un conteneur.
+MOUNTED = re.compile(r"^ *- *\"?\./([^:\s\"]+):", re.MULTILINE)
+# Les fichiers joints à une version, dans l'ordre de SHA256SUMS.
+STATION_ASSETS = ("station", "station.tar.gz")
 
 
 def parse(version: str) -> tuple[int, int, int]:
@@ -208,6 +230,81 @@ def check_lines(before: str, after: str, tags: list[str] | None = None) -> None:
         )
 
 
+def station_compose(compose: str) -> str:
+    """compose.yml sans ses sections build: : une station tire ses images, et
+    n'a pas les sources pour les construire. Une image qui manque y fait alors
+    échouer docker compose, au lieu d'un build impossible."""
+    kept: list[str] = []
+    blank: list[str] = []
+    depth: int | None = None
+    for line in compose.splitlines(keepends=True):
+        if depth is not None:
+            if not line.strip():
+                blank.append(line)
+                continue
+            if len(line) - len(line.lstrip(" ")) > depth:
+                blank.clear()  # Une ligne vide dans le bloc part avec lui.
+                continue
+            depth = None
+        kept += blank
+        blank.clear()
+        block = BUILD_BLOCK.fullmatch(line)
+        if block:
+            depth = len(block.group(1))
+        elif not BUILD_LINE.match(line):
+            kept.append(line)
+    return "".join(kept + blank)
+
+
+def _station_file(path: Path) -> tuple[bytes, int]:
+    return path.read_bytes(), 0o755 if path.stat().st_mode & 0o111 else 0o644
+
+
+def station_files(version: str, deploy: Path = DEPLOY) -> dict[str, tuple[bytes, int]]:
+    """Le dossier d'une station à cette version : chemin → (contenu, droits)."""
+    if version != "main":
+        parse(version)
+    compose = (deploy / "compose.yml").read_text(encoding="utf-8")
+    files = {
+        "VERSION": (f"{version}\n".encode(), 0o644),
+        "compose.yml": (station_compose(compose).encode(), 0o644),
+    }
+    for name in ("Caddyfile", ".env.example", "station"):
+        files[name] = _station_file(deploy / name)
+    for path in sorted((deploy / "scripts").iterdir()):
+        if path.is_file() and not path.name.startswith("."):
+            files[f"scripts/{path.name}"] = _station_file(path)
+    missing = sorted(set(MOUNTED.findall(compose)) - set(files))
+    if missing:
+        raise ValueError(
+            "compose.yml monte des fichiers que le dossier d'une station n'aurait pas : "
+            + ", ".join(missing)
+            + ". Les ajouter à station_files, dans scripts/version.py."
+        )
+    return files
+
+
+def write_station(version: str, out: Path, deploy: Path = DEPLOY) -> None:
+    """Les fichiers joints à la version, dans out. L'archive ne dépend que de
+    leur contenu : ni date, ni propriétaire."""
+    files = station_files(version, deploy)
+    out.mkdir(parents=True, exist_ok=True)
+    with (out / "station.tar.gz").open("wb") as raw:
+        with gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as packed:
+            with tarfile.open(fileobj=packed, mode="w", format=tarfile.PAX_FORMAT) as tar:
+                for name, (data, mode) in sorted(files.items()):
+                    info = tarfile.TarInfo(name)
+                    info.size, info.mode = len(data), mode
+                    tar.addfile(info, io.BytesIO(data))
+    script = out / "station"
+    script.write_bytes(files["station"][0])
+    script.chmod(0o755)
+    (out / "SHA256SUMS").write_text(
+        "".join(f"{hashlib.sha256((out / name).read_bytes()).hexdigest()}  {name}\n" for name in STATION_ASSETS),
+        encoding="utf-8",
+    )
+
+
 def main(args: list[str]) -> int:
     try:
         if len(args) == 2 and args[0] == "notes":
@@ -228,6 +325,9 @@ def main(args: list[str]) -> int:
         if len(args) >= 3 and args[0] == "lignes":
             before, after = (Path(path).read_text(encoding="utf-8") for path in args[1:3])
             check_lines(before, after, args[3:] or None)
+            return 0
+        if len(args) == 3 and args[0] == "station":
+            write_station(args[1], Path(args[2]))
             return 0
     except ValueError as error:
         print(error, file=sys.stderr)
