@@ -40,7 +40,7 @@ Rien de ce dossier ne se lance contre une station en service. Les essais se font
 | Sur l'hôte : `backup-radiotomate.sh`, `restore-radiotomate.sh`, `smoke.sh`, et `station`, en root | `#!/usr/bin/env bash` et `set -euo pipefail` |
 
 - Un script se relance sans danger : il ne refait que ce qui manque, et n'écrase rien.
-- Un nouveau script de l'hôte n'a besoin que de Docker, de curl et d'openssl. Les deux scripts de sauvegarde demandent aussi `sqlite3` et `tar` sur l'hôte.
+- Un nouveau script de l'hôte n'a besoin que de Docker, de curl et d'openssl. Les deux scripts de sauvegarde demandent aussi `sqlite3` et `tar` sur l'hôte. `station` demande aussi ce que Debian et Ubuntu ont toujours, `tar`, `sha256sum` et `ss`, et apt pour installer Docker.
 - Chaque message d'erreur dit quoi faire ensuite.
 - ShellCheck passe sur chaque script.
 - Les tests de `restore-radiotomate.sh` sont dans `engine/tests/test_update_backup.py`, avec la copie qu'il remet : après une modification du script, lancer aussi `../scripts/verifier.sh moteur`. La CI du moteur ne se déclenche pas pour `deploy/`.
@@ -59,7 +59,7 @@ Rien de ce dossier ne se lance contre une station en service. Les essais se font
 
 C'est un seul fichier, sans extension, celui de la commande posée dans `/usr/local/bin`. Ses règles :
 
-- **Où elle tourne.** Sur l'hôte, en root, sur Debian 12 ou 13 et Ubuntu 24.04 seulement : bash 5, GNU coreutils, iproute2. Comme les autres scripts de l'hôte, elle n'a besoin que de Docker, de curl et d'openssl.
+- **Où elle tourne.** Sur l'hôte, en root, sur Debian 12 ou 13 et Ubuntu 24.04 seulement : bash 5, GNU coreutils, iproute2. Elle demande Docker, curl et openssl, comme les autres scripts de l'hôte, puis ce que ces systèmes ont toujours, et apt pour installer Docker.
 - **D'où elle vient.** Pas d'un clone : chaque version publiée la joint à sa page, avec `station.tar.gz`, le dossier d'une station à cette version, et `SHA256SUMS` ([décision 0016](../docs/decisions/0016-le-dossier-vient-de-sa-version.md)).
   - `scripts/version.py station` les fabrique.
   - Un fichier que `compose.yml` monte depuis le dossier doit être dans l'archive : sinon, `version.py` refuse, et `test_version.py` échoue.

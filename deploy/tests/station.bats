@@ -79,10 +79,10 @@ setup() {
   install_station --domain radio.example --name "Radio d'Ici"
   assert_success
   assert_output --partial "Réglages Station : nom et adresses publiques posés."
-  grep -qxF -- "-T -e BUTTON_NAME=Radio d'Ici -e BUTTON_DOMAIN=radio.example -e BUTTON_HARBOR_PORT=6800 radiotomate-interface python3 -" \
+  grep -qxF -- "-T -e BUTTON_NAME=Radio d'Ici -e BUTTON_DOMAIN=radio.example -e BUTTON_HARBOR_PORT=6800 -e BUTTON_MOUNT=button.mp3 radiotomate-interface python3 -" \
     "$FAKE_STATE/settings"
   grep -qF "insert or ignore into settings" "$FAKE_STATE/settings.py"
-  grep -qF '"station.public_stream_url": f"https://{domain}/button.mp3"' "$FAKE_STATE/settings.py"
+  grep -qF "select 1 from settings where key like 'station.%'" "$FAKE_STATE/settings.py"
 }
 
 @test "l'environnement du shell ne prend pas la place de .env" {
@@ -558,4 +558,27 @@ EOF
   assert_success
   assert_output --partial "Mot de passe : $password"
   grep -qF -- "-e BUTTON_NAME=Radio Test " "$FAKE_STATE/settings"
+}
+
+@test "une station qui tourne sans son Caddy se répare : ses propres ports ne la bloquent pas" {
+  install_station --domain radio.example
+  rm "$FAKE_STATE/caddy-running"
+  touch "$FAKE_STATE/engine-running"
+  echo "tcp 6800 docker-proxy" >"$FAKE_STATE/ports"
+  install_station
+  assert_success
+  assert_output --partial "Ports : la station tourne déjà, sans son Caddy."
+  # Sans Caddy, la station n'a plus de certificat sûr : le domaine se vérifie.
+  logged "nslookup"
+}
+
+@test "relancée après une interruption, une installation neuve demande toujours sa place" {
+  touch "$FAKE_STATE/pull-fails"
+  install_station --domain radio.example
+  assert_failure
+  rm "$FAKE_STATE/pull-fails"
+  echo 5242880 >"$FAKE_STATE/free-kb"
+  install_station
+  assert_failure
+  assert_output --partial "Place libre insuffisante"
 }

@@ -31,6 +31,9 @@ MIN_FREE_GB=10
 HTTPS_WAIT=180
 # Le conteneur qui répond sur le port 80 pendant la vérification du domaine.
 PROBE=button-verification-domaine
+# Le mount public du flux, celui qu'écrit init-radiotomate.sh. Quand GEN-02
+# le rendra réglable, il se lira dans .env, ici seulement.
+MOUNT=button.mp3
 # Ce que cleanup retire en sortant : le dossier de travail, et le conteneur
 # de la vérification s'il tourne encore.
 work=""
@@ -339,8 +342,9 @@ existing_parent() {
   printf '%s\n' "${path:-/}"
 }
 
-# Une installation neuve s'arrête faute de place. Une station déjà là, dont la
-# banque a grandi, se répare quand même : la place manque, mais elle tourne.
+# Une installation neuve s'arrête faute de place, même relancée après une
+# interruption. Une station qui a déjà sa base, et dont la banque a grandi, se
+# répare quand même : la place manque, mais elle tourne.
 check_disk() {
   local path free low=""
   for path in "$dir" "$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo /var/lib/docker)"; do
@@ -354,7 +358,7 @@ check_disk() {
   done
   if [[ -z $low ]]; then
     say "Place : $MIN_FREE_GB Go libres au moins."
-  elif [[ -f $env_file ]]; then
+  elif [[ -f $env_file && -f $(env_path RT_DATA ./data/radiotomate)/radiotomate.db ]]; then
     warn "peu de place libre :$low. Une station neuve en demande $MIN_FREE_GB Go : libérer de la place, ou agrandir le disque."
   else
     die "Place libre insuffisante :$low. Il en faut $MIN_FREE_GB Go au moins : les images en prennent 3 environ, et la banque de sons grandit." \
@@ -362,11 +366,11 @@ check_disk() {
   fi
 }
 
-# La station de ce dossier a-t-elle déjà son Caddy en marche ? Les ports 80 et
-# 443 sont alors à elle : une relance ne les vérifie pas.
-caddy_running() {
+# Les conteneurs de la station de ce dossier qui tournent : tous, ou ceux du
+# service donné. Une relance ne vérifie pas les ports qu'ils tiennent.
+station_running() { # [service]
   [[ -f $dir/compose.yml && -f $env_file ]] || return 1
-  [[ -n $(compose ps -q --status running caddy 2>/dev/null) ]]
+  [[ -n $(compose ps -q --status running "$@" 2>/dev/null) ]]
 }
 
 check_ports() {
@@ -443,12 +447,10 @@ check_domain_here() {
   [[ -n $image ]] || die "Le compose.yml de la version n'a pas d'image caddy." "Archive inattendue : la télécharger à nouveau."
   docker pull -q "$image" >/dev/null ||
     die "L'image $image ne se tire pas." "Vérifier l'accès de la machine à Docker Hub, puis relancer."
-  addresses=$(
-    for kind in a aaaa; do
-      docker run --rm "$image" nslookup -type="$kind" "$domain" 2>/dev/null |
-        awk '/^Name:/ { answer = 1; next } answer && /^Address:/ { print $2 }' || true
-    done
-  )
+  # Les deux réponses à la suite, chacune après sa ligne « Server: ».
+  # shellcheck disable=SC2016
+  addresses=$(docker run --rm "$image" sh -c 'nslookup -type=a "$1"; nslookup -type=aaaa "$1"' _ "$domain" 2>/dev/null |
+    awk '/^Server:/ { answer = 0 } /^Name:/ { answer = 1; next } answer && /^Address:/ { print $2 }') || true
   [[ -n $addresses ]] ||
     die "Le domaine $domain ne mène à aucune adresse." \
       "Chez le registraire du domaine, créer un enregistrement A vers l'adresse IPv4 de cette machine, attendre qu'il se propage, puis relancer."
@@ -633,25 +635,25 @@ smoke() {
     # Les navigateurs, et curl, refusent le certificat de Caddy : le contrôle
     # passe par les ports de la machine.
     console=http://127.0.0.1:$(env_value CONSOLE_PORT 30126)
-    stream=http://127.0.0.1:$(env_value ICECAST_PORT 18000)/button.mp3
+    stream=http://127.0.0.1:$(env_value ICECAST_PORT 18000)/$MOUNT
   else
     console=https://$domain
-    stream=https://$domain/button.mp3
+    stream=https://$domain/$MOUNT
   fi
   (cd "$dir" && SMOKE_WAIT=${SMOKE_WAIT:-300} scripts/smoke.sh "$console" "$stream") ||
     die "" "Le contrôle de la station a échoué : voir plus haut. Une fois réglé, relancer station install, qui reprend où il en était."
 }
 
-# Le nom et les adresses publiques, dans les réglages Station du moteur,
-# seulement s'ils manquent : sans eux, la console reprendrait ceux de sa
-# marque par défaut. Comme radiotomate-init pour le harbor, une ligne posée
-# n'est jamais changée. Une fois l'installation finie, ils se changent dans la
-# console, Réglages → Station.
+# Le nom et les adresses publiques, dans les réglages Station du moteur : sans
+# eux, la console reprendrait ceux de sa marque par défaut. Une seule fois, sur
+# une station qui n'a encore aucun réglage Station : une ligne posée n'est
+# jamais changée, et une ligne qu'un admin a retirée ne revient pas. Ensuite,
+# ils se changent dans la console, Réglages → Station.
 station_settings() {
   local harbor written
   harbor=$(env_value HARBOR_PORT 6800)
   [[ $harbor =~ ^[0-9]+$ ]] || harbor=""
-  written=$(compose exec -T -e "BUTTON_NAME=$name" -e "BUTTON_DOMAIN=$domain" -e "BUTTON_HARBOR_PORT=$harbor" \
+  written=$(compose exec -T -e "BUTTON_NAME=$name" -e "BUTTON_DOMAIN=$domain" -e "BUTTON_HARBOR_PORT=$harbor" -e "BUTTON_MOUNT=$MOUNT" \
     radiotomate-interface python3 - <<'PY'
 import os
 import sqlite3
@@ -660,13 +662,15 @@ from contextlib import closing
 domain = os.environ["BUTTON_DOMAIN"]
 values = {
     "station.name": os.environ.get("BUTTON_NAME", ""),
-    "station.public_stream_url": f"https://{domain}/button.mp3",
+    "station.public_stream_url": f"https://{domain}/{os.environ['BUTTON_MOUNT']}",
     "station.now_url": f"https://{domain}/now.json",
     "station.status_url": f"https://{domain}/status-json.xsl",
     "station.harbor_host": domain,
     "station.harbor_port": os.environ.get("BUTTON_HARBOR_PORT", ""),
 }
 with closing(sqlite3.connect("/data/radiotomate.db")) as con, con:
+    if con.execute("select 1 from settings where key like 'station.%' limit 1").fetchone():
+        raise SystemExit(0)
     for key, value in values.items():
         added = con.execute(
             "insert or ignore into settings (key, value) values (?, ?)", (key, value)
@@ -767,10 +771,15 @@ cmd_install() {
   # Le reste d'une vérification du domaine interrompue tiendrait le port 80.
   docker rm -f "$PROBE" >/dev/null 2>&1 || true
   check_disk
+  # running : Caddy tourne, la station a son certificat et ses images. Une
+  # station qui tourne sans lui, Caddy tombé par exemple, tient encore le
+  # port du direct : ses ports ne se vérifient pas non plus.
   local running=""
-  if caddy_running; then
+  if station_running caddy; then
     running=1
     say "Ports : la station tourne déjà, avec son Caddy."
+  elif station_running; then
+    say "Ports : la station tourne déjà, sans son Caddy."
   else
     check_ports
   fi
@@ -895,7 +904,7 @@ cmd_install() {
 
   say "" "La station tourne : l'antenne joue."
   say "  Console : https://$domain$([[ $tls != internal ]] || echo ', avec un certificat que les navigateurs refusent')"
-  say "  Flux : https://$domain/button.mp3"
+  say "  Flux : https://$domain/$MOUNT"
   say "  Direct : $domain, port $(env_value HARBOR_PORT 6800), avec le jeton d'encodeur de chaque compte"
   say "  Dossier : $dir, et la commande : station"
   if [[ $(env_value BUTTON_UPDATES auto) == auto ]]; then
@@ -932,19 +941,15 @@ choose() {
   fi
 }
 
+# Comme choose, mais la question se répond par oui ou non.
 choose_updates() {
   local answer
-  if [[ -f $env_file ]] && env_has BUTTON_UPDATES; then
+  if { [[ -f $env_file ]] && env_has BUTTON_UPDATES; } || [[ $given == *" updates "* ]] || ! interactive; then
     choose BUTTON_UPDATES updates "$updates" auto check_updates ""
-  elif [[ $given == *" updates "* ]]; then
-    check_updates "$updates" || exit 2
-    printf '%s\n' "$updates"
-  elif interactive; then
-    answer=$(ask "Mises à jour automatiques, quand la commande update existera ? (o/n)" o check_yes_no)
-    if [[ ${answer,,} == [oy]* ]]; then echo auto; else echo manual; fi
-  else
-    echo auto
+    return
   fi
+  answer=$(ask "Mises à jour automatiques, quand la commande update existera ? (o/n)" o check_yes_no)
+  if [[ ${answer,,} == [oy]* ]]; then echo auto; else echo manual; fi
 }
 
 # Le dossier de la station : celui de ce script s'il est déjà celui d'une

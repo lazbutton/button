@@ -25,18 +25,19 @@ case $1 in
       echo "${*: -1}" >"$state/probe-token"
       echo probe
     elif [[ " $* " == *" nslookup "* ]]; then
-      # Comme le nslookup de busybox : $state/dns-a et dns-aaaa, une adresse
-      # par ligne.
-      kind=$(sed -n 's/.* -type=\([a-z]*\) .*/\1/p' <<<" $* ")
-      printf 'Server:\t\t127.0.0.11\nAddress:\t127.0.0.11:53\n\n'
-      if [[ ! -s $state/dns-$kind ]]; then
-        echo "*** Can't find ${*: -1}: No answer"
-        exit 0
-      fi
-      echo "Non-authoritative answer:"
-      while read -r address; do
-        printf 'Name:\t%s\nAddress: %s\n\n' "${*: -1}" "$address"
-      done <"$state/dns-$kind"
+      # Comme deux nslookup de busybox, A puis AAAA : $state/dns-a et
+      # dns-aaaa, une adresse par ligne.
+      for kind in a aaaa; do
+        printf 'Server:\t\t127.0.0.11\nAddress:\t127.0.0.11:53\n\n'
+        if [[ ! -s $state/dns-$kind ]]; then
+          echo "*** Can't find ${*: -1}: No answer"
+          continue
+        fi
+        echo "Non-authoritative answer:"
+        while read -r address; do
+          printf 'Name:\t%s\nAddress: %s\n\n' "${*: -1}" "$address"
+        done <"$state/dns-$kind"
+      done
     fi
     ;;
   compose)
@@ -45,7 +46,14 @@ case $1 in
         [[ ! -e $state/no-compose ]] || exit 1
         [[ ${3:-} != --short ]] || echo 2.29.7
         ;;
-      ps) [[ ! -e $state/caddy-running ]] || echo caddy ;;
+      ps)
+        # Caddy, ou la station sans lui : $state/caddy-running, engine-running.
+        if [[ ${*: -1} == caddy ]]; then
+          [[ ! -e $state/caddy-running ]] || echo caddy
+        elif [[ -e $state/caddy-running || -e $state/engine-running ]]; then
+          echo radiotomate-playout
+        fi
+        ;;
       pull) [[ ! -e $state/pull-fails ]] || exit 1 ;;
       up)
         # Ce que docker compose recevrait du shell, à la place de .env.
