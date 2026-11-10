@@ -1,12 +1,16 @@
 # Journal des changements
 
-Les versions publiées sont listées ici, de la plus récente à la plus ancienne. Les images Docker portent aussi un tag daté (`AAAAMMJJ-sha7`) à chaque publication depuis `main`.
+Les versions publiées sont listées ici, de la plus récente à la plus ancienne. Leur numéro dit ce qu'elles demandent à une station : voir [docs/deploiement.md](docs/deploiement.md#mettre-à-jour). Les notes de chaque version sont aussi sur sa page, dans les [versions publiées](https://github.com/lazbutton/button/releases). Depuis `main`, les images portent en plus un tag daté (`AAAAMMJJ-sha7`).
 
 Le détail des changements du moteur par rapport à l'amont : [docs/moteur/changements-radiotomate.md](docs/moteur/changements-radiotomate.md). L'historique de Radiotomate lui-même : [engine/CHANGELOG.md](engine/CHANGELOG.md).
 
 ## Non publié
 
-Première version publique en préparation.
+## 0.1.0
+
+La première version publiée. Le schéma de la base est en v18.
+
+**Mise en service.** Une station qui suivait `main` passe aux versions publiées. Dans `deploy/.env`, retirer `RT_TAG`, qui n'est plus lu : posé, il arrête maintenant `docker compose`, qui le dit. Puis épingler la version : `BUTTON_VERSION=0.1.0`. Puis passer le dossier de la station à cette version, `git fetch --tags --force` et `git checkout v0.1.0`, et mettre à jour : `docker compose pull && docker compose up -d`. Une station qui avait épinglé son moteur par `RT_TAG`, après un retour arrière par exemple, passe ainsi à 0.1.0, et son schéma avec : le faire en connaissance de cause. Pour rester sur `main`, le temps d'un essai : `BUTTON_VERSION=main` ; en revenir peut demander de redescendre le schéma. Voir [docs/deploiement.md](docs/deploiement.md#mettre-à-jour).
 
 - Moteur, console, services et déploiement réunis dans un seul dépôt.
 - Moteur : fork de Radiotomate avec horloges, conducteur et réconciliation de l'antenne, API JSON pour la console, alertes, métriques et rétention. Schéma de base en v18.
