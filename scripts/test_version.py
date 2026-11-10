@@ -231,18 +231,43 @@ class RepositoryTest(unittest.TestCase):
     def test_no_line_twice_in_a_part(self) -> None:
         # Un conflit réglé en gardant les deux côtés peut doubler des lignes,
         # qui passeraient ensuite dans les notes d'une version. Un même
-        # correctif peut, lui, figurer dans deux versions.
+        # correctif peut, lui, figurer dans deux versions. Le conflit peut
+        # aussi coller des lignes bout à bout, allonger une puce doublée de
+        # ce qui la suivait, ou laisser au milieu d'une liste un paragraphe
+        # venu d'ailleurs, de l'en-tête par exemple.
+        parts = []
         for heading, lines in version.sections(self.text):
-            kept, fenced = [], False
+            prose, fenced = [], False
             for line in lines:
                 if version.FENCE.match(line):
                     fenced = not fenced
-                elif line.strip() and not fenced:
-                    kept.append(line)
+                    prose.append("")  # Un bloc de code sépare deux paragraphes.
+                elif not fenced:
+                    prose.append(line.rstrip())
+            parts.append((heading, prose))
+        # L'en-tête, avant le premier « ## », par paragraphes d'un seul tenant.
+        header = [" ".join(block.split()) for block in "\n".join(parts[0][1]).split("\n\n") if block.strip()]
+        for heading, prose in parts:
+            kept = [line for line in prose if line]
             twice = sorted(line[:80] for line, count in Counter(kept).items() if count > 1)
             self.assertEqual(twice, [], f"Lignes en double sous « ## {heading} »")
             glued = [line[:80] for line in kept if re.search(r"[.)]- [A-Z`«ÉÀ]", line)]
             self.assertEqual(glued, [], f"Deux lignes de liste collées sous « ## {heading} »")
+            if not heading:
+                continue  # L'en-tête ne part dans aucune note.
+            items = [line for line in kept if line.startswith("- ")]
+            longer = [line[:80] for line in items if any(line != item and line.startswith(item) for item in items)]
+            self.assertEqual(longer, [], f"Puces en double, allongées, sous « ## {heading} »")
+            # Les paragraphes d'une partie viennent avant sa liste. Après la
+            # première puce : des puces, des sous-titres « ### » et la suite
+            # d'une puce, en retrait de deux espaces au moins.
+            listed = kept[kept.index(items[0]):] if items else []
+            stray = [line[:80] for line in listed if not line.startswith(("- ", "###", "  ", "\t"))]
+            self.assertEqual(stray, [], f"Lignes égarées dans la liste sous « ## {heading} »")
+            # Un paragraphe de l'en-tête, seul ou collé au bout d'une ligne.
+            text = " ".join(" ".join(kept).split())
+            echoed = [paragraph[:80] for paragraph in header if paragraph in text]
+            self.assertEqual(echoed, [], f"Paragraphes de l'en-tête repris sous « ## {heading} »")
 
     def test_the_seven_images_and_their_builds(self) -> None:
         names = version.images(version.COMPOSE.read_text(encoding="utf-8"))
