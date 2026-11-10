@@ -342,6 +342,35 @@ existing_parent() {
   printf '%s\n' "${path:-/}"
 }
 
+# Les droits d'un dossier créé dans celui-ci sous umask 077 : 700, sauf si une
+# ACL par défaut passe outre le umask.
+inherited_mode() { # dossier
+  local probe=$1/.station-droits-$$
+  (umask 077 && mkdir "$probe") ||
+    die "Un dossier d'essai ne se crée pas dans $1." "Vérifier ses droits et sa place, puis relancer."
+  stat -c %a "$probe"
+  rmdir "$probe"
+}
+
+# Une ACL par défaut sur le dossier qui reçoit la station, comme celle de /opt
+# sur un runner de GitHub, passe outre le umask. Si elle ouvre en écriture au
+# groupe ou aux autres comptes, le dossier de la station ne la garde pas :
+# root y lance station, et docker compose y lit compose.yml et .env. Elle s'en
+# retire avec setfacl (make_station_dir) ; sans setfacl, rien ne s'installe.
+check_acl() {
+  local parent mode
+  parent=$(existing_parent "$dir")
+  mode=$(inherited_mode "$parent")
+  [[ $mode =~ ^[0-7]+$ ]] ||
+    die "Les droits d'un dossier d'essai, dans $parent, ne se lisent pas." "Vérifier $parent, puis relancer."
+  ((8#$mode & 8#022)) || return 0
+  command -v setfacl >/dev/null 2>&1 ||
+    die "Une ACL par défaut sur $parent passe outre le umask : le dossier de la station y naîtrait en $mode, ouvert en écriture à d'autres comptes. Rien n'est écrit." \
+      "Installer setfacl, qui retirera cette ACL du dossier de la station : apt-get install acl. Puis relancer. Ou choisir un autre dossier, avec --dir."
+  acl_from=$parent
+  say "Droits : une ACL par défaut sur $parent passe outre le umask. Le dossier de la station ne la garde pas : il reste à root, en 755."
+}
+
 # Une installation neuve s'arrête faute de place, même relancée après une
 # interruption. Une station qui a déjà sa base, et dont la banque a grandi, se
 # répare quand même : la place manque, mais elle tourne.
@@ -476,6 +505,26 @@ check_domain_here() {
 }
 
 # --- Le dossier de la station ---
+
+# Le dossier de la station, avec ceux qui manquent au-dessus. Sous une ACL par
+# défaut qui les ouvre en écriture (check_acl), chacun la perd et reste à root,
+# en 755 : ce qui s'y crée ensuite, par les conteneurs aussi, suit le umask.
+make_station_dir() {
+  local path=$dir created=()
+  until [[ -e $path || -z $path ]]; do
+    created+=("$path")
+    path=${path%/*}
+  done
+  mkdir -p "$dir"
+  [[ -n $acl_from ]] || return 0
+  # Une station déjà là : son propre dossier.
+  ((${#created[@]})) || created=("$dir")
+  for path in "${created[@]}"; do
+    setfacl -k -b "$path" ||
+      die "setfacl ne retire pas l'ACL de $path." "La retirer à la main, setfacl -k -b $path && chmod 755 $path, puis relancer."
+    chmod 755 "$path"
+  done
+}
 
 # Les fichiers de la version : ce qui manque est posé, ce qui a changé est
 # remis, et l'ancien gardé à côté. Rien d'autre du dossier n'est touché.
@@ -762,12 +811,13 @@ cmd_install() {
 
   dir=${dir:-$(default_dir)}
   dir=${dir%/}
-  local env_file=$dir/.env env_added="" files_added="" files_restored="" os_id="" os_codename=""
+  local env_file=$dir/.env env_added="" files_added="" files_restored="" os_id="" os_codename="" acl_from=""
   trap cleanup EXIT
   env_isolate
 
   say "BUTTON : installation de la station, dans $dir."
   check_machine
+  check_acl
   check_docker
   # Le reste d'une vérification du domaine interrompue tiendrait le port 80.
   docker rm -f "$PROBE" >/dev/null 2>&1 || true
@@ -870,7 +920,7 @@ cmd_install() {
     check_domain_here
   fi
 
-  mkdir -p "$dir"
+  make_station_dir
   install_files
   write_env
   make_data_dirs

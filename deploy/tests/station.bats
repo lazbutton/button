@@ -128,17 +128,6 @@ setup() {
   [ -z "$(env_of RT_ADMIN_PASSWORD)" ]
 }
 
-@test "une ACL par défaut passe outre le umask : .env naît quand même en 600" {
-  # Une ACL par défaut sur le dossier, comme celle de /opt sur les runners de
-  # GitHub, rend le umask sans effet. Ici, umask ne fait plus rien, et celui
-  # du shell laisse tout passer : .env n'a que le mode donné à sa création.
-  # shellcheck disable=SC2016
-  run bash -c 'umask 000; umask() { :; }; source "$1"; shift; main install "$@"' _ "$STATION" --domain radio.example
-  assert_success
-  [ "$(stat -c %a "$DIR/.env")" = 600 ]
-  [[ $(env_of RT_ADMIN_PASSWORD) =~ ^[A-Za-z0-9_-]{24}$ ]]
-}
-
 @test "--github-token-file passe le jeton à docker login, par l'entrée standard" {
   printf 'jeton-de-test\n' >"$BATS_TEST_TMPDIR/jeton"
   install_station --domain radio.example --github-token-file "$BATS_TEST_TMPDIR/jeton"
@@ -180,6 +169,40 @@ setup() {
   run ! logged "github.com"
   [ "$(env_of BUTTON_VERSION)" = main ]
   [ "$(cat "$DIR/VERSION")" = main ]
+}
+
+# --- Sous une ACL par défaut ---
+
+@test "une ACL par défaut qui ouvre en lecture : .env naît quand même en 600" {
+  install_under_acl 022 --domain radio.example
+  assert_success
+  [ "$(stat -c %a "$DIR/.env")" = 600 ]
+  [[ $(env_of RT_ADMIN_PASSWORD) =~ ^[A-Za-z0-9_-]{24}$ ]]
+  # Elle reste : le umask habituel ouvre autant.
+  refute_output --partial "Droits :"
+  run ! logged "setfacl"
+}
+
+@test "une ACL par défaut qui ouvre en écriture ne passe pas au dossier de la station" {
+  ln -s "$TESTS/setfacl" "$FAKE_STATE/bin/setfacl"
+  install_under_acl 000 --domain radio.example
+  assert_success
+  assert_output --partial "Droits : une ACL par défaut sur $ROOT passe outre le umask."
+  # Le dossier de la station, et celui qui manquait au-dessus.
+  logged "setfacl -k -b $DIR"
+  logged "setfacl -k -b $ROOT/opt"
+  [ "$(stat -c %a "$DIR")" = 755 ]
+  [ "$(stat -c %a "$ROOT/opt")" = 755 ]
+  [ "$(stat -c %a "$DIR/.env")" = 600 ]
+}
+
+@test "sans setfacl, une ACL par défaut qui ouvre en écriture arrête tout, avant d'écrire" {
+  install_under_acl 000 --domain radio.example
+  assert_failure
+  assert_output --partial "Une ACL par défaut sur $ROOT passe outre le umask : le dossier de la station y naîtrait en 777"
+  assert_output --partial "apt-get install acl"
+  [ ! -e "$ROOT/opt" ]
+  run ! logged "docker"
 }
 
 # --- Les vérifications ---
