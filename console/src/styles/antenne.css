@@ -111,62 +111,6 @@
   gap: 0.2rem;
 }
 
-.automate-page {
-  display: flex;
-  flex-direction: column;
-  gap: 0.8rem;
-}
-
-.automate-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-}
-
-.automate-actions .rt-Button {
-  min-height: 2.5rem;
-}
-
-.automate-status {
-  display: grid;
-  gap: 0.9rem;
-}
-
-.automate-status h3 {
-  margin: 0 0 0.3rem;
-  font-size: 0.95rem;
-}
-
-.automate-status dl {
-  display: grid;
-  grid-template-columns: 8rem minmax(0, 1fr);
-  gap: 0.25rem 0.6rem;
-  margin: 0;
-}
-
-.automate-status dt {
-  color: var(--gray-11);
-}
-
-.automate-status dd,
-.automate-status p,
-.automate-status li {
-  margin: 0;
-}
-
-.automate-status ul {
-  margin: 0;
-  padding-left: 1.1rem;
-  display: grid;
-  gap: 0.35rem;
-}
-
-@media (max-width: 640px) {
-  .automate-status dl {
-    grid-template-columns: 1fr;
-  }
-}
-
 @keyframes health-pulse {
   0%,
   100% {

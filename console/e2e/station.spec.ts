@@ -73,6 +73,22 @@ test("un nom enregistré : le titre de l’onglet et la barre le prennent sans r
   await expect(nomDansLaBarre(page, marque)).toBeVisible();
 });
 
+test("une modification s’annonce, et s’annule sans rien enregistrer", async ({ page }) => {
+  await ouvrirLaStation(page);
+  const accroche = page.getByRole("textbox", { name: "Accroche", exact: true });
+  const enAttente = avis(page, "Modifications non enregistrées.");
+  const avant = await accroche.inputValue();
+  await expect(enAttente).toHaveCount(0);
+
+  await accroche.fill("Une accroche du banc");
+  await expect(enAttente).toBeVisible();
+  await page.getByRole("button", { name: "Annuler les modifications" }).click();
+  await expect(accroche).toHaveValue(avant);
+  await expect(enAttente).toHaveCount(0);
+  // Le bouton « Annuler » disparaît avec les modifications : le focus passe à « Enregistrer ».
+  await expect(page.getByRole("button", { name: "Enregistrer", exact: true })).toBeFocused();
+});
+
 test("moteur sans ces routes : la console garde brand.json, et l’onglet dit de mettre à jour le moteur", async ({
   page,
 }) => {

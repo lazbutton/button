@@ -177,8 +177,10 @@ test.describe("sur un téléphone", () => {
     await expect(page.getByRole("main")).toBeVisible();
     await verifier(page, "Conducteur");
 
+    // Un animateur n'a que son compte dans Réglages : la page n'a pas d'onglets.
     await page.goto("/reglages");
-    await verifierLesOnglets(page, "Réglages");
+    await expect(page.getByRole("heading", { name: "Mon compte", level: 2 })).toBeVisible();
+    await verifier(page, "Réglages");
 
     // Programmation est réservée aux programmateurs : l'écran le dit.
     await page.goto("/programmation");
