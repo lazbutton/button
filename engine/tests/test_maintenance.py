@@ -1,25 +1,32 @@
 """
 ``radiotomate maintenance``, the engine's commands for running a station: ``next-live``,
-the next live that ``station status`` shows.
+the next live that ``station status`` shows, and ``window``, whether ``station update``
+may start now.
 
-The command runs in a subprocess, like the station runs it: its ``asyncio.run`` would
-leave the tests that follow without an event loop.
+The commands run in a subprocess, like the station runs them: their ``asyncio.run``
+would leave the tests that follow without an event loop.
 """
 
 import subprocess
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import text
 
-from radiotomate.commands.maintenance import describe_next_live, until
+from radiotomate.commands.maintenance import (
+    WINDOW_MINUTES,
+    describe_next_live,
+    until,
+    what_blocks,
+)
 from radiotomate.commands.update import do_update
 from radiotomate.db import QuartAlchemy
 
 PARIS = ZoneInfo("Europe/Paris")
 MONDAY_NOON = datetime(2026, 9, 21, 12, 0, tzinfo=PARIS)
+QG = {"title": "QG", "label": "QG 20:00-22:00"}
 TEMPLATE = Path(__file__).parent / "scheduler" / "tests.yaml"
 # A weekly show, on Wednesdays from 20:00 to 22:00.
 WEEKLY = (
@@ -105,4 +112,126 @@ async def test_next_live_reads_the_weekly_shows(config_path: Path):
     assert result.returncode == 0, result.stderr
     assert result.stdout == "QG, en cours\n" or (
         result.stdout.startswith("QG, mercredi ") and " à 20:00, dans " in result.stdout
+    ), result.stdout
+
+
+def test_what_blocks_nothing_on_an_empty_station():
+    assert what_blocks(MONDAY_NOON, None, [], []) is None
+
+
+def test_what_blocks_a_live_that_starts_within_the_window():
+    soon = {**QG, "starts_in_s": 12 * 60, "active": False}
+    assert (
+        what_blocks(MONDAY_NOON, soon, [], [])
+        == "QG, un direct, commence à 12:12, dans 12 min"
+    )
+    last = {**QG, "starts_in_s": WINDOW_MINUTES * 60, "active": False}
+    assert what_blocks(MONDAY_NOON, last, [], []) == (
+        f"QG, un direct, commence à 12:{WINDOW_MINUTES}, dans {WINDOW_MINUTES} min"
+    )
+    later = {**QG, "starts_in_s": WINDOW_MINUTES * 60 + 1, "active": False}
+    assert what_blocks(MONDAY_NOON, later, [], []) is None
+
+
+def test_what_blocks_a_live_on_air():
+    on_air = {**QG, "starts_in_s": 0, "active": True}
+    assert what_blocks(MONDAY_NOON, on_air, [], []) == "QG, un direct, en cours"
+    untitled = {**on_air, "title": ""}
+    assert what_blocks(MONDAY_NOON, untitled, [], []) == "Direct, un direct, en cours"
+
+
+def test_what_blocks_the_agenda():
+    # What forecast_windows gives: aware instants, in UTC.
+    noon = MONDAY_NOON.astimezone(UTC)
+    a_set = {
+        "kind": "set",
+        "title": "Mix de Léa",
+        "start": noon - timedelta(minutes=5),
+        "end": noon + timedelta(minutes=40),
+    }
+    assert (
+        what_blocks(MONDAY_NOON, None, [a_set], [])
+        == "Mix de Léa, un set de l'Agenda, en cours jusqu'à 12:40"
+    )
+    dated = {
+        "kind": "live",
+        "title": "Direct daté",
+        "start": noon + timedelta(minutes=25),
+        "end": noon + timedelta(hours=1),
+    }
+    assert (
+        what_blocks(MONDAY_NOON, None, [dated], [])
+        == "Direct daté, un direct de l'Agenda, commence à 12:25, dans 25 min"
+    )
+    over = {**a_set, "end": noon}
+    assert what_blocks(MONDAY_NOON, None, [over], []) is None
+
+
+def test_what_blocks_a_live_named_on_the_antenne_page():
+    assert (
+        what_blocks(MONDAY_NOON, None, [], [("Léa en direct", None)])
+        == "Léa en direct, un direct, en cours"
+    )
+    one_o_clock = MONDAY_NOON + timedelta(hours=1)
+    assert (
+        what_blocks(MONDAY_NOON, None, [], [("", one_o_clock)])
+        == "Direct, un direct, en cours jusqu'à 13:00"
+    )
+    assert what_blocks(MONDAY_NOON, None, [], [("Fini", MONDAY_NOON)]) is None
+
+
+def test_what_blocks_what_is_on_air_first_then_the_soonest():
+    noon = MONDAY_NOON.astimezone(UTC)
+    later = {**QG, "starts_in_s": 20 * 60, "active": False}
+    dated = {
+        "kind": "live",
+        "title": "Direct daté",
+        "start": noon + timedelta(minutes=10),
+        "end": noon + timedelta(hours=1),
+    }
+    assert what_blocks(MONDAY_NOON, later, [dated], []).startswith("Direct daté, ")
+    on_air = what_blocks(MONDAY_NOON, later, [dated], [("Léa en direct", None)])
+    assert on_air == "Léa en direct, un direct, en cours"
+    # A dated live is also a live slot: the Agenda's name wins.
+    same = {**QG, "title": "Direct daté", "starts_in_s": 10 * 60, "active": False}
+    assert what_blocks(MONDAY_NOON, same, [dated], []) == (
+        "Direct daté, un direct de l'Agenda, commence à 12:10, dans 10 min"
+    )
+
+
+def _window(config_path: Path) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["radiotomate", "-c", str(config_path), "maintenance", "window"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+async def test_window_is_free_on_an_empty_station(config_path: Path):
+    await _database(config_path.parent / "radiotomate.db")
+    result = _window(config_path)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == (
+        f"libre : ni direct ni diffusion de l'Agenda d'ici {WINDOW_MINUTES} min\n"
+    )
+
+
+async def test_window_is_taken_before_a_dated_live(config_path: Path):
+    # The Agenda stores naive UTC; the live starts in ten minutes, whatever the day.
+    start = datetime.now(UTC).replace(tzinfo=None, microsecond=0) + timedelta(
+        minutes=10
+    )
+    end = start + timedelta(hours=1)
+    await _database(
+        config_path.parent / "radiotomate.db",
+        "insert into agenda_diffusions"
+        " (kind, title, starts_at, ends_at, created, modified)"
+        f" values ('live', 'Direct de test', '{start}', '{end}',"
+        " '2026-09-01 00:00:00', '2026-09-01 00:00:00')",
+    )
+    result = _window(config_path)
+    assert result.returncode == 1, result.stderr
+    assert result.stdout.startswith(
+        "occupée : Direct de test, un direct de l'Agenda, commence à "
     ), result.stdout
