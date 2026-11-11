@@ -30,6 +30,7 @@ from radiotomate.models import (
     Setting,
 )
 from radiotomate.scheduler.clock import (
+    motif_jingles_air,
     now_paris,
     reset_sequencer,
 )
@@ -57,6 +58,7 @@ _CLOSED_DESK_STATUSES = {
 }
 FLUSHED_REASON = "file vidée"
 PAST_REASON = "heure passée"
+TURN_PASSED_REASON = "tour passé"
 # A hard anchor goes on its minute, a soft one at the end of the title astride
 # it, an hour after its minute at most (clock._planned_anchor_item): an anchor
 # line still planned an hour after its time will never go.
@@ -678,6 +680,80 @@ async def close_past_anchor_lines(session: ormSession, now: datetime) -> int:
     return len(rows)
 
 
+def _in_the_motif(row: RundownItem) -> bool:
+    """A line of the clock that goes at its turn, not at a minute nor by hand."""
+    return row.origin != DESK_ORIGIN and row.when_mode != WhenMode.ANCHORED.value
+
+
+async def _close_jingles_before(
+    session: ormSession, line: RundownItem, now: datetime
+) -> int:
+    """Close the jingles of the motif still to push before ``line`` in the file:
+    skipped, « tour passé ». Returns how many it closed."""
+    local = naive_datetime(now)
+    rows = list(
+        await session.scalars(
+            select(RundownItem).where(
+                RundownItem.id != line.id,
+                RundownItem.status.in_(
+                    [RundownStatus.PLANNED.value, RundownStatus.RESCUE.value]
+                ),
+                RundownItem.origin != DESK_ORIGIN,
+                RundownItem.when_mode != WhenMode.ANCHORED.value,
+                or_(
+                    RundownItem.queue == "jingles",
+                    RundownItem.kind == PositionKind.JINGLE.value,
+                ),
+                or_(
+                    RundownItem.planned_at < line.planned_at,
+                    and_(
+                        RundownItem.planned_at == line.planned_at,
+                        RundownItem.sequence < line.sequence,
+                    ),
+                ),
+            )
+        )
+    )
+    for row in rows:
+        row.status = RundownStatus.SKIPPED.value
+        row.reason = TURN_PASSED_REASON
+        row.closed_at = local
+    if rows:
+        _log.info("Closed %d jingle line(s) of the motif past their turn", len(rows))
+    return len(rows)
+
+
+async def close_passed_jingles(session: ormSession, now: datetime) -> int:
+    """
+    Close the jingles of the motif whose turn has passed: a line of the motif after
+    them in the file has aired. Left planned, they would air late, as soon as the
+    Auto-DJ queue empties. The as-run closes them when that line goes on air
+    (``reconcile_as_run``); this catches the ones left planned before, by an engine
+    that held them back, at the next tick (``features.motif_jingles_air``).
+    Returns how many it closed.
+    """
+    if not await motif_jingles_air(session):
+        return 0
+    last = await session.scalar(
+        select(RundownItem)
+        .where(
+            RundownItem.status.in_(
+                [RundownStatus.ON_AIR.value, RundownStatus.PLAYED.value]
+            ),
+            RundownItem.origin != DESK_ORIGIN,
+            RundownItem.when_mode != WhenMode.ANCHORED.value,
+        )
+        .order_by(RundownItem.planned_at.desc(), RundownItem.sequence.desc())
+        .limit(1)
+    )
+    if last is None:
+        return 0
+    closed = await _close_jingles_before(session, last, now)
+    if closed:
+        await session.commit()
+    return closed
+
+
 async def close_flushed_items(
     session: ormSession,
     flushed: object,
@@ -835,6 +911,10 @@ async def reconcile_as_run(session: ormSession, log: MetadataLog) -> None:
             **dict(item.details or {}),
             "playout_command_id": log.playout_command_id,
         }
+    # Before the realign: it moves this line to its real start, which may come
+    # before the jingle it airs in place of, but leaves that jingle where it was.
+    if _in_the_motif(item) and await motif_jingles_air(session):
+        await _close_jingles_before(session, item, now)
     await realign_rundown(session, item, now)
 
 

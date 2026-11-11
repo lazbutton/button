@@ -24,6 +24,7 @@ from radiotomate.models.cart import Cart
 from radiotomate.models.sound import Sound
 from radiotomate.scheduler.clock import (
     PARIS,
+    SETTING_MOTIF_JINGLES_AIR,
     CartRound,
     _choose_item,
     anchor_in_daypart,
@@ -455,11 +456,20 @@ async def test_the_lines_already_sent_are_neither_removed_nor_moved(
     assert _pushed_ids(client) == [music[3]["id"], music[4]["id"]]
 
 
+@pytest.mark.parametrize(("value", "jingle"), [(None, True), ("0", False)])
 async def test_autodj_fills_while_cart_is_on_air(
     dbsession: ormSession,
     jingles_cart: Cart,
     beets_integration: BeetsIntegration,
+    value: str | None,
+    jingle: bool,
 ):
+    """The first line of the file is a jingle: at its turn, it waits behind the
+    cart, in the jingles queue, which Liquidsoap plays after the carts. Turned off
+    (features.motif_jingles_air), it waits for an empty Auto-DJ queue."""
+    if value is not None:
+        await Setting.upsert(dbsession, SETTING_MOTIF_JINGLES_AIR, value)
+        await dbsession.commit()
     client = _client()
     actions = await tick(
         dbsession,
@@ -477,7 +487,7 @@ async def test_autodj_fills_while_cart_is_on_air(
         client,
         beets_integration,
     )
-    assert "jingle" not in actions
+    assert ("jingle" in actions) is jingle
     assert actions.count("autodj") >= 2
 
 

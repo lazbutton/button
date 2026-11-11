@@ -2,7 +2,8 @@
 Clock sequencer: motif + hard anchors → existing Liquidsoap queues.
 
 Jingles cut Auto-DJ, never live / relay / a cart on air. Sequential jingles are
-only pushed when the current track is nearly over. Hard anchors still cut — except
+only pushed when the track before them is nearly over, or behind a jingle or cart
+on air, ahead of the music queued after them. Hard anchors still cut — except
 while the harbor is on air: the clock pauses, skips nothing, and drops due
 anchors so they are not dumped after the live.
 
@@ -94,6 +95,10 @@ SETTING_CLOCK_SEQ_EPOCH = "clock_seq_epoch"
 # ADR 0009: turned off, a soft anchor a hard one has overtaken goes after it, as
 # before, though the conducteur says it « sauté ».
 SETTING_SKIP_OVERTAKEN = "features.skip_overtaken_soft_anchors"
+# ADR 0009: turned off, a jingle of the motif waits for an empty Auto-DJ queue, as
+# before. The clock keeps two titles there: after the start, the jingle stays
+# planned, and the music after it airs in its place.
+SETTING_MOTIF_JINGLES_AIR = "features.motif_jingles_air"
 _SETTING_OFF = {"0", "false", "off", ""}
 # Why an anchor line closes without going, as the conducteur shows it.
 HELD_BY_LIVE = "retenue pendant le direct"
@@ -463,9 +468,14 @@ async def _clock_step(  # noqa: PLR0912, PLR0913, PLR0915
             await persist_sequencer_cursor(session)
             return
 
-    from radiotomate.scheduler.execution import close_past_anchor_lines, ensure_forecast
+    from radiotomate.scheduler.execution import (
+        close_passed_jingles,
+        close_past_anchor_lines,
+        ensure_forecast,
+    )
 
     await close_past_anchor_lines(session, now)
+    await close_passed_jingles(session, now)
     clock_id = clock.id
     weekday = now.weekday()
     await ensure_forecast(session, beets, now=now)
@@ -593,15 +603,16 @@ def _queue_head(live_data: dict, queue: str) -> str | None:
     return found.group(1) if found else None
 
 
-async def _desk_turn(session: ormSession, line: RundownItem, live_data: dict) -> bool:
+async def _line_turn(session: ormSession, line: RundownItem, live_data: dict) -> bool:
     """
-    Whether a desk line for the jingles or carts queue goes now, at its place.
+    Whether a line for the jingles or carts queue goes now, at its place: a desk
+    line, or a jingle of the motif (``features.motif_jingles_air``).
 
     Those queues cut what plays. The line waits until no title queued before it is
     left in a queue it would pass: the lines after it may already wait in the
     Auto-DJ, and air after it all the same. It does not cut the title on air
     either: it waits behind it in its own queue or a stronger one, or goes at its
-    end, as a jingle of the clock does.
+    end.
     """
     src = source_id(live_data)
     if src in {"stream", "relay"}:
@@ -951,6 +962,7 @@ async def _fill_sequential_from_rundown(  # noqa: PLR0912, PLR0913, PLR0915
     autodj_target: int,
 ) -> tuple[dict, int, int]:
     hold = False
+    jingles_air = await motif_jingles_air(session)
     for _ in range(8):
         if hold:
             break
@@ -971,7 +983,7 @@ async def _fill_sequential_from_rundown(  # noqa: PLR0912, PLR0913, PLR0915
             if desk and item.queue in {"jingles", "carts"}:
                 if desk_waits:
                     continue
-                turn = await _desk_turn(session, item, live_data)
+                turn = await _line_turn(session, item, live_data)
                 if next_anchor is not None and _desk_would_overflow(
                     item, live_data, now, next_anchor, turn=turn
                 ):
@@ -1007,9 +1019,19 @@ async def _fill_sequential_from_rundown(  # noqa: PLR0912, PLR0913, PLR0915
                 made_progress = True
                 break
             if _is_jingle_item(item):
-                if jingles_q >= JINGLE_QUEUE_DEPTH:
-                    continue
-                if autodj_q > 0 or not can_push_sequential_jingle(live_data):
+                if jingles_air:
+                    if jingles_q >= JINGLE_QUEUE_DEPTH or not await _line_turn(
+                        session, item, live_data
+                    ):
+                        # The desk lines after it wait too, or they would air
+                        # before it.
+                        desk_waits = True
+                        continue
+                elif (
+                    jingles_q >= JINGLE_QUEUE_DEPTH
+                    or autodj_q > 0
+                    or not can_push_sequential_jingle(live_data)
+                ):
                     continue
                 if not await _push_existing_rundown_item(
                     session, gateway, item, queue="jingles"
@@ -1225,6 +1247,13 @@ async def skip_overtaken_soft(session: ormSession) -> bool:
     """Whether a soft anchor a hard one has overtaken is skipped. A missing key
     says it is."""
     row = await Setting.from_key(session, SETTING_SKIP_OVERTAKEN)
+    return row is None or str(row.value).strip().lower() not in _SETTING_OFF
+
+
+async def motif_jingles_air(session: ormSession) -> bool:
+    """Whether a jingle of the motif airs at its turn, ahead of the music queued
+    after it, and is skipped once that music has aired. A missing key says so."""
+    row = await Setting.from_key(session, SETTING_MOTIF_JINGLES_AIR)
     return row is None or str(row.value).strip().lower() not in _SETTING_OFF
 
 
