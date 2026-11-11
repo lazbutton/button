@@ -33,10 +33,11 @@ export async function remplirLaConnexion(page: Page, role: Role): Promise<void> 
  * finit (accessibilite.ts).
  */
 export const test = base.extend({
-  // Le banc ne sort pas de la machine. brand.json nomme le flux et le now.json
-  // d'une vraie station, que le casque de la console demande dès l'ouverture :
-  // ces requêtes échouent. Un lien vers un autre site, comme « Code source »,
-  // ouvre une page vide à son adresse.
+  // Le banc ne sort pas de la machine. Les réglages de sa station d'exemple
+  // (engine/tests/e2e/seed.py) nomment un flux et un now.json en radio.example,
+  // que le casque de la console demande dès l'ouverture : ces requêtes
+  // échouent. Un lien vers un autre site, comme « Code source », ouvre une page
+  // vide à son adresse.
   context: async ({ context, baseURL }, use) => {
     const banc = new URL(baseURL ?? "http://127.0.0.1").host;
     await context.route(

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import type { Brand } from "../lib/brand.ts";
 import { monitorSources } from "../lib/monitorSource.ts";
@@ -17,7 +18,7 @@ import type { PublicStation, StationSettings } from "./types.ts";
 const FILE: Brand = {
   suite: { id: "exemple", name: "Radio Fichier", short: "RF", tagline: "Depuis brand.json" },
   labels: { player: { listen: "Écouter {name}" } },
-  infra: { smbShare: "Exemple-Media", partnerCode: "RF" },
+  infra: { smbShare: "Exemple-Media" },
   apps: {
     player: {
       streamUrl: "https://fichier.radio.example/live.mp3",
@@ -176,6 +177,14 @@ test("sans flux public réglé, ni dans le moteur ni dans brand.json, le casque 
   assert.equal(set.stream, SETTINGS.public_stream_url);
   assert.equal(set.nowUrl, "");
   assert.equal(set.statusUrl, "");
+});
+
+test("le brand.json de l'image ne donne aucune adresse : une station règle les siennes", () => {
+  const image = JSON.parse(readFileSync(new URL("../../public/brand.json", import.meta.url), "utf8")) as Brand;
+  assert.deepEqual(JSON.stringify(image).match(/[a-z]+:\/\/[^"]*/gi) ?? [], []);
+  assert.deepEqual(monitorSources(withStation(image, UNSET)), []);
+  // Le nom reste celui du logiciel, tant que la station n'a pas réglé le sien.
+  assert.equal(withStation(image, UNSET).suite.name, "BUTTON");
 });
 
 test("« Passer en direct » donne le harbor réglé, et rien sans hôte", () => {

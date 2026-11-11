@@ -12,7 +12,6 @@ export type BrandApp = {
   productionNowUrl?: string;
   nowUrl?: string;
   icecastStatusUrl?: string;
-  festivalUrl?: string;
 };
 
 export type BrandTheme = {
@@ -36,21 +35,19 @@ export type BrandTheme = {
   vuClip: string;
 };
 
+/**
+ * La marque de la console : `public/brand.json` dans l'image, ou celui qu'une station
+ * monte à sa place (ADR 0007). Celui de l'image ne donne aucune adresse : celles d'une
+ * station se règlent dans la console, Réglages → Station, et passent devant
+ * (`withStation`, api/station.ts).
+ */
 export type Brand = {
   /** `sourceUrl` : dépôt du code (AGPL, lien « Code source » de la console). */
   suite: { id: string; name: string; short: string; tagline?: string; sourceUrl?: string };
   labels: Record<string, Record<string, string>>;
-  infra: {
-    smbShare: string;
-    mediaDataset?: string;
-    mediaMount?: string;
-    group?: string;
-    partnerCode: string;
-    smbHost?: string;
-    smbUser?: string;
-  };
+  /** `smbShare` : le nom du dossier partagé, pour `{share}` dans un libellé. */
+  infra?: { smbShare?: string };
   apps: Record<string, BrandApp>;
-  tailscaleBase?: string;
   theme?: BrandTheme;
 };
 
@@ -185,7 +182,7 @@ export function interpolate(template: string, brand: Brand): string {
   return (template || "")
     .replaceAll("{name}", brand.suite.name)
     .replaceAll("{short}", brand.suite.short)
-    .replaceAll("{share}", brand.infra.smbShare);
+    .replaceAll("{share}", brand.infra?.smbShare ?? "");
 }
 
 export function label(brand: Brand, group: string, key: string): string {
