@@ -32,6 +32,7 @@ Le détail des changements du moteur par rapport à l'amont : [docs/moteur/chang
 - La commande `radiotomate ntf-grille` disparaît, avec sa grille et ses sons de remplacement : écrite pour un festival, elle remplaçait les créneaux de 0 h, 7 h, 10 h et 18 h de chaque jour. Les horloges qu'elle a posées sur une station y restent.
 - Les exemples de requête Beets, sous la sélection d'une catégorie et dans les pages de l'auto-DJ, nomment une banque neutre, `grouping:matinale`, au lieu des archives d'un festival.
 - Le contrôle des données de station, `scripts/verifier.sh donnees` comme la CI, n'excuse plus rien de la station d'origine : ses cinq exceptions, dans les `brand.json` et le casque, sont retirées.
+- Un bac dit maintenant les fichiers de son dossier qu'il n'a pas pris, et pourquoi. Un fichier déposé dans ce dossier, par le dossier de la station ou par Dropbox, pouvait ne jamais entrer dans le bac sans que personne le sache : un texte renommé en `.mp3`, ou tout fichier d'un dossier de plus de 2000 sons. Le scheduler note ces fichiers à chaque relevé du dossier, avec leur raison, dans un fichier `.refus.json` de ce dossier, et la console les montre dans la vue du bac, au-dessus de ses sons : « ce n'est pas un fichier audio », « durée illisible », « lecture impossible », ou le plafond des 2000 sons. Un fichier en sort quand il entre dans le bac, ou quand il quitte le dossier. Le moteur les rend dans `skipped_files` : voir [docs/api.md](docs/api.md#carts). Rien à faire sur une station : pas de migration.
 
 ## 0.2.0
 

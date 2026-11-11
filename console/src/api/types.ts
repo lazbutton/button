@@ -56,6 +56,13 @@ export type Sound = {
   path?: string;
 };
 
+/** Un fichier du dossier d'un bac que le moteur n'a pas pris : son chemin dans ce dossier, ou `.` pour le dossier entier. */
+export type SkippedFile = {
+  path: string;
+  /** En français, à afficher tel quel. */
+  reason: string;
+};
+
 export type CartMode = "playlist" | "playlist_loop" | "random" | "relay";
 export type ScheduleMode = "clock" | "timed" | "jingles";
 export type CartQueue = "carts" | "autodj";
@@ -86,6 +93,8 @@ export type Cart = {
   bank_folder?: string | null;
   ident_pads?: boolean;
   finder_path?: string | null;
+  /** Absent d'un moteur plus ancien. */
+  skipped_files?: SkippedFile[];
   sounds: Sound[];
   delta?: boolean;
 };
