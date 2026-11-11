@@ -444,6 +444,36 @@ def test_the_title_the_variant_cleaned(artist, title, artists, found_title, prop
     assert values == proposed
 
 
+def test_a_nan_duration_is_unknown():
+    """NaN, comme pour JavaScript : une durée inconnue, pas une erreur."""
+    match = replace(WAR_MATCH, duration_s=float("nan"))
+    row = build_row(WAR, SearchResult("trouvé", match), {})
+    assert (row.level, row.reasons, row.found_duration) == (
+        "à revoir",
+        ["durée du morceau trouvé inconnue"],
+        None,
+    )
+
+
+@pytest.mark.parametrize(
+    ("label", "proposed"),
+    [
+        # U+FEFF est une espace pour JavaScript : le label est vide.
+        ("\ufeff", "Avenue Records"),
+        (" ", "Avenue Records"),
+        # 0x1F n'en est pas une : le label du fichier reste.
+        ("\x1f", None),
+    ],
+)
+def test_an_empty_label_is_read_like_javascript(label, proposed):
+    """Les réponses de Hopper, relevées par Node."""
+    track = Track(
+        title="The Cisco Kid", artist="War", year=1972, label=label, length=267
+    )
+    values = {p.key: p.value for p in proposals(build_row(track, WAR_FOUND, {}))}
+    assert values.get("label") == proposed
+
+
 def test_tidal_then_deezer_by_isrc():
     match = Match(
         "tidal",
@@ -743,6 +773,32 @@ def test_a_close_match_is_fixed_the_file_s_way(track, match, expected):
     """Corrigé à la manière du fichier, ce que la troisième passe a relu."""
     row = close(track, **match)
     assert {key: getattr(row, key) for key in expected} == expected
+
+
+# « ğ », abîmé à l'import, devient 0x1F, une espace pour Python, pas pour JavaScript :
+# la casse du fichier se lit comme chez Hopper. Ses réponses, relevées par Node. Le
+# « i » sans point du turc est à sa place : ruff le signale, à tort ici.
+@pytest.mark.parametrize(
+    ("radio", "found", "fixed"),
+    [
+        ("De\x1fmesin Ya\x1fl1 Boya", "Değmesin yağlı boya", "Değmesin Yağlı Boya"),  # noqa: RUF001
+        ("Ne O\x1flan Ne K1z", "ne oğlan ne kız", "Ne Oğlan Ne Kız"),  # noqa: RUF001
+        ("Da\x1flar Da\x1flar", "Dağlar Dağlar", "Dağlar Dağlar"),
+    ],
+)
+def test_a_title_damaged_by_the_import_keeps_the_file_s_case(radio, found, fixed):
+    why = ("même artiste", "titre aux accents perdus", "durée à 1 s")
+    row = close(
+        replace(MILIAN, title=radio, artist="X"), title=found, artists=("X",), why=why
+    )
+    assert row.title == fixed
+
+
+def test_an_artist_damaged_by_the_import_keeps_the_file_s_case():
+    why = ("artiste aux accents perdus", "même titre", "durée à 1 s")
+    track = replace(MILIAN, title="Song", artist="Selda Ba\x1fcan")
+    row = close(track, title="Song", artists=("selda bağcan",), why=why)
+    assert row.artist == "Selda Bağcan"
 
 
 @pytest.mark.parametrize(

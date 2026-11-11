@@ -25,7 +25,13 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from radiotomate.fiches.loose import CLEANED
-from radiotomate.fiches.normalize import js_regex, normalize_text, parse_title, squash
+from radiotomate.fiches.normalize import (
+    js_regex,
+    js_trim,
+    normalize_text,
+    parse_title,
+    squash,
+)
 from radiotomate.fiches.rules import (
     MUSICBRAINZ_GENDERS,
     WIKIDATA_GENDERS,
@@ -41,6 +47,7 @@ from radiotomate.fiches.rules import (
     exotic_letters,
     fmg_verdict,
     genre_family,
+    js_falsy,
     placeholder_album,
     plain_punctuation,
     present_in,
@@ -376,18 +383,19 @@ def fixed_title(radio: str, found: str, artists: Sequence[str] = ()) -> str:
     # Un numéro de piste et le nom de l'artiste dans le titre trouvé (« 05 Dj Veekash
     # Patrona De Los Reclusos »), que le fichier n'a pas.
     trimmed = found
-    if re.match(r"[0-9]{2}\s", found) and not re.match(r"[0-9]", radio_base):
-        trimmed = re.sub(r"^[0-9]{2}\s+", "", found, count=1)
+    numbered = js_regex(r"[0-9]{2}\s").match(found)
+    if numbered and not js_regex(r"[0-9]").match(radio_base):
+        trimmed = js_regex(r"^[0-9]{2}\s+").sub("", found, count=1)
     for name in artists:
-        count = len(re.split(r"\s+", name.strip()))
-        head = " ".join(re.split(r"\s+", trimmed)[:count])
+        count = len(js_regex(r"\s+").split(js_trim(name)))
+        head = " ".join(js_regex(r"\s+").split(trimmed)[:count])
         if (
             squash(name)
             and squash(head) == squash(name)
             and not squash(radio_base).startswith(squash(name))
         ):
-            rest = " ".join(re.split(r"\s+", trimmed)[count:])
-            trimmed = re.sub(r"^[-\u2013\u2014:]\s*", "", rest, count=1)
+            rest = " ".join(js_regex(r"\s+").split(trimmed)[count:])
+            trimmed = js_regex(r"^[-\u2013\u2014:]\s*").sub("", rest, count=1)
     if squash(radio) == squash(trimmed):
         return radio
     found_base, found_tail = split_tail(trimmed)
@@ -529,7 +537,7 @@ def build_row(  # noqa: PLR0912, PLR0915
     )
     row.found_album = album_title or ""
     row.found_artists = ", ".join(match.artists)
-    row.found_duration = found_seconds or None
+    row.found_duration = None if js_falsy(found_seconds) else found_seconds
 
     if close:
         row.title, row.artist = _close_title_and_artist(track, match)
@@ -600,7 +608,7 @@ def build_row(  # noqa: PLR0912, PLR0915
         if year.review:
             row.reasons.append(year.review)
             row.year_review = year.review
-    if not track.label.strip() and deezer_album and deezer_album.label:
+    if not js_trim(track.label) and deezer_album and deezer_album.label:
         row.label = deezer_album.label
     isrc = clean_isrc(_first(match.isrc, deezer.isrc if deezer else None))
     if not clean_isrc(track.isrc) and isrc:

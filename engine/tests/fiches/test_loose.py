@@ -204,6 +204,20 @@ def test_a_mention_on_one_side_is_noted():
             LooseCandidate("Piste 04", ("Gotan Project",), duration_ms=232_000),
             232,
         ),
+        # NaN, comme pour JavaScript : une durée inconnue.
+        (
+            RadioTrack("Gonnas Pedro", "Oumako"),
+            LooseCandidate("Oumako", ("Gnonnas Pedro",), duration_ms=float("nan")),
+            596,
+        ),
+        (RadioTrack("Gonnas Pedro", "Oumako"), GNONNAS, float("nan")),
+        # « FEATURİNG », avec le « İ » turc, n'est pas une mention d'invité pour
+        # JavaScript : le titre reste trop loin.
+        (
+            RadioTrack("TARKAN", "BU GECEE FEATUR\u0130NG G\u00d6KSEL"),
+            LooseCandidate("Bu Gece", ("Tarkan",), duration_ms=200_000),
+            201,
+        ),
         # Un karaoké que le fichier ne nomme pas.
         (
             RadioTrack("The Space Lady", "Born to be wild"),

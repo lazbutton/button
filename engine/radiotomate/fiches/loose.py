@@ -20,8 +20,14 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, Protocol, TypeVar
 
-from radiotomate.fiches.normalize import js_regex, normalize_text, parse_title, squash
-from radiotomate.fiches.rules import js_round
+from radiotomate.fiches.normalize import (
+    js_regex,
+    js_trim,
+    normalize_text,
+    parse_title,
+    squash,
+)
+from radiotomate.fiches.rules import js_falsy, js_round
 from radiotomate.fiches.variants import RadioTrack, levenshtein, radio_variants
 
 if TYPE_CHECKING:
@@ -73,8 +79,8 @@ def nearly_same(a: str, b: str) -> bool:
 
 # « The » en tête, un ensemble en fin (« Orchestra », « Sextette », « & His
 # Orchestra ») : le nom sans eux.
-_THE = re.compile(r"^the\s+(?=\S{3})")
-_ENSEMBLE = re.compile(
+_THE = js_regex(r"^the\s+(?=\S{3})")
+_ENSEMBLE = js_regex(
     r"\s+(?:and\s+)?(?:(?:his|her|their|y su|e seu|e sua|et son|et ses)\s+)?"
     r"(?:big band|orchestra|orchestre|orquesta|orquestra|band|combo|group|ensemble"
     r"|all stars|sextet|sextette|quintet|quintette|quartet|quartette|trio)\Z"
@@ -83,7 +89,7 @@ _ENSEMBLE = re.compile(
 
 def _core_name(name: str) -> str:
     text = _THE.sub("", normalize_text(name), count=1)
-    return _ENSEMBLE.sub("", text, count=1).strip()
+    return js_trim(_ENSEMBLE.sub("", text, count=1))
 
 
 def _words(outer: str, inner: str) -> bool:
@@ -205,7 +211,7 @@ _BY = js_regex(r"\b(?:remix|rmx|edit|mix|rework|version) by ((?:\S+ ?){1,3})")
 
 def _by(title: str) -> str | None:
     match = _BY.search(normalize_text(title.replace("_", " ")))
-    return match[1].strip() if match else None
+    return js_trim(match[1]) if match else None
 
 
 def _remixers(parsed: ParsedTitle, more: ParsedTitle | None, title: str) -> list[str]:
@@ -273,7 +279,7 @@ def same_version(radio: str, found: str, gap_s: float) -> bool:
     )
 
 
-_GENERIC = re.compile(
+_GENERIC = js_regex(
     r"(?:intro|outro|interlude|skit|untitled|sans titre|instrumental|jingle|track"
     r"|piste|pista|titre|title|no title|unknown|inconnu|demo)(?: [0-9]+)?"
 )
@@ -306,7 +312,7 @@ def generic_title(title: str) -> bool:
     return (
         len(base.replace(" ", "")) < 3
         or bool(_GENERIC.fullmatch(base))
-        or bool(re.fullmatch(r"[0-9\s]+", base))
+        or bool(js_regex(r"[0-9\s]+").fullmatch(base))
     )
 
 
@@ -332,8 +338,8 @@ def loose_match(
     proches.
     """
     if (
-        not radio_seconds
-        or not candidate.duration_ms
+        js_falsy(radio_seconds)
+        or js_falsy(candidate.duration_ms)
         or generic_title(radio.title)
         or foreign_cover(radio, candidate)
     ):
@@ -353,7 +359,7 @@ def loose_match(
 # ===== Ce que la recherche en tire =====
 
 # Un numéro de fichier en fin (« Love_having_you_around_32915 »).
-_FILE_NUMBER = re.compile(r"[\s_]+[0-9]{4,}\Z")
+_FILE_NUMBER = js_regex(r"[\s_]+[0-9]{4,}\Z")
 
 
 def loose_variants(item: ArtistAndTitle) -> list[RadioTrack]:

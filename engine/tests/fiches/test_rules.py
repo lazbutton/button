@@ -58,6 +58,12 @@ def fields(value, expected: dict) -> dict:
         ),
         (184, 138, {"level": "à revoir"}),
         (200, None, {"level": "à revoir", "why": "durée du morceau trouvé inconnue"}),
+        # NaN, comme pour JavaScript, est une durée inconnue.
+        (
+            float("nan"),
+            200,
+            {"level": "à revoir", "why": "durée du morceau trouvé inconnue"},
+        ),
     ],
 )
 def test_duration_confirms_within_ten_seconds(radio, found, expected):
@@ -343,6 +349,13 @@ def test_without_foreign_mentions(found, radio, without):
         (
             "You Got the Power - To Turn Me On",
             ("You Got the Power - To Turn Me On", ""),
+        ),
+        # Les règles de JavaScript, relevées par Node : U+FEFF est une espace, et
+        # « FEATURİNG », avec le « İ » turc, n'est pas « featuring ».
+        ("Song (Live)\ufeff", ("Song", "(Live)")),
+        (
+            "BU GECE FEATUR\u0130NG G\u00d6KSEL",
+            ("BU GECE FEATUR\u0130NG G\u00d6KSEL", ""),
         ),
     ],
 )

@@ -18,9 +18,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
 from radiotomate.fiches.normalize import (
+    JS_SPACES,
     is_mark,
     is_upper,
     js_regex,
+    js_trim,
     normalize_text,
     parse_title,
     split_artists,
@@ -35,6 +37,11 @@ def js_round(value: float) -> int:
     """Le `Math.round` de JavaScript : une demie va vers le haut, -2,5 donne -2."""
     whole = math.floor(value)
     return whole + 1 if value - whole >= 0.5 else whole
+
+
+def js_falsy(value: float | None) -> bool:
+    """Le `!value` de JavaScript pour un nombre : absent, nul, ou NaN."""
+    return not value or math.isnan(value)
 
 
 # ===== Le morceau trouvé est-il le bon fichier ? =====
@@ -59,7 +66,7 @@ def duration_level(
     Le même titre et les mêmes artistes ne suffisent pas : la durée du fichier
     départage un extrait, un edit, une autre version.
     """
-    if not radio_seconds or not found_seconds:
+    if js_falsy(radio_seconds) or js_falsy(found_seconds):
         return DurationLevel("à revoir", why="durée du morceau trouvé inconnue")
     gap = js_round(found_seconds - radio_seconds)
     if abs(gap) <= DURATION_TOLERANCE_S:
@@ -87,8 +94,8 @@ def _edition_only(label: str) -> bool:
     )
 
 
-_MENTION = re.compile(r"\s*[(\[]([^()\[\]]*)[)\]]")
-_DASH_TAIL = re.compile(r"\s[-\u2013\u2014]\s([^-\u2013\u2014]+)\Z")
+_MENTION = js_regex(r"\s*[(\[]([^()\[\]]*)[)\]]")
+_DASH_TAIL = js_regex(r"\s[-\u2013\u2014]\s([^-\u2013\u2014]+)\Z")
 
 
 def without_edition_mentions(title: str) -> str:
@@ -101,15 +108,15 @@ def without_edition_mentions(title: str) -> str:
     out = _MENTION.sub(lambda match: "" if _edition_only(match[1]) else match[0], title)
     while (dash := _DASH_TAIL.search(out)) and _edition_only(dash[1]):
         out = out[: dash.start()]
-    return out.strip() or title.strip()
+    return js_trim(out) or js_trim(title)
 
 
 # Les parenthèses et crochets d'une mention gardée, masqués le temps de relire les
 # autres.
 _HIDDEN = {"(": "\x01", ")": "\x02", "[": "\x03", "]": "\x04"}
 _SHOWN = {hidden: mark for mark, hidden in _HIDDEN.items()}
-_FEAT_TAIL = re.compile(r"\s(?:feat\.?|ft\.?|featuring)\s+(.+)\Z", re.IGNORECASE)
-_FROM_TAIL = re.compile(r"\sfrom\s+([\"\u201c\u00ab].+)\Z", re.IGNORECASE)
+_FEAT_TAIL = js_regex(r"\s(?:feat\.?|ft\.?|featuring)\s+(.+)\Z", re.IGNORECASE)
+_FROM_TAIL = js_regex(r"\sfrom\s+([\"\u201c\u00ab].+)\Z", re.IGNORECASE)
 
 
 def without_foreign_mentions(found: str, radio: str) -> str:
@@ -128,7 +135,7 @@ def without_foreign_mentions(found: str, radio: str) -> str:
     def hide(match: re.Match[str]) -> str:
         if not written(match[1]):
             return ""
-        return re.sub(r"[()\[\]]", lambda mark: _HIDDEN[mark[0]], match[0])
+        return js_regex(r"[()\[\]]").sub(lambda mark: _HIDDEN[mark[0]], match[0])
 
     # Des parenthèses dans des parenthèses (« (Album Version (Explicit)) ») : de
     # l'intérieur vers l'extérieur.
@@ -136,7 +143,7 @@ def without_foreign_mentions(found: str, radio: str) -> str:
     while before != out:
         before = out
         out = _MENTION.sub(hide, out)
-    out = re.sub(r"[\x01-\x04]", lambda mark: _SHOWN[mark[0]], out)
+    out = js_regex(r"[\x01-\x04]").sub(lambda mark: _SHOWN[mark[0]], out)
     while True:
         dash = _DASH_TAIL.search(out)
         if not dash or written(dash[1]) or parse_title(f"x - {dash[1]}").base != "x":
@@ -148,11 +155,11 @@ def without_foreign_mentions(found: str, radio: str) -> str:
         mention = inline.search(out)
         if mention and not written(mention[1]):
             out = out[: mention.start()]
-    return out.strip() or found.strip()
+    return js_trim(out) or js_trim(found)
 
 
-_GROUP_TAIL = re.compile(r"\s*[(\[][^()\[\]]*[)\]]\Z")
-_FEAT_END = re.compile(
+_GROUP_TAIL = js_regex(r"\s*[(\[][^()\[\]]*[)\]]\Z")
+_FEAT_END = js_regex(
     r"\s(?:feat\.?|ft\.?|featuring)\s+(?:(?!\s[-\u2013\u2014]\s).)+\Z", re.IGNORECASE
 )
 
@@ -164,7 +171,7 @@ def split_tail(title: str) -> tuple[str, str]:
     « Murky Racing - Featuring Mocky » donne « Murky Racing » et « - Featuring
     Mocky » : corriger le premier ne fait pas perdre les secondes.
     """
-    whole = title.strip()
+    whole = js_trim(title)
     base = whole
     while True:
         group = _GROUP_TAIL.search(base)
@@ -181,7 +188,7 @@ def split_tail(title: str) -> tuple[str, str]:
         if feat and feat.start() > 0:
             base = base[: feat.start()]
             continue
-        return base.strip(), whole[len(base) :].strip()
+        return js_trim(base), js_trim(whole[len(base) :])
 
 
 def calmed(text: str) -> str:
@@ -213,11 +220,11 @@ def plain_punctuation(text: str) -> str:
     n'a pas ; de même une apostrophe courbe. Une parenthèse collée au mot s'en décolle
     (« Now(Dwson Remix) »).
     """
-    text = re.sub(r"[\u2019\u2018\u02bc\u201b]", "'", text)
-    text = re.sub(r"[\u201c\u201d\u201e]", '"', text)
-    text = re.sub(r"[\u2010\u2011\u2012\u2013\u2014]", "-", text)
+    text = js_regex(r"[\u2019\u2018\u02bc\u201b]").sub("'", text)
+    text = js_regex(r"[\u201c\u201d\u201e]").sub('"', text)
+    text = js_regex(r"[\u2010\u2011\u2012\u2013\u2014]").sub("-", text)
     text = text.replace("\u2026", "...").replace("\u00a0", " ")
-    return re.sub(r"([^\W_])\(", r"\1 (", text)
+    return js_regex(r"([^\W_])\(").sub(r"\1 (", text)
 
 
 def _same_spelling(radio: str, found: str) -> bool:
@@ -347,7 +354,9 @@ def _shouting(text: str) -> bool:
     """Un texte en capitales : plus de la moitié de ses mots de trois lettres ou plus
     (« ANNEES SOLAIRES Part I »)."""
     words = [
-        word for word in map(_only_letters, re.split(r"\s+", text)) if len(word) > 2
+        word
+        for word in map(_only_letters, js_regex(r"\s+").split(text))
+        if len(word) > 2
     ]
     return sum(word == word.upper() for word in words) * 2 > len(words)
 
@@ -369,10 +378,10 @@ def respelling(radio: str, found: str | None, *, sentence: bool = False) -> str 
     en capitales ne remplace pas une casse du fichier. « Vladimir and his orchestra »,
     un nom d'artiste tapé vite, devient « Vladimir And His Orchestra ».
     """
-    clean = plain_punctuation(found).strip() if found else found
+    clean = js_trim(plain_punctuation(found)) if found else found
     if not clean or clean == radio or not _same_spelling(radio, clean):
         return None
-    text = re.sub(r"\s+", " ", radio).strip()
+    text = js_trim(js_regex(r"\s+").sub(" ", radio))
     letters = _only_letters(text)
     rest = letters[1:]
     typed = "_" not in radio
@@ -388,7 +397,7 @@ def respelling(radio: str, found: str | None, *, sentence: bool = False) -> str 
     found_letters = _only_letters(clean)
     loud = (
         found_letters == found_letters.upper()
-        and len(re.split(r"\s+", clean)) > 1
+        and len(js_regex(r"\s+").split(clean)) > 1
         and letters != letters.upper()
     )
     radio_case = cased or phrase or loud
@@ -445,16 +454,13 @@ def _replace_runs(text: str, replace: Callable[[str, int], str]) -> str:
     return "".join(out)
 
 
-_RUN_STARTS = frozenset(' \t\n\v\f\r([{"\u00ab/')
+_RUN_STARTS = frozenset(JS_SPACES + '([{"\u00ab/')
 
 
 def _starts_run(text: str, offset: int) -> bool:
     """Un mot commence au début du texte, après une espace, une parenthèse ou un
     guillemet ; pas après « ' », « - » ou « * »."""
-    if offset == 0:
-        return True
-    previous = text[offset - 1]
-    return previous in _RUN_STARTS or previous.isspace()
+    return offset == 0 or text[offset - 1] in _RUN_STARTS
 
 
 @dataclass(frozen=True)
@@ -494,8 +500,8 @@ def retyped(
     (soulignés, capitales, minuscules), la casse trouvée, en capitales seulement si
     le fichier l'était.
     """
-    clean = re.sub(r"\s+", " ", plain_punctuation(found)).strip()
-    text = re.sub(r"\s+", " ", radio).strip()
+    clean = js_trim(js_regex(r"\s+").sub(" ", plain_punctuation(found)))
+    text = js_trim(js_regex(r"\s+").sub(" ", radio))
     letters = _only_letters(text)
     rest = letters[1:]
     typed = "_" not in radio
@@ -595,11 +601,11 @@ def respell_artists(radio: str, found: Sequence[str]) -> str | None:
         name = names.get(squash(part.replace("_", " ")))
         if name is None:
             return None
-        fixed = respelling(part.strip(), name)
+        fixed = respelling(js_trim(part), name)
         if fixed:
             changed = True
-        out.append(fixed if fixed is not None else part.strip())
-    return re.sub(r"\s+", " ", "".join(out)).strip() if changed else None
+        out.append(fixed if fixed is not None else js_trim(part))
+    return js_trim(js_regex(r"\s+").sub(" ", "".join(out))) if changed else None
 
 
 def same_artist_name(radio_artist: str, name: str | None) -> bool:
@@ -623,7 +629,7 @@ def same_artist_name(radio_artist: str, name: str | None) -> bool:
 
 # ===== Les valeurs bidon =====
 
-_PLACEHOLDER_ALBUM = re.compile(
+_PLACEHOLDER_ALBUM = js_regex(
     r"(?:title|no title|untitled|unknown|inconnu|sans titre|album|n/?a|none|[-?.]+)",
     re.IGNORECASE,
 )
@@ -635,15 +641,15 @@ def placeholder_album(album: str) -> bool:
     « |Anglais », « |Français », « |Aucune » ne sont pas des albums vides mais,
     semble-t-il, des marqueurs de langue : gardés, jamais remplacés.
     """
-    text = album.strip()
+    text = js_trim(album)
     return not text or bool(_PLACEHOLDER_ALBUM.fullmatch(text))
 
 
 def clean_isrc(text: str | None) -> str | None:
     """Un ISRC : 2 lettres de pays, 3 signes de déclarant, 2 chiffres d'année, 5
     chiffres ; tirets tolérés."""
-    code = re.sub(r"[-\s]", "", text).upper() if text else ""
-    return code if re.fullmatch(r"[A-Z]{2}[A-Z0-9]{3}[0-9]{7}", code) else None
+    code = js_regex(r"[-\s]").sub("", text).upper() if text else ""
+    return code if js_regex(r"[A-Z]{2}[A-Z0-9]{3}[0-9]{7}").fullmatch(code) else None
 
 
 # ===== L'année =====
@@ -674,7 +680,7 @@ def isrc_year(isrc: str | None) -> str | None:
 
 def _year_of(date: str | None) -> str | None:
     """L'année d'une date ISO, si elle est plausible (« 0000-00-00 » ne l'est pas)."""
-    if not date or not re.match(r"[0-9]{4}", date):
+    if not date or not js_regex(r"[0-9]{4}").match(date):
         return None
     year = int(date[:4])
     this_year = datetime.date.today().year
@@ -721,7 +727,7 @@ def propose_year(facts: YearInput) -> YearProposal:  # noqa: PLR0911
     du code ou la suivante, c'est la sortie d'origine. Restent à revoir : une édition
     que rien ne confirme, une compilation, une réédition.
     """
-    if re.fullmatch(r"[0-9]{4}", facts.radio.strip()):
+    if js_regex(r"[0-9]{4}").fullmatch(js_trim(facts.radio)):
         return YearProposal()
     edition = _year_of(facts.edition)
     code = isrc_year(facts.isrc)

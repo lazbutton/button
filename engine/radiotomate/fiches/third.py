@@ -37,13 +37,15 @@ from radiotomate.fiches.loose import (
     versions,
 )
 from radiotomate.fiches.normalize import (
+    js_regex,
+    js_trim,
     latin_words,
     normalize_text,
     parse_title,
     split_artists,
     squash,
 )
-from radiotomate.fiches.rules import js_round
+from radiotomate.fiches.rules import js_falsy, js_round
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -73,15 +75,15 @@ SWAPPED = "artiste et titre inversés"
 
 # Les mots d'une version écrite hors parenthèses (« I'm gonna leave you the cinematic
 # orchestra rmx »).
-_VERSION_WORD = re.compile(
+_VERSION_WORD = js_regex(
     r"(?:rmx|remix|edit|mix|dub|version|rework|bootleg|refix|reedit)", re.IGNORECASE
 )
-_CAMPUS = re.compile(r"radio.?campus.?france", re.IGNORECASE)
-_ANNOTATION = re.compile(r"\s*\[([^\]]*)\]")
-_GLUED_NUMBER = re.compile(r"[0-9]{1,2}\s*[-.]\s*(?=\S)")
-_EXTRA_DIGIT = re.compile(r"\)\s+[0-9]{1,2}\Z")
-_LAST_DIGITS = re.compile(r"\s+[0-9]{1,2}\Z")
-_CUT_PARENTHESIS = re.compile(r"\s*\([^)]*\Z")
+_CAMPUS = js_regex(r"radio.?campus.?france", re.IGNORECASE)
+_ANNOTATION = js_regex(r"\s*\[([^\]]*)\]")
+_GLUED_NUMBER = js_regex(r"[0-9]{1,2}\s*[-.]\s*(?=\S)")
+_EXTRA_DIGIT = js_regex(r"\)\s+[0-9]{1,2}\Z")
+_LAST_DIGITS = js_regex(r"\s+[0-9]{1,2}\Z")
+_CUT_PARENTHESIS = js_regex(r"\s*\([^)]*\Z")
 
 
 def _without_notes(title: str) -> str:
@@ -90,7 +92,7 @@ def _without_notes(title: str) -> str:
     def note(match: re.Match[str]) -> str:
         return "" if parse_title(f"x ({match[1]})").extras else match[0]
 
-    return _ANNOTATION.sub(note, title).strip()
+    return js_trim(_ANNOTATION.sub(note, title))
 
 
 def readings(item: RadioTrack, album: str = "") -> list[Reading]:
@@ -112,13 +114,13 @@ def readings(item: RadioTrack, album: str = "") -> list[Reading]:
         )
         for variant in loose_variants(item)[:2]
     ]
-    if _CAMPUS.fullmatch(item.artist.strip()):
-        parts = re.split(r"\s*\|\s*", item.title)
+    if _CAMPUS.fullmatch(js_trim(item.artist)):
+        parts = js_regex(r"\s*\|\s*").split(item.title)
         if len(parts) > 1 and parts[1]:
             base.insert(0, Reading(parts[1], parts[0], "artiste lu dans le titre"))
-        elif album.strip():
+        elif js_trim(album):
             base.insert(
-                0, Reading(album.strip(), item.title, "artiste lu dans l'album")
+                0, Reading(js_trim(album), item.title, "artiste lu dans l'album")
             )
     out = list(base)
     for reading in base:
@@ -141,7 +143,7 @@ def readings(item: RadioTrack, album: str = "") -> list[Reading]:
             out.append(replace(reading, title=title, fix=", ".join(fixes)))
         # La recherche à la lettre près met déjà le dernier mot entre parenthèses (« the
         # cinematic (orchestra rmx) ») : le remixeur peut en compter plus.
-        words = re.split(r"\s+", re.sub(r"[()]", " ", title).strip())
+        words = js_regex(r"\s+").split(js_trim(js_regex(r"[()]").sub(" ", title)))
         at = next(
             (
                 index
@@ -150,7 +152,7 @@ def readings(item: RadioTrack, album: str = "") -> list[Reading]:
             ),
             -1,
         )
-        if at > 0 and not re.search(r"[()\[\]]", item.title):
+        if at > 0 and not js_regex(r"[()\[\]]").search(item.title):
             fix = ", ".join([*fixes, "version hors parenthèses"])
             for size in range(1, min(4, at) + 1):
                 cut = at - size + 1
@@ -160,7 +162,7 @@ def readings(item: RadioTrack, album: str = "") -> list[Reading]:
     # Les parenthèses comptent : « you the cinematic (orchestra rmx) » n'est pas « you
     # (the cinematic orchestra rmx) ».
     def key(reading: Reading) -> str:
-        title = re.sub(r"\s+", " ", reading.title.lower()).strip()
+        title = js_trim(js_regex(r"\s+").sub(" ", reading.title.lower()))
         return f"{squash(reading.artist)}|{title}"
 
     keys = [key(reading) for reading in out]
@@ -191,13 +193,13 @@ def _latin(text: str) -> str:
     return "".join(latin_words(text))
 
 
-_MENTIONS = re.compile(r"\s*[(\[][^()\[\]]*[)\]]")
+_MENTIONS = js_regex(r"\s*[(\[][^()\[\]]*[)\]]")
 
 
 def _bare(title: str) -> str:
     """Le titre sans ses mentions entre parenthèses ou crochets, sans rien normaliser :
     les accents d'origine comptent."""
-    return _MENTIONS.sub("", title).strip() or title
+    return js_trim(_MENTIONS.sub("", title)) or title
 
 
 # Les plages du script latin (`Script=Latin`), d'après Unicode 17, telles que Node 24
@@ -269,7 +271,7 @@ def any_artist(radio: str, found: Sequence[str], found_title: str) -> str | None
             return other
     mine = normalize_text(radio)
     words = mine.split(" ")
-    if len(radio.strip()) >= 28:
+    if len(js_trim(radio)) >= 28:
         # Le dernier mot, coupé, ne compte pas.
         head = "".join(words[:-1])
         if len(head) >= 8 and any(
@@ -293,7 +295,7 @@ def any_artist(radio: str, found: Sequence[str], found_title: str) -> str | None
             [word for word in people[homes[0]] if word not in words] if single else []
         )
         if all(
-            word in _FILLER or len(word) <= 2 or re.fullmatch(r"[0-9]+", word)
+            word in _FILLER or len(word) <= 2 or js_regex(r"[0-9]+").fullmatch(word)
             for word in extra
         ):
             return "artistes par leur nom"
@@ -352,8 +354,8 @@ def third_match(
     if loose:
         return replace(loose, why=(*loose.why, *fix))
     if (
-        not radio_seconds
-        or not candidate.duration_ms
+        js_falsy(radio_seconds)
+        or js_falsy(candidate.duration_ms)
         or generic_title(reading.title)
         or foreign_cover(reading, candidate)
     ):

@@ -1,8 +1,12 @@
 """Le texte normalisé : les cas de `tests/normalize.test.ts`, dans Hopper."""
 
+import re
+
 import pytest
 
 from radiotomate.fiches.normalize import (
+    js_regex,
+    js_trim,
     latin_words,
     normalize_text,
     parse_title,
@@ -170,3 +174,62 @@ def test_parse_title(title, expected):
     for key in ("featuring", "remixers", "extras", "years"):
         if key in expected:
             assert list(getattr(parsed, key)) == expected[key]
+
+
+@pytest.mark.parametrize(
+    ("pattern", "flags", "text", "found"),
+    [
+        # Les espaces de JavaScript : ni 0x1F ni 0x85, que Python compte, mais U+FEFF.
+        (r"\s", 0, "Da\x1flar", False),
+        (r"\s", 0, "a\x85b", False),
+        (r"\s", 0, "\ufeffSong", True),
+        (r"\s", 0, "a\u00a0b", True),
+        (r"^\S+\Z", 0, "Da\x1flar", True),
+        # `\b` et `\B` ne connaissent que les lettres ASCII.
+        (r"\bet\b", 0, "Søet", True),
+        (r"a\B", 0, "aé", False),
+        # Le `.` ne prend aucun saut de ligne.
+        (r"^a.b\Z", 0, "a\rb", False),
+        (r"^a.b\Z", 0, "a\u2028b", False),
+        (r"^a.b\Z", 0, "a b", True),
+        # Sans le drapeau `u`, seules les lettres ASCII changent de casse : ni le « İ »
+        # ni le « i » sans point turcs, ni le signe kelvin.
+        (r"^featuring\Z", re.IGNORECASE, "FEATURING", True),
+        (r"^featuring\Z", re.IGNORECASE, "FEATURİNG", False),
+        (r"^remix\Z", re.IGNORECASE, "REM\u0131X", False),
+        (r"^k\Z", re.IGNORECASE, "\u212a", False),
+        # Une regex aux classes d'Unicode, écrite pour le drapeau `u` : la casse
+        # d'Unicode, où le « s » long est un « s ».
+        (r"^(?=[^\W\d_])s\Z", re.IGNORECASE, "\u017f", True),
+    ],
+)
+def test_js_regex_reads_like_javascript(pattern, flags, text, found):
+    """Les réponses de JavaScript, relevées par Node 24."""
+    assert bool(js_regex(pattern, flags).search(text)) is found
+
+
+@pytest.mark.parametrize(
+    ("pattern", "error"),
+    [
+        (r"[\S]", "classe d'espaces"),
+        (r"[\x00-\s]", "classe d'espaces"),
+        (r"[\s-x]", "classe d'espaces"),
+        (r"(?i)abc", "drapeau"),
+    ],
+)
+def test_js_regex_refuses_what_it_cannot_translate(pattern, error):
+    """Ce qui n'a pas de traduction est refusé, plutôt que lu de travers."""
+    with pytest.raises(ValueError, match=error):
+        js_regex(pattern)
+
+
+@pytest.mark.parametrize(
+    ("text", "trimmed"),
+    [
+        ("\ufeff Dağlar \u00a0", "Dağlar"),
+        # 0x1F, « ğ » abîmé à l'import, et 0x85 ne sont pas des espaces.
+        ("\x1fDağlar\x85", "\x1fDağlar\x85"),
+    ],
+)
+def test_js_trim(text, trimmed):
+    assert js_trim(text) == trimmed

@@ -24,6 +24,7 @@ from radiotomate.fiches.normalize import (
     ParsedTitle,
     is_upper,
     js_regex,
+    js_trim,
     normalize_text,
     parse_title,
     split_artists,
@@ -71,17 +72,17 @@ class Meta:
 
 
 def _collapse(text: str) -> str:
-    return re.sub(r"\s+", " ", text).strip()
+    return js_trim(js_regex(r"\s+").sub(" ", text))
 
 
-_ELISION = re.compile(r"(^|[\s_])([cdjlmnst]|qu)_(?=[^\W\d_])", re.IGNORECASE)
+_ELISION = js_regex(r"(^|[\s_])([cdjlmnst]|qu)_(?=[^\W\d_])", re.IGNORECASE)
 
 
 def _underscores(text: str) -> str:
     """Les soulignés d'un nom de fichier : « C_est » → « C'est », le reste → espace."""
     if "_" not in text:
         return text
-    return _collapse(re.sub(r"_+", " ", _ELISION.sub(r"\1\2'", text)))
+    return _collapse(js_regex(r"_+").sub(" ", _ELISION.sub(r"\1\2'", text)))
 
 
 # Les rangs de piste et de face qu'un nom de fichier garde : « A2 », « B1 - », « 3A »,
@@ -89,15 +90,15 @@ def _underscores(text: str) -> str:
 # (« 11 Magic Circle ») peut faire partie du titre, un nombre suivi d'un trait d'union
 # en fait partie (« 72-Hour Sweat »). Hopper n'a qu'une regex : `re` ne connaît pas
 # `\p{Lu}`, et le rang collé à une capitale (« 10The ») se vérifie à part.
-_TRACK_PREFIX = re.compile(
+_TRACK_PREFIX = js_regex(
     r"(?:[A-Za-z]{2,5}[0-9]{3,5}[\s_-]+(?:[A-D]?[0-9]{1,2}[\s_-]+)?"
     r"|[A-D][0-9]{1,2}(?:\s*[-\u2013.:]\s*|\s+)"
     r"|[0-9]{1,2}[A-D](?:\s*[-\u2013.:]\s*|\s+)"
     r"|[0-9]{1,2}-[0-9]{1,2}(?:\s*[-\u2013.:_]\s*|\s+)"
     r"|[0-9]{1,3}[A-Z]?\s*[-\u2013.:]\s+)(?=\S)"
 )
-_TRACK_BEFORE_LETTER = re.compile(r"[0-9]{1,3}(?!-)\.?\s*(?:[-\u2013]\s*)?(?=[^\W\d_])")
-_TRACK_BEFORE_SPACE = re.compile(r"[0-9]{1,3}\s+(?=\S)")
+_TRACK_BEFORE_LETTER = js_regex(r"[0-9]{1,3}(?!-)\.?\s*(?:[-\u2013]\s*)?(?=[^\W\d_])")
+_TRACK_BEFORE_SPACE = js_regex(r"[0-9]{1,3}\s+(?=\S)")
 
 
 def _without_track_prefix(text: str) -> str:
@@ -138,15 +139,17 @@ def _strip_end(text: str) -> str:
     for _ in range(4):
         before = out
         for junk in _JUNK_END:
-            out = junk.sub("", out, count=1).strip()
+            out = js_trim(junk.sub("", out, count=1))
         if out == before:
             break
     return out or text
 
 
-_VERSION_WORD = "(?:remix|rmx|mix|version|edit|rework)"
-_TWO_WORD_VERSION = re.compile(rf"(.+?\S)\s+(\S+\s+{_VERSION_WORD})\Z", re.IGNORECASE)
-_ONE_WORD_VERSION = re.compile(rf"(.+?\S)\s+({_VERSION_WORD})\Z", re.IGNORECASE)
+# Hopper compile les deux regex qui s'en servent avec le drapeau `u`, qui rapproche
+# le « s » long de « s » et le signe kelvin de « k » : ils sont écrits ici.
+_VERSION_WORD = "(?:remix|rmx|mix|ver[s\u017f]ion|edit|rewor[k\u212a])"
+_TWO_WORD_VERSION = js_regex(rf"(.+?\S)\s+(\S+\s+{_VERSION_WORD})\Z", re.IGNORECASE)
+_ONE_WORD_VERSION = js_regex(rf"(.+?\S)\s+({_VERSION_WORD})\Z", re.IGNORECASE)
 
 
 def _wrap_version(text: str) -> str:
@@ -154,7 +157,7 @@ def _wrap_version(text: str) -> str:
 
     « dub » reste : c'est aussi un nom.
     """
-    if re.search(r"[()\[\]]", text):
+    if js_regex(r"[()\[\]]").search(text):
         return text
     two = _TWO_WORD_VERSION.match(text)
     if two:
@@ -182,11 +185,13 @@ _LOW_BYTE = {
 
 
 def _repair_bytes(text: str) -> str:
-    repaired = re.sub(r"[\x00-\x1f]", lambda char: _LOW_BYTE.get(char[0], " "), text)
+    repaired = js_regex(r"[\x00-\x1f]").sub(
+        lambda char: _LOW_BYTE.get(char[0], " "), text
+    )
     return unicodedata.normalize("NFC", repaired)
 
 
-_THE = re.compile(r"^the(?=.{3})")
+_THE = js_regex(r"^the(?=.{3})")
 
 
 def _same_name(a: str, b: str) -> bool:
@@ -196,7 +201,7 @@ def _same_name(a: str, b: str) -> bool:
     return bool(x) and bool(y) and (x == y or x.startswith(y) or y.startswith(x))
 
 
-_NAME_REVERSED = re.compile(
+_NAME_REVERSED = js_regex(
     r"((?:[^\W\d_]|['-])+),\s*((?:[^\W\d_]|[.'-])+(?:\s(?:[^\W\d_]|[.'-])+)?)\Z"
 )
 
@@ -204,21 +209,23 @@ _NAME_REVERSED = re.compile(
 def _clean_artist(artist: str) -> str:
     """« Porter, Nolan » → « Nolan Porter », « A | B | C » → A, « J.P. Bimeni _ The
     Black Belts » → « … & … »."""
-    name = re.sub(r"^\*+|\*+\Z", "", artist).strip()
-    name = re.sub(r"\s_\s", " & ", name)
+    name = js_trim(js_regex(r"^\*+|\*+\Z").sub("", artist))
+    name = js_regex(r"\s_\s").sub(" & ", name)
     if "_" in name:
         # « Tristan Honsinger-…_What Are You Talki » : le nom, puis celui de l'album.
         head, *rest = name.split("_")
         album_after = (
-            len(rest) == 1 and re.search(r"\s", head) and re.search(r"\s", rest[0])
+            len(rest) == 1
+            and js_regex(r"\s").search(head)
+            and js_regex(r"\s").search(rest[0])
         )
         name = head if album_after else _underscores(name)
-    if re.search(r"\s\|\s", name):
-        name = re.split(r"\s\|\s", name)[0]
+    if js_regex(r"\s\|\s").search(name):
+        name = js_regex(r"\s\|\s").split(name)[0]
     reversed_name = _NAME_REVERSED.match(name)
     if reversed_name:
         name = f"{reversed_name.group(2)} {reversed_name.group(1)}"
-    return _collapse(re.sub(r"\s+aka\s+.*\Z", "", name, count=1, flags=re.IGNORECASE))
+    return _collapse(js_regex(r"\s+aka\s+.*\Z", re.IGNORECASE).sub("", name, count=1))
 
 
 _ANNOUNCEMENT = js_regex(r"\bcontacte nous\b|\bjingle\b")
@@ -228,7 +235,7 @@ def is_announcement(track: RadioTrack) -> bool:
     """Une publicité, un jingle ou un indicatif : rien à chercher."""
     text = normalize_text(f"{track.artist} {track.title}")
     return bool(_ANNOUNCEMENT.search(text)) or bool(
-        re.fullmatch(r"pub [0-9]+", normalize_text(track.title))
+        js_regex(r"pub [0-9]+").fullmatch(normalize_text(track.title))
     )
 
 
@@ -247,23 +254,23 @@ _FEAT_MENTION = js_regex(
 
 
 def _clean(text: str) -> str:
-    return re.sub(
-        r"^[-\u2013:/\s]+|[-\u2013:/\s\\|]+\Z", "", _collapse(re.sub(r"\?+", " ", text))
+    return js_regex(r"^[-\u2013:/\s]+|[-\u2013:/\s\\|]+\Z").sub(
+        "", _collapse(js_regex(r"\?+").sub(" ", text))
     )
 
 
 def radio_variants(track: RadioTrack) -> list[RadioVariant]:  # noqa: PLR0912, PLR0915
     """Les requêtes d'un titre, la plus fidèle à son texte d'abord."""
     out: list[RadioVariant] = []
-    raw_title = _repair_bytes(track.title.strip())
-    raw_artist = _repair_bytes(track.artist.strip())
+    raw_title = _repair_bytes(js_trim(track.title))
+    raw_artist = _repair_bytes(js_trim(track.artist))
 
     def push(
         artist: str, title: str, why: Sequence[str], credited: str | None = None
     ) -> None:
         credited = _clean(artist if credited is None else credited)
         artist, title = _clean(artist), _clean(title)
-        if not artist or not re.search(r"[^\W_]", title):
+        if not artist or not js_regex(r"[^\W_]").search(title):
             return
         if any(
             squash(other.artist) == squash(artist)
@@ -276,12 +283,12 @@ def radio_variants(track: RadioTrack) -> list[RadioVariant]:  # noqa: PLR0912, P
     if is_announcement(RadioTrack(raw_artist, raw_title)):
         return out
     if _STATION.search(normalize_text(raw_artist)):
-        parts = re.match(r"(.+?)\s+[-\u2013]\s+(.+)\Z", raw_title) or re.match(
-            r"([^_]+)_([^_]+)\Z", raw_title
-        )
+        parts = js_regex(r"(.+?)\s+[-\u2013]\s+(.+)\Z").match(raw_title) or js_regex(
+            r"([^_]+)_([^_]+)\Z"
+        ).match(raw_title)
         if parts:
             a, b = (
-                _underscores(re.sub(r"([^\W\d_])-(?=[^\W\d_])", r"\1 ", part))
+                _underscores(js_regex(r"([^\W\d_])-(?=[^\W\d_])").sub(r"\1 ", part))
                 for part in (parts.group(1), _strip_end(parts.group(2)))
             )
             push(a, b, ["artiste lu dans le titre"])
@@ -290,18 +297,18 @@ def radio_variants(track: RadioTrack) -> list[RadioVariant]:  # noqa: PLR0912, P
 
     artist = _clean_artist(raw_artist)
     why: list[str] = []
-    title = re.sub(r"^\*+|\*+\Z", "", raw_title).strip()
+    title = js_trim(js_regex(r"^\*+|\*+\Z").sub("", raw_title))
     # « Station17 & Schneider TM  Die Uhr spricht » : deux espaces entre les invités
     # et le titre.
-    spaced = re.match(r"(.+?)\s{2,}(.+)\Z", title)
-    if spaced and _same_name(re.split(r"\s+&\s+", spaced.group(1))[0], artist):
-        guests = re.split(r"\s+&\s+", spaced.group(1))[1:]
+    spaced = js_regex(r"(.+?)\s{2,}(.+)\Z").match(title)
+    if spaced and _same_name(js_regex(r"\s+&\s+").split(spaced.group(1))[0], artist):
+        guests = js_regex(r"\s+&\s+").split(spaced.group(1))[1:]
         title = spaced.group(2)
         if guests:
             artist = " & ".join([artist, *guests])
         why.append("invités lus dans le titre")
-    if re.match(r"copie de\s", title, re.IGNORECASE):
-        title = re.sub(r"^copie de\s+", "", title, flags=re.IGNORECASE)
+    if js_regex(r"copie de\s", re.IGNORECASE).match(title):
+        title = js_regex(r"^copie de\s+", re.IGNORECASE).sub("", title)
         why.append("« Copie de »")
     if "_" in title:
         title = _underscores(title)
@@ -309,25 +316,26 @@ def radio_variants(track: RadioTrack) -> list[RadioVariant]:  # noqa: PLR0912, P
     title = _VER.sub("Version", title)
     # « Artiste - Album - 06 - Titre », « Titre - Artiste - from Album », « Artiste
     # + Invité - Titre », « Artiste / Titre ».
-    album = re.match(
-        r"(.+?)\s+[-\u2013]\s+(.+?)\s+[-\u2013]\s+[0-9]{1,2}\s+[-\u2013]\s+(.+)\Z",
-        title,
-    )
+    album = js_regex(
+        r"(.+?)\s+[-\u2013]\s+(.+?)\s+[-\u2013]\s+[0-9]{1,2}\s+[-\u2013]\s+(.+)\Z"
+    ).match(title)
     if album and _same_name(album.group(1), artist):
         title = album.group(3)
         why.append("« Artiste - Album - N° - »")
-    origin = re.match(
-        r"(.+?)\s+[-\u2013]\s+(.+?)\s+[-\u2013]\s+from\s+.+\Z", title, re.IGNORECASE
-    )
+    origin = js_regex(
+        r"(.+?)\s+[-\u2013]\s+(.+?)\s+[-\u2013]\s+from\s+.+\Z", re.IGNORECASE
+    ).match(title)
     if origin and _same_name(origin.group(2), artist):
         title = origin.group(1)
         why.append("« Titre - Artiste - from Album »")
-    guest = re.match(r"(.+?)\s\+\s(.+?)\s[-\u2013]\s(.+)\Z", title)
+    guest = js_regex(r"(.+?)\s\+\s(.+?)\s[-\u2013]\s(.+)\Z").match(title)
     if guest and _same_name(guest.group(1), artist):
         title = guest.group(3)
         artist = f"{artist} & {guest.group(2)}"
         why.append("invité lu dans le titre")
-    prefixed = re.match(r"(.+?)\s*(?:\s[-\u2013]\s|\s?/\s?|-(?=\S))\s*(.+)\Z", title)
+    prefixed = js_regex(r"(.+?)\s*(?:\s[-\u2013]\s|\s?/\s?|-(?=\S))\s*(.+)\Z").match(
+        title
+    )
     if prefixed and _same_name(prefixed.group(1), artist):
         title = prefixed.group(2)
         why.append("artiste retiré du titre")
@@ -337,12 +345,12 @@ def radio_variants(track: RadioTrack) -> list[RadioVariant]:  # noqa: PLR0912, P
     # sans lui.
     bare = (
         title != before_number
-        and bool(re.match(r"[1-9][0-9]{0,2}\s+\S", before_number))
-        and not re.match(r"[1-9][0-9]{0,2}\s+[-\u2013.:_]", before_number)
+        and bool(js_regex(r"[1-9][0-9]{0,2}\s+\S").match(before_number))
+        and not js_regex(r"[1-9][0-9]{0,2}\s+[-\u2013.:_]").match(before_number)
     )
     if title != before_number and not bare:
         why.append("numéro de piste")
-    after_number = re.match(r"(.+?)\s+[-\u2013]\s+(.+)\Z", title)
+    after_number = js_regex(r"(.+?)\s+[-\u2013]\s+(.+)\Z").match(title)
     if after_number and _same_name(after_number.group(1), artist):
         title = after_number.group(2)
         why.append("artiste retiré du titre")
@@ -353,23 +361,23 @@ def radio_variants(track: RadioTrack) -> list[RadioVariant]:  # noqa: PLR0912, P
 
     # Une compilation, une émission ou un interprète : « Various Artists | Umeme
     # Afrorave - Agama », « Combat dub | Zion Train - … ».
-    other = re.match(r"(.+?)\s+[-\u2013]\s+(.+)\Z", main)
+    other = js_regex(r"(.+?)\s+[-\u2013]\s+(.+)\Z").match(main)
     if other and not _same_name(other.group(1), artist):
         push(
             _without_track_prefix(other.group(1)),
             _strip_end(other.group(2)),
             [*why, "artiste lu dans le titre"],
         )
-    if re.search(r"[^\W\d_]\s+[0-9]\Z", main):
+    if js_regex(r"[^\W\d_]\s+[0-9]\Z").search(main):
         push(
             artist,
-            re.sub(r"\s+[0-9]\Z", "", main, count=1),
+            js_regex(r"\s+[0-9]\Z").sub("", main, count=1),
             [*why, "chiffre de fin retiré"],
         )
     # Le premier artiste seul, pour chercher ; le candidat doit tout de même les
     # créditer tous.
     first = _FIRST_ARTIST.split(artist)[0]
-    no_feat = _FEAT_MENTION.sub("", main).strip()
+    no_feat = js_trim(_FEAT_MENTION.sub("", main))
     if first and first != artist:
         push(first, no_feat, [*why, "premier artiste cherché"], artist)
     # Un titre coupé (« Dance Sucker (Francois Kevorki », « Je ne veux pa ») ne donne
@@ -486,7 +494,7 @@ def duration_score(a: float | None, b: float | None) -> float:
 def _skeleton(name: str) -> str:
     """Le squelette d'un nom : deux translittérations ne diffèrent que par leurs
     voyelles."""
-    return re.sub(r"(.)\1+", r"\1", re.sub(r"[aeiouy]", "", name))
+    return js_regex(r"(.)\1+").sub(r"\1", js_regex(r"[aeiouy]").sub("", name))
 
 
 def same_artist(a: str, b: str) -> bool:

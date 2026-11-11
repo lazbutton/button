@@ -77,8 +77,10 @@ def test_a_version_out_of_brackets_is_put_back_in():
     assert "I'm gonna leave you (the cinematic orchestra rmx)" in titles
 
 
-def test_the_artist_of_a_radio_campus_france_title():
-    assert read("Radio Campus France", "FANFARE FOR 7.83Hz | PHOTAY")[0] == Reading(
+@pytest.mark.parametrize("artist", ["Radio Campus France", "\ufeffRadio Campus France"])
+def test_the_artist_of_a_radio_campus_france_title(artist):
+    """U+FEFF en tête est une espace, comme pour JavaScript."""
+    assert read(artist, "FANFARE FOR 7.83Hz | PHOTAY")[0] == Reading(
         "PHOTAY", "FANFARE FOR 7.83Hz", "artiste lu dans le titre"
     )
 
@@ -187,7 +189,8 @@ def test_no_album_track_without_the_artist(from_album, radio_seconds, album_ok):
 
 
 @pytest.mark.parametrize(
-    ("duration_ms", "radio_seconds"), [(None, 163), (163_000, None)]
+    ("duration_ms", "radio_seconds"),
+    [(None, 163), (163_000, None)],
 )
 def test_nothing_is_close_without_both_durations(duration_ms, radio_seconds):
     """Sans durée d'un côté ou de l'autre, rien n'est rapproché."""
@@ -206,3 +209,15 @@ def test_the_artist_read_as_a_title_is_not_looked_for_in_the_album():
         "The World", ("J.Soul",), duration_ms=178_000, from_album=True
     )
     assert third_match(swapped, candidate, 181, album_ok=True) is None
+
+
+@pytest.mark.parametrize(
+    ("duration_ms", "radio_seconds"), [(float("nan"), 596), (596_100, float("nan"))]
+)
+def test_a_nan_duration_is_unknown(duration_ms, radio_seconds):
+    """NaN, comme pour JavaScript : une durée inconnue, pas une erreur. Le même
+    artiste, le même titre, une mention d'un seul côté : sans le garde-fou, l'écart
+    NaN passerait toutes les règles."""
+    candidate = ThirdCandidate("Oumako (Live)", ("Gnonnas Pedro",), duration_ms)
+    reading = Reading("Gnonnas Pedro", "Oumako")
+    assert third_match(reading, candidate, radio_seconds) is None
