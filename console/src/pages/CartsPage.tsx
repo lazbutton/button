@@ -7,6 +7,7 @@ import { CartInspector } from "../components/carts/CartInspector";
 import { CartLibrary } from "../components/carts/CartLibrary";
 import { CreateBacDialog, type CartCreateExtra } from "../components/carts/CreateBacDialog";
 import { RelayEditor } from "../components/carts/RelayEditor";
+import { SkippedFiles } from "../components/carts/SkippedFiles";
 import { SoundTable } from "../components/carts/SoundTable";
 import { ProtoToast, useProtoToast } from "../components/ProtoToast";
 import {
@@ -18,7 +19,9 @@ import {
 } from "../api/cartSounds";
 import { apiDelete, apiPost, apiPostJson, apiPut, ApiForbiddenError, ApiRequestError } from "../api/client";
 import { BacBusyError, bacErrorText } from "../api/cartErrors";
+import { finderRel } from "../api/cartFolder";
 import { bacFilterFor, cartMatchesBacFilter, type BacFilter } from "../api/cartFlags";
+import { skippedFiles } from "../api/cartRefusals";
 import { clockCartUsages, hourUsages, kindLabel } from "../api/clockMeta";
 import { SessionGate } from "../api/SessionGate";
 import { cartTotalSeconds, formatClock, formatSpan, relayHost } from "../api/soundsView";
@@ -353,6 +356,7 @@ export function CartsPage() {
                   onFire={() => void fireCart()}
                   firing={firing}
                 />
+                <SkippedFiles files={skippedFiles(cart)} folder={finderRel(cart.id, cart.title)} />
                 {cart.mode === "relay" ? (
                   <RelayEditor cart={cart} busy={busy} onSave={saveCart} />
                 ) : (

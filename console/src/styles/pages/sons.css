@@ -585,6 +585,103 @@
   min-width: 0;
 }
 
+/* The files of the bac's folder that the engine did not take. However many,
+   the sound table stays on screen: past its height, the notice scrolls. */
+.bacs-skipped {
+  flex: none;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  max-height: min(16rem, 25vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0.6rem var(--bacs-pad);
+  border-bottom: 1px solid var(--app-border);
+  background: color-mix(in srgb, var(--app-vu-hot) 8%, var(--app-surface-1));
+  font-size: 0.8125rem;
+}
+
+.bacs-skipped:focus-visible {
+  outline: 2px solid var(--app-focus);
+  outline-offset: -2px;
+}
+
+.bacs-skipped > svg {
+  flex: none;
+  margin-top: 0.15rem;
+  color: var(--app-warn-ink);
+}
+
+.bacs-skipped-copy {
+  display: grid;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.bacs-skipped-copy strong {
+  font-weight: 600;
+}
+
+.bacs-skipped-copy p {
+  margin: 0;
+  color: var(--app-text-muted);
+}
+
+.bacs-skipped-list {
+  display: grid;
+  gap: 0.2rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.bacs-skipped-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 0.6rem;
+  min-width: 0;
+}
+
+.bacs-skipped-name {
+  min-width: 0;
+  font-family: var(--code-font-family);
+  font-size: 0.76rem;
+  overflow-wrap: anywhere;
+}
+
+.bacs-skipped-reason {
+  color: var(--app-text-muted);
+}
+
+.bacs-skipped-more summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  min-height: 2rem;
+  border-radius: var(--app-radius-sm);
+  font-weight: 600;
+  list-style: none;
+  cursor: pointer;
+}
+
+.bacs-skipped-more summary::-webkit-details-marker {
+  display: none;
+}
+
+.bacs-skipped-more summary:focus-visible {
+  outline: 2px solid var(--app-focus);
+  outline-offset: 2px;
+}
+
+.bacs-skipped-more summary svg {
+  transition: transform var(--motion-fast) var(--ease-out);
+}
+
+.bacs-skipped-more[open] summary svg {
+  transform: rotate(90deg);
+}
+
 .bacs-import-copy strong {
   flex: none;
   font-weight: 600;
@@ -2630,6 +2727,10 @@
 
   .bacs-grip svg {
     opacity: 1;
+  }
+
+  .bacs-skipped-more summary {
+    min-height: 2.5rem;
   }
 }
 
