@@ -76,6 +76,7 @@ last_update() {
   logged "docker compose up -d --force-recreate radiotomate-playout radiotomate-interface radiotomate-scheduler (dans $DIR)"
   logged "docker compose up -d (dans $DIR)"
   logged "smoke https://radio.example https://radio.example/radio.mp3 SMOKE_WAIT=300 dans $DIR"
+  grep -q '^curl .* https://radio.example/$' "$FAKE_STATE/log"
   local pull up
   pull=$(grep -n "images : BUTTON_VERSION=0.2.0" "$FAKE_STATE/log" | cut -d: -f1)
   up=$(grep -n "docker compose up -d --force-recreate" "$FAKE_STATE/log" | cut -d: -f1)
@@ -302,6 +303,41 @@ EOF
   grep -q "^# Ajouté par station update, le " "$DIR/.env"
   [ ${#key} = 48 ] && [ "$(env_of MEILI_MASTER_KEY | wc -c)" = 49 ]
   [ "$(env_of MEILI_MASTER_KEY)" != "$key" ]
+}
+
+@test "une variable que la version d'avant connaissait, retirée de .env, n'y revient pas" {
+  installed_then 0.2.0
+  sed -i '/^COMPOSE_PROFILES=/d' "$DIR/.env"
+  station update
+  assert_success
+  assert_output --partial "Retirés de .env, et que la version d'avant connaissait : ils n'y reviennent pas : COMPOSE_PROFILES."
+  run ! grep -q '^COMPOSE_PROFILES=' "$DIR/.env"
+  # Sans le profil vps, pas de HTTPS à attendre.
+  run ! grep -q '^curl .* https://radio.example/$' "$FAKE_STATE/log"
+}
+
+@test "une variable que la version d'avant ne connaissait pas s'ajoute à .env" {
+  # La 0.1.0 ne connaissait pas BUTTON_UPDATES.
+  mkdir -p "$BATS_TEST_TMPDIR/ancienne"
+  grep -v 'BUTTON_UPDATES' "$DEPLOY/.env.example" >"$BATS_TEST_TMPDIR/ancienne/.env.example"
+  RELEASE_OVERLAY=$BATS_TEST_TMPDIR/ancienne make_release 0.1.0 "$FAKE_STATE/releases/v0.1.0"
+  installed_then 0.2.0
+  sed -i '/^BUTTON_UPDATES=/d' "$DIR/.env"
+  station update
+  assert_success
+  assert_output --partial "Ajouté à .env : BUTTON_UPDATES."
+  [ "$(env_of BUTTON_UPDATES)" = auto ]
+}
+
+@test "sans les fichiers de la version d'avant, seuls les secrets reviennent dans .env" {
+  installed_then 0.2.0
+  rm -r "$FAKE_STATE/releases/v0.1.0"
+  sed -i -e '/^COMPOSE_PROFILES=/d' -e '/^MEILI_MASTER_KEY=/d' "$DIR/.env"
+  station update
+  assert_success
+  assert_output --partial "Ajouté à .env : MEILI_MASTER_KEY."
+  assert_output --partial "ils n'y reviennent pas : COMPOSE_PROFILES."
+  run ! grep -q '^COMPOSE_PROFILES=' "$DIR/.env"
 }
 
 @test "une image qui ne se tire pas laisse la station en 0.1.0, avec sa sauvegarde" {

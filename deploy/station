@@ -422,8 +422,18 @@ stream_mount() {
 env_has() { grep -qE "^$1=" "$env_file" 2>/dev/null; }
 
 # Une variable qui manque à .env, à la fin, sous une ligne qui date l'ajout et
-# dit quelle commande l'a ajoutée : install, sauf env_by.
+# dit quelle commande l'a ajoutée : install, sauf env_by. station update
+# (env_new_only) n'ajoute que le nouveau : un secret qui manque, sans lequel
+# rien ne démarre, ou une variable que la version d'avant ne connaissait pas,
+# absente de son .env.example (env_known). Une variable connue que .env n'a
+# plus a été retirée exprès, COMPOSE_PROFILES derrière un autre proxy par
+# exemple : elle ne revient pas, et se note dans env_left_out.
 env_add() { # clé, valeur
+  if [[ -n ${env_new_only:-} && $1 != *PASSWORD* && $1 != *SECRET* && $1 != *_KEY ]] &&
+    { [[ -z ${env_known:-} ]] || grep -qE "^#? *$1=" "$env_known"; }; then
+    env_left_out="${env_left_out:-} $1"
+    return 0
+  fi
   if [[ -z $env_added ]]; then
     printf '\n# Ajouté par station %s, le %s.\n' "${env_by:-install}" "$(date +%F)" >>"$env_file"
   fi
@@ -2509,7 +2519,7 @@ update_handoff_needed() {
 # tirées pendant que l'antenne joue, les fichiers, le redémarrage, puis le
 # contrôle. updates.log la note, faite, ou échouée, par cleanup.
 update_station() {
-  local archive="" previous="" kept="" env_added="" profiles=() others=() replaced=() mounting=()
+  local archive="" previous="" kept="" env_added="" env_left_out="" profiles=() others=() replaced=() mounting=()
   local started cut tls domain back
   # Les fichiers de la version, à part : backup_station prend work.
   staged=$work
@@ -2576,6 +2586,8 @@ update_station() {
   say "  Redémarrée et contrôlée en $cut s, coupure de l'antenne comprise."
   say "  La sauvegarde d'avant : $archive."
   [[ -z $env_added ]] || say "  Ajouté à .env :$env_added."
+  [[ -z $env_left_out ]] ||
+    say "  Retirés de .env, et que la version d'avant connaissait : ils n'y reviennent pas :$env_left_out."
   [[ -z $kept ]] ||
     say "  Changés sur cette station, gardés à côté, en .local-… :$kept. Les changements d'une station vont dans compose.override.yml."
 }
@@ -2609,11 +2621,14 @@ backup_rotate() { # l'archive qui vient de s'écrire
 }
 
 # .env : ce que la version visée y demande en plus, avec sa valeur par défaut,
-# comme le fait install (write_env), avant de tirer ses images : son
-# compose.yml peut en avoir besoin. Rien de posé ne change ; la version,
-# BUTTON_VERSION, change avec les fichiers.
+# par le write_env de la version, avant de tirer ses images : son compose.yml
+# peut en avoir besoin. Le nouveau seulement (env_add) : sans les fichiers de
+# la version d'avant, rien que les secrets qui manquent. Rien de posé ne
+# change ; la version, BUTTON_VERSION, change avec les fichiers.
 update_env() {
   local version=$target first="" domain email timezone admin updates tls env_by=update
+  local env_new_only=1 env_known=""
+  [[ -z $previous || ! -f $previous/.env.example ]] || env_known=$previous/.env.example
   domain=$(env_value DOMAIN)
   email=$(env_value ACME_EMAIL)
   timezone=$(env_value TZ Europe/Paris)
