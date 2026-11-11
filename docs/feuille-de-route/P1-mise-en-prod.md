@@ -35,9 +35,10 @@ Le format des fiches, les tailles et la façon de prendre une fiche sont dans le
 | [DOC-01](#doc-01--guide-dinstallation-sur-vps) | Guide d'installation sur VPS | M | INS-04, MAJ-05, SAV-01 | à faire |
 | [LEG-01](#leg-01--dépendances-images-et-licences) | Dépendances, images et licences | S | — | fait, `512be6f` |
 | [LEG-02](#leg-02--le-code-source-pour-chaque-utilisateur) | Le code source pour chaque utilisateur | S | MAJ-01 | à faire |
-| [FON-14](#fon-14--les-lignes-mises-à-la-suite-passent-à-lantenne) | Les lignes mises à la suite passent à l'antenne | M | — | à faire |
+| [FON-14](#fon-14--les-lignes-mises-à-la-suite-passent-à-lantenne) | Les lignes mises à la suite passent à l'antenne | M | — | fait, `d4a2dd9` |
+| [FON-39](#fon-39--les-jingles-du-motif-passent-à-leur-tour) | Les jingles du motif passent à leur tour | M | FON-14 | à faire |
 
-En tout : 28 fiches, 12 de taille S, 13 de taille M et 3 de taille L. Au 11 novembre 2026, 20 sont faites. Il en reste 8 : 2 de taille S, 5 de taille M et 1 de taille L.
+En tout : 29 fiches, 12 de taille S, 14 de taille M et 3 de taille L. Au 11 novembre 2026, 21 sont faites. Il en reste 8 : 2 de taille S, 5 de taille M et 1 de taille L.
 
 ## L'ordre
 
@@ -47,14 +48,15 @@ Ce qui reste, relevé le 11 novembre 2026. Les fiches de deux files différentes
 |---|---|---|
 | commande `station` | MAJ-04, MAJ-05, SAV-01, SUR-01 | `deploy/station` |
 | marque | LEG-02 | `console/src/lib/brand.ts` |
-| scheduler | FON-14 | `engine/radiotomate/scheduler/clock.py`, `engine/radiotomate/scheduler/execution.py` |
+| scheduler | FON-39 | `engine/radiotomate/scheduler/clock.py` |
 | mesure | INS-04 | aucun |
 | guide | DOC-01, en dernier | `docs/` |
 
 - **MAJ-04 est prête, et passe en tête** : ses quatre dépendances sont faites, et GEN-02, qui touchait le même script, est fusionnée. MAJ-05 la suit, puis SAV-01. Leurs « Accepté quand » demandent une machine jetable en x86-64 : la vraie installation de la CI (`.github/workflows/station.yml`) en est une.
 - **SUR-01** pose ses réglages à l'installation, qui est maintenant `station install` : elle est donc dans la file de la commande `station`. Elle peut y passer plus tôt : MAJ-05 se sert de ses alertes.
 - **LEG-02 et MAJ-04** peuvent toutes deux toucher `.github/workflows/version.yml` : la seconde à fusionner se rebase.
-- **FON-14 n'attend plus rien** : le correctif du tirage des bacs, qui touchait les mêmes fichiers, est fusionné (`550e7f1`). Elle partage `desk.py` avec FON-17 et FON-18, en P2 : une à la fois.
+- **FON-14 est fusionnée**, par la PR 139. Son « Accepté quand » reste à vérifier sur une station de test : le banc de la PR tournait sans fondu.
+- **FON-39 n'attend plus rien.** Elle touche `clock.py`, et reprend peut-être la règle de FON-14 pour faire partir une ligne à la fin du titre qui la précède. Le défaut qu'elle corrige est déjà dans la 0.2.0, et a été vu sur un banc, pas sur une station : son premier pas est de le montrer par un test. FON-33 et FON-35 à FON-38, en P2, touchent le même fichier : une à la fois.
 - **INS-04 n'a aucun conflit.** Elle se mesure sur la version qui suit la 0.2.0 : celle-ci a encore le défaut d'une station vide, dont le conducteur s'empilait.
 - **DOC-01 vient en dernier** : elle attend INS-04, MAJ-05 et SAV-01.
 
@@ -316,7 +318,7 @@ L · dépend de MAJ-01, MAJ-02, MAJ-03, INS-03 · conflits : le script d'exploit
   - Le groupe `radiotomate maintenance` existe, avec `next-live` (`engine/radiotomate/commands/maintenance.py`). `status` le lance par `docker compose exec`, et dit « inconnu » devant une image qui n'a pas la commande : `update` fait de même avec `window`.
   - Le calcul du prochain direct ne voit pas une émission annulée dans l'Agenda (FON-34, en P2) : la fenêtre refuserait une mise à jour pour un direct qui n'aura pas lieu.
   - Des messages de `deploy/station`, `docs/deploiement.md`, `deploy/.env.example` et `docs/exploitation/sauvegarde.md` disent `update` « à venir » : ils changent avec la fiche, comme les tests bats qui les citent (`deploy/tests/`).
-- **À trancher avant de coder** : le point 3 ajoute à `.env` une variable nouvelle avec sa valeur par défaut. Pour `ICECAST_MOUNT`, venue avec GEN-02, ce défaut est `radio.mp3` : posé tel quel, il change l'adresse du flux d'une station installée avant, dont le mount est `button.mp3`. Soit `update` y pose la valeur que la station a déjà. Soit il s'arrête devant une version dont les notes demandent une action, la cite, et attend un accord. Proposition : il s'arrête, car la prochaine action demandée ne sera pas un mount.
+- **Décidé**, le 11 novembre 2026 : `update` ne devine rien dans `.env` pour une variable dont le défaut change une station. C'est le cas d'`ICECAST_MOUNT`, venue avec GEN-02 : son défaut est `radio.mp3`, alors qu'une station installée avant diffuse sur `button.mp3`. Il s'arrête devant une version majeure, cite la « Mise en service » de ses notes, et ne passe qu'avec `--major`. Une majeure se reconnaît à son numéro : la version qui porte GEN-02 se publie donc en 1.0.0. La prochaine action demandée à une station ne sera pas un mount : un cas particulier par variable ne tiendrait pas.
 - **À faire** :
   1. **Fenêtre** : `update` refuse si un direct, un créneau nommé ou une diffusion datée commence dans les 30 minutes, sauf `--force`. Le moteur répond par une commande nouvelle, `radiotomate maintenance window`, lancée par `docker compose exec`.
   2. **Sauvegarde** : `backup` d'INS-03, en gardant les cinq dernières.
@@ -494,3 +496,33 @@ M · dépend de rien · conflits : `engine/radiotomate/scheduler/clock.py`, `eng
 - **Mise en service** : à la mise à jour, les lignes du pupitre encore à venir passeront. Pour revenir en arrière sans redéployer : couper l'interrupteur.
 - **Tests** : dans `engine/tests/scheduler/`, une ligne mise à la suite est poussée une fois, à son tour, dans la bonne file ; une ligne retirée ne l'est pas ; une ancre n'est pas retardée ; l'interrupteur coupé garde le comportement d'avant.
 - **Accepté quand** : sur une station de test, une ligne mise à la suite au pupitre passe à l'antenne après le titre en cours, sans autre geste, et le conducteur la marque jouée.
+- **Résultat**, le 11 novembre 2026, par la PR 139 :
+  - Le défaut a été constaté avant d'être corrigé : sur le banc de tests du moteur, puis avec le scheduler et Liquidsoap 2.4.5 réels, une ligne mise à la suite restait « prévu ».
+  - Les quatre propositions sont retenues telles quelles. La ligne se place après les titres déjà envoyés au playout (`_sent_end`, `desk.py`), là où la console la montre. Une musique part dans la file `autodj`, à son tour. Un son ou une pub part dans `carts`, un jingle dans `jingles`, à la fin du titre qui les précède (`_desk_turn`, `clock.py`). Une ligne qui finirait après une coupure dure attend cette coupure (`_desk_would_overflow`). L'interrupteur est `features.desk_lines_air` : absent, les lignes passent.
+  - Un écart avec la seconde proposition : pendant qu'un son ou un jingle du pupitre attend la fin du titre qui le précède, l'horloge met déjà la musique suivante dans la file `autodj`. Cette musique passe quand même après la ligne, car `carts` et `jingles` passent avant l'auto-DJ.
+  - Limites connues, laissées : un son mis à la suite derrière un jingle à l'antenne lui coupe ses 3 dernières secondes ; pendant un tour de « Diffuser maintenant » sur une playlist, un son mis à la suite passe au milieu du tour ; attendre une coupure dure peut laisser un blanc avant elle.
+  - L'« Accepté quand » reste à vérifier sur une station de test. Le banc tournait sans fondu : sur un Mac ARM, le fondu de Liquidsoap se fige après une ou deux transitions.
+  - Vu en passant : les jingles du motif ne passent plus après le démarrage. C'est FON-39.
+
+#### FON-39 · Les jingles du motif passent à leur tour
+
+M · dépend de FON-14 · conflits : `engine/radiotomate/scheduler/clock.py`, `engine/radiotomate/scheduler/timing.py`, `engine/tests/scheduler/test_clock.py`
+
+- **Pourquoi** : une horloge dont le motif alterne jingles et musiques ne passe plus de jingle après son démarrage. L'antenne enchaîne les titres sans habillage, et le conducteur garde ses jingles « prévu ».
+- **Aujourd'hui** :
+  - `_fill_sequential_from_rundown` (`engine/radiotomate/scheduler/clock.py`) prend les lignes prévues dans l'ordre. Devant un jingle qui ne peut pas partir, elle passe à la ligne suivante : la musique prévue après lui part avant lui.
+  - Un jingle du motif ne part que si la file `autodj` est vide, à 3 s au plus de la fin du titre en cours (`can_push_sequential_jingle`, `engine/radiotomate/scheduler/timing.py`). Or l'horloge tient deux titres d'avance dans cette file (`TARGET_QUEUE_DEPTH`) : après le premier tick, elle n'est plus vide tant qu'il reste de la musique à envoyer.
+  - Un jingle sauté reste « prévu », dans le passé, et `_load_pushable_sequential` n'a pas de borne de temps. Ces jingles partiraient donc en retard dès que la file `autodj` se vide, après « Vider les files » ou au retour d'un direct : lu dans le code, pas rejoué.
+  - Les tests ne le voient pas : `engine/tests/scheduler/test_clock.py` n'attend un jingle du motif qu'au premier tick, files vides (`test_motif_jingle_then_three_music`, `test_night_uses_clock_not_random_pick`).
+  - Relevé le 11 novembre 2026, en livrant FON-14. Sur le banc de tests du moteur, puis avec le scheduler et Liquidsoap 2.4.5 réels, sans fondu : six titres en cinq minutes, aucun jingle. Relu dans le code de `main` le même jour. La règle date de l'import initial : la 0.1.0 et la 0.2.0 l'ont. Pas vu sur une station.
+- **À trancher avant de coder** :
+  - Quand le jingle part-il ? Soit il retient la musique prévue après lui : la file `autodj` se vide à la fin du titre en cours, et il passe. L'auto-DJ n'a alors plus de titre d'avance, et un tick en retard laisserait un blanc. Soit il part à la fin du titre qui le précède, sans attendre une file vide, comme une ligne du pupitre depuis FON-14 (`_desk_turn`).
+  - Que deviennent les jingles déjà sautés ? Proposition : un jingle dont l'heure est passée ne part plus, et le conducteur le dit « sauté ».
+  - L'interrupteur de l'[ADR 0009](../decisions/0009-interrupteurs.md). Proposition : absent, les jingles passent, comme pour `features.desk_lines_air`.
+- **À faire** :
+  1. Un test qui montre le défaut : sur deux tours du motif, le second jingle ne part pas.
+  2. Le correctif, selon ce qui est tranché, derrière l'interrupteur, avec un test fonction coupée et un test fonction allumée.
+  3. `docs/moteur/changements-radiotomate.md` le dit.
+- **Mise en service** : à la mise à jour, les jingles du motif passent de nouveau. Pour revenir en arrière sans redéployer : couper l'interrupteur.
+- **Tests** : dans `engine/tests/scheduler/`, sur trois tours du motif, chaque jingle part une fois, à sa place ; un jingle dont l'heure est passée ne part pas en retard ; l'interrupteur coupé garde le comportement d'avant. Puis le banc de la PR 139, avec le scheduler et Liquidsoap réels.
+- **Accepté quand** : sur une station de test, une horloge au motif « jingle, musique, musique, musique » passe un jingle tous les trois titres, pendant une heure.
