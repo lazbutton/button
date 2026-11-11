@@ -22,10 +22,12 @@ La CI lance `pytest` avec `TZ=Europe/Paris`, sans `tests/interface` ni `tests/e2
 | `radiotomate/scheduler/` | Le scheduler : horloge (`clock.py`), conducteur (`rundown.py`, `execution.py`), pupitre (`desk.py`), Agenda (`agenda.py`), alertes, métriques, rétention |
 | `radiotomate/domain/` | Règles métier pures, sans Quart. Les erreurs (`errors.py`) deviennent des réponses JSON |
 | `radiotomate/services/` | Opérations partagées par l'interface et le scheduler : carts, auto-DJ, émissions, Agenda, banque |
+| `radiotomate/fiches/` | Les fiches de la bibliothèque : les règles de Hopper qui reconnaissent un titre et proposent de corriger ses tags. Sans Quart, sans Beets, sans réseau ([ADR 0017](../docs/decisions/0017-une-fiche-ne-s-ecrit-qu-acceptee.md)) |
 | `radiotomate/models/` | Modèles SQLAlchemy |
 | `radiotomate/commands/` | La commande `radiotomate` (click). `update/vNN.py` : les migrations |
 | `playout/radiotomate.liq` | Le script Liquidsoap 2.4.5 |
 | `tests/scheduler/` | Tests du scheduler, du domaine et des routes JSON. Ils tournent en CI |
+| `tests/fiches/` | Les cas de Hopper sur les règles des fiches, un module par fichier. Ils tournent en CI |
 | `tests/interface/` | Tests Playwright des pages HTMX de l'amont. Hors CI |
 | `tests/e2e/` | Le semis des parcours de la console (`scripts/e2e.sh`). Hors pytest |
 
