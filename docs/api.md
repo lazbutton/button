@@ -94,8 +94,8 @@ Lecture avec une session, écriture avec le droit `autodj`. Une création répon
 - `GET /autodj/slots.json` → `{slots}`. Un créneau : `{id, version, day_of_week, minute, title, color, clock_id, clock}`.
 - `POST /autodj/slots.json` → `{slot}`, `PUT` et `DELETE /autodj/slots/{id}.json`.
 - `GET /autodj/categories.json` → `{categories}`. Une catégorie : `{id, name, query, empty_query, count}`, où `query` est une requête Beets.
-- `POST /autodj/categories.json` → `{category}`, `PUT` et `DELETE /autodj/categories/{id}.json`.
-- `GET /autodj/testquery.json?query=…` → `{count, sample}` : essaie une requête avant de l'enregistrer.
+- `POST /autodj/categories.json` → `{category}`, `PUT` et `DELETE /autodj/categories/{id}.json`. Une requête refusée répond 400 `validation_error`, avec `field` à `query` ou `empty_query`, et rien n'est écrit : une virgule en trop, comme `grouping:jazz,` ou `, grouping:jazz`, où Beets lirait une partie vide qui prend toute la bibliothèque, un guillemet ouvert, ou une valeur que Beets ne sait pas lire, comme `year:abc`. Une catégorie enregistrée avant ce refus garde sa requête : l'auto-DJ et `count` en ignorent la partie vide.
+- `GET /autodj/testquery.json?query=…` → `{count, sample}` : essaie une requête avant de l'enregistrer. Il refuse les mêmes requêtes, de la même façon, avec `field` à `query`.
 
 Une modification d'horloge ou de créneau porte la `version` lue : si l'objet a changé entre-temps, elle est refusée.
 

@@ -43,6 +43,7 @@ from radiotomate.services.autodj import (
     save_slot,
     slot_payload,
 )
+from radiotomate.services.beets_query import playable_query, validate_selection_query
 
 _log = logging.getLogger(__name__)
 
@@ -394,7 +395,7 @@ async def categories_json():
     beets = BeetsIntegration.get()
     categories = []
     for cat in await MusicCategory.all(g.dbsession):
-        matches = await beets.search(cat.query)
+        matches = await beets.search(playable_query(cat.query))
         categories.append(
             {
                 "id": cat.id,
@@ -565,7 +566,7 @@ def _category_payload(cat: MusicCategory, count: int) -> dict:
 
 async def _category_count(cat: MusicCategory) -> int:
     beets = BeetsIntegration.get()
-    matches = await beets.search(cat.query)
+    matches = await beets.search(playable_query(cat.query))
     return len(matches)
 
 
@@ -580,13 +581,13 @@ async def create_category_json():
     query = str(data.get("query") or "").strip()
     if not name or not query:
         raise BadRequest("name and query required")
+    empty_query = str(data.get("empty_query") or "")
+    validate_selection_query(query, field="query")
+    if empty_query:
+        validate_selection_query(empty_query, field="empty_query")
     if await MusicCategory.from_name(g.dbsession, name):
         raise Conflict(f"Category {name} already exists")
-    cat = MusicCategory(
-        name=name,
-        query=query,
-        empty_query=str(data.get("empty_query") or ""),
-    )
+    cat = MusicCategory(name=name, query=query, empty_query=empty_query)
     g.dbsession.add(cat)
     await g.dbsession.commit()
     payload = _category_payload(cat, await _category_count(cat))
@@ -615,9 +616,13 @@ async def update_category_json(category_id: int):
         query = str(data.get("query") or "").strip()
         if not query:
             raise BadRequest("query required")
+        validate_selection_query(query, field="query")
         cat.query = query
     if "empty_query" in data:
-        cat.empty_query = str(data.get("empty_query") or "")
+        empty_query = str(data.get("empty_query") or "")
+        if empty_query:
+            validate_selection_query(empty_query, field="empty_query")
+        cat.empty_query = empty_query
     await g.dbsession.commit()
     return jsonify({"category": _category_payload(cat, await _category_count(cat))})
 
@@ -640,6 +645,7 @@ async def delete_category_json(category_id: int):
 @login_required
 async def testquery_json():
     query = request.args.get("query") or ""
+    validate_selection_query(query, field="query")
     beets = BeetsIntegration.get()
     results = await beets.search(query)
     sample = []

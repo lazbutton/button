@@ -3,7 +3,7 @@ import { FlaskConical, ListMusic, MoreHorizontal, Pencil, Plus, Search, SearchX,
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { ProtoToast, useProtoToast } from "../components/ProtoToast";
-import { apiDelete, apiGet, apiPostJson, apiPut } from "../api/client";
+import { ApiRequestError, apiDelete, apiGet, apiPostJson, apiPut } from "../api/client";
 import { errorText } from "../api/programmationErrors";
 import { nameTaken } from "../api/programmationView";
 import { SessionGate } from "../api/SessionGate";
@@ -291,6 +291,8 @@ function SelectionDialog({
   const [fallback, setFallback] = useState("");
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState("");
+  // The engine names the refused field: the fallback's error goes under it.
+  const [failureField, setFailureField] = useState<string | undefined>(undefined);
   const [test, setTest] = useState<{ query: string; result: TestResult | null; error: string } | null>(null);
   const [testing, setTesting] = useState(false);
 
@@ -300,9 +302,15 @@ function SelectionDialog({
     setQuery(initial?.query ?? "");
     setFallback(initial?.empty_query ?? "");
     setFailure("");
+    setFailureField(undefined);
     setBusy(false);
     setTest(null);
   }, [target]); // a new target resets the form; the list refreshing does not
+
+  // A refused fallback takes the focus once its error shows: the error is in its label.
+  useEffect(() => {
+    if (failureField === "empty_query") document.getElementById("selection-fallback")?.focus();
+  }, [failureField]);
 
   const others = names.filter((row) => row !== initial?.name);
   const clash = nameTaken(name, others);
@@ -326,6 +334,7 @@ function SelectionDialog({
     if (!ready || busy) return;
     setBusy(true);
     setFailure("");
+    setFailureField(undefined);
     const body = { name: name.trim(), query: query.trim(), empty_query: fallback.trim() };
     try {
       if (initial) await apiPut(`/autodj/categories/${initial.id}.json`, body);
@@ -334,6 +343,7 @@ function SelectionDialog({
       onClose();
     } catch (caught) {
       setFailure(errorText(caught, "Enregistrement impossible."));
+      setFailureField(caught instanceof ApiRequestError ? caught.field : undefined);
     } finally {
       setBusy(false);
     }
@@ -397,7 +407,8 @@ function SelectionDialog({
             </div>
             <span className="ui-field-hint">Exemples : path:/media/10-rotation · grouping:ntf1 · genre:Jazz</span>
           </div>
-          {test ? (
+          {/* A refusal was about the query before: it goes once the query changes. */}
+          {test && !(test.error && stale) ? (
             <div className={`prog-test${stale ? " is-stale" : ""}`} role="status" aria-live="polite">
               {test.error ? (
                 <p className="prog-warn">{test.error}</p>
@@ -427,16 +438,22 @@ function SelectionDialog({
               ) : null}
             </div>
           ) : null}
-          <FormField label="Si elle ne trouve rien" hint="Facultatif : une autre requête, essayée à la place.">
+          <FormField
+            label="Si elle ne trouve rien"
+            hint="Facultatif : une autre requête, essayée à la place."
+            error={failureField === "empty_query" ? failure : undefined}
+          >
             <TextField.Root
+              id="selection-fallback"
               size="2"
               className="ui-field-control prog-code-input"
               value={fallback}
               spellCheck={false}
+              aria-invalid={failureField === "empty_query" || undefined}
               onChange={(event) => setFallback(event.target.value)}
             />
           </FormField>
-          {failure ? (
+          {failure && failureField !== "empty_query" ? (
             <p className="prog-dialog-error" role="alert">
               {failure}
             </p>
