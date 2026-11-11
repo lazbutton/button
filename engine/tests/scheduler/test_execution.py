@@ -958,3 +958,67 @@ async def test_realign_skips_implausible_shift(
     )
     assert shift == timedelta(0)
     assert (await RundownItem.from_id(dbsession, ids[1])).planned_at == planned_second
+
+
+async def test_a_station_with_nothing_to_play_keeps_one_forecast(dbsession):
+    """Nothing to play: each tick draws anew, and replaces the lines it knew missing.
+
+    Such a line ("manquant") never counts as runway, so every tick of an empty
+    station redraws. Kept, they piled up: 17 lines a second on a new station,
+    the scheduler and the interface reading more of them at every tick.
+    """
+    from datetime import timedelta
+
+    from sqlalchemy import func
+
+    from radiotomate.beets.demo import BeetsMockIntegration
+
+    empty = BeetsMockIntegration()
+    try:
+        for item in list(empty.lib.items()):
+            item.remove()
+        start = datetime(2026, 11, 10, 9, 0, 0)
+        client = _client()
+        counts = []
+        for second in range(30):
+            live = _live(
+                (start + timedelta(seconds=second)).isoformat(),
+                source="safe",
+                autodj_queued=0,
+                jingles_queued=0,
+                carts_queued=0,
+            )
+            await tick(dbsession, live, client, empty)
+            counts.append(
+                await dbsession.scalar(select(func.count()).select_from(RundownItem))
+            )
+    finally:
+        empty.teardown()
+    statuses = set(await dbsession.scalars(select(RundownItem.status)))
+    assert statuses == {"failed"}
+    assert counts[0] > 0
+    assert max(counts) == counts[0], counts
+    client.post.assert_not_called()
+
+
+async def test_a_refused_push_stays_in_the_history(
+    dbsession: ormSession,
+    jingles_cart,
+    pubs_cart,
+    beets_integration: BeetsIntegration,
+):
+    """A line Liquidsoap refused was sent: a new draw leaves it to the console."""
+    from sqlalchemy import update
+
+    now = datetime(2026, 9, 14, 0, 30, tzinfo=PARIS)
+    await ensure_forecast(dbsession, beets_integration, now=now, cursor=0)
+    sent = datetime(2026, 9, 14, 0, 30)
+    await dbsession.execute(
+        update(RundownItem).values(status="failed", sent_at=sent, closed_at=sent)
+    )
+    await dbsession.commit()
+    refused = set(await dbsession.scalars(select(RundownItem.id)))
+    await ensure_forecast(dbsession, beets_integration, now=now, cursor=0)
+    kept = set(await dbsession.scalars(select(RundownItem.id)))
+    assert refused <= kept
+    assert kept - refused
