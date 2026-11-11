@@ -19,6 +19,7 @@ from radiotomate.scheduler.clock import (
     next_hard_anchor,
     next_soft_anchor,
     now_paris,
+    skip_overtaken_soft,
     track_would_overflow_anchor,
 )
 from radiotomate.services.agenda import forecast_windows
@@ -637,14 +638,28 @@ async def build_rundown(  # noqa: PLR0912, PLR0915
     failures = 0
     carts: dict = {}
     used_sounds: dict[int, set[int]] = {}
+    skip_switch: list[bool] = []
+
+    async def overtakes(hard: dict) -> bool:
+        """
+        Whether the hard anchor of ``hard`` skips the soft one still due before
+        it, as the antenna does (clock._fire_due_soft_anchors): it has something
+        to play, so it goes, and the switch lets the antenna skip what it
+        overtakes. The switch is read once, and only when it matters.
+        """
+        if hard.get("status") == STATUS_MISSING:
+            return False
+        if not skip_switch:
+            skip_switch.append(await skip_overtaken_soft(session))
+        return skip_switch[0]
 
     async def opening_anchor(
         opening: datetime,
         title_end: datetime,
-    ) -> tuple[dict, datetime] | None:
+    ) -> tuple[dict, datetime, bool] | None:
         """
-        The anchor a daypart has on its first minute, as an item, and where the
-        forecast goes on.
+        The anchor a daypart has on its first minute, as an item, where the
+        forecast goes on, and whether that anchor is hard.
 
         That anchor is never « upcoming »: the daypart before stops short of it,
         and it is already due once the forecast is in its own. The antenna plays
@@ -681,7 +696,7 @@ async def build_rundown(  # noqa: PLR0912, PLR0915
             payload, duration = prepared
             if at > opening:
                 payload["reason"] = "glissement"
-            return payload, at + timedelta(seconds=duration)
+            return payload, at + timedelta(seconds=duration), pos.is_hard_sync
         return None
 
     while t < hard_cap and len(items) < MAX_ITEMS:
@@ -766,17 +781,6 @@ async def build_rundown(  # noqa: PLR0912, PLR0915
             overflow_anchor = False
 
         if overflow_anchor and upcoming is not None:
-            if upcoming_soft is not None and upcoming_soft[0] < upcoming[0]:
-                items.append(
-                    await _overtaken_cart_line(
-                        session,
-                        upcoming_soft[1],
-                        clock,
-                        at=upcoming_soft[0],
-                        daypart=label,
-                        carts=carts,
-                    )
-                )
             anchor_dt, anchor_pos = upcoming
             anchored_item = await _prepare_cart(
                 session,
@@ -795,6 +799,33 @@ async def build_rundown(  # noqa: PLR0912, PLR0915
                     break
                 continue
             payload, duration = anchored_item
+            if upcoming_soft is not None and upcoming_soft[0] < anchor_dt:
+                # The soft anchor due before it: « sauté » if the hard one goes,
+                # else it keeps its minute, in the gap the held title leaves.
+                if await overtakes(payload):
+                    items.append(
+                        await _overtaken_cart_line(
+                            session,
+                            upcoming_soft[1],
+                            clock,
+                            at=upcoming_soft[0],
+                            daypart=label,
+                            carts=carts,
+                        )
+                    )
+                else:
+                    kept = await _prepare_cart(
+                        session,
+                        upcoming_soft[1],
+                        clock,
+                        at=upcoming_soft[0],
+                        when="anchored",
+                        daypart=label,
+                        carts=carts,
+                        used_sounds=used_sounds,
+                    )
+                    if kept is not None:
+                        items.append(kept[0])
             items.append(payload)
             t = anchor_dt + timedelta(seconds=duration)
             failures = 0
@@ -819,9 +850,29 @@ async def build_rundown(  # noqa: PLR0912, PLR0915
         failures = 0
         if t >= slot_end_at:
             # The title runs into the next daypart, or ends where it starts.
-            opened = await opening_anchor(slot_end_at, t)
+            title_end = t
+            opened = await opening_anchor(slot_end_at, title_end)
             if opened is not None:
-                opening_payload, t = opened
+                opening_payload, t, hard = opened
+                if (
+                    hard
+                    and title_end > slot_end_at
+                    and upcoming_soft is not None
+                    and await overtakes(opening_payload)
+                ):
+                    # It cuts the title that holds the soft anchor of this
+                    # daypart, at its end or at midnight: the antenna skips it.
+                    items.append(
+                        await _overtaken_cart_line(
+                            session,
+                            upcoming_soft[1],
+                            clock,
+                            at=upcoming_soft[0],
+                            daypart=label,
+                            carts=carts,
+                        )
+                    )
+                    upcoming_soft = None
                 items.append(opening_payload)
         if upcoming_soft is not None and t >= upcoming_soft[0]:
             glided = await _prepare_cart(

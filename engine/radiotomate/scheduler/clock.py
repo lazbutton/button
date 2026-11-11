@@ -1210,9 +1210,11 @@ async def _fire_due_soft_anchors(  # noqa: PLR0913
     switch: list[bool] = []
 
     async def overtaken(occurrence: datetime) -> bool:
-        """A hard anchor has come since this soft one was due: the conducteur
+        """A hard anchor has gone since this soft one was due: the conducteur
         says « sauté », and the antenna does not play it after the hard one."""
-        if not hard_anchor_since(occurrence, now, slot_start, slot_end, anchored):
+        if not hard_anchor_since(
+            occurrence, now, slot_start, slot_end, anchored, _state.fired_anchors
+        ):
             return False
         if not switch:
             switch.append(await skip_overtaken_soft(session))

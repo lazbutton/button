@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session as ormSession
 
 from radiotomate.beets import BeetsIntegration
@@ -35,7 +35,12 @@ from radiotomate.scheduler.rundown import (
     rest_of_day_minutes,
 )
 from radiotomate.services.autodj import create_clock
-from tests.scheduler.test_cart_draw import _conducteur_line, _music_on_air, _spots
+from tests.scheduler.test_cart_draw import (
+    _clock_at,
+    _conducteur_line,
+    _music_on_air,
+    _spots,
+)
 from tests.scheduler.test_clock import NIGHT, _client, _live
 
 TUESDAY_1019 = datetime(2026, 9, 15, 10, 19, tzinfo=PARIS)
@@ -704,15 +709,24 @@ async def test_reset_sequencer_reloads_after_process_restart(
     assert clock_id is None
 
 
-async def _soft_then_hard(
+MONDAY_11 = datetime(2026, 9, 14, 11, 0, tzinfo=PARIS)
+MONDAY_23 = datetime(2026, 9, 14, 23, 0, tzinfo=PARIS)
+
+
+async def _soft_then_hard(  # noqa: PLR0913
     dbsession: ormSession,
     cart: Cart,
     soft: int,
     hard: int,
+    *,
+    hard_cart: Cart | None = None,
+    dayparts: list[tuple[datetime, bool]] | None = None,
 ) -> Clock:
     """
-    On Monday from 11:00 to 14:00, a clock of music with two pub breaks: one
-    that waits for the end of the title at ``soft``, one that cuts at ``hard``.
+    A clock of music with two pub breaks: one that waits for the end of the
+    title at ``soft``, one that cuts at ``hard``, from ``hard_cart`` if given.
+    It runs in the dayparts that open at the starts marked True, the default
+    clock in the others: by default, on Monday from 11:00 to 14:00.
     """
     clock = await create_clock(
         dbsession,
@@ -721,16 +735,19 @@ async def _soft_then_hard(
             "motif": [{"kind": "musique", "category": "Rotation"}],
             "anchors": [
                 {"kind": "pub", "cart_id": cart.id, "minute": soft, "sync": "molle"},
-                {"kind": "pub", "cart_id": cart.id, "minute": hard, "sync": "dure"},
+                {
+                    "kind": "pub",
+                    "cart_id": (hard_cart or cart).id,
+                    "minute": hard,
+                    "sync": "dure",
+                },
             ],
         },
     )
     default = await Clock.from_name(dbsession, Clock.DEFAULT_NAME)
-    opening = datetime(2026, 9, 14, 11, 0, tzinfo=PARIS)
-    for start, clock_id in (
-        (opening, clock.id),
-        (opening + timedelta(hours=3), default.id),
-    ):
+    if dayparts is None:
+        dayparts = [(MONDAY_11, True), (MONDAY_11 + timedelta(hours=3), False)]
+    for start, mine in dayparts:
         minute = start.hour * 60 + start.minute
         slot = await AutoDJSlot.from_time(
             dbsession, minute, start.weekday(), exact=True
@@ -740,7 +757,7 @@ async def _soft_then_hard(
                 day_of_week=start.weekday(), minute=minute, title="t", constraints={}
             )
             dbsession.add(slot)
-        slot.clock_id = clock_id
+        slot.clock_id = clock.id if mine else default.id
     await dbsession.commit()
     return clock
 
@@ -845,6 +862,207 @@ async def test_a_soft_break_astride_the_hour_overtaken_is_skipped(
         .execution_options(populate_existing=True)
     )
     assert (line.status, line.reason) == ("skipped", "dépassé par une ancre dure")
+
+
+@pytest.mark.parametrize(
+    ("dayparts", "forecast_at", "cut_at", "ends_at"),
+    [
+        (
+            [
+                (MONDAY_11, True),
+                (MONDAY_11 + timedelta(hours=1), True),
+                (MONDAY_11 + timedelta(hours=3), False),
+            ],
+            "2026-09-14T11:57:30+02:00",
+            "2026-09-14T12:00:05+02:00",
+            "2026-09-14T12:00:30+02:00",
+        ),
+        (
+            [
+                (MONDAY_23, True),
+                (MONDAY_23 + timedelta(hours=1), True),
+                (MONDAY_23 + timedelta(hours=4), False),
+            ],
+            "2026-09-14T23:57:30+02:00",
+            "2026-09-15T00:00:05+02:00",
+            "2026-09-15T00:00:30+02:00",
+        ),
+    ],
+    ids=["creneau", "minuit"],
+)
+async def test_a_soft_break_overtaken_where_a_daypart_opens_is_skipped(  # noqa: PLR0913
+    dbsession: ormSession,
+    jingles_cart,
+    pubs_cart,
+    beets_integration: BeetsIntegration,
+    dayparts: list[tuple[datetime, bool]],
+    forecast_at: str,
+    cut_at: str,
+    ends_at: str,
+):
+    """
+    The title astride the soft break of 58 runs into the next daypart, which
+    opens with a hard break, as at midnight, where a daypart always ends: the
+    hard one cuts it. The conducteur says the soft one « sauté », with no sound,
+    and the antenna does not play it after the hard one.
+    """
+    await _spots(dbsession, pubs_cart, 4)
+    clock = await _soft_then_hard(
+        dbsession, pubs_cart, soft=58, hard=0, dayparts=dayparts
+    )
+    soft = next(pos for pos in clock.anchored_positions() if pos.minute == 58)
+    forecast = await ensure_forecast(
+        dbsession, beets_integration, now=datetime.fromisoformat(forecast_at), cursor=0
+    )
+    breaks = [item for item in forecast["items"] if item["kind"] == "pub"]
+    assert [(item["minute"], item["status"]) for item in breaks[:2]] == [
+        (58, "sauté"),
+        (0, "prévu"),
+    ]
+    assert breaks[0].get("sound_id") is None
+    client = _client()
+    cut = {**_music_on_air(cut_at), "remaining": "240"}
+    with _clock_at(cut_at):
+        assert "anchor:0" in await tick(dbsession, cut, client, beets_integration)
+    with _clock_at(ends_at):
+        actions = await tick(dbsession, _spot_ends(ends_at), client, beets_integration)
+    assert not any(action.endswith(":58") for action in actions)
+    assert len(_carts_sent(client)) == 1
+    line = await dbsession.scalar(
+        select(RundownItem)
+        .where(RundownItem.clock_position_id == soft.id)
+        .order_by(RundownItem.planned_at)
+        .execution_options(populate_existing=True)
+    )
+    assert (line.status, line.reason, line.sound_id) == (
+        "skipped",
+        "dépassé par une ancre dure",
+        None,
+    )
+
+
+async def test_a_hard_break_with_nothing_to_play_skips_no_soft_one(
+    raw_app,
+    dbsession: ormSession,
+    jingles_cart,
+    pubs_cart,
+    beets_integration: BeetsIntegration,
+):
+    """
+    The hard break of 11:50 has an empty cart: it cuts nothing. The soft break
+    of 11:49 is no « sauté »: it goes at the end of the title.
+    """
+    await _spots(dbsession, pubs_cart, 3)
+    empty = Cart(
+        title="Vide",
+        path=raw_app.config["DATA_ROOT"] / "vide",
+        mode=CartMode.RANDOM,
+        schedule_mode=ScheduleMode.CLOCK,
+    )
+    dbsession.add(empty)
+    await dbsession.commit()
+    await _soft_then_hard(dbsession, pubs_cart, soft=49, hard=50, hard_cart=empty)
+    forecast = await build_rundown(
+        dbsession,
+        beets_integration,
+        now=datetime(2026, 9, 14, 11, 48, tzinfo=PARIS),
+        horizon_min=15,
+        cursor=0,
+    )
+    breaks = [item for item in forecast["items"] if item["kind"] == "pub"]
+    assert [(item["minute"], item["status"]) for item in breaks[:2]] == [
+        (49, "prévu"),
+        (50, "manquant"),
+    ]
+    client = _client()
+    runs = {**_music_on_air("2026-09-14T11:49:05+02:00"), "remaining": "300"}
+    with _clock_at("2026-09-14T11:49:05+02:00"):
+        await tick(dbsession, runs, client, beets_integration)
+    passes = {**runs, "time": "2026-09-14T11:50:05+02:00", "remaining": "240"}
+    with _clock_at("2026-09-14T11:50:05+02:00"):
+        actions = await tick(dbsession, passes, client, beets_integration)
+    assert "anchor:50" not in actions
+    assert not any(action.endswith(":49") for action in actions)
+    ends = {**runs, "time": "2026-09-14T11:54:03+02:00", "remaining": "1"}
+    with _clock_at("2026-09-14T11:54:03+02:00"):
+        assert "soft:49" in await tick(dbsession, ends, client, beets_integration)
+    assert len(_carts_sent(client)) == 1
+
+
+async def test_a_hard_break_of_another_clock_skips_no_soft_one_past_midnight(
+    dbsession: ormSession,
+    jingles_cart,
+    pubs_cart,
+    beets_integration: BeetsIntegration,
+):
+    """
+    Monday from 23:00 has a soft break at 50; Tuesday, all day, another clock
+    with a hard break at 55. The title astride Monday 23:50 ends past midnight:
+    no hard break came, as 23:55 on Monday is no daypart of Tuesday's clock,
+    and the soft one goes.
+    """
+    spots = await _spots(dbsession, pubs_cart, 3)
+    monday = await create_clock(
+        dbsession,
+        {
+            "name": "Lundi",
+            "motif": [{"kind": "musique", "category": "Rotation"}],
+            "anchors": [
+                {"kind": "pub", "cart_id": pubs_cart.id, "minute": 50, "sync": "molle"},
+            ],
+        },
+    )
+    tuesday = await create_clock(
+        dbsession,
+        {
+            "name": "Mardi",
+            "motif": [{"kind": "musique", "category": "Rotation"}],
+            "anchors": [
+                {"kind": "pub", "cart_id": pubs_cart.id, "minute": 55, "sync": "dure"},
+            ],
+        },
+    )
+    late = await AutoDJSlot.from_time(dbsession, 23 * 60, 0, exact=True)
+    if late is None:
+        late = AutoDJSlot(day_of_week=0, minute=23 * 60, title="t", constraints={})
+        dbsession.add(late)
+    late.clock_id = monday.id
+    await dbsession.execute(
+        delete(AutoDJSlot).where(AutoDJSlot.day_of_week == 1, AutoDJSlot.minute > 0)
+    )
+    first = await AutoDJSlot.from_time(dbsession, 0, 1, exact=True)
+    if first is None:
+        first = AutoDJSlot(day_of_week=1, minute=0, title="t", constraints={})
+        dbsession.add(first)
+    first.clock_id = tuesday.id
+    await dbsession.commit()
+    soft = next(pos for pos in monday.anchored_positions() if pos.minute == 50)
+    line = await record_live_item(
+        dbsession,
+        payload={
+            "at": datetime(2026, 9, 15, 0, 5, tzinfo=PARIS).isoformat(),
+            "kind": "pub",
+            "when": "anchored",
+            "queue": "carts",
+            "resource": spots[1].title,
+            "path": str(spots[1].path),
+            "clock_id": monday.id,
+            "position_id": soft.id,
+            "cart_id": pubs_cart.id,
+            "sound_id": spots[1].id,
+            "minute": 50,
+            "sync": "molle",
+        },
+        status=RundownStatus.PLANNED.value,
+    )
+    await dbsession.commit()
+    client = _client()
+    title_ends = {**_spot_ends("2026-09-15T00:04:58+02:00"), "source": "autodj"}
+    with _clock_at("2026-09-15T00:04:58+02:00"):
+        assert "soft:50" in await tick(dbsession, title_ends, client, beets_integration)
+    assert _carts_sent(client) == [spots[1].title]
+    await dbsession.refresh(line)
+    assert line.status != "skipped"
 
 
 @pytest.mark.parametrize("mode", [CartMode.PLAYLIST_LOOP, CartMode.RANDOM])

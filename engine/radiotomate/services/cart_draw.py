@@ -95,9 +95,14 @@ def draw_without_repeat(
 def _farthest(ready: list[Sound], heard: list[Sound], ahead: Sequence[int]) -> Sound:
     """
     The ready sound farthest from its last play and from its next one, counted
-    in plays: the shorter of the two gaps first, then the longer. ``heard`` are
-    the sounds heard, the latest first; ``ahead`` the ids planned, soonest
-    first. A sound never heard, or not planned, is as far as can be.
+    in plays: the shorter of the two gaps first, then the one heard longest
+    ago, then the one planned latest. ``heard`` are the sounds heard, the
+    latest first; ``ahead`` the ids planned, soonest first. A sound never
+    heard, or not planned, is as far as can be.
+
+    With two sounds, one just heard and the other planned next, a repeat
+    cannot be avoided: it falls on the break to come, not on the one just
+    heard.
 
     A sound sent that the playout never says on air, a file gone unreadable
     say, stays in its round for ever: it is tried again only once half of the
@@ -109,9 +114,9 @@ def _farthest(ready: list[Sound], heard: list[Sound], ahead: Sequence[int]) -> S
     for index, sound_id in enumerate(ahead):
         until.setdefault(sound_id, index)
 
-    def gaps(sound: Sound) -> tuple[int, int]:
+    def gaps(sound: Sound) -> tuple[int, int, int]:
         back, forth = since.get(sound.id, far), until.get(sound.id, far)
-        return min(back, forth), max(back, forth)
+        return min(back, forth), back, forth
 
     best = max(gaps(sound) for sound in ready)
     return choice([sound for sound in ready if gaps(sound) == best])

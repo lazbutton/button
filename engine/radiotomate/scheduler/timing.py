@@ -152,17 +152,20 @@ def _next_anchor(
     return soonest, soonest_pos
 
 
-def hard_anchor_since(
+def hard_anchor_since(  # noqa: PLR0913
     since: datetime,
     now: datetime,
     slot_start: int,
     slot_end: int,
     anchored: list[ClockPosition],
+    fired: set[tuple[str, int, int]],
 ) -> bool:
     """
-    Whether a hard anchor of this daypart has come after ``since``, up to ``now``.
+    Whether a hard anchor of this daypart has gone after ``since``, up to ``now``.
     ``since`` is within the hour before ``now``: the last occurrence of each hard
-    anchor is in this hour or the one before.
+    anchor is in this hour or the one before. ``fired`` holds the occurrences
+    the clock has fired, by (date, hour, minute): a hard anchor that had nothing
+    to play, or that the playout refused, has cut nothing.
     """
     local_since = since.replace(tzinfo=None)
     local_now = now.replace(tzinfo=None)
@@ -174,7 +177,8 @@ def hard_anchor_since(
             occurrence -= timedelta(hours=1)
         if not anchor_in_daypart(slot_start, slot_end, occurrence.hour, pos.minute):
             continue
-        if local_since < occurrence:
+        key = (occurrence.date().isoformat(), occurrence.hour, pos.minute)
+        if local_since < occurrence and key in fired:
             return True
     return False
 

@@ -193,6 +193,18 @@ def test_a_sound_to_play_now_is_neither_the_last_heard_nor_the_next_planned(
         assert draw_without_repeat(sounds, antenna.drawn, ahead=ahead).id not in avoid
 
 
+def test_with_two_sounds_the_one_just_heard_waits():
+    """Two sounds: one just heard, the other planned at the next break.
+    « Diffuser maintenant » cannot avoid a repeat: it plays the other one, which
+    the next break plays again, rather than the sound just heard."""
+    sounds = _bac(2)
+    antenna = _Antenna(sounds)
+    antenna.play(sounds[1])
+    antenna.play(sounds[0])
+    for _ in range(20):
+        assert draw_without_repeat(sounds, antenna.drawn, ahead=[2]) is sounds[1]
+
+
 def test_a_sound_never_said_on_air_does_not_hold_the_cart():
     """A sound sent that the playout never says on air, as a file gone
     unreadable: its round cannot close, yet the cart goes on with the others,
