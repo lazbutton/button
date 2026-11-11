@@ -47,13 +47,14 @@ def read_versions(data_root: Path) -> dict:
     recorded = None
     with suppress(KeyError, ValueError):
         recorded = datetime.fromisoformat(str(raw["recorded_at"]))
+    items = raw.get("services")
     services = [
         {
             "service": item["service"],
             "image": _text(item.get("image")),
             "version": _text(item.get("version")),
         }
-        for item in raw.get("services") or []
+        for item in (items if isinstance(items, list) else [])
         if isinstance(item, dict) and _text(item.get("service"))
     ]
     return {

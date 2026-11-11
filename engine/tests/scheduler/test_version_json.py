@@ -53,6 +53,11 @@ async def test_version_without_record(
     _record(app_configration, "{pas du JSON")
     result = await client.get("/system/version.json")
     assert await result.get_json() == EMPTY
+    # Un relevé mal formé ne fait pas d'erreur.
+    _record(app_configration, '{"services": 5, "recorded_at": 7}')
+    result = await client.get("/system/version.json")
+    assert result.status_code == 200
+    assert await result.get_json() == EMPTY
 
 
 async def test_version_of_each_service(
