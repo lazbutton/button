@@ -11,13 +11,121 @@ else
   echo "docker $*" >>"$state/log"
 fi
 
+# Les services de la station, avec le profil vps, et leur état quand elle
+# tourne : $state/ps le remplace.
+SERVICES=(caddy catalog console icecast meilisearch nowplaying radiotomate-dropbox radiotomate-init
+  radiotomate-interface radiotomate-playout radiotomate-scheduler tusd)
+running_services() {
+  local service
+  for service in "${SERVICES[@]}"; do
+    case $service in
+      radiotomate-init) echo "button-$service-1|$service|exited||0" ;;
+      radiotomate-interface | radiotomate-playout | radiotomate-scheduler) echo "button-$service-1|$service|running|healthy|0" ;;
+      *) echo "button-$service-1|$service|running||0" ;;
+    esac
+  done
+}
+
+# docker compose run, sur les données de la station : -v, et /data, le RT_DATA
+# par défaut. Il joue backup-radiotomate.sh et restore-radiotomate.sh comme
+# les vrais, sur une base faite d'une ligne « schema=N », puis d'autres ; et
+# les blocs Python de station, reconnus à leur première ligne.
+compose_run() {
+  local entrypoint="" volumes=() envs=() spec
+  while (($#)); do
+    case $1 in
+      --rm | --no-deps | -T) shift ;;
+      -v)
+        volumes+=("$2")
+        shift 2
+        ;;
+      -e)
+        envs+=("$2")
+        shift 2
+        ;;
+      --entrypoint)
+        entrypoint=$2
+        shift 2
+        ;;
+      *)
+        # Le service.
+        shift
+        break
+        ;;
+    esac
+  done
+  host() { # chemin dans le conteneur
+    for spec in "${volumes[@]}"; do
+      spec=${spec%:ro}
+      if [[ ${spec#*:} == "$1" ]]; then
+        echo "${spec%%:*}"
+        return
+      fi
+    done
+    [[ $1 != /data ]] || echo "$PWD/data/radiotomate"
+  }
+  local tmp script
+  case "$entrypoint ${1:-}" in
+    "bash /backup-radiotomate.sh")
+      [[ ! -e $state/backup-fails ]] || {
+        echo "sqlite3 is required" >&2
+        exit 1
+      }
+      tmp=$(mktemp -d)
+      mkdir "$tmp/radiotomate"
+      cp "$(host /data)/radiotomate.db" "$tmp/radiotomate/"
+      [[ ! -f $(host /data)/radiotomate.yaml ]] || cp "$(host /data)/radiotomate.yaml" "$tmp/radiotomate/"
+      (cd "$tmp/radiotomate" && sha256sum ./* >SHA256SUMS)
+      tar -czf "$(host /sauvegarde)/radiotomate.tar.gz" -C "$tmp" radiotomate
+      rm -rf "$tmp"
+      echo /sauvegarde/radiotomate.tar.gz
+      ;;
+    "bash /restore-radiotomate.sh")
+      if [[ -n $(ls -A "$(host /cible)") ]]; then
+        echo "refusing to restore into a non-empty directory: /cible" >&2
+        exit 1
+      fi
+      tmp=$(mktemp -d)
+      tar -xzf "$(host /sauvegarde.tar.gz)" -C "$tmp"
+      cp -a "$tmp/radiotomate/." "$(host /cible)/"
+      rm -rf "$tmp"
+      echo /cible
+      ;;
+    "python3 -")
+      script=$(cat)
+      case $script in
+        "# schémas"*)
+          sed -n 's/^schema=//p' "$(host /data)/radiotomate.db" "$(host /cible)/radiotomate.db"
+          ;;
+        "# domaine"*)
+          echo "réglages du domaine : ${envs[*]}" >>"$state/log"
+          cat "$state/domain-keys" 2>/dev/null ||
+            printf 'station.public_stream_url\nstation.now_url\nstation.status_url\nstation.harbor_host\n'
+          ;;
+        *)
+          echo "docker : script Python inattendu" >&2
+          exit 2
+          ;;
+      esac
+      ;;
+    *)
+      echo "docker : docker compose run inattendu, $entrypoint $*" >&2
+      exit 2
+      ;;
+  esac
+}
+
 case $1 in
   version) echo 27.3.1 ;;
   info)
     [[ ! -e $state/docker-down ]] || exit 1
     [[ ${2:-} != --format ]] || echo /var/lib/docker
     ;;
-  pull | rm) ;;
+  pull | rm | image) ;;
+  # Ce que le projet garde après une désinstallation : $state/containers et
+  # $state/volumes, un par ligne.
+  ps) cat "$state/containers" 2>/dev/null || true ;;
+  volume) [[ ${2:-} != ls ]] || cat "$state/volumes" 2>/dev/null || true ;;
   login) echo "login ${*:2} jeton=$(cat)" >>"$state/login" ;;
   run)
     if [[ " $* " == *" caddy respond "* ]]; then
@@ -41,33 +149,90 @@ case $1 in
     fi
     ;;
   compose)
-    case $2 in
+    shift
+    # Les profils donnés avant la commande : tous, pour station.
+    profiled=""
+    while [[ ${1:-} == --profile ]]; do
+      profiled=1
+      shift 2
+    done
+    command=$1
+    shift
+    case $command in
       version)
         [[ ! -e $state/no-compose ]] || exit 1
-        [[ ${3:-} != --short ]] || echo 2.29.7
+        [[ ${1:-} != --short ]] || echo 2.29.7
         ;;
       ps)
+        if [[ " $* " == *" --services "* ]]; then
+          # Avec tous les profils, ce qui tourne : $state/services-running, où
+          # share peut être, lancé à part.
+          if [[ -n $profiled && -f $state/services-running ]]; then
+            cat "$state/services-running"
+          elif [[ -e $state/caddy-running || -e $state/engine-running ]]; then
+            echo radiotomate-playout
+          fi
+        elif [[ " $* " == *" --format "* ]]; then
+          if [[ -f $state/ps ]]; then
+            cat "$state/ps"
+          elif [[ -e $state/caddy-running || -e $state/engine-running ]]; then
+            running_services
+          fi
         # Caddy, ou la station sans lui : $state/caddy-running, engine-running.
-        if [[ ${*: -1} == caddy ]]; then
+        elif [[ ${*: -1} == caddy ]]; then
           [[ ! -e $state/caddy-running ]] || echo caddy
         elif [[ -e $state/caddy-running || -e $state/engine-running ]]; then
           echo radiotomate-playout
         fi
         ;;
+      config)
+        case " $* " in
+          *" --services "*) printf '%s\n' "${SERVICES[@]}" ;;
+          *" --profiles "*) printf 'cloud\nshare\nvps\n' ;;
+          *" --images "*) printf 'caddy:2.11-alpine\nghcr.io/lazbutton/button-radiotomate:0.1.0\n' ;;
+        esac
+        ;;
       pull) [[ ! -e $state/pull-fails ]] || exit 1 ;;
       up)
+        # Une fois : $state/up-fails.
+        if [[ -e $state/up-fails ]]; then
+          rm "$state/up-fails"
+          exit 1
+        fi
         # Ce que docker compose recevrait du shell, à la place de .env.
         echo "environnement : TZ=${TZ-absent} DOMAIN=${DOMAIN-absent}" >>"$state/log"
         [[ -e $state/env-at-first-up ]] || cp .env "$state/env-at-first-up"
-        # radiotomate-init crée la base, et Caddy tourne.
-        mkdir -p data/radiotomate
-        touch data/radiotomate/radiotomate.db "$state/caddy-running"
+        # radiotomate-init crée la base et radiotomate.yaml, et Caddy son
+        # certificat ; puis Caddy tourne.
+        mkdir -p data/radiotomate data/caddy/certificates
+        [[ -s data/radiotomate/radiotomate.db ]] ||
+          printf 'schema=18\nid=%s\n' "$RANDOM$RANDOM" >data/radiotomate/radiotomate.db
+        [[ -f data/radiotomate/radiotomate.yaml ]] || echo "db: {}" >data/radiotomate/radiotomate.yaml
+        [[ -f data/caddy/certificates/site.crt ]] || echo "certificat $RANDOM$RANDOM" >data/caddy/certificates/site.crt
+        touch "$state/caddy-running"
         ;;
+      stop)
+        if [[ ${*: -1} == caddy ]]; then
+          rm -f "$state/caddy-running"
+        elif ((!$#)); then
+          rm -f "$state/caddy-running" "$state/engine-running"
+        fi
+        ;;
+      down) rm -f "$state/caddy-running" "$state/engine-running" ;;
+      logs) echo "les journaux de la station" ;;
       exec)
-        echo "${*:3}" >>"$state/settings"
-        cat >"$state/settings.py"
-        printf 'station.name\nstation.public_stream_url\n'
+        if [[ " $* " == *" python3 "* ]]; then
+          echo "$*" >>"$state/settings"
+          cat >"$state/settings.py"
+          printf 'station.name\nstation.public_stream_url\n'
+        elif [[ " $* " == *" maintenance next-live "* ]]; then
+          [[ ! -e $state/next-live-fails ]] || exit 1
+          cat "$state/next-live" 2>/dev/null || echo "QG, mercredi 23 septembre à 20:00, dans 2 j 8 h"
+        else
+          echo "le moteur : $*"
+        fi
         ;;
+      run) compose_run "$@" ;;
     esac
     ;;
 esac

@@ -61,12 +61,13 @@ Il aurait voulu que la mise à jour revienne seule en arrière, et le lui dise :
   - elle écrit `.env` et ses secrets, et met la station en HTTPS ;
   - elle la contrôle, puis donne une fois le mot de passe admin ;
   - relancée, elle répare sans rien écraser.
+- La même commande l'exploite : `station status` dit en une fois la version, les services, la place, le prochain direct et la dernière sauvegarde. `station backup` sauvegarde sans couper l'antenne, et `station restore` remet la station sur une machine neuve. `config`, `hold`, `logs`, `cli` et `uninstall` font le reste.
 
 ## Ce qui coince encore
 
 Toute la priorité [P1](../feuille-de-route/P1-mise-en-prod.md) est écrite pour lui. Tant qu'une fiche P1 reste ouverte, une installation sur un VPS est un essai, pas une production :
 
-- **HTTPS** par un reverse proxy : INS-01. **Des commandes d'exploitation** : INS-03.
+- **HTTPS** par un reverse proxy : INS-01.
 - **Une commande de mise à jour** : MAJ-04. **Un retour arrière automatique** : MAJ-05.
 - **Des sauvegardes hors de la machine** : SAV-01. **Des alertes sur le téléphone et par e-mail** : SUR-01.
 - **Un guide d'installation sur VPS** : DOC-01.
