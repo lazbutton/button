@@ -207,6 +207,37 @@ def test_a_track_dropped_in_an_indexed_folder_is_indexed(tmp_path: Path):
     assert _items(tmp_path) == indexed
 
 
+def test_a_bank_named_like_a_beets_query_keeps_its_name_and_its_own_tracks(
+    tmp_path: Path,
+):
+    media = _station(tmp_path)
+    shutil.copy(TRACK, media / "10-rotation" / "Ada - Un.mp3")
+    # Beets reads a query and a value its own way. With path:, a trailing comma
+    # adds an empty query, which takes the whole library, and a trailing space
+    # goes. In a value, $title and %upper{} are a template, and a lone } ends it.
+    names = ["jazz", "Foo,", "Bar ", "Prix $title", "Bio %upper{x}", "Live}$2024"]
+    for name in names:
+        bank = media / "20-archives" / name
+        bank.mkdir(exist_ok=True)
+        shutil.copy(TRACK, bank / f"{name} - Live.mp3")
+    _turn(tmp_path)
+    _turn(tmp_path)
+
+    expected = {
+        "Ada - Un.mp3": ("rotation", ""),
+        **{f"{name} - Live.mp3": (name, "Archive") for name in names},
+    }
+    assert {name: fields[2:4] for name, fields in _items(tmp_path).items()} == expected
+
+    # nothing new: nothing moves, and no file is written again
+    tracks = list(media.rglob("*.mp3"))
+    dates = {track: track.stat().st_mtime_ns for track in tracks}
+    _turn(tmp_path)
+    _turn(tmp_path)
+    assert {name: fields[2:4] for name, fields in _items(tmp_path).items()} == expected
+    assert {track: track.stat().st_mtime_ns for track in tracks} == dates
+
+
 def test_a_file_still_being_copied_waits(tmp_path: Path):
     media = _station(tmp_path)
     song = media / "10-rotation" / "Ada - Un.mp3"
