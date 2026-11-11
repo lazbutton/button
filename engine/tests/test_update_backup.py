@@ -22,6 +22,7 @@ from radiotomate.db import QuartAlchemy
 from tests.test_migrations import _latest_schema_version, _schema_version
 
 RESTORE = Path(__file__).parents[2] / "deploy" / "scripts" / "restore-radiotomate.sh"
+BACKUP = RESTORE.parent / "backup-radiotomate.sh"
 needs_sqlite3 = pytest.mark.skipif(
     shutil.which("sqlite3") is None,
     reason="restore-radiotomate.sh needs the sqlite3 command",
@@ -44,13 +45,28 @@ def _version_in(path: Path) -> int:
     return int(value)
 
 
-def _restore(copy: Path, data_root: Path) -> subprocess.CompletedProcess:
+def _restore(
+    copy: Path, data_root: Path, env: dict | None = None
+) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["bash", str(RESTORE), str(copy), str(data_root)],
         capture_output=True,
         text=True,
         check=False,
+        env=env,
     )
+
+
+def _without_sqlite3(tmp_path: Path) -> dict:
+    """
+    The environment of the engine's image, where `station backup` and `station
+    restore` run the scripts: Python, but no sqlite3 command.
+    """
+    stub = tmp_path / "without-sqlite3"
+    stub.mkdir()
+    (stub / "sqlite3").write_text("#!/bin/sh\nexit 127\n")
+    (stub / "sqlite3").chmod(0o755)
+    return {**os.environ, "PATH": f"{stub}{os.pathsep}{os.environ['PATH']}"}
 
 
 @pytest.fixture
@@ -330,3 +346,83 @@ def test_restore_script_refuses_a_wal_left_alone(tmp_path: Path):
     assert result.returncode == 1
     assert "left without its database" in result.stderr
     assert not (tmp_path / "radiotomate.db").exists()
+
+
+@pytest.mark.parametrize(
+    "command", [pytest.param("sqlite3", marks=needs_sqlite3), "python3"]
+)
+async def test_backup_script_archive_restores_elsewhere(
+    engine, tmp_path: Path, command: str
+):
+    await do_update(engine)
+    async with engine.connect() as conn:
+        await conn.execute(
+            text("insert into settings (key, value) values ('test_backup', 'kept')"),
+        )
+        await conn.commit()
+    (tmp_path / "radiotomate.yaml").write_text("db: {}\n")
+    (tmp_path / "carts").mkdir()
+    (tmp_path / "carts" / "jingle.mp3").write_bytes(b"ID3")
+    # the start sound, as `radiotomate install` names it
+    (tmp_path / "default_start_sound.wav").write_bytes(b"RIFF")
+    # Beets writes its library on air too: what is not yet in the file is in
+    # its journal, which a plain copy would take apart from it
+    (tmp_path / "Beets").mkdir()
+    library = sqlite3.connect(tmp_path / "Beets" / "library.db")
+    library.execute("pragma journal_mode=wal")
+    library.execute("pragma wal_autocheckpoint=0")
+    library.execute("create table items (path)")
+    library.execute("insert into items values ('/media/10-rotation/titre.mp3')")
+    library.commit()
+    env = None if command == "sqlite3" else _without_sqlite3(tmp_path)
+    archive = tmp_path / "out" / "radiotomate.tar.gz"
+
+    # the engine and Beets still hold their databases open, as on a station on air
+    with closing(library):
+        made = subprocess.run(
+            ["bash", str(BACKUP), str(tmp_path), str(archive)],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+        )
+    assert made.returncode == 0, made.stderr
+    assert stat.S_IMODE(archive.stat().st_mode) == 0o600
+
+    target = tmp_path / "elsewhere"
+    restored = _restore(archive, target, env)
+    assert restored.returncode == 0, restored.stderr
+    with closing(
+        sqlite3.connect(f"file:{target / 'radiotomate.db'}?mode=ro", uri=True)
+    ) as con:
+        (value,) = con.execute(
+            "select value from settings where key='test_backup'"
+        ).fetchone()
+    assert value == "kept"
+    assert (target / "radiotomate.yaml").read_text() == "db: {}\n"
+    assert (target / "carts" / "jingle.mp3").read_bytes() == b"ID3"
+    assert (target / "default_start_sound.wav").read_bytes() == b"RIFF"
+    assert sorted(path.name for path in (target / "Beets").iterdir()) == ["library.db"]
+    with closing(sqlite3.connect(target / "Beets" / "library.db")) as con:
+        rows = con.execute("select path from items").fetchall()
+    assert rows == [("/media/10-rotation/titre.mp3",)]
+
+
+def test_restore_script_puts_the_copy_back_without_sqlite3(tmp_path: Path):
+    (tmp_path / "radiotomate.yaml").touch()
+    for path, version in (
+        (tmp_path / "copy.db", "16"),
+        (tmp_path / "radiotomate.db", "17"),
+    ):
+        with closing(sqlite3.connect(path)) as con:
+            con.execute("create table settings (key, value)")
+            con.execute("insert into settings values ('SCHEMA_VERSION', ?)", (version,))
+            con.commit()
+
+    result = _restore(tmp_path / "copy.db", tmp_path, _without_sqlite3(tmp_path))
+
+    assert result.returncode == 0, result.stderr
+    assert "restored schema version: 16." in result.stderr
+    assert _version_in(tmp_path / "radiotomate.db") == 16
+    (aside,) = (tmp_path / "backups").glob("avant-restauration-*.db")
+    assert _version_in(aside) == 17
