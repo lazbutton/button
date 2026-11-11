@@ -72,14 +72,14 @@ setup() {
   logged "docker compose pull (dans $DIR)"
   logged "docker compose up -d (dans $DIR)"
   logged "curl --disable -sS -o /dev/null --max-time 10 https://radio.example/"
-  logged "smoke https://radio.example https://radio.example/button.mp3 SMOKE_WAIT=300 dans $DIR"
+  logged "smoke https://radio.example https://radio.example/radio.mp3 SMOKE_WAIT=300 dans $DIR"
 }
 
 @test "le nom et les adresses publiques vont dans les réglages Station, sans rien écraser" {
   install_station --domain radio.example --name "Radio d'Ici"
   assert_success
   assert_output --partial "Réglages Station : nom et adresses publiques posés."
-  grep -qxF -- "-T -e BUTTON_NAME=Radio d'Ici -e BUTTON_DOMAIN=radio.example -e BUTTON_HARBOR_PORT=6800 -e BUTTON_MOUNT=button.mp3 radiotomate-interface python3 -" \
+  grep -qxF -- "-T -e BUTTON_NAME=Radio d'Ici -e BUTTON_DOMAIN=radio.example -e BUTTON_HARBOR_PORT=6800 -e BUTTON_MOUNT=radio.mp3 radiotomate-interface python3 -" \
     "$FAKE_STATE/settings"
   grep -qF "insert or ignore into settings" "$FAKE_STATE/settings.py"
   grep -qF "select 1 from settings where key like 'station.%'" "$FAKE_STATE/settings.py"
@@ -150,7 +150,7 @@ setup() {
   [ "$(env_of CADDY_TLS)" = internal ]
   run ! logged "nslookup"
   logged "--cacert $DIR/data/caddy/pki/authorities/local/root.crt --resolve radio.example:443:127.0.0.1 https://radio.example/"
-  logged "smoke http://127.0.0.1:30126 http://127.0.0.1:18000/button.mp3"
+  logged "smoke http://127.0.0.1:30126 http://127.0.0.1:18000/radio.mp3"
 }
 
 @test "--version installe une version publiée, pas la plus haute" {
@@ -507,7 +507,7 @@ EOF
   run ! logged "docker compose pull"
   logged "docker compose up -d"
   logged "https://github.com/lazbutton/button/releases/download/v0.1.0/station.tar.gz"
-  logged "smoke https://radio.example https://radio.example/button.mp3"
+  logged "smoke https://radio.example https://radio.example/radio.mp3"
 }
 
 @test "relancer répare ce qui manque, et garde à côté ce qui a changé" {

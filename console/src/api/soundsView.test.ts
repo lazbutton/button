@@ -120,20 +120,20 @@ test("only a cut upload offers a retry", () => {
 
 const banks: BankDestination[] = [
   { id: "rotation", label: "Rotation", group: "rotation", folder: "10-rotation" },
-  { id: "ntf1", label: "NTF 1", group: "archives", folder: "20-archives/ntf1" },
+  { id: "mix1", label: "MIX 1", group: "archives", folder: "20-archives/mix1" },
   { id: "jazz", label: "Archives jazz été", group: "archives", folder: "20-archives/jazz" },
 ];
 
 test("banks come from the catalogue and read by name", () => {
-  assert.equal(destinationLabel(banks, "ntf1"), "NTF 1");
+  assert.equal(destinationLabel(banks, "mix1"), "MIX 1");
   assert.equal(destinationLabel(banks, "autre"), "autre");
   assert.deepEqual(
     filterDestinations(banks, "ete jaz").map((item) => item.id),
     ["jazz"],
   );
   assert.deepEqual(
-    filterDestinations(banks, "archives/ntf").map((item) => item.id),
-    ["ntf1"],
+    filterDestinations(banks, "archives/mix").map((item) => item.id),
+    ["mix1"],
   );
   assert.equal(filterDestinations(banks, "  ").length, 3);
 });
@@ -147,7 +147,7 @@ test("a new bank gets a folder and is checked like the catalogue does", () => {
   };
   assert.equal(problem("Reggae", "reggae"), "");
   assert.match(problem("", "vide"), /^label: .*nom/);
-  assert.match(problem("Autre", "ntf1"), /^folder: .*existe déjà/);
+  assert.match(problem("Autre", "mix1"), /^folder: .*existe déjà/);
   assert.match(problem("archives JAZZ ete", "jazz2"), /^label: .*porte déjà/);
   assert.match(problem("Musique", "rotation"), /^folder: .*réservé/);
   assert.match(problem("Jazz live", "Jazz Live"), /^folder: .*minuscules/i);

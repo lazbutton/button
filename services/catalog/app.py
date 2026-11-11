@@ -493,7 +493,7 @@ def cors(handler: BaseHTTPRequestHandler) -> None:
 
 
 def any_of(field: str, raw: str) -> str:
-    """grouping=ntf1,ntf2 reads as ntf1 OR ntf2."""
+    """grouping=matinale,jazz reads as matinale OR jazz."""
     values = [value.strip() for value in raw.split(",") if value.strip()]
     clauses = [f"{field} = {json.dumps(value, ensure_ascii=False)}" for value in values]
     if len(clauses) > 1:

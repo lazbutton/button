@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import type { Brand } from "../lib/brand.ts";
 import { monitorSources } from "../lib/monitorSource.ts";
@@ -17,7 +18,7 @@ import type { PublicStation, StationSettings } from "./types.ts";
 const FILE: Brand = {
   suite: { id: "exemple", name: "Radio Fichier", short: "RF", tagline: "Depuis brand.json" },
   labels: { player: { listen: "Écouter {name}" } },
-  infra: { smbShare: "Exemple-Media", partnerCode: "RF" },
+  infra: { smbShare: "Exemple-Media" },
   apps: {
     player: {
       streamUrl: "https://fichier.radio.example/live.mp3",
@@ -165,15 +166,43 @@ test("le casque écoute le flux réglé dans le moteur, et brand.json sans régl
   assert.equal(unset.statusUrl, "https://fichier.radio.example/status-json.xsl");
 });
 
-test("« Passer en direct » garde le direct de brand.json, même réglé dans le moteur", () => {
-  // GET /station.json est réservé aux admins : le panneau ne lit pas les réglages du harbor.
-  assert.deepEqual(harborAddress(withStation(FILE, SETTINGS)), {
-    host: "fichier.radio.example",
-    port: "6800",
-    mount: "/stream",
+test("sans flux public réglé, ni dans le moteur ni dans brand.json, le casque n'a aucune source", () => {
+  const bare: Brand = { ...FILE, apps: {} };
+  assert.deepEqual(monitorSources(bare), []);
+  assert.deepEqual(monitorSources(withStation(bare, UNSET)), []);
+  // Le statut ou le titre en cours seuls ne font pas un flux.
+  assert.deepEqual(monitorSources(withStation(bare, { ...UNSET, now_url: SETTINGS.now_url })), []);
+  // Réglé dans le moteur : il suffit, sans rien dans brand.json.
+  const [set] = monitorSources(withStation(bare, { ...UNSET, public_stream_url: SETTINGS.public_stream_url }));
+  assert.equal(set.stream, SETTINGS.public_stream_url);
+  assert.equal(set.nowUrl, "");
+  assert.equal(set.statusUrl, "");
+});
+
+test("le brand.json de l'image ne donne aucune adresse : une station règle les siennes", () => {
+  const image = JSON.parse(readFileSync(new URL("../../public/brand.json", import.meta.url), "utf8")) as Brand;
+  assert.deepEqual(JSON.stringify(image).match(/[a-z]+:\/\/[^"]*/gi) ?? [], []);
+  assert.deepEqual(monitorSources(withStation(image, UNSET)), []);
+  // Le nom reste celui du logiciel, tant que la station n'a pas réglé le sien.
+  assert.equal(withStation(image, UNSET).suite.name, "BUTTON");
+});
+
+test("« Passer en direct » donne le harbor réglé, et rien sans hôte", () => {
+  // GET /station/harbor.json, ouvert à tout compte.
+  assert.deepEqual(harborAddress({ host: "direct.radio.example", port: 8005, mount: "/direct" }), {
+    host: "direct.radio.example",
+    port: "8005",
+    mount: "/direct",
   });
-  assert.equal(harborAddress({ ...FILE, apps: { harbor: { url: "direct.radio.example:8005" } } }).host, "direct.radio.example");
-  assert.ok(harborAddress({ ...FILE, apps: {} }).host);
+  // Sans hôte, le panneau ne donne rien à copier : il dit qu'un admin le règle.
+  assert.equal(harborAddress({ host: null, port: 6800, mount: "/stream" }), null);
+  assert.equal(harborAddress({ host: "  ", port: 6800, mount: "/stream" }), null);
+  // Une réponse illisible ne donne pas une adresse à moitié.
+  assert.equal(harborAddress({ host: "radio.example", port: Number.NaN, mount: "/stream" }), null);
+  assert.equal(harborAddress({ host: "radio.example", mount: "/stream" }), null);
+  assert.equal(harborAddress(null), null);
+  // brand.json ne donne plus le direct : seul le moteur le dit.
+  assert.equal("harbor" in withStation({ ...FILE, apps: {} }, SETTINGS).apps, false);
 });
 
 test("le formulaire : un réglage absent est un champ vide, un champ vide efface le réglage", () => {

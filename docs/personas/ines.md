@@ -62,7 +62,6 @@ Entre-temps, au bout de 90 s, le moteur a levé l'alerte `live_absent`. La raiso
 - **La raison d'un refus reste cachée** : identifiant, jeton, interrupteur ou créneau, la console ne dit pas lequel. Besoin sans fiche.
 - **Le panneau parle encore du « droit Stream »**, et non de l'interrupteur « Peut passer en direct ».
 - **Coupe franche** à l'entrée et à la sortie du direct : les transitions de `fallback` sont cassées dans Liquidsoap 2.4 ([savonet/liquidsoap#4179](https://github.com/savonet/liquidsoap/issues/4179)).
-- **Le panneau suit `brand.json`**, pas encore les réglages de la station : GEN-02, en [P1](../feuille-de-route/P1-mise-en-prod.md).
 - **Pas d'enregistrement de son direct** : FON-06. **Pas de direct depuis le navigateur**, sans BUTT : FON-05. Les deux en [P3](../feuille-de-route/P3.md).
 
 ## Concevoir pour elle

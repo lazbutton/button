@@ -147,11 +147,11 @@ docker compose ps        # attendre radiotomate-scheduler « healthy »
 
 Au premier démarrage, `radiotomate-init` prépare tout, et peut être relancé sans danger :
 
-- vérifie d'abord les secrets : avec ceux de `.env.example`, il s'arrête, et ni le moteur, ni Icecast, ni nowplaying, ni le catalogue ne démarrent ;
+- vérifie d'abord les secrets : avec ceux de `.env.example`, il s'arrête, et ni le moteur, ni Icecast, ni nowplaying, ni le catalogue ne démarrent ; puis les noms des mounts : voir [les mounts](#les-mounts) ;
 - crée `radiotomate.yaml`, la base, et applique les migrations du schéma ;
 - crée l'arborescence de la banque de sons ;
 - configure Beets (ReplayGain) ;
-- branche la sortie Icecast et le relais des métadonnées vers nowplaying ;
+- branche les sorties Icecast, sur les mounts de `.env`, et le relais des métadonnées vers nowplaying ;
 - règle le cookie de session : `Secure`, sauf avec `RT_COOKIE_SECURE=false` ;
 - sur une installation neuve, sans aucun compte, ferme le harbor au mot de passe du compte : voir [le direct](#le-direct) ;
 - crée le compte admin `RT_ADMIN_USER` s'il n'existe pas.
@@ -159,7 +159,7 @@ Au premier démarrage, `radiotomate-init` prépare tout, et peut être relancé 
 | Service | Adresse par défaut |
 |---|---|
 | Console | `http://<machine>:30126` |
-| Flux Icecast | `http://<machine>:18000/button.mp3` |
+| Flux Icecast | `http://<machine>:18000/radio.mp3` |
 | Titre en cours | `http://<machine>:6820/now.json` |
 | Catalogue | `http://<machine>:30127` |
 | Direct, pour l'encodeur | `<machine>:6800` |
@@ -183,7 +183,7 @@ Sur Internet, Caddy se place devant la station. Il obtient un certificat Let's E
 | Adresse | Service |
 |---|---|
 | `https://radio.example/` | la console |
-| `https://radio.example/button.mp3` | le flux : chaque mount d'Icecast à la racine, en MP3, AAC ou Ogg |
+| `https://radio.example/radio.mp3` | le flux : chaque mount d'Icecast à la racine, en MP3, AAC ou Ogg. Son nom se règle : voir [les mounts](#les-mounts) |
 | `https://radio.example/status-json.xsl` | le statut d'Icecast |
 | `https://radio.example/now.json` | le titre en cours |
 
@@ -207,7 +207,7 @@ docker compose logs caddy        # attendre « certificate obtained successfully
 
 Sans `DOMAIN`, Caddy ne démarre pas, et son journal le dit. Il garde ses certificats et son compte Let's Encrypt dans `data/caddy`, ou dans `CADDY_DATA`. Ce dossier se garde d'une version à l'autre : sans lui, Caddy redemande un certificat à chaque démarrage, et Let's Encrypt en limite le nombre.
 
-Ensuite, dans la console, **Réglages → Station**, donner les adresses publiques : le flux `https://radio.example/button.mp3`, le titre en cours `https://radio.example/now.json`, le statut `https://radio.example/status-json.xsl`, et l'hôte du direct, `radio.example`. Le flux et `now.json` sont alors sur le domaine de la console : sa CSP n'a rien à déclarer, `CSP_MEDIA_SRC` et `CSP_CONNECT_SRC` restent vides. Un flux sur un autre domaine ou un autre port s'y déclare : voir [les en-têtes de sécurité](#les-en-têtes-de-sécurité).
+Ensuite, dans la console, **Réglages → Station**, donner les adresses publiques : le flux `https://radio.example/radio.mp3`, le titre en cours `https://radio.example/now.json`, le statut `https://radio.example/status-json.xsl`, et l'hôte du direct, `radio.example`. Le flux et `now.json` sont alors sur le domaine de la console : sa CSP n'a rien à déclarer, `CSP_MEDIA_SRC` et `CSP_CONNECT_SRC` restent vides. Un flux sur un autre domaine ou un autre port s'y déclare : voir [les en-têtes de sécurité](#les-en-têtes-de-sécurité).
 
 Vérifier depuis une autre machine. Seuls répondent 22 pour SSH, 80, 443, en TCP et en UDP pour HTTP/3, et le port du direct :
 
@@ -219,7 +219,7 @@ nc -zv radio.example 30126 18000 6820 30127   # fermés
 Puis le contrôle après déploiement, sur les adresses publiques. Il est décrit dans [mettre à jour](#mettre-à-jour) :
 
 ```bash
-scripts/smoke.sh https://radio.example https://radio.example/button.mp3
+scripts/smoke.sh https://radio.example https://radio.example/radio.mp3
 ```
 
 Caddy lit le `Caddyfile` à son démarrage. Un `Caddyfile` changé, à la main ou par une mise à jour, ne compte qu'une fois Caddy recréé. L'écoute à travers Caddy se coupe un instant :
@@ -236,11 +236,26 @@ Icecast voit l'adresse de Caddy pour chaque auditeur. Il compte toujours les aud
 
 ## Le direct
 
-Le harbor, l'entrée du direct, est publié sur le port 6800 de la machine, ou sur `HARBOR_PORT`, et sur toutes ses interfaces : un encodeur s'y branche de n'importe où. `BIND_ADDRESS` ne le ferme pas, et il ne passe pas par Caddy. Avec un autre port que 6800, le donner aux animateurs : le panneau « Passer en direct » de la console affiche encore 6800.
+Le harbor, l'entrée du direct, est publié sur le port 6800 de la machine, ou sur `HARBOR_PORT`, et sur toutes ses interfaces : un encodeur s'y branche de n'importe où. `BIND_ADDRESS` ne le ferme pas, et il ne passe pas par Caddy. Avec un autre port que 6800, le régler aussi dans la console, **Réglages → Station** : le panneau « Passer en direct » le donne alors à chaque compte, avec l'hôte du direct. `station install` règle les deux. Sans hôte réglé, le panneau ne donne pas d'adresse : il dit qu'un admin la règle.
 
 Pour l'écouter sur une seule adresse, la mettre devant le port : `HARBOR_PORT=127.0.0.1:6800` le ferme aux autres machines. Un ancien `compose.override.yml` qui publiait le harbor se retire **avant** la mise à jour : s'il le publiait sur une adresse précise, le port est pris deux fois, et le playout ne démarre plus.
 
 Le harbor ne chiffre rien : l'identifiant et le mot de passe de l'encodeur passent en clair. Sur une machine exposée à Internet, il ne doit donc accepter que les jetons d'encodeur, qui n'ouvrent que le harbor, et refuser le mot de passe du compte : `features.allow_account_password` à faux. Une station neuve le règle dès son installation : `radiotomate-init` le pose, et chaque encodeur entre avec le jeton de son compte. Une station en service le règle quand chaque encodeur a son jeton. La marche à suivre : [refuser le mot de passe du compte](exploitation/passer-en-direct.md#refuser-le-mot-de-passe-du-compte).
+
+## Les mounts
+
+Icecast diffuse la station sur deux mounts, nommés dans `.env` :
+
+| Variable | Sans elle | Le mount |
+|---|---|---|
+| `ICECAST_MOUNT` | `radio.mp3` | le flux public, en MP3 : `https://radio.example/radio.mp3` derrière Caddy |
+| `ICECAST_MONITOR_MOUNT` | `studio.wav` | le casque de la console, en WAV, qui reste sur le réseau de la station |
+
+Un nom seul, sans dossier ni espace, en lettres, chiffres, point, tiret ou souligné, en `.mp3` pour le flux public et en `.wav` pour le casque : Caddy ne relaie que les mounts à la racine. Avec un autre nom, `radiotomate-init` s'arrête et dit lequel corriger : l'antenne ne démarre pas.
+
+Changer le mount public change l'adresse du flux, pour chaque auditeur : `radiotomate-init` le dit dans son journal. Recréer ensuite toute la station, Icecast compris, avec `docker compose up -d --force-recreate`. Puis, dans la console, **Réglages → Station**, changer aussi le flux public. `station install` et `station config --domain` prennent le mount de `.env`.
+
+Une station installée avant ces deux variables diffusait sur `button.mp3`. Pour garder l'adresse de son flux, poser `ICECAST_MOUNT=button.mp3` dans `.env` avant de passer à la version qui les lit.
 
 ## Les secrets
 
@@ -375,7 +390,7 @@ Elle répond `0.2.0`, ou pour `main` le tag daté de l'image, `AAAAMMJJ-sha7`.
 Ensuite, vérifier que l'antenne tourne, sans compte, depuis le dossier de la station :
 
 ```bash
-scripts/smoke.sh http://127.0.0.1:30126 http://127.0.0.1:18000/button.mp3
+scripts/smoke.sh http://127.0.0.1:30126 http://127.0.0.1:18000/radio.mp3
 ```
 
 Le contrôle prend l'adresse de la console, puis celle du flux public. Sur la machine, avec les ports par défaut, ce sont celles de l'exemple. Derrière un reverse proxy, donner plutôt leurs adresses publiques, en `https://`, pour le vérifier lui aussi : le contrôle ne suit pas les redirections. Il vérifie, dans l'ordre :

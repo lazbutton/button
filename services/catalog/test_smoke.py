@@ -30,7 +30,7 @@ HEALTHY = {
     "/health/ready": (200, "application/json", b'{"ready": true, "db": true}'),
     "/radiotomate-scheduler/health/ready": (200, "application/json", b'{"ready": true}'),
     "/library/search?q=a": (401, "text/html", b"<h1>401 Authorization Required</h1>"),
-    "/button.mp3": (200, "audio/mpeg", bytes(64 * 1024)),
+    "/radio.mp3": (200, "audio/mpeg", bytes(64 * 1024)),
     "/nowplaying/now.json": (200, "application/json", b'{"title": "Jingle station"}'),
 }
 
@@ -152,7 +152,7 @@ class SmokeTest(unittest.TestCase):
         Station.seen.clear()
         Station.cookies.clear()
         return subprocess.run(
-            ["bash", str(SCRIPT), console or self.station, f"{self.station}/button.mp3"],
+            ["bash", str(SCRIPT), console or self.station, f"{self.station}/radio.mp3"],
             cwd=self.root,
             env={"PATH": f"{self.bindir}{os.pathsep}{os.environ.get('PATH', '')}", **env},
             capture_output=True,
@@ -208,7 +208,7 @@ class SmokeTest(unittest.TestCase):
     def test_an_endless_stream_is_read_for_5_s(self) -> None:
         # Icecast ne finit jamais sa réponse : curl coupe au bout de 5 s, et ce
         # qu'il a lu compte.
-        Station.routes["/button.mp3"] = (200, "audio/mpeg", None)
+        Station.routes["/radio.mp3"] = (200, "audio/mpeg", None)
 
         result = self.smoke()
 
@@ -217,7 +217,7 @@ class SmokeTest(unittest.TestCase):
         self.assertEqual(Station.seen, list(HEALTHY))
 
     def test_an_ogg_stream_is_audio_too(self) -> None:
-        Station.routes["/button.mp3"] = (200, "application/ogg", bytes(64 * 1024))
+        Station.routes["/radio.mp3"] = (200, "application/ogg", bytes(64 * 1024))
 
         result = self.smoke()
 
@@ -356,12 +356,12 @@ class SmokeTest(unittest.TestCase):
         }
         for detail, stream in streams.items():
             with self.subTest(detail=detail):
-                Station.routes = {**HEALTHY, "/button.mp3": stream}
+                Station.routes = {**HEALTHY, "/radio.mp3": stream}
 
                 result = self.smoke()
 
                 self.assert_fails_at(result, "5, flux", detail)
-                self.assertEqual(Station.seen, self.read_until("/button.mp3"))
+                self.assertEqual(Station.seen, self.read_until("/radio.mp3"))
 
     def test_now_json_must_answer(self) -> None:
         with self.subTest("nowplaying arrêté"):
@@ -372,7 +372,7 @@ class SmokeTest(unittest.TestCase):
             self.assert_fails_at(
                 result, "5, flux", "now.json ne répond pas 200", '"nowplaying" is not running'
             )
-            self.assertEqual(Station.seen, self.read_until("/button.mp3"))
+            self.assertEqual(Station.seen, self.read_until("/radio.mp3"))
         with self.subTest("now.json en erreur"):
             self.docker["stopped"] = []
             Station.routes["/nowplaying/now.json"] = (500, "text/plain", b"disque plein")

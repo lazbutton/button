@@ -297,6 +297,23 @@ def artistic_generator():
     return " ".join([WORDS[random.randint(0, len(WORDS) - 1)] for i in range(2)])
 
 
+# The public mount of a station without one in its YAML: ICECAST_MOUNT's
+# default, in deploy/compose.yml.
+DEMO_MOUNT = "radio.mp3"
+
+
+def demo_mount(config: dict) -> str:
+    """The public mount the demo shows: the YAML's first Icecast output, as
+    radiotomate-init writes it, or the default one."""
+    outputs = (config.get("playout_process_config") or {}).get("outputs") or []
+    for row in outputs:
+        if isinstance(row, dict) and row.get("driver") == "icecast":
+            mount = str(row.get("mount") or "").lstrip("/")
+            if mount:
+                return mount
+    return DEMO_MOUNT
+
+
 def demo_cue_path(data_root: Path) -> Path | None:
     ops_data = data_root.resolve().parent.parent / "ops" / "local" / "data"
     if ops_data.is_dir():
@@ -333,6 +350,7 @@ class SchedulerDemo(Scheduler):
         self._bootstrapped = False
         self._data_root = Path(config.get("data", {}).get("root") or ".")
         self._relay_to = list(config.get("metadata_log", {}).get("relay_to") or [])
+        self._mount = demo_mount(config)
         self._cue_path = demo_cue_path(self._data_root)
         self._last_broadcast: tuple | None = None
 
@@ -580,6 +598,7 @@ class SchedulerDemo(Scheduler):
     async def state(self) -> dict | None:
         """Demo antenna: everything green, no listeners, the played log as as-run."""
         played = list(getattr(self, "_played", []))[-8:]
+        target = f"icecast:8000/{getattr(self, '_mount', DEMO_MOUNT)}"
         return {
             "at": datetime.now().isoformat(timespec="seconds"),
             "demo": True,
@@ -590,8 +609,8 @@ class SchedulerDemo(Scheduler):
                 "rms_db": -18.0,
                 "harbor_s": None,
                 "voiceover": False,
-                "icecast_targets": ["icecast:8000/button.mp3"],
-                "icecast_connected": ["icecast:8000/button.mp3"],
+                "icecast_targets": [target],
+                "icecast_connected": [target],
                 "icecast_down": [],
             },
             "engine": {
@@ -605,9 +624,9 @@ class SchedulerDemo(Scheduler):
             "incidents": [],
             "listeners": [
                 {
-                    "target": "icecast:8000/button.mp3",
+                    "target": target,
                     "host": "icecast",
-                    "mount": "button.mp3",
+                    "mount": target.rsplit("/", 1)[-1],
                     "reachable": True,
                     "mounted": True,
                     "connected": True,

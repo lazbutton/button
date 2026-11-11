@@ -15,9 +15,9 @@ HEALTH = {
     "silence_s": "0.5",
     "rms_db": "-18.2",
     "on": "false",
-    "icecast_targets": "icecast:8000/button.mp3,radio.example:8000/button.mp3",
-    "icecast_connected": "icecast:8000/button.mp3",
-    "icecast_down": "radio.example:8000/button.mp3",
+    "icecast_targets": "icecast:8000/radio.mp3,radio.example:8000/radio.mp3",
+    "icecast_connected": "icecast:8000/radio.mp3",
+    "icecast_down": "radio.example:8000/radio.mp3",
 }
 
 
@@ -25,7 +25,7 @@ def _status(listeners: int) -> dict:
     return {
         "icestats": {
             "source": {
-                "listenurl": "http://localhost:8000/button.mp3",
+                "listenurl": "http://localhost:8000/radio.mp3",
                 "listeners": listeners,
                 "listener_peak": listeners + 2,
                 "title": "nowave - Dahlia",
@@ -38,7 +38,7 @@ def test_playout_state_parses_health():
     state = antenne.playout_state(HEALTH)
     assert state["reachable"] is True
     assert state["silence_s"] == 0.5
-    assert state["icecast_down"] == ["radio.example:8000/button.mp3"]
+    assert state["icecast_down"] == ["radio.example:8000/radio.mp3"]
     assert antenne.playout_state(None) == {"reachable": False}
 
 
@@ -68,12 +68,12 @@ async def test_state_json_aggregates(client: QuartClient, auth: dict, app):
         transport=httpx.MockTransport(status_handler)
     )
     app.config["PLAYOUT_OUTPUTS"] = [
-        {"driver": "icecast", "host": "icecast", "port": 8000, "mount": "button.mp3"},
+        {"driver": "icecast", "host": "icecast", "port": 8000, "mount": "radio.mp3"},
         {
             "driver": "icecast",
             "host": "radio.example",
             "port": 8000,
-            "mount": "button.mp3",
+            "mount": "radio.mp3",
         },
         {"driver": "alsa", "device": "default"},
     ]
@@ -100,10 +100,10 @@ async def test_state_json_aggregates(client: QuartClient, auth: dict, app):
     assert body["engine"]["db_ok"] is True
     assert body["incidents"][0]["kind"] == "silence"
     listeners = {row["target"]: row for row in body["listeners"]}
-    local = listeners["icecast:8000/button.mp3"]
+    local = listeners["icecast:8000/radio.mp3"]
     assert local["listeners"] == 3
     assert local["connected"] is True
-    public = listeners["radio.example:8000/button.mp3"]
+    public = listeners["radio.example:8000/radio.mp3"]
     assert public["reachable"] is False
     assert public["connected"] is False
     assert isinstance(body["asrun"], list)

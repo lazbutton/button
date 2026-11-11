@@ -3,7 +3,6 @@ from radiotomate.commands import (  # noqa: F401
     install,
     interface,
     maintenance,
-    ntf,
     radiotomate_cli,
     scheduler,
     update,

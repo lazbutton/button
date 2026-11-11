@@ -29,6 +29,10 @@ KEYS = (
 )
 # What a listener may see, without a session: everything but the harbor.
 PUBLIC_KEYS = tuple(key for key in KEYS if not key.startswith("harbor_"))
+# The harbor of the software, when the station leaves it unset: the port compose.yml
+# publishes, and the mount of Liquidsoap's input (input_name). The host has none.
+HARBOR_PORT = 6800
+HARBOR_MOUNT = "/stream"
 
 TEXT_LIMITS = {"name": 80, "short": 16, "tagline": 120}
 URL_LIMIT = 500

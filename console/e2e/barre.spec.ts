@@ -1,4 +1,6 @@
 import type { Page, Route } from "@playwright/test";
+import { withStation } from "../src/api/station.ts";
+import type { PublicStation } from "../src/api/types.ts";
 import { DEFAULT_SOURCE_URL, type Brand } from "../src/lib/brand.ts";
 import { monitorSources, sourceById } from "../src/lib/monitorSource.ts";
 import { antenne, expect, seConnecter, tenirLAntenne, test } from "./banc.ts";
@@ -15,11 +17,26 @@ const barre = (page: Page) => page.getByRole("banner");
 const casque = (page: Page) => barre(page).getByRole("button", { name: /^(Écouter au casque|Arrêter l’écoute)/ });
 const echapper = (texte: string) => texte.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-/** Le flux public, tel que la console le lit dans brand.json. */
+/** Le flux public, tel que la console le lit : les réglages de la station d'exemple, sur brand.json. */
 async function adresseDuFlux(page: Page): Promise<URL> {
   const marque = (await (await page.request.get("/brand.json")).json()) as Brand;
-  return new URL(sourceById(monitorSources(marque), "public").stream);
+  const station = (await (await page.request.get("/public/station.json")).json()) as PublicStation;
+  const source = sourceById(monitorSources(withStation(marque, station)), "public");
+  if (!source) throw new Error("Le banc n’a pas de flux public réglé : voir engine/tests/e2e/seed.py.");
+  return new URL(source.stream);
 }
+
+/** Une station neuve : le moteur n'a aucun réglage, et brand.json ne donne aucune adresse. */
+const SANS_REGLAGE: PublicStation = {
+  name: null,
+  short: null,
+  tagline: null,
+  locale: null,
+  public_stream_url: null,
+  now_url: null,
+  status_url: null,
+  source_url: null,
+};
 
 const versLeFlux = (flux: URL) => (url: URL) => url.origin === flux.origin && url.pathname === flux.pathname;
 
@@ -127,6 +144,32 @@ test("écouter l’antenne au casque, puis arrêter", async ({ page }) => {
   await casque(page).click();
   await expect(casque(page)).toHaveAttribute("aria-pressed", "false");
   await expect(casque(page)).toHaveAccessibleName("Écouter au casque : Antenne publique");
+});
+
+test("sans flux public réglé, le casque dit quoi régler, et mène l’admin au réglage", async ({ page }) => {
+  await page.route("**/public/station.json", (route) => route.fulfill({ json: SANS_REGLAGE }));
+  await seConnecter(page, "admin");
+  await expect(casque(page)).toHaveAccessibleName("Écouter au casque : aucun flux réglé");
+  await casque(page).click();
+  await expect(page.getByText("L’adresse du flux public n’est pas réglée : le casque n’a rien à écouter.")).toBeVisible();
+  // Rien à choisir : la source du casque n'a pas de flux.
+  await expect(barre(page).getByRole("button", { name: /^Source du casque/ })).toHaveCount(0);
+
+  await page.getByRole("link", { name: "Régler le flux public" }).click();
+  await expect(page.getByRole("tab", { name: "Station", selected: true })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Flux public", exact: true })).toBeVisible();
+});
+
+test("sans flux public réglé, un animateur apprend qui le règle", async ({ page }) => {
+  await page.route("**/public/station.json", (route) => route.fulfill({ json: SANS_REGLAGE }));
+  await seConnecter(page, "animateur");
+  await casque(page).click();
+  await expect(
+    page.getByText(
+      "L’adresse du flux public n’est pas réglée : le casque n’a rien à écouter. Un admin la règle dans Réglages → Station.",
+    ),
+  ).toBeVisible();
+  await expect(page.getByRole("link", { name: "Régler le flux public" })).toHaveCount(0);
 });
 
 test("un flux muet au casque : la console le dit, sans marteler", async ({ page }) => {

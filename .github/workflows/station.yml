@@ -170,7 +170,7 @@ jobs:
             echo "::error title=Mot de passe admin::la sortie de station install le contient, sans terminal."
             exit 1
           fi
-          sudo scripts/smoke.sh http://127.0.0.1:30126 http://127.0.0.1:18000/button.mp3
+          sudo scripts/smoke.sh http://127.0.0.1:30126 http://127.0.0.1:18000/radio.mp3
       - name: Install again, nothing changes
         timeout-minutes: 10
         working-directory: /opt/button
@@ -338,7 +338,7 @@ jobs:
           fi
           sudo sh -c 'ls -d data/radiotomate.avant-restauration-* .env.avant-restauration-*'
           sudo station status 2>&1 | tee "$out/status-apres.log"
-          sudo scripts/smoke.sh http://127.0.0.1:30126 http://127.0.0.1:18000/button.mp3
+          sudo scripts/smoke.sh http://127.0.0.1:30126 http://127.0.0.1:18000/radio.mp3
           # No secret in what station wrote.
           if grep -rqF -- "$(cat "$RUNNER_TEMP/admin-avant")" "$out"; then
             echo "::error title=Secrets::une sortie de station contient le mot de passe admin."

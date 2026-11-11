@@ -16,8 +16,6 @@ Une horloge est un motif de positions (`musique`, `jingle`, `son`, `pub`), encha
 
 Le tick d’une seconde venu de Liquidsoap ne recalcule l’horloge que si l’état a changé, à la minute, ou à moins de dix secondes de la fin du titre (`live.should_run_tick`).
 
-Deux grilles prêtes : `Jour habillé` (jingle et trois titres, ancre dure à l’heure, de 7 h à minuit) et `Nuit nappe` (virgule et six titres, ancre molle, de minuit à 7 h). La commande `radiotomate ntf-grille` les pose et crée des sons de remplacement dans la banque.
-
 La séparation des artistes et des titres est dans `scheduler/music_rules.py`.
 
 La requête Beets d’une catégorie passe par `services/beets_query.py`. Beets coupe une requête à ses virgules, et une partie vide y prend toute la bibliothèque : `grouping:jazz,` ferait jouer n’importe quel titre. Les routes JSON des catégories et `testquery.json` refusent une telle requête, comme une requête que Beets ne sait pas lire. L’auto-DJ ignore la partie vide d’une catégorie enregistrée avant ce refus.
@@ -127,7 +125,7 @@ L’image du playout passe `apt-get upgrade` sur celle de Liquidsoap, que ses au
 
 ## Marque et interface
 
-`brand.json` et `brand.py` portent le nom affiché (`INTERFACE_NAME`), le logo et les libellés. Le nom de la station, les adresses de son flux et de son direct, et le lien de son code source se règlent aussi dans la console : des clés `station.*` de la table `settings` (`services/station.py`), sans migration. La console les pose sur son `brand.json`, qui reste le repli. Les pages HTMX gardent le nom de `brand.json`. `layout.jinja` est en `lang=fr`, avec `suite.css`. La feuille `sass/_suite.scss` est la charte noir et blanc du pupitre. Les pages HTMX d’origine (live, carts, auto-DJ, utilisateurs) restent servies par le même processus.
+`brand.json` et `brand.py` portent le nom affiché (`INTERFACE_NAME`), le logo et les libellés, ceux du logiciel : le `brand.json` du paquet ne donne aucune adresse. Le nom de la station, les adresses de son flux et de son direct, et le lien de son code source se règlent dans la console : des clés `station.*` de la table `settings` (`services/station.py`), sans migration. La console les pose sur son `brand.json`, qui reste le repli. L'adresse du direct se lit aussi par tout compte, pour « Passer en direct » : `GET /station/harbor.json`. Les pages HTMX gardent le nom de `brand.json`. `layout.jinja` est en `lang=fr`, avec `suite.css`. La feuille `sass/_suite.scss` est la charte noir et blanc du pupitre. Les pages HTMX d’origine (live, carts, auto-DJ, utilisateurs) restent servies par le même processus.
 
 ## Schéma, de v7 à v18
 
@@ -154,13 +152,13 @@ Horloges et antenne : `scheduler/clock.py`, `timing.py`, `music_rules.py`, `desk
 
 Exploitation : `alerts.py`, `metrics.py`, `retention.py`, `health.py`, `interface/health.py`, et `commands/maintenance.py`.
 
-Métier : `domain/`, `services/` (carts, auto-DJ, requêtes Beets, émissions, banque, grille NTF, jeton d’encodeur), `models/clock.py`, `emission.py`, `execution.py`, `music_category.py`.
+Métier : `domain/`, `services/` (carts, auto-DJ, requêtes Beets, émissions, banque, réglages de la station, jeton d’encodeur), `models/clock.py`, `emission.py`, `execution.py`, `music_category.py`.
 
 Interface : `account.py`, `csrf.py`, `emissions.py`, `integrity.py`, `json_util.py`, `spa.py`, `system.py`.
 
 Agenda : `models/agenda.py`, `domain/agenda.py`, `services/agenda.py`, `scheduler/agenda.py`, `interface/agenda.py`, `interface/public.py`. Banque : `services/media_bank.py`.
 
-Les tests nouveaux couvrent l’horloge, le conducteur, les alertes, le harbor, la rétention, la grille NTF, le CSRF, les JSON d’admin, le tick filtré, l’Agenda et la banque. `liquidsoap --check` sur `playout/radiotomate.liq` fait partie de la vérification.
+Les tests nouveaux couvrent l’horloge, le conducteur, les alertes, le harbor, la rétention, le CSRF, les JSON d’admin, le tick filtré, l’Agenda et la banque. `liquidsoap --check` sur `playout/radiotomate.liq` fait partie de la vérification.
 
 ## Ce qui n’a pas bougé
 

@@ -32,7 +32,7 @@ class InboxApiTest(unittest.TestCase):
             "quota dépassé",
         )
         self.assertIsNone(
-            inbox_api.judge_upload("Artiste - Titre.flac", "ntf2", 20, used=0, limit=100, in_inbox=False, in_bank=False)
+            inbox_api.judge_upload("Artiste - Titre.flac", "mix2", 20, used=0, limit=100, in_inbox=False, in_bank=False)
         )
         self.assertEqual(inbox_api.safe_name("../x.mp3"), "x.mp3")
         self.assertEqual(inbox_api.safe_name(".secret.mp3"), "")
@@ -169,7 +169,7 @@ class InboxApiTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             media = root / "media"
-            (media / "20-archives" / "ntf1").mkdir(parents=True)
+            (media / "20-archives" / "mix1").mkdir(parents=True)
             tusd = root / "tusd"
             tusd.mkdir()
             stored = tusd / "abc"
@@ -178,14 +178,14 @@ class InboxApiTest(unittest.TestCase):
                 "Upload": {
                     "ID": "abc",
                     "Size": 5,
-                    "MetaData": {"filename": "Artiste - Titre.mp3", "destination": "ntf1"},
+                    "MetaData": {"filename": "Artiste - Titre.mp3", "destination": "mix1"},
                     "Storage": {"Path": str(stored)},
                 }
             }
             status, body = inbox_api.finish_upload(event, media, tusd)
             self.assertEqual(status, 200)
             self.assertTrue(body.get("ok"))
-            target = media / "00-inbox" / "archives" / "ntf1" / "Artiste - Titre.mp3"
+            target = media / "00-inbox" / "archives" / "mix1" / "Artiste - Titre.mp3"
             self.assertEqual(target.read_bytes(), b"audio")
             self.assertFalse(stored.exists())
 
@@ -223,29 +223,29 @@ class InboxApiTest(unittest.TestCase):
     def test_banks_are_the_folders_of_20_archives(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             media = Path(raw)
-            for name in ("ntf1", "jazz-live", ".cache", "_vieux", "rotation"):
+            for name in ("mix1", "jazz-live", ".cache", "_vieux", "rotation"):
                 (media / "20-archives" / name).mkdir(parents=True)
             (media / "20-archives" / "notes.txt").write_text("pas un dossier")
             (media / "20-archives" / "jazz-live" / ".banque.json").write_text('{"nom": "Jazz en public"}')
-            self.assertEqual(list(inbox_api.destinations(media)), ["rotation", "jazz-live", "ntf1"])
+            self.assertEqual(list(inbox_api.destinations(media)), ["rotation", "jazz-live", "mix1"])
             rows = inbox_api.destination_list(media)
             self.assertEqual(
                 [(row["id"], row["label"], row["group"]) for row in rows],
-                [("rotation", "Rotation", "rotation"), ("jazz-live", "Jazz en public", "archives"), ("ntf1", "NTF 1", "archives")],
+                [("rotation", "Rotation", "rotation"), ("jazz-live", "Jazz en public", "archives"), ("mix1", "MIX 1", "archives")],
             )
             self.assertEqual(inbox_api.inbox_status(media, None)["destinations"], rows)
 
     def test_an_unknown_bank_is_refused(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             media = Path(raw)
-            event = {"Upload": {"Size": 4, "MetaData": {"filename": "a.mp3", "destination": "ntf9"}}}
+            event = {"Upload": {"Size": 4, "MetaData": {"filename": "a.mp3", "destination": "mix9"}}}
             _status, body = inbox_api.hook_decision(event, media, media / "tusd")
             self.assertEqual(body["HTTPResponse"]["Body"], "destination inconnue")
 
     def test_create_bank(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             media = Path(raw)
-            (media / "20-archives" / "ntf1").mkdir(parents=True)
+            (media / "20-archives" / "mix1").mkdir(parents=True)
             status, body = inbox_api.create_bank(media, "  Archives   jazz ", "jazz")
             self.assertEqual(status, 201)
             self.assertEqual(body["destination"]["label"], "Archives jazz")
@@ -255,7 +255,7 @@ class InboxApiTest(unittest.TestCase):
             for label, folder, code in [
                 ("Autre", "jazz", 409),
                 ("archives JAZZ", "jazz2", 409),
-                ("ntf 1", "ntf1", 409),
+                ("mix 1", "mix1", 409),
                 ("Rotation", "rot", 409),
                 ("Musique", "rotation", 409),
                 ("Sans dossier", "Jazz Live", 400),

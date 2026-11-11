@@ -11,6 +11,8 @@ RUN_DIR is a new folder, ignored by git, for one run only. The seed fills it:
   not depend on the time of the run;
 - ``media/``: a small media bank, to start the engine with ``MEDIA_ROOT`` there
   and for the fake catalog (``console/e2e/stubs/``);
+- the settings of an example station, in radio.example: the console's brand.json
+  gives no address, and its headphones and « Passer en direct » read these;
 - ``comptes.json``: the accounts and their password, drawn for this run only.
 
 The audio files are short sine tones. Nothing here comes from a station.
@@ -30,7 +32,7 @@ from pathlib import Path
 from radiotomate.commands import load_config
 from radiotomate.db import PathLike, QuartAlchemy
 from radiotomate.enums import CartMode, ScheduleMode
-from radiotomate.models import AutoDJSlot, Cart, Sound, User
+from radiotomate.models import AutoDJSlot, Cart, Setting, Sound, User
 from radiotomate.services.autodj import create_clock
 
 # The flags the console writes for each role: permissionsFromRole() in
@@ -39,6 +41,15 @@ ROLES = {
     "admin": {"admin": True},
     "programmateur": {"live": True, "carts": True, "autodj": True},
     "animateur": {"live": True},
+}
+
+# The example station, Réglages → Station in the console. radio.example never
+# answers: the bench stays on the machine (console/e2e/banc.ts).
+STATION = {
+    "public_stream_url": "https://radio.example/radio.mp3",
+    "now_url": "https://radio.example/now.json",
+    "status_url": "https://radio.example/status-json.xsl",
+    "harbor_host": "radio.example",
 }
 
 # title, mode, schedule mode, folder, sounds as (title, seconds, frequency).
@@ -151,6 +162,9 @@ async def fill(db: QuartAlchemy, data_root: Path, password: str) -> None:
         for slot in await AutoDJSlot.all(session):
             slot.clock_id = clock.id
             slot.title = clock.name
+
+        for key, value in STATION.items():
+            await Setting.upsert(session, f"station.{key}", value)
     await db.after_serving()
 
 

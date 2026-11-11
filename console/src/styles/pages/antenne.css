@@ -1386,3 +1386,13 @@ li.is-next .ant-queue-at {
     transition: none;
   }
 }
+
+/* Une ligne du panneau du direct qui dit pourquoi l'adresse manque, et quoi faire. */
+.ant-direct-settings dd.ant-direct-note {
+  flex-wrap: wrap;
+  gap: 0.25rem 0.75rem;
+  padding-block: 0.5rem;
+  color: var(--app-text-muted);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+}

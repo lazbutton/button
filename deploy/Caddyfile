@@ -33,7 +33,7 @@
 
 	header Strict-Transport-Security "max-age=31536000"
 
-	# Les mounts d'Icecast à la racine, comme /button.mp3, et son statut. En
+	# Les mounts d'Icecast à la racine, comme /radio.mp3, et son statut. En
 	# lecture seulement : une source ne se branche jamais par ce domaine. Le
 	# mount WAV du moniteur reste sur le réseau de la station.
 	@icecast {

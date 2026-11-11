@@ -22,9 +22,9 @@ function state(over: Partial<AntenneState> = {}): AntenneState {
     engine: { heartbeat_age_s: 0.4, heartbeat_ok: true, playout_connected: true, db_ok: true },
     incidents: [],
     listeners: [
-      { target: "icecast:8000/button.mp3", host: "icecast", mount: "button.mp3", reachable: true, mounted: true, connected: true, listeners: 1, listener_peak: 2 },
+      { target: "icecast:8000/radio.mp3", host: "icecast", mount: "radio.mp3", reachable: true, mounted: true, connected: true, listeners: 1, listener_peak: 2 },
       { target: "icecast:8000/studio.wav", host: "icecast", mount: "studio.wav", reachable: true, mounted: true, connected: true, listeners: 3, listener_peak: 3 },
-      { target: "radio.example:8000/button.mp3", host: "radio.example", mount: "button.mp3", reachable: true, mounted: true, connected: true, listeners: 12, listener_peak: 20 },
+      { target: "radio.example:8000/radio.mp3", host: "radio.example", mount: "radio.mp3", reachable: true, mounted: true, connected: true, listeners: 12, listener_peak: 20 },
     ],
     asrun: [],
     next_live_slot: null,

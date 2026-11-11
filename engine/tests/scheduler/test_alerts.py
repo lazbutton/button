@@ -185,18 +185,18 @@ async def test_icecast_output_down_opens_and_resolves():
     ok = {
         "silence_s": "0.0",
         "source": "autodj",
-        "icecast_targets": "icecast:8000/button.mp3,radio.example:8000/button.mp3",
-        "icecast_connected": "icecast:8000/button.mp3,radio.example:8000/button.mp3",
+        "icecast_targets": "icecast:8000/radio.mp3,radio.example:8000/radio.mp3",
+        "icecast_connected": "icecast:8000/radio.mp3,radio.example:8000/radio.mp3",
         "icecast_down": "",
     }
     assert await monitor.step(ok, 1.0) == []
     lost = dict(
         ok,
-        icecast_connected="icecast:8000/button.mp3",
-        icecast_down="radio.example:8000/button.mp3",
+        icecast_connected="icecast:8000/radio.mp3",
+        icecast_down="radio.example:8000/radio.mp3",
     )
     assert await monitor.step(lost, 1.0) == ["open:icecast_down"]
-    assert "radio.example:8000/button.mp3" in spy.sent[0]["body"]
+    assert "radio.example:8000/radio.mp3" in spy.sent[0]["body"]
     assert await monitor.step(ok, 1.0) == ["resolved:icecast_down"]
 
 

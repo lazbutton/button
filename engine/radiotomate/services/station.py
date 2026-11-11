@@ -15,6 +15,8 @@ from typing import TYPE_CHECKING
 from sqlalchemy import select
 
 from radiotomate.domain.station import (
+    HARBOR_MOUNT,
+    HARBOR_PORT,
     KEYS,
     PUBLIC_KEYS,
     check_timezone,
@@ -59,6 +61,20 @@ async def public_payload(session: ormSession) -> dict:
     """What a listener may see: ``GET /public/station.json``."""
     settings = await station_settings(session)
     return {key: settings[key] for key in PUBLIC_KEYS}
+
+
+async def harbor_payload(session: ormSession) -> dict:
+    """
+    What an encoder needs, for every account: ``GET /station/harbor.json``, read by
+    « Passer en direct ». The host stays None until an admin sets it; the port and
+    the mount are the software's by default.
+    """
+    settings = await station_settings(session)
+    return {
+        "host": settings["harbor_host"],
+        "port": settings["harbor_port"] or HARBOR_PORT,
+        "mount": settings["harbor_mount"] or HARBOR_MOUNT,
+    }
 
 
 async def admin_payload(session: ormSession) -> dict:

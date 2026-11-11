@@ -83,6 +83,9 @@ services:
       ICECAST_SOURCE_PASSWORD: ${ICECAST_SOURCE_PASSWORD:?ICECAST_SOURCE_PASSWORD manquant dans .env}
       ICECAST_ADMIN_PASSWORD: ${ICECAST_ADMIN_PASSWORD:?ICECAST_ADMIN_PASSWORD manquant dans .env}
       ICECAST_ADMIN_EMAIL: ${ICECAST_ADMIN_EMAIL:-admin@localhost}
+      # Le mount WAV du casque, comme radiotomate-init : Icecast lui donne une
+      # file plus longue.
+      ICECAST_MONITOR_MOUNT: ${ICECAST_MONITOR_MOUNT:-studio.wav}
     ports:
       - "${BIND_ADDRESS:-}${BIND_ADDRESS:+:}${ICECAST_PORT:-18000}:8000"
     # Avec les secrets de .env.example, Icecast ne démarre pas non plus : sinon,
@@ -142,6 +145,9 @@ services:
       RT_COOKIE_SECURE: ${RT_COOKIE_SECURE:-true}
       # 1 en secours seulement : un secret trop court avertit sans bloquer.
       RT_ALLOW_SHORT_SECRETS: ${RT_ALLOW_SHORT_SECRETS:-}
+      # Les mounts d'Icecast : le flux public et le casque WAV de la console.
+      ICECAST_MOUNT: ${ICECAST_MOUNT:-radio.mp3}
+      ICECAST_MONITOR_MOUNT: ${ICECAST_MONITOR_MOUNT:-studio.wav}
     volumes:
       - ${RT_DATA:-./data/radiotomate}:/data
       - ${BUTTON_MEDIA:-./media}:/media

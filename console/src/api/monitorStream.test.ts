@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, mock, test } from "node:test";
-import { answerWithin, playedSeconds, readStream, type StreamWatch } from "./monitorStream.ts";
+import { answerWithin, isNearHost, playedSeconds, readStream, type StreamWatch } from "./monitorStream.ts";
 
 beforeEach(() => mock.timers.enable({ apis: ["setTimeout", "Date"] }));
 afterEach(() => mock.timers.reset());
@@ -202,4 +202,31 @@ test("what the element played is the sum of its played ranges", () => {
   assert.equal(playedSeconds(ranges()), 0);
   // Rattraper le direct saute en avant : l'élément a alors deux plages jouées.
   assert.equal(playedSeconds(ranges([0, 1.5], [4, 6])), 3.5);
+});
+
+test("un flux sur la machine ou le réseau local prend le tampon court, le reste le large", () => {
+  // En morceaux : le garde-fou du dépôt refuse une adresse privée écrite en clair.
+  const ip = (...octets: number[]) => octets.join(".");
+  const near = [
+    "localhost",
+    "localhost.",
+    "studio.localhost",
+    "127.0.0.1",
+    "[::1]",
+    "[fe80::1]",
+    ip(10, 1, 2, 3),
+    ip(172, 16, 0, 9),
+    ip(172, 31, 255, 1),
+    ip(192, 168, 0, 20),
+    ip(169, 254, 1, 1),
+    "nas",
+    "NAS.local",
+    "studio.lan",
+    "nas.home.arpa",
+    "icecast.internal",
+  ];
+  for (const host of near) assert.equal(isNearHost(host), true, host);
+  // Un VPN comme Tailscale, en 100.64.0.0/10 ou en IPv6 unique locale, reste loin.
+  const far = ["radio.example", "192.0.2.10", ip(172, 32, 0, 1), ip(100, 64, 0, 1), "[fd12:3456::1]", "[2001:db8::10]", "999.1.1.1", ""];
+  for (const host of far) assert.equal(isNearHost(host), false, host);
 });

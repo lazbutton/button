@@ -5,7 +5,7 @@
  * testable en node.
  */
 import type { Brand } from "../lib/brand.ts";
-import type { PublicStation, StationSettings } from "./types.ts";
+import type { PublicStation, StationHarbor, StationSettings } from "./types.ts";
 
 /** Les champs de l'onglet Station, dans l'ordre du moteur. Le fuseau n'en est pas : il se lit. */
 export const STATION_FIELDS = [
@@ -107,34 +107,25 @@ export function withStation(brand: Brand, station: Partial<PublicStation> | null
   };
 }
 
-/** Le direct d'origine, quand brand.json ne le donne pas. */
-const HARBOR_HOST = "radio.lazbutton.xyz";
-const HARBOR_PORT = "6800";
-const HARBOR_MOUNT = "/stream";
-
-/** L'hôte d'une adresse de brand.json, avec ou sans `http://`. */
-function hostFromBase(base?: string): string {
-  if (!base) return "";
-  try {
-    return new URL(base.includes("://") ? base : `http://${base}`).hostname;
-  } catch {
-    return "";
-  }
-}
+/**
+ * Le port et le mount du harbor quand la station ne les règle pas : ceux du logiciel,
+ * que le moteur donne alors (`domain/station.py`). L'onglet Station les montre en grisé.
+ */
+export const HARBOR_DEFAULTS = { port: "6800", mount: "/stream" } as const;
 
 export type HarborAddress = { host: string; port: string; mount: string };
 
 /**
- * Ce que « Passer en direct » donne à l'encodeur : l'hôte de brand.json, sinon le
- * direct d'origine. Le panneau ne lit pas les réglages du harbor : `GET /station.json`
- * est réservé aux admins. L'onglet Station les montre en grisé.
+ * Ce que « Passer en direct » donne à l'encodeur, lu dans `GET /station/harbor.json` :
+ * l'hôte, le port et le mount, à copier. Sans hôte réglé, rien : le panneau dit qu'un
+ * admin le règle. Pas d'adresse en repli (ADR 0007).
  */
-export function harborAddress(brand: Brand): HarborAddress {
-  return {
-    host: hostFromBase(brand.apps.harbor?.url) || HARBOR_HOST,
-    port: HARBOR_PORT,
-    mount: HARBOR_MOUNT,
-  };
+export function harborAddress(harbor: Partial<StationHarbor> | null | undefined): HarborAddress | null {
+  const host = setting(harbor?.host);
+  const mount = setting(harbor?.mount);
+  const port = harbor?.port;
+  if (!host || !mount || typeof port !== "number" || !Number.isInteger(port)) return null;
+  return { host, port: String(port), mount };
 }
 
 /** Ce qu'un auditeur voit des réglages : ce que la console pose sur sa marque après un enregistrement. */

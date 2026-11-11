@@ -1,12 +1,14 @@
+import { isNearHost } from "../api/monitorStream";
+
 export type PcmTiming = {
   keepS: number;
   maxS: number;
   startS: number;
 };
 
-/** LAN : proche du zéro, encore assez large pour un jitter local. */
+/** Réseau local : proche du zéro, encore assez large pour un jitter local. */
 export const PCM_LAN: PcmTiming = { keepS: 0.12, maxS: 0.2, startS: 0.04 };
-/** Tailscale / distant : assez large, plus de retour direct. WAV ~1,4 Mbit/s. */
+/** Distant, VPN compris : assez large, plus de retour direct. WAV ~1,4 Mbit/s. */
 export const PCM_REMOTE: PcmTiming = { keepS: 1.2, maxS: 2.0, startS: 0.5 };
 
 export const PCM_KEEP_S = PCM_REMOTE.keepS;
@@ -14,17 +16,10 @@ export const PCM_MAX_S = PCM_REMOTE.maxS;
 
 const PCM_CHUNK_S = 0.025;
 
+/** Un flux sur la machine ou le réseau local prend le tampon court : `isNearHost`. */
 export function pcmTimingForStream(url: string): PcmTiming {
   try {
-    const host = new URL(url).hostname;
-    if (
-      host === "192.168.1.100" ||
-      host === "nasgul" ||
-      host === "localhost" ||
-      host === "127.0.0.1"
-    ) {
-      return PCM_LAN;
-    }
+    if (isNearHost(new URL(url).hostname)) return PCM_LAN;
   } catch {
     /* proto */
   }
@@ -289,8 +284,4 @@ export function isWavStream(url: string): boolean {
   } catch {
     return /\.wav(\?|$)/i.test(url);
   }
-}
-
-export function mp3Twin(url: string): string {
-  return url.replace(/\/studio\.wav(\?.*)?$/i, "/button.mp3$1");
 }

@@ -79,3 +79,38 @@ export function playedSeconds(played: Pick<TimeRanges, "length" | "start" | "end
   for (let i = 0; i < played.length; i++) seconds += played.end(i) - played.start(i);
   return seconds;
 }
+
+/** Une adresse IPv4 écrite en quatre nombres, sinon null. */
+function ipv4(host: string): number[] | null {
+  const parts = host.split(".");
+  if (parts.length !== 4 || !parts.every((part) => /^\d{1,3}$/.test(part))) return null;
+  const octets = parts.map(Number);
+  return octets.every((octet) => octet <= 255) ? octets : null;
+}
+
+/**
+ * Un flux sur la machine ou le réseau local, que le casque lit avec un tampon court :
+ * localhost, une adresse IPv4 privée (RFC 1918) ou de lien local, la boucle ou le lien
+ * local en IPv6, un nom sans point, ou en `.local`, `.lan`, `.home.arpa` ou `.internal`.
+ * Le reste est loin, et garde le tampon large : un VPN comme Tailscale, dans la plage
+ * 100.64.0.0/10 ou en IPv6 unique locale (fc00::/7), compris.
+ */
+export function isNearHost(hostname: string): boolean {
+  const host = hostname
+    .trim()
+    .toLowerCase()
+    .replace(/^\[(.*)\]$/, "$1")
+    .replace(/\.$/, "");
+  if (!host) return false;
+  if (host === "localhost" || host.endsWith(".localhost")) return true;
+  const v4 = ipv4(host);
+  if (v4) {
+    const [a, b] = v4;
+    return (
+      a === 127 || a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254)
+    );
+  }
+  // IPv6 : la boucle, et le lien local, fe80::/10.
+  if (host.includes(":")) return host === "::1" || /^fe[89ab][0-9a-f]:/.test(host);
+  return !host.includes(".") || /\.(local|lan|home\.arpa|internal)$/.test(host);
+}

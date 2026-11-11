@@ -162,6 +162,44 @@ async def test_a_listener_reads_the_public_part_without_a_session(
     assert not [key for key in payload if key.startswith("harbor")]
 
 
+async def test_every_account_reads_the_harbor_and_nothing_else(
+    raw_app,
+    app_configration: dict,
+    beets_integration: BeetsIntegration,
+    dbsession: ormSession,
+    users_password: str,
+):
+    anonymous = _interface_client(app_configration, beets_integration)
+    refused = await anonymous.get("/station/harbor.json")
+    assert refused.status_code == 401
+    assert (await refused.get_json())["error"] == "unauthenticated"
+
+    # « Passer en direct » opens for every account, even one without any right.
+    host = await _admin_client(
+        app_configration, beets_integration, dbsession, users_password, "st-host", {}
+    )
+    unset = await host.get("/station/harbor.json")
+    assert unset.status_code == 200
+    # No host of its own: the software's port and mount.
+    assert await unset.get_json() == {"host": None, "port": 6800, "mount": "/stream"}
+
+    admin = await _admin_client(
+        app_configration, beets_integration, dbsession, users_password, "st-harbor"
+    )
+    harbor = {
+        "harbor_host": "direct.radio.example",
+        "harbor_port": 8005,
+        "harbor_mount": "/direct",
+    }
+    saved = await admin.put("/station.json", json={**STATION, **harbor})
+    assert saved.status_code == 200
+    assert await (await host.get("/station/harbor.json")).get_json() == {
+        "host": "direct.radio.example",
+        "port": 8005,
+        "mount": "/direct",
+    }
+
+
 async def test_the_station_settings_need_an_admin(
     raw_app,
     app_configration: dict,

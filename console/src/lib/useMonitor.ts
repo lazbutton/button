@@ -5,7 +5,6 @@ import {
   PcmAggregator,
   WavPcmParser,
   isWavStream,
-  mp3Twin,
   pcmTimingForStream,
   skipId3,
   type PcmFrame,
@@ -16,7 +15,6 @@ import {
   type NowPlaying,
 } from "./nowPlaying";
 
-const STREAM_FALLBACK = "https://radio.lazbutton.xyz/button.mp3";
 const RECONNECT_MIN_MS = 200;
 const RECONNECT_MAX_MS = 3000;
 const STALL_MS = 8000;
@@ -81,7 +79,8 @@ export function useMonitor(
   enabled = true,
   restartKey = "",
 ) {
-  const stream = streamUrl.trim() || STREAM_FALLBACK;
+  // Sans flux réglé, rien à écouter : pas d'adresse en repli (ADR 0007).
+  const stream = streamUrl.trim();
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const ctxRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
@@ -456,7 +455,7 @@ export function useMonitor(
 
   const play = useCallback(async () => {
     const audio = audioRef.current;
-    if (!audio || !wantLiveRef.current) return;
+    if (!audio || !wantLiveRef.current || !stream) return;
     clearReconnect();
     const gen = ++playGen.current;
     if (audio.getAttribute("src") || pcmSinkRef.current) teardownStream();
@@ -475,35 +474,18 @@ export function useMonitor(
       } catch {
         if (gen !== playGen.current || !wantLiveRef.current) return;
         teardownPcm();
-        const fallback = mp3Twin(stream);
-        if (fallback !== stream) {
-          try {
-            await startPcm(fallback, gen);
-          } catch {
-            if (gen !== playGen.current || !wantLiveRef.current) return;
-            try {
-              await startMse(fallback, gen);
-            } catch {
-              if (gen !== playGen.current || !wantLiveRef.current) return;
-              audio.crossOrigin = "anonymous";
-              audio.src = `${fallback}?t=${Date.now()}`;
-            }
-            ensureGraph();
-            connectElement(audio);
-            usedElement = true;
-          }
-        } else {
-          try {
-            await startMse(stream, gen);
-          } catch {
-            if (gen !== playGen.current || !wantLiveRef.current) return;
-            audio.crossOrigin = "anonymous";
-            audio.src = `${stream}?t=${Date.now()}`;
-          }
-          ensureGraph();
-          connectElement(audio);
-          usedElement = true;
+        try {
+          // MSE ne lit que du MP3 : un flux WAV passe directement par l'élément.
+          if (isWavStream(stream)) throw new Error("wav");
+          await startMse(stream, gen);
+        } catch {
+          if (gen !== playGen.current || !wantLiveRef.current) return;
+          audio.crossOrigin = "anonymous";
+          audio.src = `${stream}?t=${Date.now()}`;
         }
+        ensureGraph();
+        connectElement(audio);
+        usedElement = true;
       }
       if (gen !== playGen.current) return;
       if (!usedElement && audio.getAttribute("src")) {
@@ -691,6 +673,8 @@ export function useMonitor(
   }, [scheduleReconnect]);
 
   useEffect(() => {
+    // Ni now.json ni statut d'Icecast réglés : le titre en cours ne se lit pas ici.
+    if (!nowUrl && !statusUrl) return;
     let cancelled = false;
     async function poll() {
       const next = await fetchNowPlaying(nowUrl, statusUrl);

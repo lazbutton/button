@@ -4,7 +4,11 @@ ICECAST_SOURCE_PASSWORD="${ICECAST_SOURCE_PASSWORD:-buttonhackme}"
 ICECAST_ADMIN_PASSWORD="${ICECAST_ADMIN_PASSWORD:-buttonadmin}"
 # Public contact shown on the Icecast status page.
 ICECAST_ADMIN_EMAIL="${ICECAST_ADMIN_EMAIL:-admin@localhost}"
-export ICECAST_SOURCE_PASSWORD ICECAST_ADMIN_PASSWORD ICECAST_ADMIN_EMAIL
+# The WAV mount of the console's headphones, as radiotomate-init names it: it
+# gets a longer queue. A leading slash is allowed there too.
+ICECAST_MONITOR_MOUNT="${ICECAST_MONITOR_MOUNT:-studio.wav}"
+ICECAST_MONITOR_MOUNT="${ICECAST_MONITOR_MOUNT#/}"
+export ICECAST_SOURCE_PASSWORD ICECAST_ADMIN_PASSWORD ICECAST_ADMIN_EMAIL ICECAST_MONITOR_MOUNT
 # The tests point these at their own files.
 TEMPLATE="${ICECAST_TEMPLATE:-/etc/icecast2/icecast.xml.template}"
 CONFIG="${ICECAST_CONFIG:-/tmp/icecast.xml}"
@@ -32,10 +36,12 @@ BEGIN {
   src = xml(ENVIRON["ICECAST_SOURCE_PASSWORD"])
   adm = xml(ENVIRON["ICECAST_ADMIN_PASSWORD"])
   email = xml(ENVIRON["ICECAST_ADMIN_EMAIL"])
+  monitor = xml(ENVIRON["ICECAST_MONITOR_MOUNT"])
 }
 {
   line = replace($0, "__ICECAST_SOURCE_PASSWORD__", src)
   line = replace(line, "__ICECAST_ADMIN_PASSWORD__", adm)
+  line = replace(line, "__ICECAST_MONITOR_MOUNT__", monitor)
   print replace(line, "__ICECAST_ADMIN_EMAIL__", email)
 }' "$TEMPLATE" > "$CONFIG"
 exec icecast2 -c "$CONFIG"

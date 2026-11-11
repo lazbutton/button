@@ -38,8 +38,8 @@ async def test_named_host_only_during_their_slot(
     dbsession.add(
         Emission(
             scope="weekly",
-            title="Creative Camp",
-            artist="NTF",
+            title="Atelier du soir",
+            artist="Collectif",
             day_of_week=INSIDE.weekday(),
             start_minute=20 * 60,
             end_minute=22 * 60,

@@ -120,7 +120,7 @@ Le script monte un banc à part, dans `.e2e/<date>-<pid>/`, ignoré par git :
 
 | Pièce | Ce que c'est |
 |---|---|
-| Moteur | l'interface en mode démo (`radiotomate interface --demo --port …`), sur une base semée par `engine/tests/e2e/seed.py` : un compte par rôle, des carts, une horloge pour toute la semaine, et une petite banque pour `MEDIA_ROOT` |
+| Moteur | l'interface en mode démo (`radiotomate interface --demo --port …`), sur une base semée par `engine/tests/e2e/seed.py` : un compte par rôle, des carts, une horloge pour toute la semaine, les réglages d'une station d'exemple en `radio.example`, et une petite banque pour `MEDIA_ROOT` |
 | Comptes | `comptes.json` : `admin`, `programmateur` et `animateur`, avec un mot de passe tiré à chaque lancement |
 | Faux services | `console/e2e/stubs/` : le catalogue (recherche et fichiers de la banque) et tusd (envois tus), sans Meilisearch ni Docker. Comme en prod, ils demandent au moteur une session ou, pour tusd, le lien d'un invité |
 | Console | le build de production, servi par `vite preview`, qui relaie comme nginx : les routes du moteur lues dans `console/docker/nginx.conf.template`, `/library` vers le catalogue, `/tus` vers tusd |
@@ -137,7 +137,8 @@ Les parcours, dans `console/e2e/` :
 |---|---|
 | `antenne.spec.ts` | se connecter, puis voir l'antenne |
 | `accessibilite.spec.ts` | chaque écran et chaque onglet passés à axe-core, avec les menus et les panneaux de l'antenne, une confirmation rouge et deux incidents ouverts simulés par `page.route` : en clair et en sombre avec le compte admin, puis la barre latérale repliée et la largeur d'une tablette, et sur un téléphone avec l'animateur |
-| `barre.spec.ts` | la barre du haut : ce qui passe, et le dernier titre connu quand le moteur ne répond plus, l'état de l'antenne et son détail, le casque et sa source, un flux muet, qui s'arrête ou qui ne répond jamais, en PCM comme par l'élément audio, le menu du compte, le lien « Code source » |
+| `barre.spec.ts` | la barre du haut : ce qui passe, et le dernier titre connu quand le moteur ne répond plus, l'état de l'antenne et son détail, le casque et sa source, un casque sans flux réglé, qui dit quoi régler, un flux muet, qui s'arrête ou qui ne répond jamais, en PCM comme par l'élément audio, le menu du compte, le lien « Code source » |
+| `direct.spec.ts` | « Passer en direct » : l'adresse réglée du direct, à copier ; sans hôte réglé, ce que voient l'admin et l'animateur ; face à un moteur sans la route (404), le panneau dit de le mettre à jour |
 | `pupitre.spec.ts` | Espace, `/` et Entrée, la pré-écoute, « Diffuser », déplacer une ligne au clavier et à la souris, monter une ligne en tête devant une ligne déjà commencée, retirer puis annuler, le focus rendu à « Passer en direct » |
 | `conducteur.spec.ts` | la page Conducteur dans les mots de la console ; une ligne sans son, que le bandeau compte et qui mène à « Réparer », et ce que l'animateur en voit ; un retrait au clavier, un retrait sans réponse, et un conducteur qui ne répond plus, simulés par `page.route` devant le moteur de démo |
 | `etats.spec.ts` | session expirée, droit manquant, moteur injoignable, moteur muet, moteur arrêté derrière nginx (502 en HTML), envoi trop lourd pour nginx (413 en HTML) et route absente, puis les gestes refusés ou sans réponse de la page Automate, simulés par `page.route` devant le moteur de démo et le faux catalogue |
@@ -153,7 +154,7 @@ Un parcours échoue aussi sur un défaut d'accessibilité grave ou critique, au 
 
 Un parcours s'écrit dans `console/e2e/<sujet>.spec.ts`. Il importe de `e2e/banc.ts` :
 
-- `test` et `expect`. `test` fait échouer un parcours sur toute erreur JavaScript de la page, et sur un défaut d'accessibilité grave ou critique de la page où il finit. Pour vérifier un état en cours de route, un menu ouvert par exemple : `verifierAccessibilite(page, écran)`, de `e2e/accessibilite.ts`. `test` coupe aussi ce qui sortirait du banc : `brand.json` nomme le flux d'une vraie station, que le casque demande dès l'ouverture. Une requête vers un autre site échoue, et un lien vers un autre site ouvre une page vide à son adresse. Un parcours qui a besoin du flux le sert lui-même par `page.route`, qui passe avant le banc, comme dans `barre.spec.ts` ;
+- `test` et `expect`. `test` fait échouer un parcours sur toute erreur JavaScript de la page, et sur un défaut d'accessibilité grave ou critique de la page où il finit. Pour vérifier un état en cours de route, un menu ouvert par exemple : `verifierAccessibilite(page, écran)`, de `e2e/accessibilite.ts`. `test` coupe aussi ce qui sortirait du banc : les réglages de sa station d'exemple, semés par `engine/tests/e2e/seed.py`, nomment un flux en `radio.example`, que le casque demande dès l'ouverture. Une requête vers un autre site échoue, et un lien vers un autre site ouvre une page vide à son adresse. Un parcours qui a besoin du flux le sert lui-même par `page.route`, qui passe avant le banc, comme dans `barre.spec.ts` ;
 - `seConnecter(page, rôle)`, pour entrer avec un compte semé, ou `remplirLaConnexion(page, rôle)` quand l'écran de connexion est déjà affiché ;
 - `antenne`, `file` et `bibliotheque`, les trois régions du pupitre, `avis` pour un message de la console annoncé comme un état, `alerte` pour un message annoncé comme une alerte, `tenirLAntenne` et `tenirLaFile`.
 

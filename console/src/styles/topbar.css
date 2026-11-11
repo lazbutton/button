@@ -798,3 +798,15 @@
     transition: none;
   }
 }
+
+/* ---- Casque sans flux réglé ---------------------------------------------- */
+
+.tb-listen[data-unset="true"] .tb-listen-toggle {
+  color: var(--app-text-muted);
+}
+
+.tb-pop-text {
+  margin: 0;
+  color: var(--app-text-muted);
+  line-height: 1.45;
+}
