@@ -16,7 +16,7 @@ Le format des fiches, les tailles et la façon de prendre une fiche sont dans le
 | [SEC-06](#sec-06--refuser-les-secrets-dexemple) | Refuser les secrets d'exemple | S | — | fait, `f1d6740` |
 | [SEC-07](#sec-07--ports-fermés-sur-une-machine-exposée) | Ports fermés sur une machine exposée | S | — | fait, `a74aaed` |
 | [GEN-01](#gen-01--réglages-de-la-station-dans-la-console) | Réglages de la station dans la console | L | — | fait, `98252bb` et `c2b39eb` |
-| [GEN-02](#gen-02--sortir-les-données-dune-station-du-code) | Sortir les données d'une station du code | M | GEN-01 | à faire |
+| [GEN-02](#gen-02--sortir-les-données-dune-station-du-code) | Sortir les données d'une station du code | M | GEN-01 | fait, `922889f` |
 | [GEN-03](#gen-03--garde-fou-contre-les-données-de-station) | Garde-fou contre les données de station | S | — | fait, `62a6f8a` |
 | [TST-01](#tst-01--banc-reproductible-et-playwright) | Banc reproductible et Playwright | M | — | fait, `99b2cdf` |
 | [TST-02](#tst-02--parcours-critiques) | Parcours critiques | M | TST-01 | fait, `7d8aa69` |
@@ -35,9 +35,9 @@ Le format des fiches, les tailles et la façon de prendre une fiche sont dans le
 | [DOC-01](#doc-01--guide-dinstallation-sur-vps) | Guide d'installation sur VPS | M | INS-04, MAJ-05, SAV-01 | à faire |
 | [LEG-01](#leg-01--dépendances-images-et-licences) | Dépendances, images et licences | S | — | fait, `512be6f` |
 | [LEG-02](#leg-02--le-code-source-pour-chaque-utilisateur) | Le code source pour chaque utilisateur | S | MAJ-01 | à faire |
-| [FON-14](#fon-14--les-lignes-mises-à-la-suite-passent-à-lantenne) | Les lignes mises à la suite passent à l'antenne | M | le correctif du tirage des bacs | à faire |
+| [FON-14](#fon-14--les-lignes-mises-à-la-suite-passent-à-lantenne) | Les lignes mises à la suite passent à l'antenne | M | — | à faire |
 
-En tout : 28 fiches, 12 de taille S, 13 de taille M et 3 de taille L. Au 11 novembre 2026, 19 sont faites. Il en reste 9 : 2 de taille S, 6 de taille M et 1 de taille L.
+En tout : 28 fiches, 12 de taille S, 13 de taille M et 3 de taille L. Au 11 novembre 2026, 20 sont faites. Il en reste 8 : 2 de taille S, 5 de taille M et 1 de taille L.
 
 ## L'ordre
 
@@ -45,17 +45,16 @@ Ce qui reste, relevé le 11 novembre 2026. Les fiches de deux files différentes
 
 | File | Fiches, dans l'ordre | Fichier partagé |
 |---|---|---|
-| commande `station` | GEN-02, MAJ-04, MAJ-05, SAV-01, SUR-01 | `deploy/station` |
-| marque | LEG-02, après GEN-02 | `console/src/lib/brand.ts` |
+| commande `station` | MAJ-04, MAJ-05, SAV-01, SUR-01 | `deploy/station` |
+| marque | LEG-02 | `console/src/lib/brand.ts` |
 | scheduler | FON-14 | `engine/radiotomate/scheduler/clock.py`, `engine/radiotomate/scheduler/execution.py` |
 | mesure | INS-04 | aucun |
 | guide | DOC-01, en dernier | `docs/` |
 
-- **GEN-02 passe en tête** : le dépôt est public, et les données qu'elle retire y sont lisibles par tous. Elle touche aussi `deploy/station`, par le nom du mount public (`MOUNT`), ses tests bats et la vraie installation de la CI : elle est donc dans la file de la commande `station`.
-- **MAJ-04 est prête** : ses quatre dépendances sont faites. Elle part après GEN-02, ou se rebase sur elle. MAJ-05 la suit, puis SAV-01. Leurs « Accepté quand » demandent une machine jetable en x86-64 : la vraie installation de la CI (`.github/workflows/station.yml`) en est une.
-- **SUR-01** pose ses réglages à l'installation, qui est maintenant `station install` : elle est donc dans la file de la commande `station`. Elle peut y passer plus tôt : MAJ-05 se sert de ses alertes. Elle partage aussi `deploy/scripts/init-radiotomate.sh` avec GEN-02.
+- **MAJ-04 est prête, et passe en tête** : ses quatre dépendances sont faites, et GEN-02, qui touchait le même script, est fusionnée. MAJ-05 la suit, puis SAV-01. Leurs « Accepté quand » demandent une machine jetable en x86-64 : la vraie installation de la CI (`.github/workflows/station.yml`) en est une.
+- **SUR-01** pose ses réglages à l'installation, qui est maintenant `station install` : elle est donc dans la file de la commande `station`. Elle peut y passer plus tôt : MAJ-05 se sert de ses alertes.
 - **LEG-02 et MAJ-04** peuvent toutes deux toucher `.github/workflows/version.yml` : la seconde à fusionner se rebase.
-- **FON-14 attend** le correctif du tirage des bacs, qui touche les mêmes fichiers : voir [Où on en est](README.md#où-on-en-est).
+- **FON-14 n'attend plus rien** : le correctif du tirage des bacs, qui touchait les mêmes fichiers, est fusionné (`550e7f1`). Elle partage `desk.py` avec FON-17 et FON-18, en P2 : une à la fois.
 - **INS-04 n'a aucun conflit.** Elle se mesure sur la version qui suit la 0.2.0 : celle-ci a encore le défaut d'une station vide, dont le conducteur s'empilait.
 - **DOC-01 vient en dernier** : elle attend INS-04, MAJ-05 et SAV-01.
 
@@ -317,6 +316,7 @@ L · dépend de MAJ-01, MAJ-02, MAJ-03, INS-03 · conflits : le script d'exploit
   - Le groupe `radiotomate maintenance` existe, avec `next-live` (`engine/radiotomate/commands/maintenance.py`). `status` le lance par `docker compose exec`, et dit « inconnu » devant une image qui n'a pas la commande : `update` fait de même avec `window`.
   - Le calcul du prochain direct ne voit pas une émission annulée dans l'Agenda (FON-34, en P2) : la fenêtre refuserait une mise à jour pour un direct qui n'aura pas lieu.
   - Des messages de `deploy/station`, `docs/deploiement.md`, `deploy/.env.example` et `docs/exploitation/sauvegarde.md` disent `update` « à venir » : ils changent avec la fiche, comme les tests bats qui les citent (`deploy/tests/`).
+- **À trancher avant de coder** : le point 3 ajoute à `.env` une variable nouvelle avec sa valeur par défaut. Pour `ICECAST_MOUNT`, venue avec GEN-02, ce défaut est `radio.mp3` : posé tel quel, il change l'adresse du flux d'une station installée avant, dont le mount est `button.mp3`. Soit `update` y pose la valeur que la station a déjà. Soit il s'arrête devant une version dont les notes demandent une action, la cite, et attend un accord. Proposition : il s'arrête, car la prochaine action demandée ne sera pas un mount.
 - **À faire** :
   1. **Fenêtre** : `update` refuse si un direct, un créneau nommé ou une diffusion datée commence dans les 30 minutes, sauf `--force`. Le moteur répond par une commande nouvelle, `radiotomate maintenance window`, lancée par `docker compose exec`.
   2. **Sauvegarde** : `backup` d'INS-03, en gardant les cinq dernières.
@@ -472,7 +472,7 @@ S · dépend de MAJ-01 · conflits : `console/src/lib/brand.ts`, `.github/workfl
 
 #### FON-14 · Les lignes mises à la suite passent à l'antenne
 
-M · dépend du correctif du tirage des bacs, qui touche les mêmes fichiers · conflits : `engine/radiotomate/scheduler/clock.py`, `engine/radiotomate/scheduler/execution.py`, `engine/radiotomate/scheduler/desk.py`
+M · dépend de rien · conflits : `engine/radiotomate/scheduler/clock.py`, `engine/radiotomate/scheduler/execution.py`, `engine/radiotomate/scheduler/desk.py`
 
 - **Pourquoi** : au pupitre, « Mettre à la suite » répond « Mis à la suite. » et montre la ligne dans la file, mais le scheduler ne la passe jamais.
 - **Aujourd'hui** :
