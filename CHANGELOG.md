@@ -28,6 +28,7 @@ Le détail des changements du moteur par rapport à l'amont : [docs/moteur/chang
 - Les noms des mounts d'Icecast se règlent dans `.env` : `ICECAST_MOUNT`, le flux public, `radio.mp3` sans elle, et `ICECAST_MONITOR_MOUNT`, le casque WAV de la console, `studio.wav`. `radiotomate-init` refuse un nom avec un dossier, un espace ou une autre extension, et dit lequel corriger ; il dit aussi quand le flux public change d'adresse, et comment garder l'ancienne. Icecast garde sa file plus longue au mount du casque, sous son nouveau nom. La commande `station` lit le mount public dans `.env`, pour son contrôle et les réglages Station, et la démo du moteur montre celui de son YAML. Voir [docs/deploiement.md](docs/deploiement.md#les-mounts).
 - La commande `radiotomate ntf-grille` disparaît, avec sa grille et ses sons de remplacement : écrite pour un festival, elle remplaçait les créneaux de 0 h, 7 h, 10 h et 18 h de chaque jour. Les horloges qu'elle a posées sur une station y restent.
 - Les exemples de requête Beets, sous la sélection d'une catégorie et dans les pages de l'auto-DJ, nomment une banque neutre, `grouping:matinale`, au lieu des archives d'un festival.
+- Le contrôle des données de station, `scripts/verifier.sh donnees` comme la CI, n'excuse plus rien de la station d'origine : ses cinq exceptions, dans les `brand.json` et le casque, sont retirées.
 
 ## 0.2.0
 

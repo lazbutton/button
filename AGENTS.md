@@ -43,7 +43,7 @@ Pour comprendre le tout : [docs/architecture.md](docs/architecture.md). Pour le 
 
 ## Les règles fixes
 
-- **Aucune donnée de station dans ce dépôt** : pas de secret, de mot de passe, d'adresse IP, de nom d'hôte, de domaine ni de compte réel. Les exemples utilisent `radio.example` et des valeurs `change-me`. Les deux `brand.json` en contiennent encore : la fiche GEN-02 les retire, n'en ajoute pas.
+- **Aucune donnée de station dans ce dépôt** : pas de secret, de mot de passe, d'adresse IP, de nom d'hôte, de domaine ni de compte réel. Les exemples utilisent `radio.example` et des valeurs `change-me`.
 - **Une migration publiée ne se modifie jamais.** Une évolution du schéma est une nouvelle migration, qui sait se défaire.
 - **L'API JSON est un contrat** entre le moteur et la console : [ADR 0010](docs/decisions/0010-moteur-et-console-se-deploient-a-part.md).
 - **Le moteur reste un fork mince de Radiotomate.** Le paquet garde son nom, `radiotomate`. Les fichiers de l'amont restent en anglais.

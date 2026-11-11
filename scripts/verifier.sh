@@ -35,17 +35,6 @@ exceptions_donnees=(
   # privé, et un pair qui n'est pas un proxy. Des adresses de test.
   engine/tests/scheduler/test_login_guard.py 'adresse IP privée' '"(::ffff:)?(10\.0\.0\.2|172\.18\.0\.5|192\.168\.1\.10|100\.64\.0\.1)"'
   engine/tests/scheduler/test_login_json.py 'adresse IP privée' '"172\.18\.0\.5"'
-  # À retirer avec GEN-02 : le partage SMB de la station d'origine.
-  console/public/brand.json 'adresse IP privée' '"smbHost": "'
-  # À retirer avec GEN-02 : les adresses Tailscale de la station d'origine.
-  console/public/brand.json 'nom en .ts.net' '"(url|stream|status|nowUrl|tailscaleBase)": "http://'
-  # À retirer avec GEN-02 : le partage SMB et les adresses de la station
-  # d'origine, sur son réseau local.
-  engine/radiotomate/brand.json 'adresse IP privée' '"(smbHost|url|stream|status)": "'
-  # À retirer avec GEN-02 : l'adresse Tailscale de la station d'origine.
-  engine/radiotomate/brand.json 'nom en .ts.net' '"tailscaleBase": "'
-  # À retirer avec GEN-02 : le NAS de la station d'origine, écouté sans tampon.
-  console/src/lib/monitorPcm.ts 'adresse IP privée' 'host === "'
 )
 
 check_donnees() {
