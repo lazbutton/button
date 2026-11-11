@@ -280,8 +280,10 @@ class AlertMonitor:
     ) -> dict[str, str]:
         """Return the conditions currently true, keyed by kind."""
         active: dict[str, str] = {}
+        # The instant, whatever the container's TZ, as the harbor's gate reads
+        # the lives: the alert follows what the encoder may do.
         live_absent = live_slot_without_encoder(
-            self.live_slots, health, now or datetime.now(), self.settings.live_grace
+            self.live_slots, health, now or now_paris(), self.settings.live_grace
         )
         if live_absent:
             active["live_absent"] = live_absent

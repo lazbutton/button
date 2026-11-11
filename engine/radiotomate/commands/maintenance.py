@@ -88,10 +88,9 @@ def next_live(config):
 
     db = QuartAlchemy()
     db.init_from_config(config["db"], {})
-    # The container's clock, read as Paris, like the Antenne page
-    # (antenne.build_state); to the second, since next_live_slot counts whole
-    # seconds until the start.
-    now = now_paris(datetime.now().replace(microsecond=0))
+    # The instant, in Paris, whatever the container's TZ, as window reads it;
+    # to the second, since next_live_slot counts whole seconds until the start.
+    now = now_paris().replace(microsecond=0)
 
     async def find():
         try:

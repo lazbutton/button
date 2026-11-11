@@ -1,10 +1,13 @@
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 from zoneinfo import ZoneInfo
 
 import httpx
 from quart.testing import QuartClient
+from sqlalchemy.orm import Session as ormSession
 
+from radiotomate.domain.agenda import utc_naive
+from radiotomate.models import AgendaDiffusion
 from radiotomate.scheduler import alerts, antenne
 from radiotomate.scheduler.playout import PlayoutGateway, PlayoutResult
 
@@ -108,3 +111,34 @@ async def test_state_json_aggregates(client: QuartClient, auth: dict, app):
     assert public["connected"] is False
     assert isinstance(body["asrun"], list)
     assert body["next_live_slot"] is None
+
+
+async def test_state_json_tells_the_next_live_from_the_instant(
+    container_tz: str, client: QuartClient, auth: dict, dbsession: ormSession
+):
+    # A dated live of the Agenda starts in ten minutes, wherever the station is.
+    start = datetime.now(UTC) + timedelta(minutes=10)
+    dbsession.add(
+        AgendaDiffusion(
+            kind="live",
+            title="Direct de test",
+            starts_at=utc_naive(start),
+            ends_at=utc_naive(start + timedelta(hours=1)),
+        )
+    )
+    await dbsession.commit()
+    with patch.object(
+        PlayoutGateway,
+        "health",
+        new=AsyncMock(
+            return_value=PlayoutResult(
+                ok=True, status_code=200, payload={"source": "autodj"}
+            )
+        ),
+    ):
+        response = await client.get("/antenne/state.json", headers=auth)
+    assert response.status_code == 200, await response.get_data(as_text=True)
+    slot = (await response.get_json())["next_live_slot"]
+    assert slot["title"] == "Direct de test"
+    assert slot["active"] is False
+    assert 9 * 60 <= slot["starts_in_s"] <= 10 * 60
