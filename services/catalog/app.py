@@ -35,6 +35,10 @@ TUSD_DIR = Path(os.environ.get("TUSD_DIR", "/tusd"))
 # L'utilisateur de l'image tusproject/tusd, à qui main() donne TUSD_DIR. Le
 # compose.yml d'une version d'avant ne le dit pas.
 TUSD_USER = os.environ.get("TUSD_USER", "1000:1000")
+# rtuser, l'utilisateur du moteur, à qui setup-media-tree.sh donne la banque au
+# démarrage : une station qui reçoit cette image sans le dossier de sa version,
+# où radiotomate-init le fait aussi, la reçoit ainsi.
+MEDIA_OWNER = os.environ.get("MEDIA_OWNER", "1000:1000")
 AUDIO_EXT = {".mp3", ".wav", ".flac", ".ogg", ".m4a", ".aac", ".aiff", ".aif", ".webm"}
 SKIP_TOP = {"00-inbox", "90-trash"}
 CARTS_ONLY_FLAG = ".library-carts-only"
@@ -966,7 +970,11 @@ def inbox_loop() -> None:
 
 
 def main() -> None:
-    subprocess.run(["/bin/sh", "/app/setup-media-tree.sh", str(MEDIA_ROOT)], check=False)
+    subprocess.run(
+        ["/bin/sh", "/app/setup-media-tree.sh", str(MEDIA_ROOT)],
+        env={**os.environ, "MEDIA_OWNER": MEDIA_OWNER},
+        check=False,
+    )
     MEDIA_ROOT.mkdir(parents=True, exist_ok=True)
     # Avant de servir : tusd n'écrit un envoi qu'après l'accord du hook pre-create.
     warning = inbox_api.give_tusd_dir(TUSD_DIR, TUSD_USER)

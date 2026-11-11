@@ -96,7 +96,12 @@ if [ -d "$CONFIG" ]; then
   rm -rf "$CONFIG"
 fi
 if [ -x /setup-media-tree.sh ]; then
-  /bin/sh /setup-media-tree.sh "$MEDIA"
+  # La banque est à rtuser, comme $DATA : la boucle Beets et l'interface y écrivent.
+  if id rtuser >/dev/null 2>&1; then
+    MEDIA_OWNER="$(id -u rtuser):$(id -g rtuser)" /bin/sh /setup-media-tree.sh "$MEDIA"
+  else
+    /bin/sh /setup-media-tree.sh "$MEDIA"
+  fi
 else
   mkdir -p "$DATA/Music"
 fi

@@ -189,6 +189,37 @@ class InboxApiTest(unittest.TestCase):
             self.assertEqual(target.read_bytes(), b"audio")
             self.assertFalse(stored.exists())
 
+    def test_a_deposit_takes_the_owner_of_its_folder(self) -> None:
+        # Le catalogue tourne en root, et la banque est au moteur : sa copie
+        # serait à root, et la boucle Beets n'y écrirait pas les tags.
+        with tempfile.TemporaryDirectory() as raw:
+            folder = Path(raw)
+            mine = folder.stat()
+            stored = folder / "abc"
+            stored.write_bytes(b"audio")
+            target = folder / "Artiste - Titre.mp3"
+            real_stat = Path.stat
+
+            def stat_as_root(path: Path, *args, **kwargs):
+                found = real_stat(path, *args, **kwargs)
+                if path == target:
+                    return SimpleNamespace(st_uid=0, st_gid=0)
+                return found
+
+            with mock.patch.object(inbox_api.os, "chown") as chown, mock.patch.object(Path, "stat", stat_as_root):
+                self.assertIsNone(inbox_api.move_in(stored, target))
+            chown.assert_called_once_with(target, mine.st_uid, mine.st_gid)
+            # Déjà au propriétaire du dossier : rien ne change. Un refus ne
+            # coupe pas l'envoi.
+            again = folder / "autre.mp3"
+            again.write_bytes(b"audio")
+            with mock.patch.object(inbox_api.os, "chown", side_effect=PermissionError(1, "refusé")) as chown:
+                inbox_api.give_like_folder(again)
+                chown.assert_not_called()
+                with mock.patch.object(Path, "stat", stat_as_root):
+                    inbox_api.give_like_folder(target)
+                chown.assert_called_once()
+
     def test_banks_are_the_folders_of_20_archives(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             media = Path(raw)
