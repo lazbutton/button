@@ -72,7 +72,7 @@ def destinations(media: Path) -> dict[str, tuple[str, str]]:
 
 
 def humanize(name: str) -> str:
-    """ntf1 -> NTF 1, jazz-live -> Jazz live."""
+    """mix1 -> MIX 1, jazz-live -> Jazz live."""
     short = re.fullmatch(r"([a-z]{1,4})-?(\d+)", name)
     if short:
         return f"{short.group(1).upper()} {short.group(2)}"
