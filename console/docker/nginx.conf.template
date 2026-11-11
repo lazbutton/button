@@ -112,6 +112,17 @@ server {
         proxy_send_timeout 30s;
     }
 
+    # The source code of this version (AGPL), for any team account:
+    # source.json, then the archive it names, both put there by the image
+    # (Dockerfile). An image built without them answers 404: the console's
+    # "Code source" link then leads to the repository.
+    location ^~ /code-source/ {
+        include /etc/nginx/security-headers.conf;
+        auth_request /_session;
+        alias /usr/share/nginx/source/;
+        add_header Cache-Control "no-cache";
+    }
+
     # A guest's page (Agenda): /invitation#<token>. The token stays after the
     # "#", so it never reaches a server; its API is throttled, never indexed.
     location = /invitation {

@@ -1,3 +1,10 @@
+# The source code of this version, for the "Code source" link (AGPL): the
+# archive and source.json that scripts/version.py source writes. console.yml
+# passes them as the source build context, which replaces this empty stage.
+# Built without it, the image serves none, and the link leads to the
+# repository.
+FROM scratch AS source
+
 FROM node:26-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -17,6 +24,8 @@ COPY docker/nginx.conf.template /etc/nginx/nginx-default.conf.template
 COPY docker/security-headers.conf.template /etc/nginx/security-headers.conf.template
 COPY docker/docker-entrypoint.sh /docker-entrypoint.d/99-automate-backend.sh
 COPY --from=build /app/dist /usr/share/nginx/html
+# Outside the html root: nginx serves it to a team session only.
+COPY --from=source / /usr/share/nginx/source/
 RUN chmod +x /docker-entrypoint.d/99-automate-backend.sh
 ENV AUTOMATE_BACKEND=http://127.0.0.1:6811
 ENV CATALOG_UPSTREAM=http://catalog:30127

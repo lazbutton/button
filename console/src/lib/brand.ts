@@ -42,7 +42,10 @@ export type BrandTheme = {
  * (`withStation`, api/station.ts).
  */
 export type Brand = {
-  /** `sourceUrl` : dépôt du code (AGPL, lien « Code source » de la console). */
+  /**
+   * `sourceUrl` : le code d'une version modifiée (AGPL, lien « Code source » de la console).
+   * Sans lui, le lien mène au code de la version en service (api/sourceCode.ts).
+   */
   suite: { id: string; name: string; short: string; tagline?: string; sourceUrl?: string };
   labels: Record<string, Record<string, string>>;
   /** `smbShare` : le nom du dossier partagé, pour `{share}` dans un libellé. */
@@ -50,8 +53,6 @@ export type Brand = {
   apps: Record<string, BrandApp>;
   theme?: BrandTheme;
 };
-
-export const DEFAULT_SOURCE_URL = "https://github.com/lazbutton/button";
 
 export type Appearance = "light" | "dark";
 export type AppearanceChoice = "system" | Appearance;

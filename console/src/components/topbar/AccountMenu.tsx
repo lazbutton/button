@@ -1,13 +1,15 @@
 import { DropdownMenu } from "@radix-ui/themes";
-import { CodeXml, ExternalLink, LogOut, Monitor, Moon, Sun, UserRound, type LucideIcon } from "lucide-react";
+import { CodeXml, Download, ExternalLink, LogOut, Monitor, Moon, Sun, UserRound, type LucideIcon } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useAccount } from "../../api/AccountContext";
 import { ROLE_LABEL } from "../../api/roles";
 import { useLogout } from "../../api/SessionGate";
+import { sourceLink } from "../../api/sourceCode";
 import { accountLabel, initials } from "../../api/topbar";
 import { APPEARANCE_OPTIONS, useAppearance } from "../../lib/Appearance";
 import { useBrand } from "../../lib/BrandContext";
-import { DEFAULT_SOURCE_URL, type AppearanceChoice } from "../../lib/brand";
+import type { AppearanceChoice } from "../../lib/brand";
+import { useSourceArchive } from "../../lib/useSourceArchive";
 
 const APPEARANCE_ICON: Record<AppearanceChoice, LucideIcon> = {
   system: Monitor,
@@ -24,10 +26,17 @@ export function AccountMenu() {
   const brand = useBrand();
   const username = account?.username ?? "";
   const mark = initials(username);
-  const sourceUrl = brand.suite.sourceUrl || DEFAULT_SOURCE_URL;
+  const { archive, refresh } = useSourceArchive();
+  // Le code de la version en service, que l'AGPL doit à chaque compte : api/sourceCode.ts.
+  const source = sourceLink(brand.suite.sourceUrl, archive);
 
   return (
-    <DropdownMenu.Root modal={false}>
+    <DropdownMenu.Root
+      modal={false}
+      onOpenChange={(open) => {
+        if (open) refresh();
+      }}
+    >
       <DropdownMenu.Trigger>
         <button type="button" className="tb-account" aria-label={accountLabel(username)}>
           <span className="tb-avatar" aria-hidden="true">
@@ -70,11 +79,19 @@ export function AccountMenu() {
         </DropdownMenu.RadioGroup>
         <DropdownMenu.Separator />
         <DropdownMenu.Item asChild>
-          <a href={sourceUrl} target="_blank" rel="noreferrer">
+          {/* L'archive que sert la station se télécharge ; un autre lien s'ouvre à côté de la console. */}
+          <a
+            href={source.href}
+            {...(source.download ? { download: source.download } : { target: "_blank", rel: "noreferrer" })}
+          >
             <CodeXml size={15} aria-hidden="true" />
             Code source
             <span className="tb-menu-tag">AGPL</span>
-            <ExternalLink size={13} aria-hidden="true" className="tb-menu-end" />
+            {source.download ? (
+              <Download size={13} aria-hidden="true" className="tb-menu-end" />
+            ) : (
+              <ExternalLink size={13} aria-hidden="true" className="tb-menu-end" />
+            )}
           </a>
         </DropdownMenu.Item>
         <DropdownMenu.Item onSelect={logout}>

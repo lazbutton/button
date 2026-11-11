@@ -8,6 +8,7 @@ import {
   apiGet,
   apiPut,
 } from "../api/client";
+import { sourceLink, type SourceArchive } from "../api/sourceCode";
 import {
   HARBOR_DEFAULTS,
   publicStation,
@@ -20,9 +21,10 @@ import {
 } from "../api/station";
 import type { StationSettings } from "../api/types";
 import { SettingsHead } from "../components/reglages/SettingsCard";
-import { DEFAULT_SOURCE_URL, type Brand } from "../lib/brand";
+import type { Brand } from "../lib/brand";
 import { useStationBinding } from "../lib/BrandContext";
 import { monitorSources } from "../lib/monitorSource";
+import { useSourceArchive } from "../lib/useSourceArchive";
 import { LoadingState } from "../ui/DataState";
 import { FormField } from "../ui/FormField";
 import "../styles/pages/reglages.css";
@@ -69,7 +71,8 @@ const GROUPS: { legend: string; description: string; fields: FieldSpec[] }[] = [
   },
   {
     legend: "Code source",
-    description: "Le lien « Code source » du menu du compte, sous licence AGPL. À changer pour une version modifiée.",
+    description:
+      "Le lien « Code source » du menu du compte, sous licence AGPL. Vide, il télécharge le code de la version en service, que sert la station. Pour une version modifiée, y mettre l’adresse de son code.",
     fields: [{ key: "source_url", label: "Lien du code source", kind: "url" }],
   },
 ];
@@ -83,9 +86,10 @@ function isField(name: string | undefined): name is StationField {
 
 /**
  * Ce que la console garde quand un champ reste vide : la valeur de son image, qui ne
- * donne aucune adresse, ou pour le harbor celle du logiciel.
+ * donne aucune adresse, ou pour le harbor celle du logiciel. Pour le code source,
+ * l'archive que porte l'image, à l'adresse où la station la sert.
  */
-function fallbacks(brand: Brand): Partial<StationForm> {
+function fallbacks(brand: Brand, archive: SourceArchive | null): Partial<StationForm> {
   const listen = monitorSources(brand).find((source) => source.id === "public");
   return {
     name: brand.suite.name,
@@ -96,7 +100,7 @@ function fallbacks(brand: Brand): Partial<StationForm> {
     status_url: listen?.statusUrl,
     harbor_port: HARBOR_DEFAULTS.port,
     harbor_mount: HARBOR_DEFAULTS.mount,
-    source_url: brand.suite.sourceUrl || DEFAULT_SOURCE_URL,
+    source_url: new URL(sourceLink(brand.suite.sourceUrl, archive).href, window.location.href).href,
   };
 }
 
@@ -116,6 +120,7 @@ function outdated(caught: unknown): boolean {
 /** Réglages → Station, pour un admin : le nom, les adresses de l'écoute et du direct, le code source. */
 export function StationPage() {
   const { imageBrand, applyStation } = useStationBinding();
+  const { archive } = useSourceArchive();
   const [loaded, setLoaded] = useState<Loaded>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
   const [form, setForm] = useState<StationForm | null>(null);
@@ -187,7 +192,7 @@ export function StationPage() {
     );
   }
 
-  const placeholders = fallbacks(imageBrand);
+  const placeholders = fallbacks(imageBrand, archive);
   const dirty = stationChanged(form, loaded.settings);
   const edit = (key: StationField, value: string) => {
     setForm((current) => (current ? { ...current, [key]: value } : current));

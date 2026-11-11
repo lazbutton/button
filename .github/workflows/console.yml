@@ -101,10 +101,21 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: docker/setup-buildx-action@v4
         if: steps.tags.outputs.published != 'true'
+      - name: Source code
+        # The archive of this commit's code and its source.json, for the
+        # "Code source" link (AGPL): the image serves them to any team account.
+        # For a version, the same bytes as the archive version.yml joins to its
+        # page.
+        if: steps.tags.outputs.published != 'true'
+        env:
+          VERSION: ${{ inputs.version || 'main' }}
+        run: python3 scripts/version.py source "$VERSION" "$RUNNER_TEMP/source"
       - uses: docker/build-push-action@v7
         if: steps.tags.outputs.published != 'true'
         with:
           context: ./console
+          # Replaces the Dockerfile's empty source stage.
+          build-contexts: source=${{ runner.temp }}/source
           platforms: linux/amd64
           # The serve stage upgrades Alpine's packages: from the cache, it
           # would keep those of its first build. The npm build stays cached.

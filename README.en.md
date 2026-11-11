@@ -63,6 +63,6 @@ Contributions are welcome: bug reports, fixes, translations, documentation. Plea
 
 ## License and credits
 
-BUTTON is released under the [GNU Affero General Public License v3.0 or later](LICENSE). If you run a modified version for other people, for instance by hosting a station, you must give them access to its source code.
+BUTTON is released under the [GNU Affero General Public License v3.0 or later](LICENSE). If you run a modified version for other people, for instance by hosting a station, you must give them access to its source code. The console offers it to every account: its « Code source » link downloads the code of the running version, which the station serves itself. For a modified version, set the address of its code in **Réglages → Station**.
 
 The engine derives from [Radiotomate](https://git.sr.ht/~martink/radiotomate), written by Martin Kirchgessner. Authors and bundled assets: [AUTHORS.md](AUTHORS.md).

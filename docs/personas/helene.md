@@ -62,7 +62,6 @@ Deux bénévoles de l'an dernier sont partis. Avant de supprimer leurs comptes, 
 - **La double authentification** des admins : SEC-08, en P2. Un mot de passe d'admin volé donne toute l'antenne.
 - **Les relevés SACEM et SPRE** : FON-01, en P2. **Les statistiques d'écoute**, pour les bilans et les demandes de subvention : FON-03, en P3.
 - **Les données personnelles** : la durée de conservation des journaux d'Icecast, l'effacement d'un compte : FON-11, en P3.
-- **Le code source de la version en service**, que l'AGPL doit à chaque utilisateur, animateurs compris : le lien doit y mener, LEG-02, en [P1](../feuille-de-route/P1-mise-en-prod.md).
 - **Refuser le mot de passe du compte au direct** demande encore une commande sur la machine : [passer-en-direct.md](../exploitation/passer-en-direct.md#refuser-le-mot-de-passe-du-compte).
 - **Le logo de la station** ne s'envoie pas encore depuis la console : GEN-04. **Les mises à jour** ne s'y voient pas encore : MAJ-07. Les deux en P2.
 
