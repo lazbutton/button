@@ -10,24 +10,24 @@ Ce qui reste à faire, rangé par priorité. Chaque tâche est une **fiche** : a
 
 ## Où on en est
 
-Relevé le 11 novembre 2026, sur `main` après la PR 139. La dernière version publiée est la 0.2.0, du 10 novembre. P1 a 21 fiches faites sur 29, P2 cinq sur 48. La personne qui fusionne tient cette partie à jour, comme les tableaux.
+Relevé le 11 novembre 2026, sur `main` après la PR 141. La dernière version publiée est la 0.2.0, du 10 novembre. P1 a 22 fiches faites sur 29, P2 cinq sur 49. La personne qui fusionne tient cette partie à jour, comme les tableaux.
 
 **D'abord** :
 
-1. **La version qui suit la 0.2.0 : la 1.0.0.** Plus rien ne la retient : le correctif du tirage des bacs est fusionné (`550e7f1`). Elle porte ce qu'il faut à une station neuve : la banque de sons rendue au moteur, et un conducteur qui ne s'empile plus. Elle demande une action à chaque station, dite dans la « Mise en service » du [CHANGELOG](../../CHANGELOG.md) : régler ses adresses dans Réglages → Station, et poser `ICECAST_MOUNT=button.mp3` dans `.env` pour garder l'adresse de son flux. Une version qui demande une action est une majeure ([developpement.md](../developpement.md#publier-une-version)) : décidé le 11 novembre, elle se publie en 1.0.0.
+1. **La version qui suit la 0.2.0 : la 1.0.0.** Plus rien ne la retient : le correctif du tirage des bacs est fusionné (`550e7f1`). Elle porte ce qu'il faut à une station neuve : la banque de sons rendue au moteur, et un conducteur qui ne s'empile plus. Elle apporte aussi `station update` (MAJ-04), que la 0.2.0 n'a pas : une station d'aujourd'hui prend d'abord la commande de cette version, comme le dit [deploiement.md](../deploiement.md#avec-la-commande-station). Elle demande une action à chaque station, dite dans la « Mise en service » du [CHANGELOG](../../CHANGELOG.md) : régler ses adresses dans Réglages → Station, et poser `ICECAST_MOUNT=button.mp3` dans `.env` pour garder l'adresse de son flux. Une version qui demande une action est une majeure ([developpement.md](../developpement.md#publier-une-version)) : décidé le 11 novembre, elle se publie en 1.0.0.
 2. **PUB-03, les réglages du dépôt public.** Ils se posent en quelques minutes, par la personne qui tient le dépôt.
-3. **MAJ-04**, la commande de mise à jour : elle est prête, et plus rien ne passe devant elle.
+3. **MAJ-05**, le retour arrière automatique : MAJ-04 est fusionnée, et elle passe en tête de la file de la commande `station`. Tant qu'elle manque, une mise à jour qui échoue se défait à la main.
 
-**Ensuite, ce qui reste de P1**, par files : voir [l'ordre](P1-mise-en-prod.md#lordre). MAJ-05, SAV-01 et SUR-01 suivent MAJ-04 dans la file de la commande `station`. FON-39 n'attend plus rien : les jingles du motif d'une horloge ne passent plus après son démarrage, relevé sur un banc en livrant FON-14. LEG-02 n'attend rien non plus, INS-04 se mesure sur la version suivante, et DOC-01 vient en dernier.
+**Ensuite, ce qui reste de P1**, par files : voir [l'ordre](P1-mise-en-prod.md#lordre). SAV-01 et SUR-01 suivent MAJ-05 dans la file de la commande `station`. FON-39 n'attend plus rien : les jingles du motif d'une horloge ne passent plus après son démarrage, relevé sur un banc en livrant FON-14. LEG-02 n'attend rien non plus, INS-04 se mesure sur la version suivante, et DOC-01 vient en dernier.
 
 **À côté, dans P2**, ce qui n'attend rien de P1 :
 
 - l'antenne, une fiche à la fois sur un même fichier : FON-17 puis FON-18 sur le pupitre (`desk.py`), que FON-14 vient de changer : rejouer leur défaut avant de coder ; FON-33 et FON-35 à FON-38 sur `clock.py`, après FON-39 ; FON-19 et FON-32 sur `execution.py` ;
 - les bacs et la banque : FON-21, FON-31, et FON-20 et FON-40, ces deux-là l'une après l'autre, sur le script du pont Dropbox ;
 - les fiches de la bibliothèque : FON-23 puis FON-24, et ARC-06 à côté. FON-25 à FON-30 les suivent ;
-- sans ordre, chacune avec ses conflits : FON-34, qui partage `alerts.py` avec SUR-01, TST-04, TST-05, TST-07, DEV-01 à DEV-04, PUB-02, GEN-04, SEC-08, SEC-10 et ARC-01.
+- sans ordre, chacune avec ses conflits : FON-34, qui partage `alerts.py` avec SUR-01, TST-04, TST-05, TST-07, DEV-01 à DEV-04, PUB-02, GEN-04, GEN-05, SEC-08, SEC-10, ARC-01, et MAJ-08, que MAJ-04 ne retient plus.
 
-Le reste de P2 attend P1 : MAJ-06 et SUR-03 écrivent dans la commande `station`, MAJ-07 suit MAJ-06, MAJ-08 se mesure pendant une mise à jour, SUR-02 suit SUR-01, et SEC-09 relit le tout.
+Le reste de P2 attend P1 : MAJ-06 et SUR-03 écrivent dans la commande `station`, MAJ-07 suit MAJ-06, SUR-02 suit SUR-01, et SEC-09 relit le tout.
 
 **Ce qui n'est pas du code**, et qu'une personne doit faire ou trancher :
 
