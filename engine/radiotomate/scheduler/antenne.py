@@ -293,7 +293,9 @@ async def build_state(app) -> dict:
         "incidents": incidents_state(app),
         "listeners": listeners,
         "asrun": asrun,
-        "next_live_slot": next_live_slot(slots, datetime.now()),
+        # The instant, whatever the container's TZ, as the harbor's gate reads
+        # the lives: "at" stays the container's clock, like asrun.
+        "next_live_slot": next_live_slot(slots, now_paris()),
     }
 
 

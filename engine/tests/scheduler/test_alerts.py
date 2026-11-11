@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -170,6 +170,18 @@ async def test_ef01_live_slot_without_encoder_opens_after_grace_and_resolves():
     ]
     # Slot over without encoder: no incident either.
     assert await monitor.step(clock, 1.0, now=_paris(2, 22, 30)) == []
+
+
+async def test_ef01_reads_the_instant_whatever_the_container_tz(container_tz: str):
+    monitor = alerts.AlertMonitor(_settings(live_grace_seconds=90), _Spy())
+    # A dated live of the Agenda, on for five minutes, the encoder still absent.
+    start = datetime.now(PARIS) - timedelta(minutes=5)
+    monitor.live_slots = [
+        alerts.DatedLiveSlot("Direct de test", start, start + timedelta(hours=1))
+    ]
+    clock = {"silence_s": "0.0", "source": "carts"}
+    # No time given: the scheduler's loop lets the monitor read the clock.
+    assert await monitor.step(clock, 1.0) == ["open:live_absent"]
 
 
 def test_ef01_playout_down_does_not_double_report():

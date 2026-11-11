@@ -25,6 +25,7 @@ from radiotomate.commands.maintenance import (
 )
 from radiotomate.commands.update import do_update
 from radiotomate.db import QuartAlchemy
+from radiotomate.domain.agenda import MONTHS, WEEKDAYS, paris
 
 PARIS = ZoneInfo("Europe/Paris")
 MONDAY_NOON = datetime(2026, 9, 21, 12, 0, tzinfo=PARIS)
@@ -90,12 +91,27 @@ def config_path(tmp_path: Path) -> Path:
     return path
 
 
-def _next_live(config_path: Path) -> subprocess.CompletedProcess:
+def _dated_live(start: datetime) -> str:
+    """A dated live of the Agenda, an hour from ``start``: naive UTC, to the
+    second, as the Agenda stores it."""
+    return (
+        "insert into agenda_diffusions"
+        " (kind, title, starts_at, ends_at, created, modified)"
+        f" values ('live', 'Direct de test', '{start}',"
+        f" '{start + timedelta(hours=1)}', '2026-09-01 00:00:00',"
+        " '2026-09-01 00:00:00')"
+    )
+
+
+def _next_live(
+    config_path: Path, timezone: str = "Europe/Paris"
+) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["radiotomate", "-c", str(config_path), "maintenance", "next-live"],
         capture_output=True,
         text=True,
         check=False,
+        env={**os.environ, "TZ": timezone},
     )
 
 
@@ -115,6 +131,25 @@ async def test_next_live_reads_the_weekly_shows(config_path: Path):
     assert result.stdout == "QG, en cours\n" or (
         result.stdout.startswith("QG, mercredi ") and " à 20:00, dans " in result.stdout
     ), result.stdout
+
+
+@pytest.mark.parametrize("timezone", ["Europe/Paris", "America/Montreal"])
+async def test_next_live_reads_a_dated_live(config_path: Path, timezone: str):
+    # The live starts in ten minutes, whatever the day.
+    start = datetime.now(UTC).replace(tzinfo=None, microsecond=0) + timedelta(
+        minutes=10
+    )
+    await _database(config_path.parent / "radiotomate.db", _dated_live(start))
+    # A station in another time zone reads the same instant, told in Paris.
+    result = _next_live(config_path, timezone)
+    assert result.returncode == 0, result.stderr
+    at = paris(start)
+    day = f"{WEEKDAYS[at.weekday()]} {at.day} {MONTHS[at.month - 1]}"
+    # Nine minutes and some seconds, once the command has started.
+    assert result.stdout in {
+        f"Direct de test, {day} à {at:%H:%M}, dans {minutes} min\n"
+        for minutes in (9, 10)
+    }, result.stdout
 
 
 def test_what_blocks_nothing_on_an_empty_station():
@@ -280,14 +315,7 @@ async def test_window_is_taken_before_a_dated_live(config_path: Path, timezone: 
     start = datetime.now(UTC).replace(tzinfo=None, microsecond=0) + timedelta(
         minutes=10
     )
-    end = start + timedelta(hours=1)
-    await _database(
-        config_path.parent / "radiotomate.db",
-        "insert into agenda_diffusions"
-        " (kind, title, starts_at, ends_at, created, modified)"
-        f" values ('live', 'Direct de test', '{start}', '{end}',"
-        " '2026-09-01 00:00:00', '2026-09-01 00:00:00')",
-    )
+    await _database(config_path.parent / "radiotomate.db", _dated_live(start))
     # A station in another time zone reads the same instant.
     result = _window(config_path, timezone)
     assert result.returncode == 1, result.stderr

@@ -55,6 +55,7 @@ La CI lance `pytest` avec `TZ=Europe/Paris`, sans `tests/interface` ni `tests/e2
 - L'Agenda et les tables nouvelles stockent de l'UTC naïf. Les conversions passent par les fonctions de `domain/agenda.py`.
 - L'API rend l'heure de Paris avec son décalage, par exemple `2026-11-07T22:00+01:00`.
 - Ne jamais comparer deux heures de conventions différentes. Les tests tournent avec `TZ=Europe/Paris`, comme la CI.
+- Un créneau ou un direct de l'Agenda se compare à l'instant : `now_paris()`, sans argument. `now_paris(datetime.now())` lit l'horloge du conteneur comme l'heure de Paris : c'est faux sur une station réglée sur un autre fuseau, et la CI ne le voit pas. Un test qui laisse le code lire l'horloge demande la fixture `container_tz` de `tests/scheduler/conftest.py` : il passe aussi sous `America/Montreal`.
 
 ## Interrupteurs
 

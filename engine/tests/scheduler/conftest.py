@@ -1,3 +1,5 @@
+import os
+import time
 from collections.abc import AsyncGenerator, Generator
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -38,6 +40,24 @@ class PatientTestApp(TestApp):
 @pytest.fixture(autouse=True)
 def patient_test_app(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(Quart, "test_app_class", PatientTestApp)
+
+
+@pytest.fixture(params=["Europe/Paris", "America/Montreal"])
+def container_tz(request: pytest.FixtureRequest) -> Generator[str, None, None]:
+    """
+    The station's time zone, the ``TZ`` of its containers (ADR 0005): the wall
+    clock that ``datetime.now()`` reads. A test that asks for it runs twice, in
+    Paris like the CI, then in Montreal, where that clock is not Paris's.
+    """
+    before = os.environ.get("TZ")
+    os.environ["TZ"] = request.param
+    time.tzset()
+    yield request.param
+    if before is None:
+        del os.environ["TZ"]
+    else:
+        os.environ["TZ"] = before
+    time.tzset()
 
 
 @pytest.fixture(scope="session")
