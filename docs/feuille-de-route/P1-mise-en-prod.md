@@ -10,57 +10,54 @@ Le format des fiches, les tailles et la façon de prendre une fiche sont dans le
 |---|---|---|---|---|
 | [SEC-01](#sec-01--protéger-le-catalogue) | Protéger le catalogue | S | — | fait, `ed13ff2` |
 | [SEC-02](#sec-02--cookie-de-session-sécurisé-par-défaut) | Cookie de session sécurisé par défaut | S | — | fait, `22ed07a` |
-| [SEC-03](#sec-03--limiter-les-essais-de-connexion) | Limiter les essais de connexion | M | — | à faire |
+| [SEC-03](#sec-03--limiter-les-essais-de-connexion) | Limiter les essais de connexion | M | — | fait, `869ecd5` |
 | [SEC-04](#sec-04--identifiants-dencodeur-dédiés) | Identifiants d'encodeur dédiés | M | — | fait, `ac86ab3` |
 | [SEC-05](#sec-05--en-têtes-de-sécurité) | En-têtes de sécurité | S | — | fait, `5dbc61f` |
 | [SEC-06](#sec-06--refuser-les-secrets-dexemple) | Refuser les secrets d'exemple | S | — | fait, `f1d6740` |
 | [SEC-07](#sec-07--ports-fermés-sur-une-machine-exposée) | Ports fermés sur une machine exposée | S | — | fait, `a74aaed` |
 | [GEN-01](#gen-01--réglages-de-la-station-dans-la-console) | Réglages de la station dans la console | L | — | fait, `98252bb` et `c2b39eb` |
 | [GEN-02](#gen-02--sortir-les-données-dune-station-du-code) | Sortir les données d'une station du code | M | GEN-01 | à faire |
-| [GEN-03](#gen-03--garde-fou-contre-les-données-de-station) | Garde-fou contre les données de station | S | — | à faire |
+| [GEN-03](#gen-03--garde-fou-contre-les-données-de-station) | Garde-fou contre les données de station | S | — | fait, `62a6f8a` |
 | [TST-01](#tst-01--banc-reproductible-et-playwright) | Banc reproductible et Playwright | M | — | fait, `99b2cdf` |
 | [TST-02](#tst-02--parcours-critiques) | Parcours critiques | M | TST-01 | fait, `7d8aa69` |
 | [TST-03](#tst-03--parcours-en-ci-et-accessibilité) | Parcours en CI et accessibilité | S | TST-02 | fait, `2333eba` |
-| [MAJ-01](#maj-01--versions-et-canal-stable) | Versions et canal stable | M | — | à faire |
+| [MAJ-01](#maj-01--versions-et-canal-stable) | Versions et canal stable | M | — | fait, `38e12a5` |
 | [MAJ-02](#maj-02--copie-de-la-base-avant-chaque-migration) | Copie de la base avant chaque migration | S | — | fait, `26f0fcc` |
 | [MAJ-03](#maj-03--contrôle-après-déploiement) | Contrôle après déploiement | S | SEC-01 | fait, `bd65070` |
 | [MAJ-04](#maj-04--commande-de-mise-à-jour) | Commande de mise à jour | L | MAJ-01, MAJ-02, MAJ-03, INS-03 | à faire |
 | [MAJ-05](#maj-05--retour-arrière-automatique) | Retour arrière automatique | M | MAJ-04 | à faire |
-| [INS-01](#ins-01--https-par-un-reverse-proxy) | HTTPS par un reverse proxy | M | SEC-01, SEC-02, SEC-05, SEC-07 | à faire |
-| [INS-02](#ins-02--installer-en-une-commande) | Installer en une commande | L | INS-01, GEN-01, MAJ-01, SEC-06 | à faire |
-| [INS-03](#ins-03--commandes-dexploitation) | Commandes d'exploitation | M | INS-02 | à faire |
+| [INS-01](#ins-01--https-par-un-reverse-proxy) | HTTPS par un reverse proxy | M | SEC-01, SEC-02, SEC-05, SEC-07 | fait, `eaeb106` |
+| [INS-02](#ins-02--installer-en-une-commande) | Installer en une commande | L | INS-01, GEN-01, MAJ-01, SEC-06 | fait, `f37f425` |
+| [INS-03](#ins-03--commandes-dexploitation) | Commandes d'exploitation | M | INS-02 | fait, `a5b2eb7` |
 | [INS-04](#ins-04--mesurer-une-station-sur-un-petit-vps) | Mesurer une station sur un petit VPS | S | INS-02 | à faire |
 | [SAV-01](#sav-01--sauvegardes-hors-de-la-machine) | Sauvegardes hors de la machine | M | INS-03 | à faire |
 | [SUR-01](#sur-01--alertes-sur-le-téléphone-et-par-e-mail) | Alertes sur le téléphone et par e-mail | M | — | à faire |
 | [DOC-01](#doc-01--guide-dinstallation-sur-vps) | Guide d'installation sur VPS | M | INS-04, MAJ-05, SAV-01 | à faire |
-| [LEG-01](#leg-01--dépendances-images-et-licences) | Dépendances, images et licences | S | — | à faire |
+| [LEG-01](#leg-01--dépendances-images-et-licences) | Dépendances, images et licences | S | — | fait, `512be6f` |
 | [LEG-02](#leg-02--le-code-source-pour-chaque-utilisateur) | Le code source pour chaque utilisateur | S | MAJ-01 | à faire |
-| [FON-14](#fon-14--les-lignes-mises-à-la-suite-passent-à-lantenne) | Les lignes mises à la suite passent à l'antenne | M | — | à faire |
+| [FON-14](#fon-14--les-lignes-mises-à-la-suite-passent-à-lantenne) | Les lignes mises à la suite passent à l'antenne | M | le correctif du tirage des bacs | à faire |
 
-En tout : 28 fiches, 12 de taille S, 13 de taille M et 3 de taille L.
+En tout : 28 fiches, 12 de taille S, 13 de taille M et 3 de taille L. Au 11 novembre 2026, 19 sont faites. Il en reste 9 : 2 de taille S, 6 de taille M et 1 de taille L.
 
 ## L'ordre
 
-Les fiches d'une même vague peuvent avancer en même temps, une par agent, à condition que leurs **conflits** ne se recoupent pas. Dans une file, les fiches passent l'une après l'autre, parce qu'elles touchent les mêmes fichiers.
-
-**Vague 1, sans dépendance :**
+Ce qui reste, relevé le 11 novembre 2026. Les fiches de deux files différentes peuvent avancer en même temps, une par agent. Dans une file, elles passent l'une après l'autre, parce qu'elles touchent les mêmes fichiers.
 
 | File | Fiches, dans l'ordre | Fichier partagé |
 |---|---|---|
-| nginx | SEC-01, SEC-05, SEC-03 | `console/docker/nginx.conf.template` |
-| démarrage | SEC-02, SEC-06, SEC-07 | `deploy/scripts/init-radiotomate.sh`, `deploy/compose.yml` |
-| migrations | MAJ-02 | `engine/radiotomate/commands/update/__init__.py` |
-| banc | TST-01 | `console/package.json`, `engine/radiotomate/commands/` |
-| garde-fou | GEN-03 | `scripts/verifier.sh` |
-| CI | LEG-01 | `.github/` |
-| alertes | SUR-01 | `engine/radiotomate/scheduler/alerts.py` |
+| commande `station` | GEN-02, MAJ-04, MAJ-05, SAV-01, SUR-01 | `deploy/station` |
+| marque | LEG-02, après GEN-02 | `console/src/lib/brand.ts` |
 | scheduler | FON-14 | `engine/radiotomate/scheduler/clock.py`, `engine/radiotomate/scheduler/execution.py` |
+| mesure | INS-04 | aucun |
+| guide | DOC-01, en dernier | `docs/` |
 
-**Vague 2, dès qu'une file se libère :** SEC-04, GEN-01, TST-02, MAJ-01, MAJ-03, LEG-02. SEC-04 et GEN-01 n'attendent rien, mais elles touchent les mêmes fichiers : `console/src/api/types.ts` et `docs/api.md`. Fusionner l'une, puis rebaser l'autre. SEC-04 prend la migration v18.
-
-**Vague 3 :** GEN-02, TST-03, INS-01.
-
-**Vague 4 et suivantes, une à la fois :** INS-02, puis INS-03 et INS-04, puis MAJ-04 et SAV-01, puis MAJ-05, puis DOC-01. Elles écrivent toutes le même script d'exploitation.
+- **GEN-02 passe en tête** : le dépôt est public, et les données qu'elle retire y sont lisibles par tous. Elle touche aussi `deploy/station`, par le nom du mount public (`MOUNT`), ses tests bats et la vraie installation de la CI : elle est donc dans la file de la commande `station`.
+- **MAJ-04 est prête** : ses quatre dépendances sont faites. Elle part après GEN-02, ou se rebase sur elle. MAJ-05 la suit, puis SAV-01. Leurs « Accepté quand » demandent une machine jetable en x86-64 : la vraie installation de la CI (`.github/workflows/station.yml`) en est une.
+- **SUR-01** pose ses réglages à l'installation, qui est maintenant `station install` : elle est donc dans la file de la commande `station`. Elle peut y passer plus tôt : MAJ-05 se sert de ses alertes. Elle partage aussi `deploy/scripts/init-radiotomate.sh` avec GEN-02.
+- **LEG-02 et MAJ-04** peuvent toutes deux toucher `.github/workflows/version.yml` : la seconde à fusionner se rebase.
+- **FON-14 attend** le correctif du tirage des bacs, qui touche les mêmes fichiers : voir [Où on en est](README.md#où-on-en-est).
+- **INS-04 n'a aucun conflit.** Elle se mesure sur la version qui suit la 0.2.0 : celle-ci a encore le défaut d'une station vide, dont le conducteur s'empilait.
+- **DOC-01 vient en dernier** : elle attend INS-04, MAJ-05 et SAV-01.
 
 ## Déjà fait
 
@@ -187,24 +184,26 @@ L, en deux commits : moteur, puis console · dépend de rien · conflits : `engi
 
 #### GEN-02 · Sortir les données d'une station du code
 
-M · dépend de GEN-01 · conflits : les deux `brand.json`, `console/src/lib/`, `deploy/scripts/init-radiotomate.sh`, `deploy/compose.yml`
+M · dépend de GEN-01 · conflits : les deux `brand.json`, `console/src/lib/`, `deploy/scripts/init-radiotomate.sh`, `deploy/compose.yml`, `deploy/station`, `deploy/tests/`, `.github/workflows/station.yml`, `scripts/verifier.sh`
 
-- **Pourquoi** : le code contient encore les adresses et les noms de la station d'origine. Une autre station les verrait en repli, et ils n'ont rien à faire dans un logiciel publié.
+- **Pourquoi** : le code contient encore les adresses et les noms de la station d'origine. Une autre station les verrait en repli, et ils n'ont rien à faire dans un logiciel publié. Or le dépôt est public, constaté le 11 novembre 2026 : ces données sont déjà lisibles par tous, et la fiche passe en tête de ce qui reste. Elles restent dans l'historique après la fiche : c'est PUB-01.
 - **Aujourd'hui** :
   - `console/public/brand.json` et `engine/radiotomate/brand.json` donnent des adresses, un hôte et un compte du réseau de la station ;
   - des adresses en repli dans `console/src/lib/nowPlaying.ts`, `useMonitor.ts` et `monitorSource.ts`, des noms du réseau local dans `monitorPcm.ts`, l'adresse du direct dans `console/src/api/station.ts` (`harborAddress`), que montre « Passer en direct » ;
   - ce panneau, ouvert à tout compte, ne lit pas les réglages du harbor de GEN-01 : `GET /station.json` est réservé aux admins. Le faire suivre demande de choisir ce qu'un animateur peut lire ;
-  - les mounts `hold.mp3`, `button.mp3` et `studio.wav`, écrits dans `init-radiotomate.sh`, dans la démo de `engine/radiotomate/scheduler_api.py` et dans la console (`monitorPcm.ts`, `monitorSource.ts`, `lib/MonitorContext.tsx`) ;
+  - les mounts `hold.mp3`, `button.mp3` et `studio.wav`, écrits dans `init-radiotomate.sh`, dans la démo de `engine/radiotomate/scheduler_api.py` et dans la console (`monitorPcm.ts`, `monitorSource.ts`, `lib/MonitorContext.tsx`). Depuis INS-02, `deploy/station` écrit aussi le mount public (`MOUNT`), que citent ses tests bats (`deploy/tests/`) et la vraie installation de la CI (`.github/workflows/station.yml`) ;
   - les exemples `grouping:ntf1` dans `pages/CategoriesPage.tsx`, `mock/catalog.ts` et les gabarits `templates/autodj/` ;
-  - la commande `radiotomate ntf-grille` (`commands/ntf.py`, `services/ntf_grille.py`) et son test.
+  - la commande `radiotomate ntf-grille` (`commands/ntf.py`, `services/ntf_grille.py`) et son test ;
+  - le garde-fou de GEN-03 laisse passer ces adresses par cinq exceptions, marquées « À retirer avec GEN-02 » (`exceptions_donnees`, `scripts/verifier.sh`) : deux pour chaque `brand.json`, une pour `console/src/lib/monitorPcm.ts`.
 - **À faire** :
   1. Des `brand.json` neutres, pour une station d'exemple en `radio.example`. La marque d'une station se monte comme une configuration : [ADR 0007](../decisions/0007-la-marque-est-une-configuration.md).
   2. Plus aucune adresse en repli dans le code : sans réglage, la fonction se cache et dit quoi régler.
-  3. Les noms des mounts en variables. Les valeurs par défaut sont neutres.
+  3. Les noms des mounts en variables. Les valeurs par défaut sont neutres. `deploy/station` lit le mount public dans `.env`, et nulle part ailleurs.
   4. Des exemples neutres, comme `grouping:matinale`. `ntf-grille` devient une grille d'exemple neutre, ou disparaît.
+  5. Les cinq exceptions du garde-fou sortent de `scripts/verifier.sh`. La phrase du [AGENTS.md](../../AGENTS.md) de la racine sur les deux `brand.json` aussi, comme celle de [console/AGENTS.md](../../console/AGENTS.md).
 - **Mise en service** : une station existante pose ses noms de mount dans `.env` avant de passer à cette version, sinon l'adresse de son flux change.
 - **Tests** : GEN-03 passe. Les tests qui citent des noms de la station passent à des noms neutres.
-- **Accepté quand** : une installation neuve ne montre ni nom ni adresse de la station d'origine, et GEN-03 est vert.
+- **Accepté quand** : une installation neuve ne montre ni nom ni adresse de la station d'origine, et GEN-03 est vert sans ces cinq exceptions.
 
 #### GEN-03 · Garde-fou contre les données de station
 
@@ -310,6 +309,14 @@ S · dépend de SEC-01 · conflits : aucun, fichier nouveau `deploy/scripts/smok
 L · dépend de MAJ-01, MAJ-02, MAJ-03, INS-03 · conflits : le script d'exploitation, `engine/radiotomate/commands/`, `interface/system.py`, `.github/workflows/`
 
 - **Pourquoi** : mettre à jour doit tenir en une commande, au bon moment, avec une sauvegarde, et dire si tout va bien.
+- **Aujourd'hui**, le 11 novembre 2026 :
+  - `deploy/station` installe et exploite une station (INS-02, INS-03) : `install`, `status`, `logs`, `backup`, `restore`, `config`, `hold`, `unhold`, `cli` et `uninstall`. Il n'a pas encore `update`. Ses règles sont dans [deploy/AGENTS.md](../../deploy/AGENTS.md), partie « La commande station ».
+  - `update` y trouve de quoi faire : le verrou des commandes qui changent la station (`lock_station`), la sauvegarde (`backup_station`), le contrôle (`smoke_ok`), le fichier `HOLD` (`hold_write`), la plus haute version publiée (`latest_version`), et les réglages `BUTTON_UPDATES` et `BUTTON_UPDATE_TIME` de `.env`, que `config` pose.
+  - Depuis la 0.2.0, chaque version publiée joint `station`, `station.tar.gz` et `SHA256SUMS` (`.github/workflows/version.yml`, `scripts/version.py`), et `install` les télécharge puis compare les sommes : cette part du point 3 est faite.
+  - Rien n'efface les archives de `backups/`. `docs/exploitation/sauvegarde.md` annonce qu'`update` gardera les cinq dernières.
+  - Le groupe `radiotomate maintenance` existe, avec `next-live` (`engine/radiotomate/commands/maintenance.py`). `status` le lance par `docker compose exec`, et dit « inconnu » devant une image qui n'a pas la commande : `update` fait de même avec `window`.
+  - Le calcul du prochain direct ne voit pas une émission annulée dans l'Agenda (FON-34, en P2) : la fenêtre refuserait une mise à jour pour un direct qui n'aura pas lieu.
+  - Des messages de `deploy/station`, `docs/deploiement.md`, `deploy/.env.example` et `docs/exploitation/sauvegarde.md` disent `update` « à venir » : ils changent avec la fiche, comme les tests bats qui les citent (`deploy/tests/`).
 - **À faire** :
   1. **Fenêtre** : `update` refuse si un direct, un créneau nommé ou une diffusion datée commence dans les 30 minutes, sauf `--force`. Le moteur répond par une commande nouvelle, `radiotomate maintenance window`, lancée par `docker compose exec`.
   2. **Sauvegarde** : `backup` d'INS-03, en gardant les cinq dernières.
@@ -318,7 +325,7 @@ L · dépend de MAJ-01, MAJ-02, MAJ-03, INS-03 · conflits : le script d'exploit
   5. Le contrôle de MAJ-03.
   6. Un journal, `updates.log`, dans le dossier de la station.
   7. `GET /system/version.json`, pour les admins : la version de chaque service.
-- **Tests** : ShellCheck et `bats` pour le script ; sur une machine jetable, une mise à jour de `0.1.0` vers `0.1.1`.
+- **Tests** : ShellCheck et `bats` pour le script ; sur une machine jetable, une mise à jour d'une version publiée vers la suivante. La vraie installation de la CI (`.github/workflows/station.yml`) peut la porter : une version publiée installée, puis `update` vers `main`.
 - **Accepté quand** : sur une machine jetable, une mise à jour normale coupe l'antenne moins de 30 secondes, et `status` affiche la version installée et la dernière disponible.
 
 #### MAJ-05 · Retour arrière automatique
@@ -326,6 +333,7 @@ L · dépend de MAJ-01, MAJ-02, MAJ-03, INS-03 · conflits : le script d'exploit
 M · dépend de MAJ-04 · conflits : le script d'exploitation
 
 - **Pourquoi** : une mise à jour ne doit jamais laisser l'antenne en panne, même la nuit sans personne.
+- **Aujourd'hui** : `restore` revient déjà seule à la station d'avant quand la station restaurée ne repart pas (`restore_undo`, `deploy/station`). `hold` pose `HOLD` avec sa date et sa raison (`hold_write`), et `status` l'affiche. Le retour arrière d'une mise à jour peut s'en inspirer.
 - **À faire** : si le contrôle échoue après une mise à jour :
   1. retour aux images d'avant pour **tous** les services ;
   2. si le schéma a migré, restauration de la copie de la base d'avant, car l'ancienne version ne sait pas lire le schéma récent. Les minutes écoulées depuis la mise à jour sont perdues, et le journal le dit ;
@@ -387,6 +395,7 @@ M · dépend de INS-02 · conflits : le script d'exploitation
 
 S · dépend de INS-02 · conflits : aucun
 
+- **Aujourd'hui** : INS-02 est faite, la mesure peut se faire. Deux défauts d'une station vide, vus le 10 novembre 2026 sur un VPS de 2 vCPU en 0.2.0, fausseraient les chiffres : la banque de sons à root, et un conducteur qui s'empilait jusqu'à saturer le processeur. Ils sont corrigés sur `main`, pas dans la 0.2.0 : mesurer sur la version suivante. Ce qui reste du second est FON-32, en P2.
 - **À faire** : mesurer la mémoire et le processeur au repos, puis avec 50 auditeurs simulés ; la taille des images ; le disque utilisé ; la bande passante par auditeur, environ 58 Mo par heure d'écoute à 128 kbit/s.
 - **Résultat** : la taille minimale conseillée, écrite dans DOC-01. Si une station ne tient pas dans 4 Go de mémoire, la fiche P3 « moins de services » remonte.
 - **Accepté quand** : les mesures et la taille conseillée sont dans la doc, avec la date et la version mesurée.
@@ -398,6 +407,7 @@ S · dépend de INS-02 · conflits : aucun
 M · dépend de INS-03 · conflits : le script d'exploitation
 
 - **Pourquoi** : une sauvegarde sur la machine disparaît avec elle.
+- **Aujourd'hui** : `station backup` écrit son archive dans `backups/`, sur la machine. `backup_stage` (`deploy/station`) prépare le dossier de la sauvegarde, qu'un envoi hors de la machine peut reprendre tel quel, et `backup_pack` en fait l'archive.
 - **À faire** :
   1. `backup --remote` avec restic, vers un stockage S3 ou SFTP réglé par `config`. Chaque nuit par un minuteur systemd, chiffré avant l'envoi, avec une rotation : 7 quotidiennes, 4 hebdomadaires, 6 mensuelles.
   2. La doc dit la règle : un autre fournisseur que celui du VPS, pour qu'une panne ou une erreur de compte ne touche pas les deux.
@@ -409,10 +419,10 @@ M · dépend de INS-03 · conflits : le script d'exploitation
 
 #### SUR-01 · Alertes sur le téléphone et par e-mail
 
-M · dépend de rien · conflits : `engine/radiotomate/scheduler/alerts.py`, `deploy/scripts/init-radiotomate.sh`
+M · dépend de rien · conflits : `engine/radiotomate/scheduler/alerts.py`, `deploy/scripts/init-radiotomate.sh`, `deploy/station`
 
 - **Pourquoi** : sur un VPS, personne ne regarde l'antenne. Un silence ou un disque plein doit arriver sur un téléphone.
-- **Aujourd'hui** : `scheduler/alerts.py` envoie les alertes vers un webhook JSON ou une tâche Vikunja, réglés dans le bloc `alerts:` du YAML.
+- **Aujourd'hui** : `scheduler/alerts.py` envoie les alertes vers un webhook JSON ou une tâche Vikunja, réglés dans le bloc `alerts:` du YAML. Depuis INS-02, l'installation est `station install` (`deploy/station`) : c'est là que se posent les réglages du point 1.
 - **À faire** :
   1. L'e-mail par SMTP, et ntfy, une notification gratuite sur le téléphone, réglés à l'installation.
   2. Ils servent aux incidents d'antenne, aux mises à jour (faite, annulée, majeure en attente) et au disque presque plein, que `/system/disk.json` sait déjà mesurer.
@@ -426,6 +436,7 @@ M · dépend de rien · conflits : `engine/radiotomate/scheduler/alerts.py`, `de
 
 M · dépend de INS-04, MAJ-05, SAV-01 · conflits : `docs/`
 
+- **Aujourd'hui** : `docs/deploiement.md` porte déjà « Installer sur un VPS », avec « Exploiter la station », puis « Mettre à jour » et « Revenir en arrière ». `docs/exploitation/sauvegarde.md` porte la sauvegarde et la restauration. Les trois pages de la fiche se taillent dans ces parties, une fois `update`, `rollback` et `backup --remote` écrites.
 - **À faire** :
   1. `docs/installer.md` remplace la partie « Installer » de `docs/deploiement.md` : choisir un VPS, avec la taille mesurée par INS-04, un processeur x86-64 et le trafic compté ; le DNS ; l'installation ; le premier réglage dans la console ; brancher un encodeur ; la sécurité de la machine, c'est-à-dire SSH par clé, `unattended-upgrades` et le pare-feu du fournisseur.
   2. `docs/mettre-a-jour.md` et `docs/sauvegarder.md`.
@@ -450,7 +461,7 @@ S · dépend de rien · conflits : `.github/`
 S · dépend de MAJ-01 · conflits : `console/src/lib/brand.ts`, `.github/workflows/`
 
 - **Pourquoi** : l'AGPL oblige à proposer le code source de la version en service à chaque personne qui utilise la console à distance, animateurs compris.
-- **Aujourd'hui** : le lien « Code source » du menu du compte (`components/topbar/AccountMenu.tsx`) mène à `DEFAULT_SOURCE_URL` (`console/src/lib/brand.ts`), ou à `suite.sourceUrl` de `brand.json`.
+- **Aujourd'hui** : le lien « Code source » du menu du compte (`components/topbar/AccountMenu.tsx`) mène à `DEFAULT_SOURCE_URL` (`console/src/lib/brand.ts`), ou à `suite.sourceUrl` de `brand.json`. Le dépôt est public, constaté le 11 novembre 2026, et GitHub joint à la page de chaque version l'archive de son code : le point 1 tient tant que le dépôt reste public. Le lien mène à la racine du dépôt, pas au code de la version en service.
 - **À faire** :
   1. Chaque version publiée joint une archive de son code source.
   2. Le lien mène au code de la version en service, joignable par toute personne qui a un compte, même si le dépôt n'est pas public.
@@ -461,7 +472,7 @@ S · dépend de MAJ-01 · conflits : `console/src/lib/brand.ts`, `.github/workfl
 
 #### FON-14 · Les lignes mises à la suite passent à l'antenne
 
-M · dépend de rien · conflits : `engine/radiotomate/scheduler/clock.py`, `engine/radiotomate/scheduler/execution.py`, `engine/radiotomate/scheduler/desk.py`
+M · dépend du correctif du tirage des bacs, qui touche les mêmes fichiers · conflits : `engine/radiotomate/scheduler/clock.py`, `engine/radiotomate/scheduler/execution.py`, `engine/radiotomate/scheduler/desk.py`
 
 - **Pourquoi** : au pupitre, « Mettre à la suite » répond « Mis à la suite. » et montre la ligne dans la file, mais le scheduler ne la passe jamais.
 - **Aujourd'hui** :
