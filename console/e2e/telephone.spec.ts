@@ -1,4 +1,4 @@
-import { devices, type Locator } from "@playwright/test";
+import { devices, type Locator, type Page } from "@playwright/test";
 import { antenne, bibliotheque, expect, file, seConnecter, test } from "./banc.ts";
 
 // La console à la largeur d'un téléphone, 360 px, au doigt : rien ne déborde,
@@ -81,9 +81,17 @@ test("les gestes du pupitre se font au doigt", async ({ page }) => {
   await expect(page.getByRole("menuitem", { name: "Code source AGPL" })).toBeVisible();
 });
 
+/**
+ * Le premier bouton de ce nom dans la file. La tête de la file n'en a pas
+ * toujours : une ligne déjà partie vers l'antenne est verrouillée, sans
+ * « Retirer » ni « Déplacer ». Le « Diffuser Grande distance maintenant » d'un
+ * parcours du pupitre en laisse une, que le moteur de démo garde en tête de la
+ * file jusqu'à sa fin, trois minutes plus tard, et aucun parcours ne la retire.
+ */
+const dansLaFile = (page: Page, nom: RegExp) => file(page).getByRole("button", { name: nom }).first();
+
 test("les cibles du pupitre et de la barre font 40 px au moins", async ({ page }) => {
   const barre = page.getByRole("banner");
-  const ligne = file(page).getByRole("listitem").first();
   const resultat = bibliotheque(page).getByRole("listitem").first();
   const petites = await cibles([
     page.getByRole("button", { name: "Ouvrir la navigation" }),
@@ -92,7 +100,7 @@ test("les cibles du pupitre et de la barre font 40 px au moins", async ({ page }
     barre.getByRole("button", { name: /, compte .+ : menu$/ }),
     antenne(page).getByRole("button", { name: /^Suivant/ }),
     antenne(page).getByRole("button", { name: "Passer en direct" }),
-    ligne.getByRole("button", { name: /^Retirer / }),
+    dansLaFile(page, /^Retirer /),
     bibliotheque(page).getByRole("searchbox"),
     ...(await bibliotheque(page).getByRole("tab").all()),
     resultat.getByRole("button", { name: /^Mettre / }),
@@ -103,6 +111,6 @@ test("les cibles du pupitre et de la barre font 40 px au moins", async ({ page }
 });
 
 test("la poignée pour déplacer une ligne de la file fait 40 px au moins", async ({ page }) => {
-  const petites = await cibles([file(page).getByRole("listitem").first().getByRole("button", { name: /^Déplacer / })]);
+  const petites = await cibles([dansLaFile(page, /^Déplacer /)]);
   expect(petites).toEqual([]);
 });
