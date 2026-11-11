@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Le tar de GNU, celui de Debian et d'Ubuntu, sur la machine des tests, qui a
+# celui de busybox. En création, chaque -C vaut pour les fichiers qui le
+# suivent, comme dans station backup --with-media : busybox n'en garde qu'un.
+# --occurrence, qui arrête la lecture une fois les fichiers trouvés, ne
+# change rien au résultat : busybox ne le connaît pas, il s'en va. Le reste va
+# au vrai tar.
+set -euo pipefail
+real() { PATH=/usr/local/bin:/usr/bin:/bin tar "$@"; }
+args=() count=0
+for arg; do
+  [[ $arg != --occurrence ]] || continue
+  [[ $arg != -C ]] || count=$((count + 1))
+  args+=("$arg")
+done
+set -- "${args[@]}"
+if ((count < 2)) || [[ $1 != -c* ]]; then
+  real "$@"
+  exit
+fi
+# tar -cf ARCHIVE -C DOSSIER FICHIER… -C DOSSIER FICHIER…
+mode=$1 archive=$2 from=$PWD names=()
+shift 2
+here=$(mktemp -d)
+trap 'rm -rf "$here"' EXIT
+while (($#)); do
+  if [[ $1 == -C ]]; then
+    from=$2
+    shift 2
+    continue
+  fi
+  cp -a "$from/$1" "$here/$1"
+  names+=("$1")
+  shift
+done
+real "$mode" "$archive" -C "$here" "${names[@]}"

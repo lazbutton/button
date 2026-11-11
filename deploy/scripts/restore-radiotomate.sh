@@ -20,15 +20,30 @@ if [[ ! -f "$ARCHIVE" ]]; then
   exit 1
 fi
 
-if ! command -v sqlite3 >/dev/null 2>&1; then
+# sqlite3, sinon Python et son module sqlite3 : l'image du moteur n'a que
+# Python, et station restore y lance ce script.
+if sqlite3 -version >/dev/null 2>&1; then
+  # Sans ~/.sqliterc : ses réglages changeraient la sortie comparée plus bas.
+  sql() {
+    sqlite3 -batch -noheader -init /dev/null "$@"
+  }
+elif command -v python3 >/dev/null 2>&1; then
+  # Les lignes comme sqlite3 les écrit : les colonnes séparées par |.
+  sql() {
+    python3 - "$@" <<'PY'
+import sqlite3
+import sys
+from contextlib import closing
+
+with closing(sqlite3.connect(sys.argv[1])) as con:
+    for row in con.execute(sys.argv[2]):
+        print("|".join("" if value is None else str(value) for value in row))
+PY
+  }
+else
   echo "sqlite3 is required: install it (apt install sqlite3), then retry." >&2
   exit 1
 fi
-
-# Sans ~/.sqliterc : ses réglages changeraient la sortie comparée plus bas.
-sql() {
-  sqlite3 -batch -noheader -init /dev/null "$@"
-}
 
 check_integrity() {
   local result

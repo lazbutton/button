@@ -471,6 +471,11 @@ EOF
 @test "station sans commande donne l'aide ; une commande inconnue est refusée" {
   run bash "$STATION"
   assert_success
+  assert_output --partial "Usage : station COMMANDE [options]"
+  assert_output --partial "  install        installer la station, ou la réparer"
+
+  run bash "$STATION" install --help
+  assert_success
   assert_output --partial "Usage : station install [options]"
 
   run bash "$STATION" detruire
