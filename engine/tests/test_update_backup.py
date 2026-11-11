@@ -363,17 +363,29 @@ async def test_backup_script_archive_restores_elsewhere(
     (tmp_path / "radiotomate.yaml").write_text("db: {}\n")
     (tmp_path / "carts").mkdir()
     (tmp_path / "carts" / "jingle.mp3").write_bytes(b"ID3")
+    # the start sound, as `radiotomate install` names it
+    (tmp_path / "default_start_sound.wav").write_bytes(b"RIFF")
+    # Beets writes its library on air too: what is not yet in the file is in
+    # its journal, which a plain copy would take apart from it
+    (tmp_path / "Beets").mkdir()
+    library = sqlite3.connect(tmp_path / "Beets" / "library.db")
+    library.execute("pragma journal_mode=wal")
+    library.execute("pragma wal_autocheckpoint=0")
+    library.execute("create table items (path)")
+    library.execute("insert into items values ('/media/10-rotation/titre.mp3')")
+    library.commit()
     env = None if command == "sqlite3" else _without_sqlite3(tmp_path)
     archive = tmp_path / "out" / "radiotomate.tar.gz"
 
-    # the engine still holds the database open, as on a station on air
-    made = subprocess.run(
-        ["bash", str(BACKUP), str(tmp_path), str(archive)],
-        capture_output=True,
-        text=True,
-        check=False,
-        env=env,
-    )
+    # the engine and Beets still hold their databases open, as on a station on air
+    with closing(library):
+        made = subprocess.run(
+            ["bash", str(BACKUP), str(tmp_path), str(archive)],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+        )
     assert made.returncode == 0, made.stderr
     assert stat.S_IMODE(archive.stat().st_mode) == 0o600
 
@@ -389,6 +401,11 @@ async def test_backup_script_archive_restores_elsewhere(
     assert value == "kept"
     assert (target / "radiotomate.yaml").read_text() == "db: {}\n"
     assert (target / "carts" / "jingle.mp3").read_bytes() == b"ID3"
+    assert (target / "default_start_sound.wav").read_bytes() == b"RIFF"
+    assert sorted(path.name for path in (target / "Beets").iterdir()) == ["library.db"]
+    with closing(sqlite3.connect(target / "Beets" / "library.db")) as con:
+        rows = con.execute("select path from items").fetchall()
+    assert rows == [("/media/10-rotation/titre.mp3",)]
 
 
 def test_restore_script_puts_the_copy_back_without_sqlite3(tmp_path: Path):
