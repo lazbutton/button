@@ -5,6 +5,7 @@ random order, and no sound comes back early from one round to the next.
 
 import json
 from datetime import datetime, timedelta
+from itertools import pairwise
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -15,10 +16,15 @@ from sqlalchemy.orm import Session as ormSession
 
 from radiotomate.beets import BeetsIntegration
 from radiotomate.enums import RundownStatus
-from radiotomate.models import Cart, Setting, Sound
+from radiotomate.models import Cart, MetadataLog, RundownItem, Setting, Sound
 from radiotomate.quart import CustomQuart
+from radiotomate.scheduler import timing
 from radiotomate.scheduler.clock import PARIS, tick
-from radiotomate.scheduler.execution import record_live_item
+from radiotomate.scheduler.execution import (
+    ensure_forecast,
+    reconcile_as_run,
+    record_live_item,
+)
 from radiotomate.scheduler.rundown import build_rundown
 from radiotomate.services.cart_draw import (
     SETTING_DRAWN,
@@ -160,6 +166,52 @@ def test_the_next_round_opens_early_when_the_last_sounds_are_planned():
     antenna.play(sounds[1])
     for _ in range(20):
         assert draw_without_repeat(sounds, antenna.drawn, ahead=[3]) is sounds[0]
+
+
+@pytest.mark.parametrize(
+    ("count", "heard", "ahead"),
+    [
+        (3, [1, 2], [3]),
+        (4, [1, 2], [3, 4]),
+        (4, [1, 2, 3, 4], [2, 1, 4, 3]),
+        (6, [1, 2, 3], [4, 5, 6]),
+        (6, [1, 2, 3, 4, 5, 6], [6, 5, 4, 3, 2, 1]),
+    ],
+)
+def test_a_sound_to_play_now_is_neither_the_last_heard_nor_the_next_planned(
+    count: int, heard: list[int], ahead: list[int]
+):
+    """The conducteur holds every sound the round has left, as it does six hours
+    ahead: « Diffuser maintenant » opens the next round early, with a sound that
+    neither just played nor plays at the next break."""
+    sounds = _bac(count)
+    antenna = _Antenna(sounds)
+    for sound_id in heard:
+        antenna.play(sounds[sound_id - 1])
+    avoid = {heard[-1], ahead[0]}
+    for _ in range(50):
+        assert draw_without_repeat(sounds, antenna.drawn, ahead=ahead).id not in avoid
+
+
+def test_a_sound_never_said_on_air_does_not_hold_the_cart():
+    """A sound sent that the playout never says on air, as a file gone
+    unreadable: its round cannot close, yet the cart goes on with the others,
+    and tries it again only once half of them have played."""
+    sounds = _bac(4)
+    drawn: list[int] = []
+    now = datetime(2026, 9, 14, 8, 0)
+    aired: list[int] = []
+    for _ in range(40):
+        sound = draw_without_repeat(sounds, drawn)
+        now += timedelta(minutes=10)
+        sound.last_played = now
+        if sound.id != 4:
+            drawn = drawn_after(sounds, drawn, sound.id)
+        aired.append(sound.id)
+    assert all(aired[n] != aired[n - 1] for n in range(1, len(aired)))
+    plays = [index for index, sound_id in enumerate(aired) if sound_id == 4]
+    assert all(later - earlier > 2 for earlier, later in pairwise(plays))
+    assert all(aired.count(sound_id) >= 8 for sound_id in (1, 2, 3))
 
 
 def test_one_sound_and_no_sound():
@@ -389,7 +441,7 @@ async def test_on_air_notes_the_draw(
         assert await _drawn(dbsession) == {key: [first]}
 
 
-async def test_a_broken_note_does_not_lose_the_log(
+async def test_a_state_that_does_not_read_starts_a_new_round(
     raw_app: CustomQuart,
     dbsession: ormSession,
     pubs_cart: Cart,
@@ -407,6 +459,37 @@ async def test_a_broken_note_does_not_lose_the_log(
         )
         assert result.status_code == 200, (await result.data).decode()
     assert await _drawn(dbsession) == {str(pubs_cart.id): [spots[0].id]}
+
+
+async def test_a_fault_in_the_draw_does_not_lose_the_log(
+    raw_app: CustomQuart,
+    dbsession: ormSession,
+    pubs_cart: Cart,
+    auth: dict,
+):
+    """The draw fails to note the sound: what went on air is logged all the same."""
+    spots = await _spots(dbsession, pubs_cart, 2)
+    with patch(
+        "radiotomate.scheduler.metadata_log.note_on_air",
+        side_effect=RuntimeError("draw"),
+    ) as note:
+        async with raw_app.test_app():
+            client = raw_app.test_client()
+            result = await client.post(
+                "/metadata_log",
+                json={
+                    "source": "carts",
+                    "title": "Spot test",
+                    "radiotomate_sound_id": spots[0].id,
+                },
+                headers=auth,
+            )
+            assert result.status_code == 200, (await result.data).decode()
+            logged = await MetadataLog.get(dbsession, limit=1)
+            assert [(row.source, row.title) for row in logged] == [
+                ("carts", "Spot test")
+            ]
+    note.assert_called_once()
 
 
 # -- the clock and its conducteur ----------------------------------------------
@@ -435,6 +518,36 @@ def _music_on_air(time: str) -> dict:
     }
 
 
+async def _on_air(dbsession: ormSession, pushed: dict, time: str) -> None:
+    """The playout says a spot is on air, as ``POST /metadata_log`` takes it in."""
+    log = await MetadataLog.from_playout(
+        dbsession,
+        {
+            "source": "carts",
+            "title": pushed["title"],
+            "radiotomate_sound_id": pushed["radiotomate_sound_id"],
+            "radiotomate_item_id": pushed.get("radiotomate_item_id"),
+            "on_air": datetime.fromisoformat(time).replace(tzinfo=None).isoformat(),
+        },
+    )
+    dbsession.add(log)
+    await reconcile_as_run(dbsession, log)
+    await note_on_air(dbsession, pushed["radiotomate_sound_id"])
+    await dbsession.commit()
+
+
+def _clock_at(time: str):
+    """
+    The clock's own now, set to the tick's: a line it records as it sends it is
+    dated then, not today, and the conducteur reads in order.
+    """
+    moment = datetime.fromisoformat(time)
+    return patch(
+        "radiotomate.scheduler.clock.now_paris",
+        side_effect=lambda now=None: timing.now_paris(moment if now is None else now),
+    )
+
+
 async def _pub_break(
     dbsession: ormSession,
     beets_integration: BeetsIntegration,
@@ -442,7 +555,8 @@ async def _pub_break(
 ) -> str:
     """The spot the clock sends at a pub break, then on air."""
     client = _client()
-    actions = await tick(dbsession, _music_on_air(time), client, beets_integration)
+    with _clock_at(time):
+        actions = await tick(dbsession, _music_on_air(time), client, beets_integration)
     assert any(action.startswith("anchor:") for action in actions)
     pushed = [
         call.kwargs["json"]
@@ -450,8 +564,7 @@ async def _pub_break(
         if call.args[0] == "/queue/carts"
     ]
     assert len(pushed) == 1
-    await note_on_air(dbsession, pushed[0]["radiotomate_sound_id"])
-    await dbsession.commit()
+    await _on_air(dbsession, pushed[0], time)
     return pushed[0]["title"]
 
 
@@ -517,3 +630,69 @@ async def test_the_conducteur_plans_rounds(
     assert planned[1] in titles[:2]
     assert sorted(planned[1:5]) == sorted(titles)
     assert all(planned[n] not in planned[n - 2 : n] for n in range(2, len(planned)))
+
+
+async def _pub_lines(dbsession: ormSession, cart: Cart) -> dict[datetime, tuple]:
+    """The pub lines of the conducteur, by time: status and reason."""
+    rows = await dbsession.scalars(
+        select(RundownItem)
+        .where(RundownItem.cart_id == cart.id, RundownItem.kind == "pub")
+        .order_by(RundownItem.planned_at)
+        .execution_options(populate_existing=True)
+    )
+    return {row.planned_at: (row.status, row.reason) for row in rows}
+
+
+async def test_breaks_held_during_a_live_are_closed(
+    dbsession: ormSession,
+    jingles_cart: Cart,
+    pubs_cart: Cart,
+    beets_integration: BeetsIntegration,
+):
+    """A live holds the pub break of 10:20, which will never go: its line says
+    so, « sauté », and the draw after the live no longer counts it as to come."""
+    await _spots(dbsession, pubs_cart, 3)
+    await ensure_forecast(
+        dbsession,
+        beets_integration,
+        now=datetime(2026, 9, 14, 10, 5, tzinfo=PARIS),
+        horizon_min=60,
+    )
+    held_at = datetime(2026, 9, 14, 10, 20)
+    assert (await _pub_lines(dbsession, pubs_cart))[held_at][0] == "planned"
+    live = {**_music_on_air(f"{MONDAY}T10:20:05+02:00"), "source": "stream"}
+    actions = await tick(dbsession, live, _client(), beets_integration)
+    assert "anchor:20:hold" in actions
+    lines = await _pub_lines(dbsession, pubs_cart)
+    assert lines[held_at] == ("skipped", "retenue pendant le direct")
+    assert lines[datetime(2026, 9, 14, 10, 40)][0] == "planned"
+    held = await dbsession.scalar(
+        select(RundownItem.sound_id).where(
+            RundownItem.cart_id == pubs_cart.id, RundownItem.planned_at == held_at
+        )
+    )
+    draw = await cart_draw(dbsession, await _loaded(dbsession, pubs_cart))
+    assert held not in draw.planned
+
+
+async def test_a_break_an_hour_past_is_closed(
+    dbsession: ormSession,
+    jingles_cart: Cart,
+    pubs_cart: Cart,
+    beets_integration: BeetsIntegration,
+):
+    """The scheduler was stopped at 10:20: that break never went. An hour later
+    its line is closed, « sauté », and the draw no longer waits for it."""
+    spots = await _spots(dbsession, pubs_cart, 3)
+    await _conducteur_line(dbsession, spots[1], 20, RundownStatus.PLANNED)
+    await _conducteur_line(dbsession, spots[2], 40, RundownStatus.PLANNED)
+    await tick(
+        dbsession,
+        _music_on_air(f"{MONDAY}T11:30:05+02:00"),
+        _client(),
+        beets_integration,
+    )
+    lines = await _pub_lines(dbsession, pubs_cart)
+    assert lines[datetime(2026, 9, 14, 10, 20)] == ("skipped", "heure passée")
+    # Within the hour, a soft break may still glide to the end of its title.
+    assert lines[datetime(2026, 9, 14, 10, 40)] == ("planned", None)

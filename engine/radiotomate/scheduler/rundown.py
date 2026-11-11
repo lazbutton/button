@@ -12,6 +12,7 @@ from radiotomate.domain.execution import item_status_code
 from radiotomate.enums import CartMode, PositionKind
 from radiotomate.models import AutoDJSlot, Clock
 from radiotomate.scheduler.clock import (
+    OVERTAKEN,
     _load_cart,
     _pick_music,
     load_sequencer_cursor,
@@ -403,6 +404,49 @@ async def _prepare_cart(  # noqa: PLR0913
     return payload, duration
 
 
+async def _overtaken_cart_line(  # noqa: PLR0913
+    session: ormSession,
+    pos: ClockPosition,
+    clock: Clock,
+    *,
+    at: datetime,
+    daypart: str,
+    carts: dict,
+) -> dict:
+    """
+    A soft anchor a hard one overtakes: « sauté », and the antenna skips it too
+    (clock._fire_due_soft_anchors). It names its cart, not a sound: it takes none,
+    and the cart keeps its order, or its draw, for the anchors that play.
+    """
+    cart_id, title = _clock_cart_ref(pos, clock)
+    cart = await _cached_cart(session, carts, cart_id, title)
+    label = (
+        getattr(cart, "title", None)
+        or title
+        or (f"cart #{cart_id}" if cart_id is not None else "Cart manquant")
+    )
+    payload = _item_payload(
+        at=at,
+        kind=pos.kind,
+        when="anchored",
+        resource=label,
+        queue=_queue_for(pos.kind, "anchored"),
+        status="sauté",
+        clock_name=clock.name,
+        daypart=daypart,
+        duration=0.0,
+        minute=pos.minute,
+        sync=pos.sync,
+        cart=label,
+        clock_id=clock.id,
+        position_id=pos.id,
+        cart_id=getattr(cart, "id", cart_id),
+    )
+    payload["status_code"] = item_status_code(payload)
+    payload["reason"] = OVERTAKEN
+    return payload
+
+
 async def _prepare_sequential(  # noqa: PLR0913
     session: ormSession,
     beets: BeetsIntegration,
@@ -723,22 +767,16 @@ async def build_rundown(  # noqa: PLR0912, PLR0915
 
         if overflow_anchor and upcoming is not None:
             if upcoming_soft is not None and upcoming_soft[0] < upcoming[0]:
-                skipped = await _prepare_cart(
-                    session,
-                    upcoming_soft[1],
-                    clock,
-                    at=upcoming_soft[0],
-                    when="anchored",
-                    daypart=label,
-                    carts=carts,
-                    used_sounds=used_sounds,
+                items.append(
+                    await _overtaken_cart_line(
+                        session,
+                        upcoming_soft[1],
+                        clock,
+                        at=upcoming_soft[0],
+                        daypart=label,
+                        carts=carts,
+                    )
                 )
-                if skipped is not None:
-                    payload, _duration = skipped
-                    payload["status"] = "sauté"
-                    payload["status_code"] = item_status_code(payload)
-                    payload["reason"] = "dépassé par une ancre dure"
-                    items.append(payload)
             anchor_dt, anchor_pos = upcoming
             anchored_item = await _prepare_cart(
                 session,

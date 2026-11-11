@@ -3,7 +3,7 @@ anchor arithmetic. No state, no DB, no Liquidsoap."""
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
@@ -150,6 +150,33 @@ def _next_anchor(
     if soonest is None or soonest_pos is None:
         return None
     return soonest, soonest_pos
+
+
+def hard_anchor_since(
+    since: datetime,
+    now: datetime,
+    slot_start: int,
+    slot_end: int,
+    anchored: list[ClockPosition],
+) -> bool:
+    """
+    Whether a hard anchor of this daypart has come after ``since``, up to ``now``.
+    ``since`` is within the hour before ``now``: the last occurrence of each hard
+    anchor is in this hour or the one before.
+    """
+    local_since = since.replace(tzinfo=None)
+    local_now = now.replace(tzinfo=None)
+    for pos in anchored:
+        if pos.minute is None or not pos.is_hard_sync:
+            continue
+        occurrence = local_now.replace(minute=pos.minute, second=0, microsecond=0)
+        if occurrence > local_now:
+            occurrence -= timedelta(hours=1)
+        if not anchor_in_daypart(slot_start, slot_end, occurrence.hour, pos.minute):
+            continue
+        if local_since < occurrence:
+            return True
+    return False
 
 
 def track_would_overflow_anchor(

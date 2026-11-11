@@ -53,13 +53,17 @@ def draw_without_repeat(
     sounds: Iterable[Sound],
     drawn: Iterable[int] = (),
     before: Sequence[int] = (),
-    ahead: Iterable[int] = (),
+    ahead: Sequence[int] = (),
 ) -> Sound | None:
     """
     One ready sound, drawn among those that have not played in the round under
     way. ``drawn`` are the ids played in it. ``before`` are the ids that play
     before this one and are not on air yet, oldest first; ``ahead`` those
-    already planned after it, which keep their turn.
+    already planned after it, soonest first, which keep their turn.
+
+    When the round has nothing left but sounds heard lately, every sound has
+    played, is on its way or is planned: the next round opens early, with the
+    sound farthest from its last play and its next one (``_farthest``).
     """
     ready = [sound for sound in sounds if sound.available]
     if len(ready) < 2:
@@ -72,13 +76,6 @@ def draw_without_repeat(
         gone.add(sound_id)
     if gone >= ids:
         gone = set()
-    taken = set(ahead)
-    # The round's last sounds may all be planned ahead: the next round opens early.
-    free = (
-        [sound for sound in ready if sound.id not in gone | taken]
-        or [sound for sound in ready if sound.id not in taken]
-        or ready
-    )
     # From one round to the next, the half heard last waits. A sound that plays
     # before this one comes after any sound played.
     turn = {sound_id: index for index, sound_id in enumerate(before)}
@@ -88,7 +85,36 @@ def draw_without_repeat(
         reverse=True,
     )
     recent = {sound.id for sound in heard[: len(ready) // 2]}
-    return choice([sound for sound in free if sound.id not in recent] or free)
+    waiting = gone | set(ahead) | recent
+    in_round = [sound for sound in ready if sound.id not in waiting]
+    if in_round:
+        return choice(in_round)
+    return _farthest(ready, heard, ahead)
+
+
+def _farthest(ready: list[Sound], heard: list[Sound], ahead: Sequence[int]) -> Sound:
+    """
+    The ready sound farthest from its last play and from its next one, counted
+    in plays: the shorter of the two gaps first, then the longer. ``heard`` are
+    the sounds heard, the latest first; ``ahead`` the ids planned, soonest
+    first. A sound never heard, or not planned, is as far as can be.
+
+    A sound sent that the playout never says on air, a file gone unreadable
+    say, stays in its round for ever: it is tried again only once half of the
+    others have played, and the cart goes on with them meanwhile.
+    """
+    far = len(ready) + len(ahead)
+    since = {sound.id: index for index, sound in enumerate(heard)}
+    until: dict[int, int] = {}
+    for index, sound_id in enumerate(ahead):
+        until.setdefault(sound_id, index)
+
+    def gaps(sound: Sound) -> tuple[int, int]:
+        back, forth = since.get(sound.id, far), until.get(sound.id, far)
+        return min(back, forth), max(back, forth)
+
+    best = max(gaps(sound) for sound in ready)
+    return choice([sound for sound in ready if gaps(sound) == best])
 
 
 def _heard_at(sound: Sound) -> datetime:
