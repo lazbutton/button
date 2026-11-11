@@ -7,6 +7,7 @@ The commands run in a subprocess, like the station runs them: their ``asyncio.ru
 would leave the tests that follow without an event loop.
 """
 
+import os
 import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -18,6 +19,7 @@ from sqlalchemy import text
 from radiotomate.commands.maintenance import (
     WINDOW_MINUTES,
     describe_next_live,
+    named_lives,
     until,
     what_blocks,
 )
@@ -199,12 +201,67 @@ def test_what_blocks_what_is_on_air_first_then_the_soonest():
     )
 
 
-def _window(config_path: Path) -> subprocess.CompletedProcess:
+def test_what_blocks_a_live_on_the_harbor_named_or_not():
+    # What the playout says of its source: a live on the harbor, named or not.
+    assert what_blocks(MONDAY_NOON, None, [], [], True) == "Direct, un direct, en cours"
+    named = [("Léa en direct", None)]
+    assert (
+        what_blocks(MONDAY_NOON, None, [], named, True)
+        == "Léa en direct, un direct, en cours"
+    )
+    # The harbor off: a named live is a row the next title has not cleared yet.
+    assert what_blocks(MONDAY_NOON, None, [], named, False) is None
+    # The playout says nothing: the named live counts.
+    assert (
+        what_blocks(MONDAY_NOON, None, [], named, None)
+        == "Léa en direct, un direct, en cours"
+    )
+    # A weekly show on air names the live on the harbor.
+    on_air = {**QG, "starts_in_s": 0, "active": True}
+    assert what_blocks(MONDAY_NOON, on_air, [], [], True) == "QG, un direct, en cours"
+
+
+async def test_named_lives_come_from_the_database(tmp_path: Path):
+    db_file = tmp_path / "radiotomate.db"
+    named = (
+        "insert into emissions (scope, title, artist, host_username, starts_at,"
+        " ends_at, version, created, modified) values ('session', {title}, '', '',"
+        " '2026-09-21 09:00:00', {end}, 1, '2026-09-21 09:00:00',"
+        " '2026-09-21 09:00:00')"
+    )
+    await _database(
+        db_file,
+        WEEKLY,
+        named.format(title="'Léa en direct'", end="'2026-09-21 11:00:00'"),
+        named.format(title="'Sans fin'", end="null"),
+    )
+    db = QuartAlchemy()
+    db.init_from_config({"url": f"sqlite+aiosqlite:///{db_file}"}, {})
+    try:
+        async with db.session() as session:
+            lives = await named_lives(session)
+    finally:
+        await db.after_serving()
+    # 11:00 in UTC, as stored: 13:00 in Paris, in September.
+    assert sorted(lives, key=lambda live: live[0]) == [
+        ("Léa en direct", datetime(2026, 9, 21, 13, 0, tzinfo=PARIS)),
+        ("Sans fin", None),
+    ]
+    assert (
+        what_blocks(MONDAY_NOON, None, [], lives[:1])
+        == "Léa en direct, un direct, en cours jusqu'à 13:00"
+    )
+
+
+def _window(
+    config_path: Path, timezone: str = "Europe/Paris"
+) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["radiotomate", "-c", str(config_path), "maintenance", "window"],
         capture_output=True,
         text=True,
         check=False,
+        env={**os.environ, "TZ": timezone},
     )
 
 
@@ -217,7 +274,8 @@ async def test_window_is_free_on_an_empty_station(config_path: Path):
     )
 
 
-async def test_window_is_taken_before_a_dated_live(config_path: Path):
+@pytest.mark.parametrize("timezone", ["Europe/Paris", "America/Montreal"])
+async def test_window_is_taken_before_a_dated_live(config_path: Path, timezone: str):
     # The Agenda stores naive UTC; the live starts in ten minutes, whatever the day.
     start = datetime.now(UTC).replace(tzinfo=None, microsecond=0) + timedelta(
         minutes=10
@@ -230,7 +288,8 @@ async def test_window_is_taken_before_a_dated_live(config_path: Path):
         f" values ('live', 'Direct de test', '{start}', '{end}',"
         " '2026-09-01 00:00:00', '2026-09-01 00:00:00')",
     )
-    result = _window(config_path)
+    # A station in another time zone reads the same instant.
+    result = _window(config_path, timezone)
     assert result.returncode == 1, result.stderr
     assert result.stdout.startswith(
         "occupée : Direct de test, un direct de l'Agenda, commence à "

@@ -23,6 +23,10 @@ from . import radiotomate_cli
 # How far ahead ``window`` looks: an update cuts the antenna while the engine
 # restarts, and a slow one, images pulled, takes a few minutes before that.
 WINDOW_MINUTES = 30
+# The playout's API, which the interface reaches on its network, as the
+# scheduler does (scheduler_app.py), and how long ``window`` waits for it.
+PLAYOUT_URL = "http://127.0.0.1:6833"
+PLAYOUT_WAIT_S = 3.0
 
 
 @radiotomate_cli.group()
@@ -103,6 +107,7 @@ def what_blocks(
     slot: dict | None,
     windows: list[dict],
     lives: list[tuple[str, datetime | None]],
+    harbor: bool | None = None,
 ) -> str | None:
     """What keeps an update from starting at ``now``, in one line, or None.
 
@@ -110,14 +115,17 @@ def what_blocks(
     dated live of the Agenda. ``windows`` is what ``agenda.forecast_windows``
     returns from ``now`` to ``WINDOW_MINUTES`` later: the dated lives and the
     sets that can play. ``lives`` are the lives named on the Antenne page, with
-    their end if they have one. What is on air comes first, then what starts
-    soonest; a dated live, in both, is told as the Agenda's. ``now`` is an aware
-    time in Paris."""
+    their end if they have one. ``harbor`` is what the playout says: a live on
+    the harbor now, named or not (True), none (False), or nothing said (None).
+    A named live only counts while the playout does not say the harbor is off:
+    its row stays until the next title. What is on air comes first, then what
+    starts soonest; a dated live, in both, is told as the Agenda's. ``now`` is
+    an aware time in Paris."""
     from radiotomate.domain.agenda import KIND_SET
     from radiotomate.domain.emission import now_paris
 
     events: list[tuple[datetime, datetime | None, str, str]] = []
-    for title, end in lives:
+    for title, end in lives if harbor is not False else []:
         if end is None or end > now:
             events.append((now, end, title or "Direct", "un direct"))
     for window in windows:
@@ -128,6 +136,9 @@ def what_blocks(
     if slot is not None:
         start = now + timedelta(seconds=0 if slot["active"] else slot["starts_in_s"])
         events.append((start, None, slot["title"] or "Direct", "un direct"))
+    if harbor:
+        # Last: a named live or a slot gives it a name first.
+        events.append((now, None, "Direct", "un direct"))
     on_air = [
         event
         for event in events
@@ -151,6 +162,18 @@ def what_blocks(
     )
 
 
+async def named_lives(session) -> list[tuple[str, datetime | None]]:
+    """The lives named on the Antenne page, with their end in Paris, if they
+    have one: stored in UTC, naive, as expire_idle_sessions reads it."""
+    from radiotomate.domain.agenda import paris
+    from radiotomate.models.emission import Emission
+
+    return [
+        (row.title, paris(row.ends_at) if row.ends_at else None)
+        for row in await Emission.all_sessions(session)
+    ]
+
+
 @maintenance.command("window")
 @click.pass_obj
 def window(config):
@@ -159,18 +182,34 @@ def window(config):
     """
     import asyncio
 
+    from httpx import AsyncClient
+
     from radiotomate.db import QuartAlchemy
-    from radiotomate.domain.agenda import paris
-    from radiotomate.domain.emission import now_paris
-    from radiotomate.models.emission import Emission
+    from radiotomate.domain.emission import is_harbor_source, now_paris
     from radiotomate.scheduler.alerts import load_live_slots
     from radiotomate.scheduler.antenne import next_live_slot
+    from radiotomate.scheduler.playout import PlayoutGateway
     from radiotomate.services.agenda import forecast_windows
 
     db = QuartAlchemy()
     db.init_from_config(config["db"], {})
-    # As next-live: the container's clock, read as Paris.
-    now = now_paris(datetime.now().replace(microsecond=0))
+    # The instant, in Paris, whatever the container's TZ: the Agenda's times
+    # are instants, and the harbor's gate reads the weekly shows in Paris.
+    now = now_paris().replace(microsecond=0)
+    token = str((config.get("playout_process_config") or {}).get("token") or "")
+
+    async def on_harbor() -> bool | None:
+        """Is a live on the harbor now, says the playout's /health. None when
+        it does not answer: the playout stopped, or no station around."""
+        async with AsyncClient(
+            base_url=PLAYOUT_URL, headers={"X-Auth-Token": token}
+        ) as client:
+            result = await PlayoutGateway(
+                client, timeout=PLAYOUT_WAIT_S, max_attempts=1
+            ).health()
+        if not result.ok or not isinstance(result.payload, dict):
+            return None
+        return is_harbor_source(result.payload.get("source"))
 
     async def find():
         try:
@@ -179,12 +218,8 @@ def window(config):
                 windows = await forecast_windows(
                     session, now, now + timedelta(minutes=WINDOW_MINUTES)
                 )
-                # A named live ends in UTC, naive as stored (expire_idle_sessions).
-                lives = [
-                    (row.title, paris(row.ends_at) if row.ends_at else None)
-                    for row in await Emission.all_sessions(session)
-                ]
-            return what_blocks(now, slot, windows, lives)
+                lives = await named_lives(session)
+            return what_blocks(now, slot, windows, lives, await on_harbor())
         finally:
             await db.after_serving()
 
