@@ -32,6 +32,7 @@ Le détail des changements du moteur par rapport à l'amont : [docs/moteur/chang
 - La commande `radiotomate ntf-grille` disparaît, avec sa grille et ses sons de remplacement : écrite pour un festival, elle remplaçait les créneaux de 0 h, 7 h, 10 h et 18 h de chaque jour. Les horloges qu'elle a posées sur une station y restent.
 - Les exemples de requête Beets, sous la sélection d'une catégorie et dans les pages de l'auto-DJ, nomment une banque neutre, `grouping:matinale`, au lieu des archives d'un festival.
 - Le contrôle des données de station, `scripts/verifier.sh donnees` comme la CI, n'excuse plus rien de la station d'origine : ses cinq exceptions, dans les `brand.json` et le casque, sont retirées.
+- Le moteur a les règles des fiches de la bibliothèque, reprises de l'outil de catalogue de Hopper avec leurs cas de test : reconnaître à la lettre près le morceau d'un fichier parmi ceux qu'une source en ligne donne, et dire ce qu'on proposerait de corriger dans ses tags, champ par champ, avec un niveau et une raison : la graphie du titre et de l'artiste, un album, une année, un label ou un ISRC manquants, une famille de genre et le verdict « femme ou minorité de genre ». Rien ne s'en sert encore : la recherche en ligne et la page « À relire » viendront avec les fiches suivantes ([ADR 0017](docs/decisions/0017-une-fiche-ne-s-ecrit-qu-acceptee.md)).
 
 ## 0.2.0
 
