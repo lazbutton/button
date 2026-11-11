@@ -22,7 +22,10 @@ donc deux tours : elle le voit, puis l'indexe.
 
 Comme le vrai, le faux modify écrit dans les fichiers des titres qu'il change,
 et note leur nouvelle date. Comme ces tags, et ceux de promote-inbox.sh, ce que
-la boucle écrit pendant son tour ne doit pas la faire attendre.
+la boucle écrit pendant son tour ne doit pas la faire attendre. Il lit aussi sa
+requête comme le vrai, et ses valeurs comme un modèle, sans les fonctions : une
+requête path: qui finit par une virgule prend toute la bibliothèque, et $champ,
+dans une valeur, prend celle du titre.
 """
 
 from __future__ import annotations
@@ -30,6 +33,7 @@ from __future__ import annotations
 import json
 import os
 import pickle
+import re
 import shutil
 import sqlite3
 import stat
@@ -38,6 +42,7 @@ import sys
 import tempfile
 import time
 import unittest
+from collections.abc import Callable
 from contextlib import closing
 from pathlib import Path
 
@@ -94,6 +99,41 @@ def id_query(terms: list[str]) -> list[int] | None:
     if not all(term.startswith("id:") and term[3:].isdigit() for term in terms[::2]):
         return None
     return [int(term[3:]) for term in terms[::2]]
+
+
+def path_query(terms: list[str]) -> Callable[[int, bytes], bool] | None:
+    """Une requête path: d'un seul terme, lue comme Beets 2.5.1 la lit. Une
+    virgule finale la coupe en deux requêtes, la seconde vide, qui prend tout.
+    Puis il retire les espaces des deux bouts, et le \\ de \\:."""
+    if len(terms) != 1 or not terms[0].startswith("path:"):
+        return None
+    if terms[0].endswith(","):
+        return lambda item_id, path: True
+    top = os.fsencode(terms[0].strip().removeprefix("path:").replace("\\:", ":"))
+    return lambda item_id, path: under(path, top)
+
+
+def evaluate(template: str, values: dict[str, object]) -> str:
+    """Comme le vrai, modify lit une valeur comme un modèle : $champ y prend la
+    valeur du titre, et $$, $%, $} et $, gardent leur caractère. Un } seul arrête
+    le modèle : la suite reste telle quelle, $$ compris. Le faux ne joue ni les
+    fonctions, %nom{…}, ni un ${ qui n'est pas suivi d'un nom."""
+    read = []
+    pos = 0
+    for match in re.finditer(r"\$([$%},])|\$\{(\w+)\}|\$(\w+)|\}", template):
+        read.append(template[pos : match.start()])
+        pos = match.end()
+        if match.group(0) == "}":
+            return "".join(read) + template[match.start() :]
+        field = match.group(2) or match.group(3)
+        if match.group(1):
+            read.append(match.group(1))
+        elif field in values:
+            read.append(str(values[field] or ""))
+        else:
+            # Un champ que le titre n'a pas reste écrit tel quel.
+            read.append(match.group(0))
+    return "".join(read) + template[pos:]
 
 
 def fake_beet(beetsdir: Path, args: list[str]) -> int:  # noqa: PLR0911, PLR0912
@@ -159,25 +199,40 @@ def fake_beet(beetsdir: Path, args: list[str]) -> int:  # noqa: PLR0911, PLR0912
         if skipped:
             print(f"Skipped {skipped} paths.")
         return 0
-    if args[:2] == ["modify", "-y"] and len(args) > 3 and args[-1].startswith("path:"):
-        fields = dict(arg.split("=", 1) for arg in args[2:-1])
-        if set(fields) - {"grouping", "genre"}:
+    if args[:2] == ["modify", "-y"]:
+        # Comme le vrai : champ=valeur est un changement, le reste la requête.
+        fields = {}
+        terms = []
+        for arg in args[2:]:
+            key, equal, value = arg.partition("=")
+            if equal and ":" not in key:
+                fields[key] = value
+            else:
+                terms.append(arg)
+        ids = id_query(terms)
+        wanted = (lambda item_id, path: item_id in ids) if ids is not None else path_query(terms)
+        if not fields or set(fields) - {"grouping", "genre"} or wanted is None:
             print(f"faux beet, modify inattendu : {args}", file=sys.stderr)
             return 2
-        top = os.fsencode(args[-1].removeprefix("path:"))
+        if ids is not None and len(ids) > MOST_IDS:
+            print("sqlite3.OperationalError: Expression tree is too large (maximum depth 1000)", file=sys.stderr)
+            return 1
         with closing(open_library(beetsdir)) as con, con:
             found = [
-                (item_id, path, {"grouping": grouping, "genre": genre})
-                for item_id, path, grouping, genre in con.execute("select id, path, grouping, genre from items")
-                if under(path, top)
+                (item_id, path, {"title": title, "grouping": grouping, "genre": genre})
+                for item_id, path, title, grouping, genre in con.execute(
+                    "select id, path, title, grouping, genre from items"
+                )
+                if wanted(item_id, path)
             ]
             if not found:
                 print("error: No matching items found.", file=sys.stderr)
                 return 1
             for item_id, path, values in found:
-                if all(values[field] == value for field, value in fields.items()):
+                new = {field: evaluate(template, values) for field, template in fields.items()}
+                if all(values[field] == value for field, value in new.items()):
                     continue
-                for field, value in fields.items():
+                for field, value in new.items():
                     con.execute(f"update items set {field} = ? where id = ?", (value, item_id))
                 # Il écrit les tags dans le fichier, et note sa nouvelle date.
                 if os.path.exists(path):
@@ -361,6 +416,13 @@ class BeetsImportLoopTest(unittest.TestCase):
     def groupings(self) -> dict[str, object]:
         return {path: item["grouping"] for path, item in self.items().items()}
 
+    def modifies(self) -> int:
+        """Combien de fois la boucle a lancé beet modify."""
+        log = self.beetsdir / "beet.log"
+        if not log.exists():
+            return 0
+        return sum(json.loads(line)[:1] == ["modify"] for line in log.read_text(encoding="utf-8").splitlines())
+
     def test_a_file_added_to_an_indexed_folder_is_indexed(self) -> None:
         (self.rotation / "Ada - Un.mp3").write_bytes(b"un")
         self.turn()
@@ -407,6 +469,49 @@ class BeetsImportLoopTest(unittest.TestCase):
                 "20-archives/Nuit d'été 2/Dan - Live deux.flac": ("Nuit d'été 2", "Archive"),
             },
         )
+
+    def test_a_bank_named_like_a_beets_query_keeps_its_name_and_its_own_tracks(self) -> None:
+        # Beets lit à sa façon une requête et une valeur. Par path:, une virgule
+        # finale prenait toute la bibliothèque, et l'espace final, la banque
+        # voisine. Dans la valeur, $title prenait le titre de chaque fichier, et
+        # un } arrêtait le modèle.
+        (self.rotation / "Ada - Un.mp3").write_bytes(b"un")
+        names = ["jazz", "Foo,", "Bar", "Bar ", "Prix $title", "Live}$2024", "A\\:B"]
+        for name in names:
+            bank = self.media / "20-archives" / name
+            bank.mkdir()
+            (bank / "Cy - Live.flac").write_bytes(name.encode())
+        self.turn()
+        self.turn()
+
+        expected = {
+            "10-rotation/Ada - Un.mp3": ["rotation", None],
+            **{f"20-archives/{name}/Cy - Live.flac": [name, "Archive"] for name in names},
+        }
+        self.assertEqual({path: [item["grouping"], item["genre"]] for path, item in self.items().items()}, expected)
+
+        # Rien de neuf : rien ne bouge, et la boucle ne relance pas Beets pour
+        # reposer ce qui est déjà là.
+        seen = len(self.selections_seen())
+        modifies = self.modifies()
+        self.turn()
+        self.turn()
+        for selection in self.selections_seen()[seen:]:
+            self.assertEqual(selection, expected)
+        self.assertEqual(self.modifies(), modifies)
+
+    def test_a_bank_larger_than_one_query_gets_its_grouping(self) -> None:
+        bank = self.media / "20-archives" / "jazz"
+        bank.mkdir()
+        # Plus que SQLite n'en prend dans une requête : la boucle les désigne par paquets.
+        count = MOST_IDS + 2
+        for number in range(count):
+            (bank / f"Cy - Live {number}.flac").write_bytes(b"%d" % number)
+        self.turn()
+        self.turn()
+
+        self.assertEqual(set(self.groupings().values()), {"jazz"})
+        self.assertEqual(len(self.items()), count)
 
     def test_a_file_still_being_copied_waits(self) -> None:
         song = self.rotation / "Ada - Un.mp3"

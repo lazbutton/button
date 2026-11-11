@@ -239,6 +239,61 @@ print(f"{folder} : {len(changed)} fichier(s) changé(s), relu(s).")
 PY
 }
 
+# Le regroupement d'un dossier, et le genre d'une banque, se posent avec beet
+# modify, sur les seuls titres du dossier qui ne les ont pas déjà. Ils sont
+# désignés par id:, jamais par path: : Beets lit une requête à sa façon, et un
+# nom de dossier n'y passe pas tel quel. Une virgule finale y ajoute une requête
+# vide, qui prend tout : une banque « Foo, » donnait son regroupement et son genre
+# à toute la bibliothèque, et les écrivait dans tous les fichiers. Beets en
+# retire aussi les espaces des bouts, et le \ de \:. Il lit enfin une valeur
+# comme un modèle : $title ou %upper{…} y seraient remplacés. La boucle les
+# protège donc, par $$, $% et $}. Les titres qui ont déjà leurs champs ne sont
+# pas désignés : un tour sans rien de neuf ne lance pas beet modify.
+set_fields() { # dossier champ=valeur…
+  python3 - "$@" <<'PY'
+import os
+import sqlite3
+import subprocess
+import sys
+from contextlib import closing
+from pathlib import Path
+
+
+def literal(value):
+    """La valeur telle quelle, pour un modèle de Beets."""
+    return value.replace("$", "$$").replace("%", "$%").replace("}", "$}")
+
+
+folder, *pairs = sys.argv[1:]
+fields = dict(pair.split("=", 1) for pair in pairs)
+library = Path(os.environ.get("BEETSDIR", "")) / "library.db"
+top = os.path.join(os.fsencode(os.path.normpath(folder)), b"")
+if not library.is_file():
+    sys.exit(0)
+with closing(sqlite3.connect(library)) as con:
+    if not con.execute("select 1 from sqlite_master where name = 'items'").fetchone():
+        sys.exit(0)
+    rows = con.execute(f"select id, path, {', '.join(fields)} from items where path is not null")
+    ids = [
+        item_id
+        for item_id, path, *values in rows
+        if os.fsencode(path).startswith(top) and values != list(fields.values())
+    ]
+changes = [f"{field}={literal(value)}" for field, value in fields.items()]
+# Par paquets : au-delà d'un millier, SQLite refuse la requête.
+for start in range(0, len(ids), 200):
+    query = []
+    for item_id in ids[start : start + 200]:
+        query += [f"id:{item_id}", ","]
+    if subprocess.run(["beet", "modify", "-y", *changes, *query[:-1]]).returncode:
+        print(
+            f"{folder} : regroupement impossible, l'erreur de Beets est au-dessus. La boucle réessaie au prochain tour.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+PY
+}
+
 # Un fichier encore en cours de copie ne va pas à Beets : il mesurerait son gain
 # sur un morceau, et beet modify écrirait ses tags dans un fichier qui s'écrit
 # encore. La boucle retient donc l'état de chaque dossier avant de dormir, noms,
@@ -304,18 +359,19 @@ while true; do
     if [ -d "$MEDIA/10-rotation" ] && folder_state same "$MEDIA/10-rotation"; then
       reread "$MEDIA/10-rotation" grouping || true
       beet import -A -q -s "$MEDIA/10-rotation" || true
-      beet modify -y grouping=rotation "path:$MEDIA/10-rotation" || true
+      set_fields "$MEDIA/10-rotation" grouping=rotation || true
     fi
-    # Chaque dossier de 20-archives est une banque ; son nom devient le grouping.
+    # Chaque dossier de 20-archives est une banque ; son nom, tel quel, devient le grouping.
     for dir in "$MEDIA"/20-archives/*/; do
       [ -d "$dir" ] || continue
       dir=${dir%/}
-      ed=$(basename "$dir")
+      # Pas de basename : $(…) retirerait un retour à la ligne final.
+      ed=${dir##*/}
       case "$ed" in .*|_*) continue ;; esac
       folder_state same "$dir" || continue
       reread "$dir" grouping genre || true
       beet import -A -q -s "$dir" || true
-      beet modify -y grouping="$ed" genre=Archive "path:$dir" || true
+      set_fields "$dir" grouping="$ed" genre=Archive || true
     done
   else
     echo "Historique Beets : reprise impossible, l'erreur est au-dessus. Rien n'est indexé à ce tour : sans elle, Beets réimporterait des titres déjà indexés. La boucle réessaie au prochain. Si l'erreur parle de droits, relancer la station (docker compose up -d) : radiotomate-init rend le dossier de Beets au moteur." >&2
