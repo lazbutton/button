@@ -20,6 +20,8 @@ Deux grilles prêtes : `Jour habillé` (jingle et trois titres, ancre dure à l�
 
 La séparation des artistes et des titres est dans `scheduler/music_rules.py`.
 
+La requête Beets d’une catégorie passe par `services/beets_query.py`. Beets coupe une requête à ses virgules, et une partie vide y prend toute la bibliothèque : `grouping:jazz,` ferait jouer n’importe quel titre. Les routes JSON des catégories et `testquery.json` refusent une telle requête, comme une requête que Beets ne sait pas lire. L’auto-DJ ignore la partie vide d’une catégorie enregistrée avant ce refus.
+
 ## Conducteur et vérité d’antenne
 
 Le scheduler ne pousse plus un son au moment où le cron sonne. Il prévoit une file (`rundown_items`), envoie des commandes (`playout_commands`) et réconcilie ce qui a vraiment joué.
@@ -150,7 +152,7 @@ Horloges et antenne : `scheduler/clock.py`, `timing.py`, `music_rules.py`, `desk
 
 Exploitation : `alerts.py`, `metrics.py`, `retention.py`, `health.py`, `interface/health.py`, et `commands/maintenance.py`.
 
-Métier : `domain/`, `services/` (carts, auto-DJ, émissions, banque, grille NTF, jeton d’encodeur), `models/clock.py`, `emission.py`, `execution.py`, `music_category.py`.
+Métier : `domain/`, `services/` (carts, auto-DJ, requêtes Beets, émissions, banque, grille NTF, jeton d’encodeur), `models/clock.py`, `emission.py`, `execution.py`, `music_category.py`.
 
 Interface : `account.py`, `csrf.py`, `emissions.py`, `integrity.py`, `json_util.py`, `spa.py`, `system.py`.
 

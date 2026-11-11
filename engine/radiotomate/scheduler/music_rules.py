@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import select
 
 from radiotomate.models import MetadataLog
+from radiotomate.services.beets_query import playable_query
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session as ormSession
@@ -44,7 +45,7 @@ async def _pick_music(  # noqa: PLR0913
     if extra_titles:
         forbidden_titles = forbidden_titles | extra_titles
     for query in queries:
-        items = await beets.search(query)
+        items = await beets.search(playable_query(query))
         picked = _choose_item(items, forbidden_artists, forbidden_titles)
         if picked is not None:
             return picked

@@ -972,6 +972,94 @@ async def test_slot_and_category_json(
     assert gone.status_code == 200
 
 
+async def test_category_query_with_extra_comma_is_refused(
+    raw_app,
+    app_configration: dict,
+    beets_integration: BeetsIntegration,
+    dbsession: ormSession,
+    users_password: str,
+):
+    """Beets lit `grouping:jazz,` comme « jazz, ou tous les titres »."""
+    client = await _admin_client(
+        app_configration,
+        beets_integration,
+        dbsession,
+        users_password,
+        "comma-admin",
+    )
+
+    async def refused(response, field: str) -> str:
+        assert response.status_code == 400, await response.get_data(as_text=True)
+        payload = await response.get_json()
+        assert (payload["code"], payload["field"]) == ("validation_error", field)
+        return payload["message"]
+
+    message = await refused(
+        await client.post(
+            "/autodj/categories.json",
+            json={"name": "Jazz", "query": "grouping:jazz,"},
+        ),
+        "query",
+    )
+    assert "virgule en trop" in message
+    await refused(
+        await client.post(
+            "/autodj/categories.json",
+            json={
+                "name": "Jazz",
+                "query": "grouping:jazz",
+                "empty_query": ", genre:Jazz",
+            },
+        ),
+        "empty_query",
+    )
+    listed = await (await client.get("/autodj/categories.json")).get_json()
+    assert "Jazz" not in {row["name"] for row in listed["categories"]}
+
+    created = await client.post(
+        "/autodj/categories.json",
+        json={"name": "Jazz", "query": "grouping:jazz", "empty_query": ""},
+    )
+    assert created.status_code == 201
+    cat_id = (await created.get_json())["category"]["id"]
+    await refused(
+        await client.put(
+            f"/autodj/categories/{cat_id}.json", json={"query": "grouping:jazz ,"}
+        ),
+        "query",
+    )
+    await refused(
+        await client.put(
+            f"/autodj/categories/{cat_id}.json", json={"empty_query": "genre:Jazz,"}
+        ),
+        "empty_query",
+    )
+    listed = await (await client.get("/autodj/categories.json")).get_json()
+    jazz = next(row for row in listed["categories"] if row["id"] == cat_id)
+    assert (jazz["query"], jazz["empty_query"]) == ("grouping:jazz", "")
+
+    # Le bouton Tester de la console le dit avant d'enregistrer.
+    await refused(
+        await client.get(
+            "/autodj/testquery.json", query_string={"query": "grouping:jazz,"}
+        ),
+        "query",
+    )
+    # Un guillemet ouvert faisait une erreur 500.
+    message = await refused(
+        await client.get(
+            "/autodj/testquery.json", query_string={"query": 'title:"Swing'}
+        ),
+        "query",
+    )
+    assert "guillemet" in message
+    tested = await client.get(
+        "/autodj/testquery.json",
+        query_string={"query": "grouping:jazz , grouping:rotation"},
+    )
+    assert tested.status_code == 200
+
+
 async def test_cart_and_user_json(  # noqa: PLR0915
     raw_app,
     app_configration: dict,
