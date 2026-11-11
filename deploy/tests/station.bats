@@ -386,7 +386,7 @@ EOF
   assert_output --partial "Domaine, qui pointe déjà sur cette machine :"
   assert_output --partial "Fuseau de la station [Europe/Paris] :"
   assert_output --partial "Identifiant du compte admin [admin] :"
-  assert_output --partial "Mises à jour automatiques, quand la commande update existera ? (o/n) [o] :"
+  assert_output --partial "Mises à jour automatiques, dès que station update saura se lancer seule ? (o/n) [o] :"
   [ "$(env_of DOMAIN)" = radio.example ]
   [ -z "$(env_of ACME_EMAIL)" ]
   [ "$(env_of TZ)" = America/Montreal ]

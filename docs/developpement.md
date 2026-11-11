@@ -83,6 +83,13 @@ Dans les deux cas, le runner garde l'ACL par défaut de `/opt`, ouverte à tous 
   - `station uninstall --purge`, qui ne laisse ni dossier, ni commande, ni conteneur ;
   - une installation neuve, comme sur une autre machine, puis `station restore` : la station doit avoir les mêmes comptes, horloges, émissions, Agenda et réglages, d'après une empreinte de leurs lignes, et le même son. Le mot de passe admin de la sauvegarde doit ouvrir une session, par la console. Ni l'archive, ni aucune sortie ne doit le montrer.
 
+Le job `update` fait une vraie mise à jour, le critère de la fiche MAJ-04. Il installe la plus haute version publiée, avec sa propre commande `station`, prise sur sa page comme sur un VPS. Puis il fait ce que demande la version suivante, `ICECAST_MOUNT=button.mp3` dans `.env`, et lance `station update --from` avec l'archive et la commande de la branche, vers `main`. Il vérifie ensuite :
+
+- l'antenne, lue chaque seconde sur le port local d'Icecast pendant la mise à jour : elle doit se couper moins de 30 s ;
+- les comptes, horloges, émissions, Agenda et réglages, d'après la même empreinte qu'avant ;
+- la sauvegarde d'avant, dans `backups/`, la ligne de `updates.log` et `versions.json` ;
+- `station status`, puis le contrôle de la station, `smoke.sh`, sur le flux `button.mp3`.
+
 Chaque cas prend quelques minutes, mais tire les images de la station deux fois, 3 Go environ chaque fois : le job ne tourne donc que pour ce qu'une installation prend, `deploy/station` et ses tests, `compose.yml`, le `Caddyfile`, `deploy/scripts/` et `scripts/version.py`, sur une pull request comme sur `main`. À la main : « Run workflow » sur `station`. Les images sont celles de `main`, pas celles de la branche : une pull request qui change une image et le dossier ensemble ne se vérifie en entier qu'après sa fusion. En échec, la sortie de l'installation et les journaux de `docker compose` sont dans un artefact du cas, `installation-neuf-1` ou `installation-deja-la-1`, sans les secrets de `.env` ; le chiffre est celui de la tentative. Il reste 14 jours. `scripts/verifier.sh` ne fait pas cette installation : elle écrit dans `/opt/button`, et prend les ports 80 et 443 de la machine. Pour la refaire à la main, sur une machine jetable : voir [d'où viennent les fichiers](deploiement.md#doù-viennent-les-fichiers).
 
 Les dépendances du catalogue vont dans un environnement à part, une fois :
@@ -227,7 +234,7 @@ Les stations installent des versions publiées, pas `main` : voir la décision [
 
 Pour publier :
 
-1. Une pull request renomme « Non publié » en `## X.Y.Z` dans le [CHANGELOG](../CHANGELOG.md), et rouvre au-dessus un « Non publié » vide. En tête des notes, ce que la version demande : la version du schéma quand elle migre, l'action pour une majeure. Pour voir les notes telles qu'elles seront publiées : `python3 scripts/version.py notes X.Y.Z`.
+1. Une pull request renomme « Non publié » en `## X.Y.Z` dans le [CHANGELOG](../CHANGELOG.md), et rouvre au-dessus un « Non publié » vide. En tête des notes, ce que la version demande : la version du schéma quand elle migre, l'action pour une majeure. L'action d'une majeure est un paragraphe qui commence par `**Mise en service.**` : `station update` s'arrête devant une majeure, et le cite, d'après le `CHANGELOG.md` que la version joint à ses fichiers de station. Pour voir les notes telles qu'elles seront publiées : `python3 scripts/version.py notes X.Y.Z`.
 2. Une fois la pull request fusionnée, poser le tag sur son commit de fusion, puis le pousser. Un tag à la fois : attendre la fin du job « release, X.Y and stable » avant le suivant.
 
    ```bash
@@ -236,7 +243,7 @@ Pour publier :
    git push origin vX.Y.Z
    ```
 
-3. Le workflow [`version`](../.github/workflows/version.yml) fait le reste. Il vérifie d'abord, sans rien construire, les notes de la version, qu'aucune version plus haute n'est dans l'histoire du commit, et qu'un correctif n'ajoute aucune migration. Puis il lance les tests du moteur, de la console et des services, et publie les sept images en `X.Y.Z`. Une fois les sept publiées, il crée la page de la version, avec ses notes. Il y joint les fichiers d'une station, que `station install` télécharge : `station`, `station.tar.gz` et `SHA256SUMS` ([décision 0016](decisions/0016-le-dossier-vient-de-sa-version.md)). Puis il pose `X.Y` et `stable` sur ces mêmes images. Trivy analyse enfin les sept images, sans rien retenir.
+3. Le workflow [`version`](../.github/workflows/version.yml) fait le reste. Il vérifie d'abord, sans rien construire, les notes de la version, qu'aucune version plus haute n'est dans l'histoire du commit, et qu'un correctif n'ajoute aucune migration. Puis il lance les tests du moteur, de la console et des services, et publie les sept images en `X.Y.Z`. Une fois les sept publiées, il crée la page de la version, avec ses notes. Il y joint les fichiers d'une station, que `station install` et `station update` téléchargent : `station`, `station.tar.gz` et `SHA256SUMS` ([décision 0016](decisions/0016-le-dossier-vient-de-sa-version.md)). Puis il pose `X.Y` et `stable` sur ces mêmes images. Trivy analyse enfin les sept images, sans rien retenir.
 
 Pour voir ces fichiers avant de publier, ou pour essayer `main` sur une machine jetable : `python3 scripts/version.py station main /tmp/station`. Le `compose.yml` de l'archive n'a plus ses sections `build:`.
 

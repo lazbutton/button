@@ -31,7 +31,7 @@ Trois voies se présentaient :
 - **Aucun jeton pour les fichiers.** Le dépôt est public. Le jeton GHCR ne sert qu'aux images encore privées.
 - **La 0.1.0 ne s'installe pas ainsi.** Elle est publiée avant cette décision, sans ces fichiers. La première version installable par `station install` est la suivante. D'ici là, `releases/latest/download/station` ne trouve rien.
 - **Un essai de `main`.** Hors d'une version publiée, l'archive se fabrique depuis un clone, par `python3 scripts/version.py station main <dossier>`. `station install --from` la prend ensuite.
-- **Les commandes suivantes.** `update` (MAJ-04) et `rollback` (MAJ-05) prendront les fichiers de la même façon. Revenir à une version, c'est reprendre son archive.
+- **Les commandes suivantes.** `update` (MAJ-04) et `rollback` (MAJ-05) prendront les fichiers de la même façon. Revenir à une version, c'est reprendre son archive. Depuis `update`, l'archive porte aussi `CHANGELOG.md` : `update` y cite l'action que demande une version majeure.
 - **Plus de build sur une station.** Une station n'a pas les sources : une image qui manque fait échouer `docker compose`, au lieu de lancer un build impossible.
 - **Un fichier monté doit être dans l'archive.** Tout fichier que `compose.yml` monte depuis le dossier doit être dans `station.tar.gz` : sinon, `scripts/version.py station` refuse.
 - **Les scripts restent dans le dossier**, pas dans les images. Un correctif d'image marche toujours avec le dossier de la version d'avant : voir les pièges de [deploy/AGENTS.md](../../deploy/AGENTS.md#pièges).

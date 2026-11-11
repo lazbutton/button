@@ -283,6 +283,7 @@ class StationTest(unittest.TestCase):
                 self.assertEqual(read("VERSION"), b"0.1.0\n")
                 self.assertNotRegex(read("compose.yml").decode(), r"(?m)^ *build:")
                 self.assertEqual(read("Caddyfile"), (version.DEPLOY / "Caddyfile").read_bytes())
+                self.assertEqual(read("CHANGELOG.md"), version.CHANGELOG.read_bytes())
                 self.assertEqual(read("station"), (version.DEPLOY / "station").read_bytes())
                 for path in (version.DEPLOY / "scripts").iterdir():
                     self.assertEqual(read(f"scripts/{path.name}"), path.read_bytes(), path.name)

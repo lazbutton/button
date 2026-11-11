@@ -38,9 +38,11 @@ titre, passe.
 station : les fichiers joints à la version, écrits dans le dossier donné.
 `station`, le script d'exploitation ; `station.tar.gz`, le dossier d'une
 station à cette version : compose.yml sans ses sections build:, Caddyfile,
-.env.example, scripts/, station et VERSION ; SHA256SUMS, les sommes des deux.
-`station install` les télécharge. La version s'écrit X.Y.Z, ou main pour un
-essai. Échoue si compose.yml monte un fichier du dossier qui n'y est pas.
+.env.example, CHANGELOG.md, scripts/, station et VERSION ; SHA256SUMS, les
+sommes des deux. `station install` et `station update` les téléchargent ; la
+seconde cite dans CHANGELOG.md l'action que demande une version majeure. La
+version s'écrit X.Y.Z, ou main pour un essai. Échoue si compose.yml monte un
+fichier du dossier qui n'y est pas.
 
 Stdlib seule.
 """
@@ -269,6 +271,9 @@ def station_files(version: str, deploy: Path = DEPLOY) -> dict[str, tuple[bytes,
     files = {
         "VERSION": (f"{version}\n".encode(), 0o644),
         "compose.yml": (station_compose(compose).encode(), 0o644),
+        # Les notes de chaque version : station update y lit l'action que
+        # demande une majeure, en tête de ses notes.
+        "CHANGELOG.md": (CHANGELOG.read_bytes(), 0o644),
     }
     for name in ("Caddyfile", ".env.example", "station"):
         files[name] = _station_file(deploy / name)
