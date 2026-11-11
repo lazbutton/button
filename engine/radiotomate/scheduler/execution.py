@@ -852,12 +852,18 @@ async def realign_rundown(
     """
     Anchor the rundown on the as-run: the item that just went on air takes the
     real start time and every later sequential item slides by the same delta.
-    Anchored positions (fixed minute) and desk pins keep their own time.
-    Returns the applied shift (zero when within tolerance).
+    Anchored positions (fixed minute) keep their own time. Desk lines slide like
+    clock lines while they air (``features.desk_lines_air``), and keep their own
+    time otherwise. Returns the applied shift (zero when within tolerance).
     """
     if item.planned_at is None or item.when_mode == WhenMode.ANCHORED.value:
         return timedelta(0)
-    if item.origin == DESK_ORIGIN:
+    desk_airs = await desk_lines_air(session)
+    # « Jouer tout de suite » plays its title at once, cutting the title on air,
+    # which resumes after it: the lines after it do not move.
+    if item.origin == DESK_ORIGIN and (
+        not desk_airs or (item.details or {}).get(PLAYED_NOW)
+    ):
         return timedelta(0)
     planned = naive_datetime(item.planned_at)
     started = naive_datetime(started)
@@ -873,22 +879,16 @@ async def realign_rundown(
             item.id,
         )
         return timedelta(0)
-    following = list(
-        await session.scalars(
-            select(RundownItem).where(
-                RundownItem.id != item.id,
-                RundownItem.status.in_(
-                    list(
-                        REPLACEABLE_STATUSES
-                        | (ENGAGED_STATUSES - {RundownStatus.ON_AIR.value})
-                    )
-                ),
-                RundownItem.when_mode != WhenMode.ANCHORED.value,
-                RundownItem.origin != DESK_ORIGIN,
-                RundownItem.planned_at >= item.planned_at,
-            )
-        )
+    waiting = REPLACEABLE_STATUSES | (ENGAGED_STATUSES - {RundownStatus.ON_AIR.value})
+    query = select(RundownItem).where(
+        RundownItem.id != item.id,
+        RundownItem.status.in_(list(waiting)),
+        RundownItem.when_mode != WhenMode.ANCHORED.value,
+        RundownItem.planned_at >= item.planned_at,
     )
+    if not desk_airs:
+        query = query.where(RundownItem.origin != DESK_ORIGIN)
+    following = list(await session.scalars(query))
     item.planned_at = started
     for row in following:
         if row.planned_at is not None:
@@ -959,8 +959,11 @@ async def _next_sequence(session: ormSession) -> int:
 
 # Desk edits live in their own module; re-exported for existing callers.
 from radiotomate.scheduler.desk import (  # noqa: E402, F401
+    PLAYED_NOW,
     attach_desk_pins,
+    close_replaced,
     delete_desk_item,
+    desk_lines_air,
     desk_queue_for,
     expire_past_desk_items,
     insert_desk_item,

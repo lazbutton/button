@@ -14,12 +14,13 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from time import perf_counter
 from typing import TYPE_CHECKING
 
-from sqlalchemy import select
+from sqlalchemy import case, select
 
 from radiotomate.domain.emission import is_harbor_source
 from radiotomate.enums import (
@@ -109,6 +110,16 @@ _PUSHABLE_STATUSES = {
     RundownStatus.RESCUE.value,
 }
 _ROUND_MODES = {CartMode.PLAYLIST, CartMode.PLAYLIST_LOOP}
+# execution.DESK_ORIGIN: execution imports this module.
+_DESK_ORIGIN = "desk"
+# Liquidsoap plays the carts before the jingles, and the jingles before the
+# Auto-DJ, as soon as they hold a title: those two queues cut what plays.
+_QUEUE_RANK = {"autodj": 0, "jingles": 1, "carts": 2}
+_QUEUE_HEADS = {
+    "autodj": ("next_autodj", "autodj_queued"),
+    "jingles": ("next_jingle", "jingles_queued"),
+}
+_ITEM_ID = re.compile(r'radiotomate_item_id="([^"]*)"')
 
 
 @dataclass
@@ -542,20 +553,76 @@ def _is_jingle_item(item: RundownItem) -> bool:
 
 
 async def _load_pushable_sequential(session: ormSession) -> list[RundownItem]:
+    """The lines still to push, in the order of the file: the desk lines among them
+    while they air (``features.desk_lines_air``), first at the same time, as the
+    console shows them."""
     # Through execution, which loads desk: desk imported first hits their cycle.
-    from radiotomate.scheduler.execution import removed_clock_ids
+    from radiotomate.scheduler.execution import desk_lines_air, removed_clock_ids
 
     removed = await removed_clock_ids(session)
+    query = select(RundownItem).where(
+        RundownItem.status.in_(list(_PUSHABLE_STATUSES)),
+        RundownItem.when_mode != WhenMode.ANCHORED.value,
+    )
+    if not await desk_lines_air(session):
+        query = query.where(RundownItem.origin != _DESK_ORIGIN)
     rows = await session.scalars(
-        select(RundownItem)
-        .where(
-            RundownItem.status.in_(list(_PUSHABLE_STATUSES)),
-            RundownItem.origin != "desk",
-            RundownItem.when_mode != WhenMode.ANCHORED.value,
+        query.order_by(
+            RundownItem.planned_at,
+            case((RundownItem.origin == _DESK_ORIGIN, 0), else_=1),
+            RundownItem.sequence,
         )
-        .order_by(RundownItem.planned_at, RundownItem.sequence)
     )
     return [row for row in rows if row.id not in removed]
+
+
+def _file_order(row: RundownItem) -> tuple:
+    """A line's place in the file, as ``_load_pushable_sequential`` sorts it."""
+    return (row.planned_at, 0 if row.origin == _DESK_ORIGIN else 1, row.sequence)
+
+
+def _queue_head(live_data: dict, queue: str) -> str | None:
+    """What a playout queue plays next: "" when it holds nothing, the rundown id
+    of its next title, or None for a title without a line, such as a gesture."""
+    cue_key, count_key = _QUEUE_HEADS[queue]
+    if queued_count(live_data, count_key, cue_key) == 0:
+        return ""
+    cue = live_data.get(cue_key)
+    uri = str(cue.get("initial_uri") or "") if isinstance(cue, dict) else ""
+    found = _ITEM_ID.search(uri)
+    return found.group(1) if found else None
+
+
+async def _desk_turn(session: ormSession, line: RundownItem, live_data: dict) -> bool:
+    """
+    Whether a desk line for the jingles or carts queue goes now, at its place.
+
+    Those queues cut what plays. The line waits until no title queued before it is
+    left in a queue it would pass: the lines after it may already wait in the
+    Auto-DJ, and air after it all the same. It does not cut the title on air
+    either: it waits behind it in its own queue or a stronger one, or goes at its
+    end, as a jingle of the clock does.
+    """
+    src = source_id(live_data)
+    if src in {"stream", "relay"}:
+        return False
+    rank = _QUEUE_RANK[line.queue]
+    for queue in _QUEUE_HEADS:
+        if _QUEUE_RANK[queue] >= rank:
+            continue
+        head = _queue_head(live_data, queue)
+        if head == "":
+            continue
+        queued = await RundownItem.from_id(session, head) if head else None
+        if (
+            queued is None
+            or queued.planned_at is None
+            or _file_order(queued) < _file_order(line)
+        ):
+            return False
+    if _QUEUE_RANK.get(src, 0) >= rank:
+        return True
+    return remaining_seconds(live_data) <= JINGLE_PREEMPT_REMAINING
 
 
 def _on_air_title(live_data: dict) -> str:
@@ -832,7 +899,46 @@ async def _push_existing_rundown_item(  # noqa: PLR0912
     return True
 
 
-async def _fill_sequential_from_rundown(  # noqa: PLR0912, PLR0913
+async def _push_desk_line(
+    session: ormSession,
+    gateway: PlayoutGateway,
+    line: RundownItem,
+    now: datetime,
+) -> bool:
+    """Push a desk line to its queue. The tick commits when the cursor of the motif
+    moves, and a desk line does not move it: its push, refused or not, is
+    committed here, or the next tick, in a session of its own, could miss it and
+    push the line again."""
+    from radiotomate.scheduler.execution import close_replaced
+
+    pushed = await _push_existing_rundown_item(session, gateway, line, queue=line.queue)
+    if pushed:
+        await close_replaced(session, line, now)
+    await session.commit()
+    return pushed
+
+
+def _desk_would_overflow(
+    line: RundownItem,
+    live_data: dict,
+    now: datetime,
+    next_anchor: int,
+    *,
+    turn: bool,
+) -> bool:
+    """Whether a desk line would still play at the minute of the next hard anchor.
+    At its turn it starts at the end of the title on air; before, not earlier
+    than its time in the file, which realign_rundown keeps on the as-run."""
+    start = remaining_seconds(live_data)
+    if not turn and line.planned_at is not None:
+        ahead = (line.planned_at - now.replace(tzinfo=None)).total_seconds()
+        start = max(start, ahead)
+    return track_would_overflow_anchor(
+        now, start, float(line.duration or 0), next_anchor
+    )
+
+
+async def _fill_sequential_from_rundown(  # noqa: PLR0912, PLR0913, PLR0915
     session: ormSession,
     gateway: PlayoutGateway,
     live_data: dict,
@@ -856,9 +962,50 @@ async def _fill_sequential_from_rundown(  # noqa: PLR0912, PLR0913
         if not pending:
             break
         made_progress = False
+        # A desk line waits for its turn: the desk lines after it wait too.
+        desk_waits = False
         for item in pending:
             if item.status not in _PUSHABLE_STATUSES:
                 continue
+            desk = item.origin == _DESK_ORIGIN
+            if desk and item.queue in {"jingles", "carts"}:
+                if desk_waits:
+                    continue
+                turn = await _desk_turn(session, item, live_data)
+                if next_anchor is not None and _desk_would_overflow(
+                    item, live_data, now, next_anchor, turn=turn
+                ):
+                    _log.info(
+                        "Holding desk line %s so hard anchor at minute %s can fire",
+                        item.id,
+                        next_anchor,
+                    )
+                    hold = True
+                    break
+                if not turn:
+                    desk_waits = True
+                    continue
+                if not await _push_desk_line(session, gateway, item, now):
+                    continue
+                actions.append("desk")
+                if item.queue == "jingles":
+                    jingles_q += 1
+                    live_data = {
+                        **live_data,
+                        "next_jingle": {"rid": 1},
+                        "jingles_queued": jingles_q,
+                    }
+                else:
+                    live_data = {
+                        **live_data,
+                        "next_cart": {"rid": 1},
+                        "carts_queued": queued_count(
+                            live_data, "carts_queued", "next_cart"
+                        )
+                        + 1,
+                    }
+                made_progress = True
+                break
             if _is_jingle_item(item):
                 if jingles_q >= JINGLE_QUEUE_DEPTH:
                     continue
@@ -893,15 +1040,23 @@ async def _fill_sequential_from_rundown(  # noqa: PLR0912, PLR0913
                 )
                 hold = True
                 break
-            queue = item.queue if item.queue in {"autodj", "carts"} else "autodj"
-            if not await _push_existing_rundown_item(
-                session, gateway, item, queue=queue
-            ):
-                continue
-            actions.append(
-                "autodj" if item.kind == PositionKind.MUSIQUE.value else "autodj_cart"
-            )
-            _state.cursor += 1
+            if desk:
+                if not await _push_desk_line(session, gateway, item, now):
+                    continue
+                # Not a step of the motif: the cursor stays.
+                actions.append("desk")
+            else:
+                queue = item.queue if item.queue in {"autodj", "carts"} else "autodj"
+                if not await _push_existing_rundown_item(
+                    session, gateway, item, queue=queue
+                ):
+                    continue
+                actions.append(
+                    "autodj"
+                    if item.kind == PositionKind.MUSIQUE.value
+                    else "autodj_cart"
+                )
+                _state.cursor += 1
             autodj_q += 1
             live_data = {
                 **live_data,
