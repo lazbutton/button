@@ -22,8 +22,8 @@ from radiotomate.domain.execution import (
     naive_datetime,
     rundown_summary,
 )
-from radiotomate.enums import PositionKind, RundownStatus, WhenMode
-from radiotomate.models import RundownItem, Setting, Sound
+from radiotomate.enums import CommandStatus, PositionKind, RundownStatus, WhenMode
+from radiotomate.models import PlayoutCommand, RundownItem, Setting, Sound
 from radiotomate.scheduler.clock import _PUSHABLE_STATUSES
 from radiotomate.scheduler.execution import (
     _CLOSED_DESK_STATUSES,
@@ -39,7 +39,11 @@ if TYPE_CHECKING:
 
 # ADR 0009: turned off, a clock line removed at the desk airs, as before.
 SETTING_SKIP_REMOVED = "features.skip_removed_lines"
+# ADR 0009: turned off, the clock leaves the desk lines alone, as before: they
+# never air, and drop from the file once their time is over.
+SETTING_DESK_LINES_AIR = "features.desk_lines_air"
 _SETTING_OFF = {"0", "false", "off", ""}
+REPLACED_REASON = "remplacé au pupitre"
 
 # Handed to the playout, not yet on air. Liquidsoap plays a line in the order it
 # got it and cannot give it back: removed or moved, it would air all the same.
@@ -49,6 +53,17 @@ _SENT_REMOVE = (
     "Une fois à l'antenne, « Suivant » la coupe."
 )
 _SENT_MOVE = "Cette ligne est déjà partie vers l'antenne : elle ne se déplace plus."
+_SENT_EDIT = "Cette ligne est déjà partie vers l'antenne : elle ne se modifie plus."
+# A sent line still not on air an hour after its time will not air: the queue
+# cleaner takes out of Liquidsoap what waits there longer than ten minutes, by
+# default (``queue_cleaner.max_age_seconds``).
+SENT_GRACE = timedelta(hours=1)
+# The default age past which the queue cleaner takes a request out of Liquidsoap.
+QUEUE_MAX_AGE = timedelta(minutes=10)
+# Details key of the line « Jouer tout de suite » sends itself: it airs at once,
+# not at the time the file gives it, and moves no other line.
+PLAYED_NOW = "played_now"
+_OPEN_COMMANDS = {CommandStatus.PENDING.value, CommandStatus.SENDING.value}
 
 
 def desk_queue_for(kind: str) -> str:
@@ -150,8 +165,21 @@ async def skip_removed_lines(session: ormSession) -> bool:
     return row is None or str(row.value).strip().lower() not in _SETTING_OFF
 
 
+async def desk_lines_air(session: ormSession) -> bool:
+    """Whether the clock pushes the desk lines at their turn. A missing key says
+    it does."""
+    row = await Setting.from_key(session, SETTING_DESK_LINES_AIR)
+    return row is None or str(row.value).strip().lower() not in _SETTING_OFF
+
+
 def _is_removal(row: RundownItem) -> bool:
     return bool((row.details or {}).get("suppress_at"))
+
+
+def _is_replacement(row: RundownItem) -> bool:
+    """A desk line put in the place of the clock rows at its time (``replace_at``)."""
+    details = row.details or {}
+    return bool(row.path) and bool(details.get("hides_ids") or details.get("hides_at"))
 
 
 def _removed_by(removal: RundownItem):
@@ -170,18 +198,46 @@ def _removed_by(removal: RundownItem):
     )
 
 
+async def _hiding(session: ormSession, rows: list[RundownItem]) -> list[RundownItem]:
+    """The desk rows that take clock rows off the antenna: the removals, and, while
+    the desk lines air, the replacements, which go in their place."""
+    hiding = [row for row in rows if _is_removal(row)]
+    if hiding and not await skip_removed_lines(session):
+        hiding = []
+    replacements = [row for row in rows if _is_replacement(row)]
+    if replacements and await desk_lines_air(session):
+        hiding += replacements
+    return hiding
+
+
 async def removed_clock_ids(session: ormSession) -> set[str]:
     """Ids of the clock rows removed at the desk: the clock does not push them while
     their removal lasts. « Annuler » deletes the removal and gives them back."""
-    active = await list_active_desk_items(session)
-    removals = [row for row in active if _is_removal(row)]
-    if not removals or not await skip_removed_lines(session):
+    hiding = await _hiding(session, await list_active_desk_items(session))
+    if not hiding:
         return set()
     return set(
         await session.scalars(
-            select(RundownItem.id).where(or_(*(_removed_by(row) for row in removals)))
+            select(RundownItem.id).where(or_(*(_removed_by(row) for row in hiding)))
         )
     )
+
+
+async def close_replaced(session: ormSession, line: RundownItem, now: datetime) -> None:
+    """A replacement has gone to the playout: the clock rows it hides will never
+    air. Closed « remplacé », they do not go either once it is over."""
+    if not _is_replacement(line):
+        return
+    rows = await session.scalars(
+        select(RundownItem).where(
+            RundownItem.status.in_(list(_PUSHABLE_STATUSES)),
+            _removed_by(line),
+        )
+    )
+    for row in rows:
+        row.status = RundownStatus.REPLACED.value
+        row.reason = REPLACED_REASON
+        row.closed_at = naive_datetime(now)
 
 
 async def _skip_removed(
@@ -199,13 +255,32 @@ async def _skip_removed(
         row.closed_at = now
 
 
+async def _detach_commands(session: ormSession, rows: list[RundownItem]) -> None:
+    """Unlink the playout commands of rows about to go, as a reset of the conducteur
+    does: they point at them. A command still to send expires with them."""
+    ids = [row.id for row in rows if row.reserved_at is not None]
+    if not ids:
+        return
+    commands = await session.scalars(
+        select(PlayoutCommand).where(PlayoutCommand.rundown_item_id.in_(ids))
+    )
+    for command in commands:
+        command.rundown_item_id = None
+        if command.status in _OPEN_COMMANDS:
+            command.status = CommandStatus.EXPIRED.value
+            command.last_error = "ligne du pupitre retirée"
+    await session.flush()
+
+
 async def expire_past_desk_items(
     session: ormSession, now: datetime | None = None
 ) -> None:
     """Drop unlocked desk pins whose planned window is already over.
 
     A removal that goes marks its lines skipped: the clock passed them over, and
-    with nothing left to hide them they would air late.
+    with nothing left to hide them they would air late. A replacement that never
+    went does the same, while the desk lines air. A line sent to the playout stays
+    while it waits for its turn in Liquidsoap, which plays it all the same.
     """
     cutoff = naive_datetime(now) or datetime.now()
     rows = await list_active_desk_items(session)
@@ -217,13 +292,17 @@ async def expire_past_desk_items(
         if start is None:
             continue
         hold = max(float(row.duration or 0), 30.0)
-        if start + timedelta(seconds=hold) <= cutoff:
+        end = start + timedelta(seconds=hold)
+        if item_is_sent(row):
+            end += SENT_GRACE
+        if end <= cutoff:
             stale.append(row)
     if not stale:
         return
-    removals = [row for row in stale if _is_removal(row)]
-    if removals and await skip_removed_lines(session):
-        await _skip_removed(session, removals, cutoff)
+    hiding = await _hiding(session, stale)
+    if hiding:
+        await _skip_removed(session, hiding, cutoff)
+    await _detach_commands(session, stale)
     for row in stale:
         await session.delete(row)
     await session.commit()
@@ -261,14 +340,47 @@ async def _on_air_end(session: ormSession) -> datetime | None:
     return start + timedelta(seconds=float(row.duration or 0))
 
 
+async def _on_air_floor(session: ormSession) -> datetime:
+    """Now, or the end of the title on air when it is later."""
+    now = datetime.now()
+    return max(now, naive_datetime(await _on_air_end(session)) or now)
+
+
+async def _sent_end(session: ormSession) -> datetime | None:
+    """While the desk lines air, the end of the last line already sent to the
+    playout: Liquidsoap plays it first, in the order it got it. None otherwise."""
+    if not await desk_lines_air(session):
+        return None
+    # A line sent longer ago is no longer in Liquidsoap: played without word, or
+    # taken out by the queue cleaner. Its status says sent all the same.
+    recent = datetime.now() - QUEUE_MAX_AGE
+    rows = await session.scalars(
+        select(RundownItem).where(
+            RundownItem.status.in_(list(_SENT_STATUSES)),
+            RundownItem.reserved_at >= recent,
+        )
+    )
+    # The line of « Jouer tout de suite » is dated after the title on air, but
+    # plays at once: its time says nothing of where the next line goes. On air,
+    # it gives the floor as the title on air does.
+    ends = [
+        naive_datetime(row.planned_at) + timedelta(seconds=float(row.duration or 0))
+        for row in rows
+        if row.planned_at is not None and not (row.details or {}).get(PLAYED_NOW)
+    ]
+    return max(ends, default=None)
+
+
 async def _earliest_start(session: ormSession) -> datetime:
-    """Now, or the end of the title on air when it is later.
+    """Now, or the end of the title on air when it is later, or the end of the lines
+    already sent to the playout (``_sent_end``).
 
     A line dated earlier can end before now: it leaves the antenna file, and a
     desk pin is then dropped by ``expire_past_desk_items``.
     """
-    now = datetime.now()
-    return max(now, naive_datetime(await _on_air_end(session)) or now)
+    floor = await _on_air_floor(session)
+    sent = await _sent_end(session)
+    return floor if sent is None else max(floor, sent)
 
 
 async def _planned_at_for_insert(
@@ -286,8 +398,12 @@ async def _planned_at_for_insert(
         if target is not None and target.planned_at is not None:
             # Above a line still to come, half a second ahead of it: the floor
             # could put it below, as realign_rundown leaves under 5 s of drift.
+            # Never above a line already sent: it airs first all the same.
             start = target.planned_at - timedelta(milliseconds=500)
-            return start if start > datetime.now() else floor
+            if start <= datetime.now():
+                return floor
+            sent = await _sent_end(session)
+            return start if sent is None else max(start, sent)
     if after_id:
         after = await RundownItem.from_id(session, after_id)
         if after is not None:
@@ -344,7 +460,12 @@ def read_desk_pin(data: dict) -> DeskPin:
     )
 
 
-async def insert_desk_item(session: ormSession, data: dict) -> RundownItem:
+async def insert_desk_item(
+    session: ormSession, data: dict, *, sent: bool = False
+) -> RundownItem:
+    """A desk line, to come. ``sent``: « Jouer tout de suite » has already handed it
+    to the playout. It is then in its queue, and the clock does not push it again:
+    it follows it to the antenna like any line sent."""
     suppress_at = str(data.get("suppress_at") or "").strip()
     if suppress_at:
         return await _insert_suppress(session, suppress_at)
@@ -353,12 +474,15 @@ async def insert_desk_item(session: ormSession, data: dict) -> RundownItem:
     sound = await Sound.from_media_path(session, path)
     version = await ensure_programming_version(session)
     replace_at = str(data.get("replace_at") or "").strip() or None
-    planned_at = await _planned_at_for_insert(
-        session,
-        after_id=str(data.get("after_id") or "").strip() or None,
-        before_id=str(data.get("before_id") or "").strip() or None,
-        replace_at=replace_at,
-    )
+    if sent:
+        planned_at = await _on_air_floor(session)
+    else:
+        planned_at = await _planned_at_for_insert(
+            session,
+            after_id=str(data.get("after_id") or "").strip() or None,
+            before_id=str(data.get("before_id") or "").strip() or None,
+            replace_at=replace_at,
+        )
     details = {
         "artist": artist,
         "title": title or _desk_resource(artist, title),
@@ -384,6 +508,11 @@ async def insert_desk_item(session: ormSession, data: dict) -> RundownItem:
         cart_id=sound.cart_id if sound is not None else None,
         sound_id=sound.id if sound is not None else None,
     )
+    if sent:
+        now = datetime.now()
+        item.details = {**details, PLAYED_NOW: True}
+        item.status = RundownStatus.IN_QUEUE.value
+        item.reserved_at = item.sent_at = item.accepted_at = item.queued_at = now
     session.add(item)
     await session.commit()
     await session.refresh(item)
@@ -424,6 +553,8 @@ def _require_mutable_desk(item: RundownItem) -> None:
         )
     if item.origin != DESK_ORIGIN:
         raise DomainConflict("Ce passage vient de l'horloge.")
+    if item_is_sent(item):
+        raise DomainConflict(_SENT_EDIT)
 
 
 async def patch_desk_item(session: ormSession, item_id: str, data: dict) -> RundownItem:
@@ -473,6 +604,8 @@ async def delete_desk_item(session: ormSession, item_id: str) -> None:
         )
     if item_is_sent(item):
         raise DomainConflict(_SENT_REMOVE)
+    # A line the playout refused: its command points at it.
+    await _detach_commands(session, [item])
     await session.delete(item)
     await session.commit()
 

@@ -16,6 +16,7 @@ from radiotomate.models import AutoDJSlot, Clock, MusicCategory
 from radiotomate.scheduler.execution import (
     attach_desk_pins,
     delete_desk_item,
+    desk_lines_air,
     ensure_forecast,
     insert_desk_item,
     item_to_payload,
@@ -368,7 +369,10 @@ async def conducteur_fire_now_json():
     except RuntimeError:
         return playout_rejected_response()
     if sound is None:
-        await insert_desk_item(g.dbsession, pin._asdict())
+        # Already in its queue: while the desk lines air, the clock must not
+        # push it a second time.
+        sent = await desk_lines_air(g.dbsession)
+        await insert_desk_item(g.dbsession, pin._asdict(), sent=sent)
     invalidate_conducteur_cache()
     return jsonify(await _desk_payload())
 
