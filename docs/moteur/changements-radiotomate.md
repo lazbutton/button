@@ -95,7 +95,7 @@ L’Agenda (migration v17) ajoute des émissions à une date précise : un set e
 
 Une émission (`emissions`, migrations v10 et v15) a un titre, un créneau hebdomadaire ou daté, et un `host_username`. Le créneau live sans encodeur est l’alerte `live_absent` (EF-01) : le filet est l’horloge du moment, pas un silence.
 
-Un cart peut pointer un dossier de la banque (`bank_folder`, v12) et marquer ses sons comme pads d’identifiant (`ident_pads`, v16). Les jingles par défaut prennent le dossier `30-habillage/jingles`.
+Un cart peut pointer un dossier de la banque (`bank_folder`, v12) et marquer ses sons comme pads d’identifiant (`ident_pads`, v16). Les jingles par défaut prennent le dossier `30-habillage/jingles`. Le scheduler rattache au cart les fichiers nouveaux de son dossier (`scheduler/bank_sync.py`), et note ceux qu’il ne prend pas, avec leur raison, dans un fichier `.refus.json` de ce dossier. L’interface les rend dans `skipped_files`.
 
 Chaque personne a une page de compte. Les utilisateurs se créent et se modifient aussi en JSON.
 
@@ -157,6 +157,8 @@ Métier : `domain/`, `services/` (carts, auto-DJ, requêtes Beets, émissions, b
 Interface : `account.py`, `csrf.py`, `emissions.py`, `integrity.py`, `json_util.py`, `spa.py`, `system.py`.
 
 Agenda : `models/agenda.py`, `domain/agenda.py`, `services/agenda.py`, `scheduler/agenda.py`, `interface/agenda.py`, `interface/public.py`. Banque : `services/media_bank.py`.
+
+Fiches de la bibliothèque : `fiches/`, les règles de l’outil de catalogue de Hopper (texte normalisé, variantes d’un titre, règles, propositions), sans Quart, sans Beets, sans réseau.
 
 Les tests nouveaux couvrent l’horloge, le conducteur, les alertes, le harbor, la rétention, le CSRF, les JSON d’admin, le tick filtré, l’Agenda et la banque. `liquidsoap --check` sur `playout/radiotomate.liq` fait partie de la vérification.
 
