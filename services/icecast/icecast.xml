@@ -22,7 +22,7 @@
         <burst-size>65535</burst-size>
     </limits>
     <mount>
-        <mount-name>/studio.wav</mount-name>
+        <mount-name>/__ICECAST_MONITOR_MOUNT__</mount-name>
         <queue-size>1048576</queue-size>
         <burst-size>524288</burst-size>
     </mount>

@@ -11,15 +11,15 @@ function state(over: Partial<AntenneState> = {}): AntenneState {
       source: "autodj",
       silence_s: 0.2,
       rms_db: -17.6,
-      icecast_targets: ["icecast:8000/button.mp3", "radio.example:8000/button.mp3"],
-      icecast_connected: ["icecast:8000/button.mp3", "radio.example:8000/button.mp3"],
+      icecast_targets: ["icecast:8000/radio.mp3", "radio.example:8000/radio.mp3"],
+      icecast_connected: ["icecast:8000/radio.mp3", "radio.example:8000/radio.mp3"],
       icecast_down: [],
     },
     engine: { heartbeat_age_s: 0.4, heartbeat_ok: true, playout_connected: true, db_ok: true, tick_run_total: 10, tick_gated_total: 30 },
     incidents: [],
     listeners: [
-      { target: "icecast:8000/button.mp3", host: "icecast", mount: "button.mp3", reachable: true, mounted: true, connected: true, listeners: 0, listener_peak: 1 },
-      { target: "radio.example:8000/button.mp3", host: "radio.example", mount: "button.mp3", reachable: true, mounted: true, connected: true, listeners: 4, listener_peak: 9 },
+      { target: "icecast:8000/radio.mp3", host: "icecast", mount: "radio.mp3", reachable: true, mounted: true, connected: true, listeners: 0, listener_peak: 1 },
+      { target: "radio.example:8000/radio.mp3", host: "radio.example", mount: "radio.mp3", reachable: true, mounted: true, connected: true, listeners: 4, listener_peak: 9 },
     ],
     asrun: [],
     next_live_slot: { title: "QG", label: "QG 20:00-22:00", starts_in_s: 7800, active: false },
@@ -45,14 +45,14 @@ test("all green when everything is fine", () => {
 
 test("silence and disconnected public output turn red", () => {
   const s = state({
-    playout: { reachable: true, source: "autodj", silence_s: 25, rms_db: -90, icecast_down: ["radio.example:8000/button.mp3"] },
+    playout: { reachable: true, source: "autodj", silence_s: 25, rms_db: -90, icecast_down: ["radio.example:8000/radio.mp3"] },
     incidents: [
       { kind: "icecast_down", detail: "Sortie Icecast déconnectée : radio.example", since_s: 40, notified: true },
       { kind: "silence", detail: "25 s de silence (source autodj)", since_s: 20, notified: true },
     ],
     listeners: [
-      { target: "icecast:8000/button.mp3", host: "icecast", mount: "button.mp3", reachable: true, mounted: true, connected: true, listeners: 0, listener_peak: 1 },
-      { target: "radio.example:8000/button.mp3", host: "radio.example", mount: "button.mp3", reachable: false, mounted: false, connected: false, listeners: null, listener_peak: null },
+      { target: "icecast:8000/radio.mp3", host: "icecast", mount: "radio.mp3", reachable: true, mounted: true, connected: true, listeners: 0, listener_peak: 1 },
+      { target: "radio.example:8000/radio.mp3", host: "radio.example", mount: "radio.mp3", reachable: false, mounted: false, connected: false, listeners: null, listener_peak: null },
     ],
   });
   const byKey = Object.fromEntries(derivePillars(s, false).map((p) => [p.key, p]));

@@ -1,4 +1,4 @@
-"""python test_icecast_config.py — mots de passe et e-mail tels quels dans icecast.xml."""
+"""python test_icecast_config.py — mots de passe, e-mail et mount du casque dans icecast.xml."""
 
 from __future__ import annotations
 
@@ -67,6 +67,17 @@ class IcecastConfigTest(unittest.TestCase):
         self.assertEqual(config.findtext("authentication/source-password"), "buttonhackme")
         self.assertEqual(config.findtext("authentication/admin-password"), "buttonadmin")
         self.assertEqual(config.findtext("admin"), "admin@localhost")
+        self.assertEqual(config.findtext("mount/mount-name"), "/studio.wav")
+
+    def test_the_monitor_mount_follows_its_variable(self) -> None:
+        # Le mount WAV du casque garde sa file plus longue sous un autre nom.
+        for value in ("casque.wav", "/casque.wav"):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as raw:
+                root = Path(raw)
+                start(root, ICECAST_MONITOR_MOUNT=value)
+                config = ET.parse(root / "icecast.xml")
+                self.assertEqual(config.findtext("mount/mount-name"), "/casque.wav")
+                self.assertEqual(config.findtext("mount/queue-size"), "1048576")
 
 
 if __name__ == "__main__":

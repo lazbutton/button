@@ -1,8 +1,10 @@
 """
 A full run of `deploy/scripts/init-radiotomate.sh` with the real CLI: at every
 start, it warns while the admin account still has the example password (SEC-06),
-and a new installation refuses the account password at the harbor.
-The secrets check itself is tested in `services/catalog/test_init_secrets.py`.
+a new installation refuses the account password at the harbor, and the Icecast
+outputs take the mounts of `.env`.
+The secrets and mounts checks themselves are tested in
+`services/catalog/test_init_secrets.py`.
 """
 
 import os
@@ -11,6 +13,8 @@ import sqlite3
 import subprocess
 from contextlib import closing
 from pathlib import Path
+
+from ruamel.yaml import YAML
 
 from radiotomate.services.stream_token import SETTING_ACCOUNT_PASSWORD, SETTING_OFF
 
@@ -24,7 +28,9 @@ MACHINE_SECRETS = [
 WARNING = "a encore le mot de passe change-me"
 
 
-def _init(tmp_path: Path, user: str, password: str) -> subprocess.CompletedProcess:
+def _init(
+    tmp_path: Path, user: str, password: str, **env: str
+) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["sh", str(INIT)],
         env={
@@ -35,6 +41,7 @@ def _init(tmp_path: Path, user: str, password: str) -> subprocess.CompletedProce
             "RT_ADMIN_USER": user,
             "RT_ADMIN_PASSWORD": password,
             **{name: secrets.token_hex(24) for name in MACHINE_SECRETS},
+            **env,
         },
         capture_output=True,
         encoding="utf-8",
@@ -113,3 +120,35 @@ def test_an_interrupted_installation_still_gets_the_key(tmp_path: Path):
     again = _init(tmp_path, "admin", "un mot de passe")
     assert again.returncode == 0, again.stderr
     assert _setting(tmp_path, SETTING_ACCOUNT_PASSWORD) == "0"
+
+
+def _outputs(tmp_path: Path) -> list[tuple[str, str]]:
+    data = YAML().load(tmp_path / "data" / "radiotomate.yaml")
+    outputs = data["playout_process_config"]["outputs"]
+    return [(row["encoder"], row["mount"]) for row in outputs]
+
+
+def test_the_outputs_take_the_mounts_of_the_env(tmp_path: Path):
+    first = _init(tmp_path, "admin", "un mot de passe")
+    assert first.returncode == 0, first.stderr
+    # No station's name by default.
+    assert _outputs(tmp_path) == [("mp3cbr", "radio.mp3"), ("wav", "studio.wav")]
+    assert "le flux public passe" not in first.stderr
+
+    # A station keeps the address of its stream: a leading slash is allowed.
+    kept = _init(
+        tmp_path,
+        "admin",
+        "",
+        ICECAST_MOUNT="/antenne.mp3",
+        ICECAST_MONITOR_MOUNT="casque.wav",
+    )
+    assert kept.returncode == 0, kept.stderr
+    assert _outputs(tmp_path) == [("mp3cbr", "antenne.mp3"), ("wav", "casque.wav")]
+    # The public stream moved: said, with the way back, without stopping.
+    assert "le flux public passe de /radio.mp3 à /antenne.mp3" in kept.stderr
+    assert "ICECAST_MOUNT=radio.mp3 dans .env" in kept.stderr
+
+    again = _init(tmp_path, "admin", "", ICECAST_MOUNT="antenne.mp3")
+    assert again.returncode == 0, again.stderr
+    assert "le flux public passe" not in again.stderr

@@ -892,5 +892,21 @@ async def test_antenne_state_demo_scheduler():
     body = await demo.state()
     assert body["demo"] is True
     assert body["engine"]["heartbeat_ok"] is True
-    assert body["listeners"][0]["mount"] == "button.mp3"
+    # No station's name: the default mount, without an output in the YAML.
+    assert body["listeners"][0]["mount"] == "radio.mp3"
+    assert body["playout"]["icecast_targets"] == ["icecast:8000/radio.mp3"]
     assert body["asrun"][0]["title"] == "Dahlia"
+
+
+def test_the_demo_shows_the_mount_of_the_yaml():
+    from radiotomate.scheduler_api import demo_mount
+
+    assert demo_mount({}) == "radio.mp3"
+    assert demo_mount({"playout_process_config": {"outputs": None}}) == "radio.mp3"
+    outputs = [
+        {"driver": "pulseaudio"},
+        {"driver": "icecast", "mount": "/antenne.mp3"},
+        {"driver": "icecast", "mount": "casque.wav"},
+    ]
+    config = {"playout_process_config": {"outputs": outputs}}
+    assert demo_mount(config) == "antenne.mp3"

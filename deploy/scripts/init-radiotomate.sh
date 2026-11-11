@@ -24,6 +24,27 @@ case "$RT_COOKIE_SECURE" in
 esac
 export RT_COOKIE_SECURE
 
+# Les mounts d'Icecast : le flux public, en MP3, et le casque de la console, en
+# WAV, qui reste sur le réseau de la station. Un nom seul, sans dossier : Caddy
+# ne relaie que les mounts à la racine (deploy/Caddyfile). Un / au début est
+# permis. Vérifiés avant tout, comme le cookie.
+ICECAST_MOUNT="${ICECAST_MOUNT:-radio.mp3}"
+ICECAST_MOUNT="${ICECAST_MOUNT#/}"
+ICECAST_MONITOR_MOUNT="${ICECAST_MONITOR_MOUNT:-studio.wav}"
+ICECAST_MONITOR_MOUNT="${ICECAST_MONITOR_MOUNT#/}"
+check_mount() { # variable, valeur, extension, exemple
+  case "$2" in
+    "" | *[!A-Za-z0-9._-]* | [!A-Za-z0-9]*) ;;
+    ?*."$3") return 0 ;;
+  esac
+  echo "$1 vaut « $2 » : un nom de mount en .$3, en lettres, chiffres, point, tiret ou souligné, sans dossier ni espace, comme $4." >&2
+  echo "Le corriger dans .env, puis lancer : docker compose up -d --force-recreate (docs/deploiement.md, « Les mounts »)." >&2
+  exit 1
+}
+check_mount ICECAST_MOUNT "$ICECAST_MOUNT" mp3 radio.mp3
+check_mount ICECAST_MONITOR_MOUNT "$ICECAST_MONITOR_MOUNT" wav studio.wav
+export ICECAST_MOUNT ICECAST_MONITOR_MOUNT
+
 # Les secrets de .env.example valent change-me, connus de tous : refusés eux aussi
 # avant tout. Personne ne tape les quatre secrets de machine : 24 caractères au
 # moins. En secours, RT_ALLOW_SHORT_SECRETS=1 fait d'un secret trop court un
@@ -143,6 +164,7 @@ export ICECAST_SOURCE_PASSWORD RT_NOWPLAYING_SECRET RT_SKIP_ICECAST_OUTPUTS
 python3 - <<'PY'
 from pathlib import Path
 import os
+import sys
 from ruamel.yaml import YAML
 
 path = Path(os.environ["RTCONFIG"])
@@ -175,7 +197,7 @@ else:
             "quality": 128,
             "host": "icecast",
             "port": 8000,
-            "mount": "button.mp3",
+            "mount": os.environ["ICECAST_MOUNT"],
             "password": os.environ["ICECAST_SOURCE_PASSWORD"],
         },
         {
@@ -184,10 +206,25 @@ else:
             "quality": 1,
             "host": "icecast",
             "port": 8000,
-            "mount": "studio.wav",
+            "mount": os.environ["ICECAST_MONITOR_MOUNT"],
             "password": os.environ["ICECAST_SOURCE_PASSWORD"],
         },
     ]
+    # Le flux public change d'adresse : les auditeurs et les réglages de la
+    # station gardent l'ancienne. Dit, sans bloquer : le nom vient de .env.
+    before = [
+        str(row.get("mount"))
+        for row in ppc.get("outputs") or []
+        if isinstance(row, dict) and row.get("host") == "icecast" and row.get("encoder") == "mp3cbr"
+    ]
+    if before and before[0] != os.environ["ICECAST_MOUNT"]:
+        print(
+            f"Attention : le flux public passe de /{before[0]} à /{os.environ['ICECAST_MOUNT']}."
+            f" Pour garder l'ancienne adresse : ICECAST_MOUNT={before[0]} dans .env, puis"
+            " docker compose up -d --force-recreate. Sinon, changer aussi le flux public"
+            " dans la console, Réglages → Station (docs/deploiement.md, « Les mounts »).",
+            file=sys.stderr,
+        )
 ppc["outputs"] = outputs
 ml = data.setdefault("metadata_log", {})
 ml["relay_to"] = [

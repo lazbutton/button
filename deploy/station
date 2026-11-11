@@ -32,9 +32,6 @@ MIN_FREE_GB=10
 HTTPS_WAIT=180
 # Le conteneur qui répond sur le port 80 pendant la vérification du domaine.
 PROBE=button-verification-domaine
-# Le mount public du flux, celui qu'écrit init-radiotomate.sh. Quand GEN-02
-# le rendra réglable, il se lira dans .env, ici seulement.
-MOUNT=button.mp3
 # Le format des archives de station backup. restore lit celui-ci et les plus
 # anciens : une version plus récente de la commande lit encore une archive
 # d'aujourd'hui, et un format nouveau prend le numéro suivant. Dans chaque
@@ -370,6 +367,15 @@ env_value() { # clé, défaut
     line=${line:1:${#line}-2}
   fi
   printf '%s\n' "$line"
+}
+
+# Le mount public du flux, celui qu'écrit init-radiotomate.sh : ICECAST_MOUNT
+# dans .env, sans son / du début, et radio.mp3 sans elle, comme compose.yml.
+stream_mount() {
+  local mount
+  mount=$(env_value ICECAST_MOUNT "")
+  mount=${mount#/}
+  printf '%s\n' "${mount:-radio.mp3}"
 }
 
 env_has() { grep -qE "^$1=" "$env_file" 2>/dev/null; }
@@ -889,10 +895,10 @@ smoke_ok() {
     # Les navigateurs, et curl, refusent le certificat de Caddy ; une station
     # sans domaine n'a que ses ports.
     console=http://127.0.0.1:$(env_value CONSOLE_PORT 30126)
-    stream=http://127.0.0.1:$(env_value ICECAST_PORT 18000)/$MOUNT
+    stream=http://127.0.0.1:$(env_value ICECAST_PORT 18000)/$(stream_mount)
   else
     console=https://$domain
-    stream=https://$domain/$MOUNT
+    stream=https://$domain/$(stream_mount)
   fi
   (cd "$dir" && SMOKE_WAIT=${SMOKE_WAIT:-300} scripts/smoke.sh "$console" "$stream")
 }
@@ -911,7 +917,7 @@ station_settings() {
   local harbor written
   harbor=$(env_value HARBOR_PORT 6800)
   [[ $harbor =~ ^[0-9]+$ ]] || harbor=""
-  written=$(compose exec -T -e "BUTTON_NAME=$name" -e "BUTTON_DOMAIN=$domain" -e "BUTTON_HARBOR_PORT=$harbor" -e "BUTTON_MOUNT=$MOUNT" \
+  written=$(compose exec -T -e "BUTTON_NAME=$name" -e "BUTTON_DOMAIN=$domain" -e "BUTTON_HARBOR_PORT=$harbor" -e "BUTTON_MOUNT=$(stream_mount)" \
     radiotomate-interface python3 - <<'PY'
 import os
 import sqlite3
@@ -1181,7 +1187,7 @@ cmd_install() {
 
   say "" "La station tourne : l'antenne joue."
   say "  Console : https://$domain$([[ $tls != internal ]] || echo ', avec un certificat que les navigateurs refusent')"
-  say "  Flux : https://$domain/$MOUNT"
+  say "  Flux : https://$domain/$(stream_mount)"
   say "  Direct : $domain, port $(env_value HARBOR_PORT 6800), avec le jeton d'encodeur de chaque compte"
   say "  Dossier : $dir, et la commande : station"
   if [[ $(env_value BUTTON_UPDATES auto) == auto ]]; then
@@ -1494,7 +1500,7 @@ PY
 # passent au nouveau. Celles qu'un admin a changées dans la console restent.
 # Elles se forment comme dans station_settings. Écrit les clés changées.
 engine_domain_settings() { # ancien domaine, nouveau
-  engine_run -e "BUTTON_OLD=$1" -e "BUTTON_NEW=$2" -e "BUTTON_MOUNT=$MOUNT" \
+  engine_run -e "BUTTON_OLD=$1" -e "BUTTON_NEW=$2" -e "BUTTON_MOUNT=$(stream_mount)" \
     --entrypoint python3 radiotomate-init - <<'PY'
 # domaine : les adresses publiques des réglages Station, de l'ancien au nouveau.
 import os

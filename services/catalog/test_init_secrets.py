@@ -1,4 +1,4 @@
-"""python test_init_secrets.py — radiotomate-init refuse les secrets d'exemple (SEC-06)."""
+"""python test_init_secrets.py — radiotomate-init refuse les secrets d'exemple (SEC-06), et un mount mal nommé."""
 
 from __future__ import annotations
 
@@ -179,6 +179,34 @@ class InitSecretsTest(unittest.TestCase):
         # Seul radiotomate-init lit ce mot de passe : le relancer suffit.
         self.assertIn("lancer : docker compose up -d (", result.stderr)
         self.assertFalse(self.engine_called())
+
+    def test_a_wrong_mount_is_refused_before_anything(self) -> None:
+        wrong = (
+            ("ICECAST_MOUNT", "radio"),
+            ("ICECAST_MOUNT", "live/radio.mp3"),
+            ("ICECAST_MOUNT", "mon flux.mp3"),
+            ("ICECAST_MOUNT", ".mp3"),
+            ("ICECAST_MOUNT", "radio.wav"),
+            ("ICECAST_MONITOR_MOUNT", "studio.mp3"),
+            ("ICECAST_MONITOR_MOUNT", "casque/*.wav"),
+        )
+        for name, value in wrong:
+            with self.subTest(name=name, value=value):
+                result = self.init({**strong_secrets(), name: value})
+
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(f"{name} vaut « {value} »", result.stderr)
+                self.assertIn("docs/deploiement.md, « Les mounts »", result.stderr)
+                # Refusé avant tout, comme un secret : ni dossier, ni moteur.
+                self.assertFalse((self.root / "data").exists())
+                self.assertFalse(self.engine_called())
+
+    def test_a_mount_may_start_with_a_slash(self) -> None:
+        mounts = {"ICECAST_MOUNT": "/radio-2_hd.mp3", "ICECAST_MONITOR_MOUNT": "/casque.wav"}
+        result = self.init({**strong_secrets(), **mounts})
+
+        self.assertTrue(self.engine_called(), result.stderr)
+        self.assertNotIn("vaut «", result.stderr)
 
 
 if __name__ == "__main__":

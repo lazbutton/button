@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Contrôle après une installation ou une mise à jour : l'antenne tourne-t-elle ?
 # Sans compte, depuis le dossier de la station, celui de compose.yml :
-#   scripts/smoke.sh http://127.0.0.1:30126 http://127.0.0.1:18000/button.mp3
+#   scripts/smoke.sh http://127.0.0.1:30126 http://127.0.0.1:18000/radio.mp3
 # Cinq points, dans l'ordre. Au premier qui échoue, le script le nomme, dit quel
 # journal lire, et sort en 1. SMOKE_WAIT : l'attente de la santé du moteur, en
 # secondes, 120 par défaut.
@@ -9,7 +9,7 @@ set -euo pipefail
 
 usage() {
   echo "usage: smoke.sh CONSOLE_URL STREAM_URL" >&2
-  echo "  depuis le dossier de la station : scripts/smoke.sh http://127.0.0.1:30126 http://127.0.0.1:18000/button.mp3" >&2
+  echo "  depuis le dossier de la station : scripts/smoke.sh http://127.0.0.1:30126 http://127.0.0.1:18000/radio.mp3" >&2
   exit 2
 }
 
