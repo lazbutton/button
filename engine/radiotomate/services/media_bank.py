@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
+import tempfile
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import mutagen
 
 from radiotomate.domain.errors import DomainValidationError
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 AUDIO_SUFFIXES = {
     ".mp3",
@@ -33,6 +39,20 @@ CART_DROP_TOP = "50-carts"
 FINDER_CARTS = "Carts"
 TRASH_TOP = "90-trash"
 MAX_BANK_ATTACH = 2000
+# The files of a cart's folder that the cart did not take, and why. The bank
+# skips it, as any dot file. The scheduler writes it, the interface reads it.
+REFUSALS_NAME = ".refus.json"
+# 2000 entries of 4 KiB, the longest path: a bigger file is not the scheduler's,
+# and is not read.
+_REFUSALS_MAX_BYTES = 8 << 20
+# The reasons, in French: the console shows them as they are.
+REFUSAL_UNREADABLE = "lecture impossible"
+REFUSAL_NOT_AUDIO = "ce n'est pas un fichier audio"
+REFUSAL_NO_LENGTH = "durée illisible"
+REFUSAL_TOO_MANY = (
+    f"plus de {MAX_BANK_ATTACH} fichiers audio : "
+    "le bac ne prend plus rien de son dossier"
+)
 _SLUG_RE = re.compile(r"[^A-Za-z0-9._-]+")
 HABILLAGE_TITLES = {
     "jingles": "30-habillage/jingles",
@@ -229,6 +249,10 @@ def ensure_cart_tree(cart_id: int, title: str, existing: str | None = None) -> s
     return rel
 
 
+class BankFolderTooLargeError(DomainValidationError):
+    """More than MAX_BANK_ATTACH audio files: a cart takes none from the folder."""
+
+
 def iter_bank_audio(folder: Path) -> list[Path]:
     try:
         folder_res = folder.resolve()
@@ -253,7 +277,7 @@ def iter_bank_audio(folder: Path) -> list[Path]:
                 continue
             files.append(resolved)
     if len(files) > MAX_BANK_ATTACH:
-        raise DomainValidationError(
+        raise BankFolderTooLargeError(
             f"folder has more than {MAX_BANK_ATTACH} audio files"
         )
     return files
@@ -413,6 +437,9 @@ def release_cart_tree(cart_id: int, title: str, bank_folder: str | None) -> None
         return
     for dirpath, _dirnames, filenames in os.walk(folder, followlinks=False):
         for name in filenames:
+            # The scheduler's note goes away with the folder, not to the trash.
+            if name == REFUSALS_NAME:
+                continue
             trash_exclusive_file(Path(dirpath) / name, 0)
     shutil.rmtree(folder, ignore_errors=True)
 
@@ -474,12 +501,107 @@ def audio_length(path: Path) -> float | None:
     return float(length)
 
 
-def inspect_audio(path: Path) -> float | None:
+def probe_audio(path: Path) -> tuple[float | None, str | None]:
+    """The length of an audio file, or why it cannot be one."""
     try:
         with path.open("rb") as handle:
             head = handle.read(64)
     except OSError:
-        return None
+        return None, REFUSAL_UNREADABLE
     if not _looks_like_audio(head):
+        return None, REFUSAL_NOT_AUDIO
+    length = audio_length(path)
+    if length is None:
+        return None, REFUSAL_NO_LENGTH
+    return length, None
+
+
+def inspect_audio(path: Path) -> float | None:
+    return probe_audio(path)[0]
+
+
+def read_refusals(folder: Path) -> list[dict]:
+    """The entries of a folder's .refus.json, each with its path and reason."""
+    try:
+        with (folder / REFUSALS_NAME).open("rb") as handle:
+            raw = handle.read(_REFUSALS_MAX_BYTES + 1)
+        entries = json.loads(raw) if len(raw) <= _REFUSALS_MAX_BYTES else None
+    except (OSError, ValueError, RecursionError):
+        return []
+    if not isinstance(entries, list):
+        return []
+    return [
+        {"path": entry["path"], "reason": entry["reason"]}
+        for entry in entries
+        if isinstance(entry, dict)
+        and isinstance(entry.get("path"), str)
+        and isinstance(entry.get("reason"), str)
+    ]
+
+
+def write_refusals(folder: Path, entries: list[dict]) -> bool:
+    """Bring a folder's .refus.json in line with entries. True if it changed.
+
+    No entry, no file. The file is only rewritten when it changes, and through a
+    rename: the interface, another process, never reads half of it.
+    """
+    target = folder / REFUSALS_NAME
+    if not entries:
+        try:
+            target.unlink()
+        except FileNotFoundError:
+            return False
+        return True
+    if read_refusals(folder) == entries:
+        return False
+    # One entry per line: easy to read, even for a shell script.
+    lines = ",\n".join(json.dumps(entry, ensure_ascii=False) for entry in entries)
+    fd, partial = tempfile.mkstemp(prefix=f"{REFUSALS_NAME}.", dir=folder)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            os.fchmod(handle.fileno(), 0o644)
+            handle.write(f"[\n{lines}\n]\n")
+        Path(partial).replace(target)
+    except BaseException:
+        Path(partial).unlink(missing_ok=True)
+        raise
+    return True
+
+
+def _quiet_resolve(path: Path | str | None) -> Path | None:
+    try:
+        return Path(path).resolve() if path else None
+    except (OSError, RuntimeError):
         return None
-    return audio_length(path)
+
+
+def cart_refusals(
+    bank_folder: str | None, held: Iterable[Path | str | None] = ()
+) -> list[dict]:
+    """The files of a cart's folder that the cart did not take, and why.
+
+    From the scheduler's last pass, minus what changed since: a file that left
+    the folder, or that the cart now holds (held, its sounds' paths, read only
+    when there is something to check). Never raises.
+    """
+    raw = str(bank_folder or "").strip()
+    if not raw:
+        return []
+    try:
+        folder = resolve_bank_dir(raw)
+    except (DomainValidationError, OSError):
+        return []
+    entries = read_refusals(folder)
+    if not entries:
+        return []
+    taken = {resolved for resolved in map(_quiet_resolve, held) if resolved}
+    kept = []
+    for entry in entries:
+        target = _quiet_resolve(folder / entry["path"])
+        try:
+            gone = target is None or not target.exists()
+        except OSError:
+            gone = False
+        if not gone and target not in taken:
+            kept.append(entry)
+    return kept
