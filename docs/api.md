@@ -166,6 +166,8 @@ Jouer tout de suite, droit `live` : `POST /carts/{id}/now.json` et `POST /carts/
 
 `GET /system/disk.json` → `{total, used, free, path}` : espace disque de la banque (`MEDIA_ROOT`). Droits `carts` ou `autodj`, sinon 403 ; 503 si le disque est illisible.
 
+`GET /system/version.json`, admin seulement → `{version, recorded_at, services}` : la version de la station, `BUTTON_VERSION`, et pour chaque service `{service, image, version}`, triés par service. `version` y est celle que porte l'image, `org.opencontainers.image.version`, ou `null` pour une image qui ne la dit pas. L'interface n'a pas accès à Docker : la commande `station` relève ces versions après chaque installation, mise à jour ou restauration, dans `versions.json`, dans le dossier des données du moteur. `recorded_at`, l'heure de Paris à la minute, dit depuis quand elles tournent. Sans relevé, sur une station installée sans la commande `station` par exemple : `{version: null, recorded_at: null, services: []}`. Une station relancée à la main, par `docker compose up`, garde le relevé d'avant.
+
 ### Comptes
 
 `GET/POST /users.json`, `PUT/DELETE /users/{id}.json`, admin seulement. Un compte : `{id, username, notes, permissions}`. `PUT` accepte `notes`, `password`, `permissions`, `username`.
