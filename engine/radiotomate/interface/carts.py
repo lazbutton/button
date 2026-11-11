@@ -267,6 +267,13 @@ def _cart_queue(cart: Cart) -> str | None:
     return "carts"
 
 
+def _skipped_files(cart: Cart, sounds: list[Sound]) -> list[dict]:
+    """The files of the cart's folder that the scheduler did not take, and why."""
+    if cart.mode is CartMode.RELAY:
+        return []
+    return media_bank.cart_refusals(cart.bank_folder, (sound.path for sound in sounds))
+
+
 def _cart_json(cart: Cart, sounds: list[Sound] | None = None) -> dict:
     listed = cart.sounds if sounds is None else sounds
     nxt = None
@@ -301,6 +308,7 @@ def _cart_json(cart: Cart, sounds: list[Sound] | None = None) -> dict:
         "bank_folder": cart.bank_folder or "",
         "ident_pads": bool(getattr(cart, "ident_pads", False)),
         "finder_path": (media_bank.finder_rel(cart.id, cart.title) if cart.id else ""),
+        "skipped_files": _skipped_files(cart, listed),
         "sounds": [_sound_json(sound) for sound in listed],
     }
 
