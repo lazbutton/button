@@ -119,10 +119,15 @@ last_update() {
   assert_output --partial "  Une station pose le nom de son mount public dans \`.env\` :"
   assert_output --partial "(https://github.com/lazbutton/button/blob/v1.0.0/docs/deploiement.md#les-mounts)."
   refute_output --partial "**"
-  assert_output --partial "Rien n'est changé. Une fois l'action faite : station update --major."
+  # Le script lancé, qui n'est pas la commande de la station : celle d'une
+  # 0.2.0 n'a pas update.
+  assert_output --regexp "Rien n'est changé\. Une fois l'action faite : bash [^ ]*/station update --major\."
   [ "$(env_of BUTTON_VERSION)" = 0.1.0 ]
   [ "$(cat "$DIR/VERSION")" = 0.1.0 ]
   [ ! -e "$DIR/backups" ]
+  run bash "$DIR/station" update
+  assert_failure
+  assert_output --partial "Rien n'est changé. Une fois l'action faite : station update --major."
   station update --major
   assert_success
   assert_output --partial "Version majeure : l'action que demandent ses notes est faite (--major)."
@@ -135,7 +140,7 @@ last_update() {
   station update
   assert_failure
   assert_output --partial "Pas de mise à jour maintenant : QG, un direct, commence à 20:00, dans 12 min. L'antenne se couperait pendant. Rien n'est changé."
-  assert_output --partial "Relancer plus tard, ou mettre à jour quand même : station update --force."
+  assert_output --regexp "Relancer plus tard, ou mettre à jour quand même : bash [^ ]*/station update --force\."
   [ "$(env_of BUTTON_VERSION)" = 0.1.0 ]
   [ ! -e "$DIR/backups" ]
   [ ! -e "$DIR/updates.log" ]
@@ -151,7 +156,7 @@ last_update() {
   echo "occupée : QG, un direct, commence à 20:00, dans 29 min" >"$FAKE_STATE/window-later"
   station update
   assert_failure
-  assert_output --partial "Pas de mise à jour maintenant : QG, un direct, commence à 20:00, dans 29 min."
+  assert_output --partial "Pas de mise à jour maintenant : QG, un direct, commence à 20:00, dans 29 min. L'antenne se couperait pendant. La station reste en 0.1.0, avec la sauvegarde d'avant."
   run ! logged "docker compose up"
   [ "$(env_of BUTTON_VERSION)" = 0.1.0 ]
   [ "$(cat "$DIR/VERSION")" = 0.1.0 ]
@@ -188,6 +193,30 @@ last_update() {
   assert_output --partial "Une restauration ne s'est pas finie : $DIR/restauration-en-cours est encore là. Rien n'est changé."
 }
 
+@test "une station au script de sauvegarde sans repli Python se sauvegarde avec celui de la version visée" {
+  # Comme une 0.2.0 : son script demande sqlite3, que l'image du moteur n'a pas.
+  mkdir -p "$BATS_TEST_TMPDIR/ancienne/scripts"
+  cat >"$BATS_TEST_TMPDIR/ancienne/scripts/backup-radiotomate.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+command -v sqlite3 >/dev/null 2>&1 || {
+  echo "sqlite3 is required" >&2
+  exit 1
+}
+EOF
+  RELEASE_OVERLAY=$BATS_TEST_TMPDIR/ancienne make_release 0.1.0 "$FAKE_STATE/releases/v0.1.0"
+  installed_then 0.2.0
+  station backup
+  assert_failure
+  assert_output --partial "sqlite3 is required"
+  station update
+  assert_success
+  grep -Eq -- "-v /[^ ]+/files/scripts/backup-radiotomate.sh:/backup-radiotomate.sh:ro" "$FAKE_STATE/log"
+  [ "$(find "$DIR/backups" -name 'button-*.tar' | wc -l)" = 1 ]
+  # Puis la station a le sien, celui de la 0.2.0.
+  cmp "$DIR/scripts/backup-radiotomate.sh" "$DEPLOY/scripts/backup-radiotomate.sh"
+}
+
 @test "update garde les cinq dernières sauvegardes de backups/" {
   installed_then 0.2.0
   mkdir -p "$DIR/backups"
@@ -204,6 +233,38 @@ last_update() {
   [ -e "$DIR/backups/button-20260103T030000Z.tar" ]
   [ -e "$DIR/backups/autre-chose.tar" ]
   [ "$(find "$DIR/backups" -name 'button-*.tar' | wc -l)" = 5 ]
+}
+
+@test "la sauvegarde de la mise à jour reste, même après des archives d'une horloge en avance" {
+  installed_then 0.2.0
+  mkdir -p "$DIR/backups"
+  local day
+  for day in 1 2 3 4 5; do
+    touch "$DIR/backups/button-2099010${day}T030000Z.tar"
+  done
+  station update
+  assert_success
+  local archive
+  archive=$(sed -n 's/^  La sauvegarde d.avant : \(.*\)\.$/\1/p' <<<"$output")
+  [ -f "$archive" ]
+  [ ! -e "$DIR/backups/button-20990101T030000Z.tar" ]
+  [ "$(find "$DIR/backups" -name 'button-*.tar' | wc -l)" = 5 ]
+}
+
+@test "un Caddyfile changé par la version fait repartir Caddy, que up ne recrée pas" {
+  mkdir -p "$BATS_TEST_TMPDIR/suivante"
+  { cat "$DEPLOY/Caddyfile"; echo "# changé en 0.2.0"; } >"$BATS_TEST_TMPDIR/suivante/Caddyfile"
+  RELEASE_OVERLAY=$BATS_TEST_TMPDIR/suivante make_release 0.2.0 "$FAKE_STATE/releases/v0.2.0"
+  installed_then 0.2.0
+  # Caddy, d'une image épinglée, monte le Caddyfile ; le playout, rien du dossier.
+  printf 'id-caddy\nid-playout\n' >"$FAKE_STATE/containers"
+  printf 'id-caddy|caddy|%s %s \nid-playout|radiotomate-playout|%s \n' \
+    "$DIR/Caddyfile" "$DIR/data/caddy" "$DIR/data/radiotomate" >"$FAKE_STATE/inspect-mounts"
+  station update
+  assert_success
+  assert_output --partial "Mise à jour : recréés avec les fichiers de la version : caddy."
+  logged "docker compose --profile cloud --profile share --profile vps up -d --force-recreate --no-deps caddy (dans $DIR)"
+  run ! logged "--no-deps radiotomate-playout"
 }
 
 @test "update garde .env et compose.override.yml, et à côté un fichier que la station a changé" {
@@ -243,14 +304,21 @@ last_update() {
   [ "$(env_of MEILI_MASTER_KEY)" != "$key" ]
 }
 
-@test "une image qui ne se tire pas ne change rien à la station" {
+@test "une image qui ne se tire pas laisse la station en 0.1.0, avec sa sauvegarde" {
   installed_then 0.2.0
+  cp "$DIR/.env" "$BATS_TEST_TMPDIR/env-avant"
+  (cd "$DIR" && snapshot) | grep -v ' ./data/' >"$BATS_TEST_TMPDIR/dossier-avant"
   touch "$FAKE_STATE/pull-fails"
   station update
   assert_failure
   assert_output --partial "Les images de la version 0.2.0 ne se tirent pas : voir le message de docker compose plus haut. La station tourne toujours en 0.1.0."
   [ "$(env_of BUTTON_VERSION)" = 0.1.0 ]
   [ "$(cat "$DIR/VERSION")" = 0.1.0 ]
+  # Rien n'a changé que la sauvegarde d'avant, et son journal.
+  cmp "$BATS_TEST_TMPDIR/env-avant" "$DIR/.env"
+  diff "$BATS_TEST_TMPDIR/dossier-avant" <( (cd "$DIR" && snapshot) |
+    grep -v -e ' ./data/' -e ' ./backups/button-' -e ' ./backups.log$' -e ' ./updates.log$')
+  [ "$(find "$DIR/backups" -name 'button-*.tar' | wc -l)" = 1 ]
   run ! logged "docker compose up"
   [ "$(last_update | cut -f1-3)" = "$(printf '0.1.0\t0.2.0\téchouée')" ]
   [ "$(last_update | cut -f5)" = "pendant les images" ]
@@ -265,6 +333,29 @@ last_update() {
   assert_output --regexp "Revenir à la version 0\.1\.0 : voir docs/deploiement\.md, « Revenir en arrière », avec la sauvegarde $DIR/backups/button-[0-9TZ]+\.tar\."
   [ "$(last_update | cut -f1-3)" = "$(printf '0.1.0\t0.2.0\téchouée')" ]
   [ "$(last_update | cut -f5)" = "pendant le contrôle" ]
+}
+
+@test "relancée après un échec au redémarrage, update dit de réparer la station" {
+  installed_then 0.2.0
+  touch "$FAKE_STATE/up-fails"
+  station update
+  assert_failure
+  assert_output --partial "Le moteur ne repart pas en 0.2.0"
+  [ "$(last_update | cut -f3,5)" = "$(printf 'échouée\tpendant le redémarrage')" ]
+  station update
+  assert_success
+  assert_output --partial "La station est déjà en 0.2.0. Rien à faire."
+  assert_output --partial "Attention : la mise à jour vers 0.2.0 a échoué : voir station status. station install la répare, sur cette version."
+}
+
+@test "un échec pendant la sauvegarde se note, et status le dit" {
+  installed_then 0.2.0
+  touch "$FAKE_STATE/backup-fails"
+  station update
+  assert_failure
+  [ "$(last_update | cut -f3-5)" = "$(printf 'échouée\t-\tpendant la sauvegarde')" ]
+  station status
+  assert_output --regexp "  La dernière : le [0-9/]+ à [0-9:]+, de 0\.1\.0 à 0\.2\.0, échouée, pendant la sauvegarde\."
 }
 
 @test "update passe la main à la commande station de la version visée" {
@@ -284,6 +375,23 @@ last_update() {
   cmp "$DIR/station" "$BATS_TEST_TMPDIR/station-0.2.0"
   # Elle ne la repasse pas.
   [ "$(grep -c "prend la main" <<<"$output")" = 1 ]
+}
+
+@test "la commande à qui on a passé la main ne la repasse pas" {
+  installed_then 0.2.0
+  {
+    head -n 1 "$STATION"
+    echo 'echo "La commande de la version 0.2.0." >&2'
+    tail -n +2 "$STATION"
+  } >"$BATS_TEST_TMPDIR/station-0.2.0"
+  RELEASE_STATION=$BATS_TEST_TMPDIR/station-0.2.0 make_release 0.2.0 "$FAKE_STATE/releases/v0.2.0"
+  # Celle-ci n'est pas celle de l'archive : sans STATION_UPDATE_HANDOFF, elle
+  # passerait la main.
+  run env STATION_UPDATE_HANDOFF=1 bash "$STATION" update
+  assert_success
+  refute_output --partial "prend la main"
+  refute_output --partial "La commande de la version 0.2.0."
+  [ "$(env_of BUTTON_VERSION)" = 0.2.0 ]
 }
 
 @test "update depuis une archive, main compris ; de main, pas vers une version publiée" {

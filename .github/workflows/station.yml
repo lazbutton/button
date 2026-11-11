@@ -30,8 +30,8 @@ name: station
 # update: a real update, of a station installed by the highest published
 # version, with its own station command, to the folder of this checkout and
 # the :main images (scripts/version.py station main), by the station command
-# of this checkout. Before, the action the next version asks: ICECAST_MOUNT
-# keeps the stream on button.mp3. During, the stream is read every second:
+# of this checkout. Before, the action that 1.0.0 asks: ICECAST_MOUNT keeps
+# the stream on the mount it was served on. During, it is read every second:
 # the antenna must not be cut 30 s or more (MAJ-04). After, the same accounts,
 # clocks, weekly shows, Agenda and settings, the backup of before, the line
 # of updates.log and versions.json, then status and the smoke check.
@@ -427,15 +427,21 @@ jobs:
           # after. The station command of the version may only have install.
           sudo docker compose exec -T radiotomate-interface \
             radiotomate users add animateur-ci --password "$(openssl rand -hex 12)"
+          # The weekly show is three days from today: a version with the
+          # window of MAJ-04 would refuse to update during it.
           sudo docker compose exec -T radiotomate-interface python3 - <<'PY'
           import sqlite3
           from contextlib import closing
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
 
+          day = (datetime.now(ZoneInfo("Europe/Paris")).weekday() + 3) % 7
           with closing(sqlite3.connect("/data/radiotomate.db", timeout=30)) as con, con:
               con.execute("insert into clocks (name) values ('Horloge de la CI')")
               con.execute(
                   "insert into emissions (scope, title, day_of_week, start_minute, end_minute, created, modified)"
-                  " values ('weekly', 'Émission de la CI', 2, 1200, 1320, datetime('now'), datetime('now'))"
+                  " values ('weekly', 'Émission de la CI', ?, 1200, 1320, datetime('now'), datetime('now'))",
+                  (day,),
               )
               con.execute(
                   "insert into agenda_diffusions (kind, title, starts_at, ends_at, created, modified)"
@@ -466,10 +472,15 @@ jobs:
           # shellcheck disable=SC2024
           sudo docker compose exec -T radiotomate-interface python3 - <"$RUNNER_TEMP/empreinte.py" |
             tee "$out/empreinte-avant.txt"
-          # The action that the next version asks of a station installed before
-          # it: keep the address of its stream, button.mp3.
+          # The mount the station serves: button.mp3 before ICECAST_MOUNT came,
+          # radio.mp3 after, by default. The action that 1.0.0 asks of a
+          # station installed before it: keep that address, in .env.
+          mount=radio.mp3
+          code=$(curl -s -m 2 -o /dev/null -w '%{http_code}' http://127.0.0.1:18000/button.mp3 || true)
+          if [ "$code" = 200 ]; then mount=button.mp3; fi
+          echo "Mount servi : /$mount"
           if ! sudo grep -q '^ICECAST_MOUNT=' .env; then
-            echo 'ICECAST_MOUNT=button.mp3' | sudo tee -a .env >/dev/null
+            echo "ICECAST_MOUNT=$mount" | sudo tee -a .env >/dev/null
           fi
           # The antenna, read from Icecast's local port during the update: a
           # second of the stream at a time, with its time, its status and what
@@ -477,7 +488,7 @@ jobs:
           (
             while :; do
               answer=$(curl -s -m 1 -o /dev/null -w '%{http_code} %{size_download}' \
-                http://127.0.0.1:18000/button.mp3 || true)
+                "http://127.0.0.1:18000/$mount" || true)
               echo "$(date +%s.%N) $answer"
               [[ $answer == "200 "[1-9]* ]] || sleep 0.5
             done
@@ -517,7 +528,7 @@ jobs:
           sudo jq -e '.version == "main" and (.services | map(.service) | index("radiotomate-playout"))' \
             data/radiotomate/versions.json
           sudo station status 2>&1 | tee "$out/status.log"
-          sudo scripts/smoke.sh http://127.0.0.1:30126 http://127.0.0.1:18000/button.mp3
+          sudo scripts/smoke.sh http://127.0.0.1:30126 "http://127.0.0.1:18000/$mount"
       - name: Logs of the station
         if: failure()
         run: |

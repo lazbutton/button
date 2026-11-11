@@ -83,12 +83,12 @@ Dans les deux cas, le runner garde l'ACL par défaut de `/opt`, ouverte à tous 
   - `station uninstall --purge`, qui ne laisse ni dossier, ni commande, ni conteneur ;
   - une installation neuve, comme sur une autre machine, puis `station restore` : la station doit avoir les mêmes comptes, horloges, émissions, Agenda et réglages, d'après une empreinte de leurs lignes, et le même son. Le mot de passe admin de la sauvegarde doit ouvrir une session, par la console. Ni l'archive, ni aucune sortie ne doit le montrer.
 
-Le job `update` fait une vraie mise à jour, le critère de la fiche MAJ-04. Il installe la plus haute version publiée, avec sa propre commande `station`, prise sur sa page comme sur un VPS. Puis il fait ce que demande la version suivante, `ICECAST_MOUNT=button.mp3` dans `.env`, et lance `station update --from` avec l'archive et la commande de la branche, vers `main`. Il vérifie ensuite :
+Le job `update` fait une vraie mise à jour, le critère de la fiche MAJ-04. Il installe la plus haute version publiée, avec sa propre commande `station`, prise sur sa page comme sur un VPS. Puis il fait ce que demande la 1.0.0 à une station installée avant elle : il épingle dans `.env`, par `ICECAST_MOUNT`, le mount que la station sert. Il lance enfin `station update --from` avec l'archive et la commande de la branche, vers `main`. L'émission hebdomadaire qu'il ajoute tombe trois jours plus tard : la fenêtre ne l'arrête pas. Il vérifie ensuite :
 
 - l'antenne, lue chaque seconde sur le port local d'Icecast pendant la mise à jour : elle doit se couper moins de 30 s ;
 - les comptes, horloges, émissions, Agenda et réglages, d'après la même empreinte qu'avant ;
 - la sauvegarde d'avant, dans `backups/`, la ligne de `updates.log` et `versions.json` ;
-- `station status`, puis le contrôle de la station, `smoke.sh`, sur le flux `button.mp3`.
+- `station status`, puis le contrôle de la station, `smoke.sh`, sur le même mount.
 
 Chaque cas prend quelques minutes, mais tire les images de la station deux fois, 3 Go environ chaque fois : le job ne tourne donc que pour ce qu'une installation prend, `deploy/station` et ses tests, `compose.yml`, le `Caddyfile`, `deploy/scripts/` et `scripts/version.py`, sur une pull request comme sur `main`. À la main : « Run workflow » sur `station`. Les images sont celles de `main`, pas celles de la branche : une pull request qui change une image et le dossier ensemble ne se vérifie en entier qu'après sa fusion. En échec, la sortie de l'installation et les journaux de `docker compose` sont dans un artefact du cas, `installation-neuf-1` ou `installation-deja-la-1`, sans les secrets de `.env` ; le chiffre est celui de la tentative. Il reste 14 jours. `scripts/verifier.sh` ne fait pas cette installation : elle écrit dans `/opt/button`, et prend les ports 80 et 443 de la machine. Pour la refaire à la main, sur une machine jetable : voir [d'où viennent les fichiers](deploiement.md#doù-viennent-les-fichiers).
 

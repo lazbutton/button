@@ -67,10 +67,12 @@ compose_run() {
   local tmp script
   case "$entrypoint ${1:-}" in
     "bash /backup-radiotomate.sh")
-      [[ ! -e $state/backup-fails ]] || {
+      # L'image du moteur n'a pas sqlite3 : un script sans repli Python, comme
+      # celui de la 0.2.0, y échoue.
+      if [[ -e $state/backup-fails ]] || ! grep -q python3 "$(host /backup-radiotomate.sh)"; then
         echo "sqlite3 is required" >&2
         exit 1
-      }
+      fi
       tmp=$(mktemp -d)
       mkdir "$tmp/radiotomate"
       cp "$(host /data)/radiotomate.db" "$tmp/radiotomate/"
@@ -81,6 +83,10 @@ compose_run() {
       echo /sauvegarde/radiotomate.tar.gz
       ;;
     "bash /restore-radiotomate.sh")
+      if ! grep -q python3 "$(host /restore-radiotomate.sh)"; then
+        echo "sqlite3 is required" >&2
+        exit 1
+      fi
       if [[ -n $(ls -A "$(host /cible)") ]]; then
         echo "refusing to restore into a non-empty directory: /cible" >&2
         exit 1
@@ -126,8 +132,16 @@ case $1 in
   # station relève les versions : $state/containers et $state/volumes, un par
   # ligne.
   ps) cat "$state/containers" 2>/dev/null || true ;;
-  # Leur service, leur image et leur version : $state/inspect.
-  inspect) cat "$state/inspect" 2>/dev/null || true ;;
+  # Leur service, leur image et leur version : $state/inspect ; ou leur
+  # identifiant, leur service et les chemins qu'ils montent :
+  # $state/inspect-mounts.
+  inspect)
+    if [[ " $* " == *".Mounts"* ]]; then
+      cat "$state/inspect-mounts" 2>/dev/null || true
+    else
+      cat "$state/inspect" 2>/dev/null || true
+    fi
+    ;;
   volume) [[ ${2:-} != ls ]] || cat "$state/volumes" 2>/dev/null || true ;;
   login) echo "login ${*:2} jeton=$(cat)" >>"$state/login" ;;
   run)

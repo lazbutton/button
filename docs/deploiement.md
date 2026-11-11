@@ -375,18 +375,18 @@ sudo station update
 
 Elle passe à la plus haute version publiée, ou à celle de `--version X.Y.Z`, plus récente que la sienne. Dans l'ordre :
 
-1. **Elle vérifie que rien ne s'y oppose.** `HOLD` bloque toute mise à jour, et une restauration pas finie aussi. Un direct ou une diffusion de l'Agenda à l'antenne, ou qui commence dans les 30 minutes, l'arrête : le moteur le dit, par `radiotomate maintenance window`. Un moteur d'avant cette commande ne le dit pas : la mise à jour se fait, et prévient. `--force` passe outre ce direct, pas `HOLD`.
-2. **Elle s'arrête devant une version majeure.** Elle cite l'action que demandent ses notes, leur paragraphe « Mise en service », et ne change rien. Une fois l'action faite : `sudo station update --major`.
-3. **Elle télécharge les fichiers de la version**, et vérifie leur somme, comme `station install`. La suite est faite par la commande `station` de cette version : elle sait ce que sa version demande.
-4. **Elle sauvegarde la station**, comme `station backup`, sans les sons, dans `backups/`. Seules les cinq dernières archives de `backups/` restent, celles de `station backup` comprises.
-5. **Elle tire les images de la version**, pendant que l'antenne joue encore. Si elles ne se tirent pas, rien n'a changé.
-6. **Elle pose les fichiers de la version.** `.env` et `compose.override.yml` restent. Ce que la version demande en plus à `.env` s'y ajoute, avec sa valeur par défaut, et `BUTTON_VERSION` passe à la version. Un fichier de la version que la station avait changé reste à côté, en `.local-…` : les changements d'une station vont dans `compose.override.yml`.
-7. **Elle redémarre la station** : les trois services du moteur ensemble, puis les autres, puis ceux d'un autre profil qui tournaient, comme `share`. L'antenne se coupe le temps du redémarrage.
+1. **Elle télécharge les fichiers de la version**, et vérifie leur somme, comme `station install`. La suite est faite par la commande `station` de cette version : elle sait ce que sa version demande.
+2. **Elle vérifie que rien ne s'y oppose.** `HOLD` bloque toute mise à jour, et une restauration pas finie aussi. Une version majeure l'arrête : elle cite l'action que demandent ses notes, leur paragraphe « Mise en service », et ne change rien ; une fois l'action faite, la relancer avec `--major`. Un direct ou une diffusion de l'Agenda à l'antenne, ou qui commence dans les 30 minutes, l'arrête aussi : le moteur le dit, par `radiotomate maintenance window`, d'après la grille, l'Agenda et ce qui passe par le harbor. Un moteur d'avant cette commande ne le dit pas : la mise à jour se fait, et prévient. `--force` passe outre ce direct, pas `HOLD`.
+3. **Elle sauvegarde la station**, comme `station backup`, sans les sons, dans `backups/`, avec le script de sauvegarde de la version : celui d'une 0.2.0 ne tourne pas dans l'image du moteur. Seules les cinq dernières archives de `backups/` restent, celles de `station backup` comprises.
+4. **Elle ajoute à `.env` ce que la version y demande**, avec sa valeur par défaut, puis **tire ses images**, pendant que l'antenne joue encore. Si elles ne se tirent pas, la station reste à sa version : seules la sauvegarde, et ce que `.env` a reçu, restent.
+5. **Elle relit la fenêtre**, que le tirage a pu faire attendre : un direct qui s'est rapproché l'arrête encore, avant tout changement de la station.
+6. **Elle pose les fichiers de la version.** `.env` et `compose.override.yml` restent, et `BUTTON_VERSION` passe à la version. Un fichier de la version que la station avait changé reste à côté, en `.local-…` : les changements d'une station vont dans `compose.override.yml`.
+7. **Elle redémarre la station** : les trois services du moteur ensemble, puis les autres, puis ceux d'un autre profil qui tournaient, comme `share`. Un service à l'image épinglée qui monte un fichier changé de la version, comme Caddy et son `Caddyfile`, est recréé lui aussi. L'antenne se coupe le temps du redémarrage.
 8. **Elle la contrôle** : son adresse en HTTPS, puis `scripts/smoke.sh`, décrit plus bas.
 
-Au clavier, elle demande une confirmation avant la sauvegarde ; `--yes` répond pour un script. `--from station.tar.gz` prend les fichiers de la version dans une archive, comme `station install`, `main` compris, pour un essai.
+Au clavier, elle demande une confirmation avant la sauvegarde ; `--yes` répond pour un script. `--from station.tar.gz` prend les fichiers de la version dans une archive, comme `station install`, `main` compris, pour un essai. Sur une machine distante, la lancer dans `tmux` ou `screen` : une connexion SSH coupée en plein redémarrage l'arrêterait là.
 
-Chaque mise à jour se note dans `updates.log`, dans le dossier de la station : faite, arrêtée ou échouée, avec la sauvegarde d'avant. `station status` dit la dernière. Si le contrôle échoue, la commande le dit, avec la sauvegarde d'avant : revenir en arrière se fait encore à la main, voir [revenir en arrière](#revenir-en-arrière).
+Chaque mise à jour se note dans `updates.log`, dans le dossier de la station : faite, arrêtée ou échouée, avec la sauvegarde d'avant. `station status` dit la dernière. Si le redémarrage ou le contrôle échoue, la commande le dit, avec la sauvegarde d'avant : revenir en arrière se fait encore à la main, voir [revenir en arrière](#revenir-en-arrière). La station est alors déjà à la nouvelle version : relancée, `station update` n'a plus rien à faire, et `station install` la répare, sur cette version.
 
 La version de chaque service, d'après ses images, est relevée après chaque installation, mise à jour ou restauration, dans `versions.json`, avec les données du moteur. `GET /system/version.json` la donne aux admins : voir [api.md](api.md#système).
 
@@ -482,7 +482,7 @@ tar -xzf station.tar.gz
 docker compose pull && docker compose up -d
 ```
 
-Avec une migration, d'abord redescendre le schéma, ou remettre la copie de la base, comme plus haut. La sauvegarde que `station update` fait avant de changer, dans `backups/`, se remet par `station restore` une fois la version d'avant reposée.
+Avec une migration, d'abord redescendre le schéma, ou remettre la copie de la base, comme plus haut. La sauvegarde que `station update` fait avant de changer, dans `backups/`, se remet par `station restore`, une fois la version d'avant reposée, si sa commande `station` a `restore` : la 0.2.0 ne l'a pas, et ses scripts de sauvegarde demandent `sqlite3`, que l'image du moteur n'a pas. Pour elle, remettre la copie de la base faite avant la migration : voir [remettre la copie](exploitation/sauvegarde.md#remettre-la-copie).
 
 Une station qui suit `main` ne revient pas à un tag daté : il n'existe que pour les images reconstruites ce jour-là, pas pour les sept. Elle revient à une version publiée, de la même façon.
 
