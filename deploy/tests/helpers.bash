@@ -8,12 +8,18 @@ STATION=$DEPLOY/station
 # Les fichiers joints à une version, faits des fichiers du dépôt, comme
 # scripts/version.py station, dont les tests disent le reste. smoke.sh n'y fait
 # que noter son appel : ses tests sont dans services/catalog/test_smoke.py.
+# Une autre commande station, ou un autre CHANGELOG.md : leur chemin, dans
+# RELEASE_STATION et RELEASE_CHANGELOG. D'autres fichiers, par-dessus ceux
+# du dépôt : un dossier, RELEASE_OVERLAY, avec les mêmes chemins.
 make_release() { # version, dossier
-  local files
+  local files script=${RELEASE_STATION:-$STATION}
   files=$(mktemp -d)
   mkdir -p "$files/scripts" "$2"
-  cp "$DEPLOY/compose.yml" "$DEPLOY/Caddyfile" "$DEPLOY/.env.example" "$STATION" "$files/"
+  cp "$DEPLOY/compose.yml" "$DEPLOY/Caddyfile" "$DEPLOY/.env.example" "$files/"
+  cp "$script" "$files/station"
+  cp "${RELEASE_CHANGELOG:-$DEPLOY/../CHANGELOG.md}" "$files/CHANGELOG.md"
   cp "$DEPLOY"/scripts/* "$files/scripts/"
+  [[ -z ${RELEASE_OVERLAY:-} ]] || cp -R "$RELEASE_OVERLAY/." "$files/"
   cat >"$files/scripts/smoke.sh" <<'EOF'
 #!/usr/bin/env bash
 echo "smoke $* SMOKE_WAIT=${SMOKE_WAIT:-} dans $PWD" >>"$FAKE_STATE/log"
@@ -28,7 +34,7 @@ EOF
   # Un nom de fichier par mot : aucun n'a d'espace.
   # shellcheck disable=SC2046
   (cd "$files" && tar -czf "$2/station.tar.gz" $(find . -type f | sed 's|^\./||' | sort))
-  cp "$STATION" "$2/station"
+  cp "$script" "$2/station"
   (cd "$2" && sha256sum station station.tar.gz >SHA256SUMS)
   rm -rf "$files"
 }

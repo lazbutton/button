@@ -67,10 +67,12 @@ compose_run() {
   local tmp script
   case "$entrypoint ${1:-}" in
     "bash /backup-radiotomate.sh")
-      [[ ! -e $state/backup-fails ]] || {
+      # L'image du moteur n'a pas sqlite3 : un script sans repli Python, comme
+      # celui de la 0.2.0, y échoue.
+      if [[ -e $state/backup-fails ]] || ! grep -q python3 "$(host /backup-radiotomate.sh)"; then
         echo "sqlite3 is required" >&2
         exit 1
-      }
+      fi
       tmp=$(mktemp -d)
       mkdir "$tmp/radiotomate"
       cp "$(host /data)/radiotomate.db" "$tmp/radiotomate/"
@@ -81,6 +83,10 @@ compose_run() {
       echo /sauvegarde/radiotomate.tar.gz
       ;;
     "bash /restore-radiotomate.sh")
+      if ! grep -q python3 "$(host /restore-radiotomate.sh)"; then
+        echo "sqlite3 is required" >&2
+        exit 1
+      fi
       if [[ -n $(ls -A "$(host /cible)") ]]; then
         echo "refusing to restore into a non-empty directory: /cible" >&2
         exit 1
@@ -122,9 +128,20 @@ case $1 in
     [[ ${2:-} != --format ]] || echo /var/lib/docker
     ;;
   pull | rm | image) ;;
-  # Ce que le projet garde après une désinstallation : $state/containers et
-  # $state/volumes, un par ligne.
+  # Ce que le projet garde après une désinstallation, ou ce qui tourne quand
+  # station relève les versions : $state/containers et $state/volumes, un par
+  # ligne.
   ps) cat "$state/containers" 2>/dev/null || true ;;
+  # Leur service, leur image et leur version : $state/inspect ; ou leur
+  # identifiant, leur service et les chemins qu'ils montent :
+  # $state/inspect-mounts.
+  inspect)
+    if [[ " $* " == *".Mounts"* ]]; then
+      cat "$state/inspect-mounts" 2>/dev/null || true
+    else
+      cat "$state/inspect" 2>/dev/null || true
+    fi
+    ;;
   volume) [[ ${2:-} != ls ]] || cat "$state/volumes" 2>/dev/null || true ;;
   login) echo "login ${*:2} jeton=$(cat)" >>"$state/login" ;;
   run)
@@ -150,10 +167,11 @@ case $1 in
     ;;
   compose)
     shift
-    # Les profils donnés avant la commande : tous, pour station.
+    # Les options données avant la commande : les profils, tous pour station,
+    # et les fichiers d'une version que station update tire avant de les poser.
     profiled=""
-    while [[ ${1:-} == --profile ]]; do
-      profiled=1
+    while [[ ${1:-} == --profile || ${1:-} == -f || ${1:-} == --project-directory ]]; do
+      [[ $1 != --profile ]] || profiled=1
       shift 2
     done
     command=$1
@@ -192,7 +210,11 @@ case $1 in
           *" --images "*) printf 'caddy:2.11-alpine\nghcr.io/lazbutton/button-radiotomate:0.1.0\n' ;;
         esac
         ;;
-      pull) [[ ! -e $state/pull-fails ]] || exit 1 ;;
+      pull)
+        # La version tirée : celle de .env, sauf BUTTON_VERSION du shell.
+        echo "images : BUTTON_VERSION=${BUTTON_VERSION-celle de .env}" >>"$state/log"
+        [[ ! -e $state/pull-fails ]] || exit 1
+        ;;
       up)
         # Une fois : $state/up-fails.
         if [[ -e $state/up-fails ]]; then
@@ -228,6 +250,20 @@ case $1 in
         elif [[ " $* " == *" maintenance next-live "* ]]; then
           [[ ! -e $state/next-live-fails ]] || exit 1
           cat "$state/next-live" 2>/dev/null || echo "QG, mercredi 23 septembre à 20:00, dans 2 j 8 h"
+        elif [[ " $* " == *" maintenance window "* ]]; then
+          # Un moteur d'avant la commande : $state/window-unknown. Une
+          # fenêtre prise : $state/window, une fois ; prise à la lecture
+          # suivante seulement : $state/window-later.
+          if [[ -e $state/window-unknown ]]; then
+            echo "Error: No such command 'window'." >&2
+            exit 2
+          elif [[ -f $state/window ]]; then
+            cat "$state/window"
+            rm "$state/window"
+            exit 1
+          fi
+          [[ ! -f $state/window-later ]] || mv "$state/window-later" "$state/window"
+          echo "libre : ni direct ni diffusion de l'Agenda d'ici 30 min"
         else
           echo "le moteur : $*"
         fi

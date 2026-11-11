@@ -38,7 +38,7 @@ La commande procède dans l'ordre :
    - l'e-mail du compte Let's Encrypt ;
    - le fuseau ;
    - l'identifiant du compte admin ;
-   - si les mises à jour seront automatiques. La commande `update` qui les fera n'existe pas encore.
+   - si les mises à jour seront automatiques. Elles se feront seules quand `station update` saura se lancer seule ; d'ici là, `station update` les fait à la main.
 3. **Elle vérifie que chaque adresse du domaine mène à la machine**, sur le port 80. Elle le fait avant que Caddy demande un certificat : Let's Encrypt refuse un domaine un moment après quelques échecs.
 4. **Elle pose la station dans `/opt/button`** :
    - les fichiers de la plus haute version publiée, vérifiés par leur somme : `compose.yml`, le `Caddyfile`, les scripts ;
@@ -62,7 +62,7 @@ La commande procède dans l'ordre :
 - un fichier changé est remis à la version, et l'ancien est gardé à côté, en `.local-…` ;
 - une variable qui manque à `.env` s'ajoute.
 
-Elle ne change jamais une valeur de `.env`, ni la version : changer de version, c'est la commande `update`, à venir, et changer un réglage, `station config`. Une installation interrompue reprend où elle en était. Une installation finie, relancée, ne change rien.
+Elle ne change jamais une valeur de `.env`, ni la version : changer de version, c'est `station update`, et changer un réglage, `station config`. Une installation interrompue reprend où elle en était. Une installation finie, relancée, ne change rien.
 
 ### Les options
 
@@ -103,6 +103,7 @@ Une fois installée, la station s'exploite par la même commande, en root : `sud
 
 | Commande | Pour |
 |---|---|
+| `update` | la mettre à jour, vers la plus haute version publiée : voir [mettre à jour](#avec-la-commande-station) |
 | `status` | l'état de la station : sa version et la plus haute publiée, ses services, la place sur le disque, le prochain direct, la dernière sauvegarde, et les mises à jour, bloquées ou non. Elle sort en erreur quand un service ne va pas |
 | `logs [service]` | les journaux, les 200 dernières lignes. `-f` les suit |
 | `backup [archive]` | une sauvegarde, sans couper l'antenne. `--with-media` y met la banque de sons |
@@ -121,7 +122,7 @@ Sauvegarder et restaurer : voir [`exploitation/sauvegarde.md`](exploitation/sauv
 - les adresses publiques de **Réglages → Station** qui suivaient l'ancien domaine passent au nouveau. Celles qu'un admin a changées restent ;
 - les encodeurs du direct se branchent ensuite sur le nouveau domaine.
 
-**Les mises à jour.** `station config --updates manual` les passe à la main, `--update-time 03:30` change leur heure, à celle de la station, 04:00 par défaut. La commande `update`, à venir, les fera. `station hold la grille de Noël` les bloque : elle pose le fichier `HOLD` dans le dossier de la station, avec la date et la raison. `station unhold` le retire.
+**Les mises à jour.** `station update` les fait, à la main : voir [mettre à jour](#avec-la-commande-station). Réglées en automatique, le défaut, elles se feront seules quand la commande saura se lancer seule. `station config --updates manual` les passe à la main, `--update-time 03:30` change leur heure, à celle de la station, 04:00 par défaut. `station hold la grille de Noël` les bloque : elle pose le fichier `HOLD` dans le dossier de la station, avec la date et la raison. `station unhold` le retire.
 
 **Désinstaller.** `sudo station uninstall` arrête la station, et retire ses conteneurs, ses images, les fichiers de sa version et la commande `station`. Restent `.env`, `data/`, `media/` et `backups/` : le script d'une version publiée, `sudo bash station install`, reprend la même station. `sudo station uninstall --purge` efface tout le dossier, données et sauvegardes comprises, une fois le mot `effacer` tapé. Ce qui vit hors du dossier, comme une banque de sons ailleurs (`BUTTON_MEDIA`), reste, et la commande le dit. Docker reste installé, avec le jeton du registre s'il y en a un : `docker logout ghcr.io` le retire.
 
@@ -364,7 +365,41 @@ BUTTON se met à jour par versions publiées, numérotées `X.Y.Z`. Chacune a se
 
 Le dossier de la station suit la même version que ses images : `compose.yml`, et les scripts qu'il monte dans les conteneurs, comme `init-radiotomate.sh`. Une station à l'antenne épingle donc sa version dans `.env`, et la change à chaque mise à jour, avec son dossier. Les images des autres projets, meilisearch, tusd, rclone et Caddy, sont épinglées dans `compose.yml`, et changent avec lui. Une station qui avait `RT_TAG` dans `.env` retire la ligne : il n'est plus lu, et, posé, il arrête `docker compose`, qui le dit.
 
-Avant de mettre à jour, lire les notes de chaque version sautée, et s'assurer que les secrets laisseront la station démarrer : voir [les secrets](#les-secrets). Puis, depuis le dossier du dépôt, pour passer en `0.2.0` par exemple :
+### Avec la commande station
+
+Une station installée par `station install` se met à jour en une commande, en root :
+
+```bash
+sudo station update
+```
+
+Elle passe à la plus haute version publiée, ou à celle de `--version X.Y.Z`, plus récente que la sienne. Dans l'ordre :
+
+1. **Elle télécharge les fichiers de la version**, et vérifie leur somme, comme `station install`. La suite est faite par la commande `station` de cette version : elle sait ce que sa version demande.
+2. **Elle vérifie que rien ne s'y oppose.** `HOLD` bloque toute mise à jour, et une restauration pas finie aussi. Une version majeure l'arrête : elle cite l'action que demandent ses notes, leur paragraphe « Mise en service », et ne change rien ; une fois l'action faite, la relancer avec `--major`. Un direct ou une diffusion de l'Agenda à l'antenne, ou qui commence dans les 30 minutes, l'arrête aussi : le moteur le dit, par `radiotomate maintenance window`, d'après la grille, l'Agenda et ce qui passe par le harbor. Un moteur d'avant cette commande ne le dit pas : la mise à jour se fait, et prévient. `--force` passe outre ce direct, pas `HOLD`.
+3. **Elle sauvegarde la station**, comme `station backup`, sans les sons, dans `backups/`, avec le script de sauvegarde de la version : celui d'une 0.2.0 ne tourne pas dans l'image du moteur. Seules les cinq dernières archives de `backups/` restent, celles de `station backup` comprises.
+4. **Elle ajoute à `.env` ce que la version y demande de nouveau**, avec sa valeur par défaut : un secret qui manque, ou une variable que la version d'avant ne connaissait pas. Une variable qu'elle connaissait, et que `.env` n'a plus, a été retirée exprès, comme `COMPOSE_PROFILES` derrière un autre proxy : elle ne revient pas, et la commande le dit. Puis elle **tire ses images**, pendant que l'antenne joue encore. Si elles ne se tirent pas, la station reste à sa version : seules la sauvegarde, et ce que `.env` a reçu, restent.
+5. **Elle relit la fenêtre**, que le tirage a pu faire attendre : un direct qui s'est rapproché l'arrête encore, avant tout changement de la station.
+6. **Elle pose les fichiers de la version.** `.env` et `compose.override.yml` restent, et `BUTTON_VERSION` passe à la version. Un fichier de la version que la station avait changé reste à côté, en `.local-…` : les changements d'une station vont dans `compose.override.yml`.
+7. **Elle redémarre la station** : les trois services du moteur ensemble, puis les autres, puis ceux d'un autre profil qui tournaient, comme `share`. Un service à l'image épinglée qui monte un fichier changé de la version, comme Caddy et son `Caddyfile`, est recréé lui aussi. L'antenne se coupe le temps du redémarrage.
+8. **Elle la contrôle** : son adresse en HTTPS, puis `scripts/smoke.sh`, décrit plus bas.
+
+Au clavier, elle demande une confirmation avant la sauvegarde ; `--yes` répond pour un script. `--from station.tar.gz` prend les fichiers de la version dans une archive, comme `station install`, `main` compris, pour un essai. Sur une machine distante, la lancer dans `tmux` ou `screen` : une connexion SSH coupée en plein redémarrage l'arrêterait là.
+
+Chaque mise à jour se note dans `updates.log`, dans le dossier de la station : faite, arrêtée ou échouée, avec la sauvegarde d'avant. `station status` dit la dernière. Si le redémarrage ou le contrôle échoue, la commande le dit, avec la sauvegarde d'avant : revenir en arrière se fait encore à la main, voir [revenir en arrière](#revenir-en-arrière). La station est alors déjà à la nouvelle version : relancée, `station update` n'a plus rien à faire, et `station install` la répare, sur cette version.
+
+La version de chaque service, d'après ses images, est relevée après chaque installation, mise à jour ou restauration, dans `versions.json`, avec les données du moteur. `GET /system/version.json` la donne aux admins : voir [api.md](api.md#système).
+
+**Depuis la 0.2.0.** Sa commande `station` n'a pas `update`. Prendre celle de la version publiée, comme pour une installation, puis la lancer : elle trouve la station dans `/opt/button`.
+
+```bash
+curl -fsSLO https://github.com/lazbutton/button/releases/latest/download/station
+sudo bash station update
+```
+
+### À la main
+
+Une station installée depuis un clone du dépôt, sans `station install`, se met à jour à la main. Avant de mettre à jour, lire les notes de chaque version sautée, et s'assurer que les secrets laisseront la station démarrer : voir [les secrets](#les-secrets). Puis, depuis le dossier du dépôt, pour passer en `0.2.0` par exemple :
 
 ```bash
 git fetch --tags --force
@@ -435,6 +470,19 @@ docker compose pull && docker compose up -d
 ```
 
 L'antenne reste coupée de l'arrêt du moteur à son redémarrage. Sauvegarder avant : voir [`exploitation/sauvegarde.md`](exploitation/sauvegarde.md).
+
+Une station installée par `station install` n'a pas de clone : les fichiers de la version d'avant sont dans son archive. Depuis le dossier de la station, pour revenir en `0.2.0` :
+
+```bash
+curl -fsSLO https://github.com/lazbutton/button/releases/download/v0.2.0/station.tar.gz
+curl -fsSLO https://github.com/lazbutton/button/releases/download/v0.2.0/SHA256SUMS
+grep station.tar.gz SHA256SUMS | sha256sum -c
+tar -xzf station.tar.gz
+# .env : BUTTON_VERSION=0.2.0
+docker compose pull && docker compose up -d
+```
+
+Avec une migration, d'abord redescendre le schéma, ou remettre la copie de la base, comme plus haut. La sauvegarde que `station update` fait avant de changer, dans `backups/`, se remet par `station restore`, une fois la version d'avant reposée, si sa commande `station` a `restore` : la 0.2.0 ne l'a pas, et ses scripts de sauvegarde demandent `sqlite3`, que l'image du moteur n'a pas. Pour elle, remettre la copie de la base faite avant la migration : voir [remettre la copie](exploitation/sauvegarde.md#remettre-la-copie).
 
 Une station qui suit `main` ne revient pas à un tag daté : il n'existe que pour les images reconstruites ce jour-là, pas pour les sept. Elle revient à une version publiée, de la même façon.
 

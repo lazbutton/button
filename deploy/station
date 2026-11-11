@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # station : installer une station BUTTON sur un VPS, puis l'exploiter. En root.
 #   station install [options]   installer la station, ou la réparer
+#   station update [options]    la mettre à jour
 #   station status              son état ; logs, backup, restore, config,
 #                               hold, unhold, cli et uninstall : station help
 # Sur un VPS neuf, ce script se télécharge seul, depuis la plus haute version
@@ -12,8 +13,8 @@
 # mène. Voir docs/deploiement.md, « Installer sur un VPS » et « Exploiter la
 # station ».
 #
-# Une commande, une fonction cmd_<nom>, avec les mêmes aides. Viendront ici
-# update (MAJ-04) et rollback (MAJ-05).
+# Une commande, une fonction cmd_<nom>, avec les mêmes aides. Viendra ici
+# rollback (MAJ-05).
 set -euo pipefail
 
 # Le dépôt dont chaque version publiée joint station, station.tar.gz et
@@ -50,7 +51,12 @@ DATA_DIRS=(RT_DATA:./data/radiotomate NOWPLAYING_DATA:./data/nowplaying MEILI_DA
 # Les fichiers qu'une version pose dans le dossier, ceux de station.tar.gz :
 # station_files, dans scripts/version.py, que test_version.py compare à
 # cette liste. uninstall les retire.
-VERSION_FILES=(VERSION compose.yml Caddyfile .env.example station scripts)
+VERSION_FILES=(VERSION compose.yml Caddyfile .env.example CHANGELOG.md station scripts)
+# Les archives de backups/ que garde station update : les plus récentes.
+KEEP_BACKUPS=5
+# Les trois services du moteur, recréés ensemble par une mise à jour : les
+# deux derniers partagent le réseau du premier, qui ne redémarre jamais seul.
+ENGINE_SERVICES=(radiotomate-playout radiotomate-interface radiotomate-scheduler)
 # Le projet Compose, name dans compose.yml : ses conteneurs et ses volumes
 # portent son nom.
 PROJECT=button
@@ -62,14 +68,17 @@ LOCK=$ROOT/run/button-station.lock
 # et l'efface à la fin : resté là, il dit quoi remettre (status le montre).
 JOURNAL=restauration-en-cours
 # L'heure des mises à jour automatiques, à celle de la station (TZ), quand
-# BUTTON_UPDATE_TIME manque à .env. La commande update (MAJ-04) la lira.
+# BUTTON_UPDATE_TIME manque à .env. Elles viendront avec MAJ-06, qui la lira.
 UPDATE_TIME=04:00
-# Ce que cleanup défait en sortant : le dossier de travail ; le conteneur de
+# Ce que cleanup défait en sortant : le dossier de travail ; celui des
+# fichiers d'une version, que station update garde à part ; le conteneur de
 # la vérification du domaine s'il tourne encore ; Caddy, arrêté pour elle ;
 # une archive à moitié écrite ; une restauration interrompue ; ce qu'elle
-# préparait. caddy_stopped et station_stopped portent le dossier de la
+# préparait ; une mise à jour qui n'a pas fini, que updates.log note.
+# caddy_stopped, station_stopped et updating portent le dossier de la
 # station : cleanup ne voit pas toujours les variables locales des commandes.
 work=""
+staged=""
 probe_started=""
 caddy_stopped=""
 partial=""
@@ -77,6 +86,10 @@ station_stopped=""
 swapped=()
 prepared=()
 restart_others=()
+# Une mise à jour en cours : le dossier de la station, la version d'avant, la
+# nouvelle, la sauvegarde d'avant, puis l'étape où elle en est.
+updating=()
+update_stage=""
 # Sans --yes, une question se pose au clavier. Une interruption au clavier
 # dit ce message.
 assume_yes=""
@@ -103,6 +116,7 @@ Usage : station COMMANDE [options]
 La commande d'une station BUTTON sur un VPS, en root.
 
   install        installer la station, ou la réparer
+  update         la mettre à jour, vers la plus haute version publiée
   status         son état : version, services, disque, prochain direct
   logs           ses journaux
   backup         la sauvegarder, sans couper l'antenne
@@ -123,6 +137,33 @@ EOF
 usage_command() { # commande
   case $1 in
     install) usage_install ;;
+    update)
+      cat <<'EOF'
+Usage : station update [options] [--dir DOSSIER]
+
+Met la station à la plus haute version publiée : une sauvegarde d'abord, dans
+backups/, qui garde les cinq dernières ; puis les fichiers de la version,
+vérifiés par leur somme, et ses images, tirées pendant que l'antenne joue.
+.env et compose.override.yml restent ; ce que la version y demande en plus
+s'ajoute. L'antenne se coupe le temps de redémarrer. Puis le contrôle de la
+station, et une ligne dans updates.log.
+
+Pas de mise à jour quand HOLD la bloque, ni quand un direct ou une diffusion
+de l'Agenda est à l'antenne ou commence dans les 30 minutes. Une version
+majeure demande une action, que la commande cite, avant de la prendre.
+
+  --version X.Y.Z   une autre version publiée, plus récente, que la plus haute
+  --from ARCHIVE    les fichiers de la version depuis cette archive,
+                    station.tar.gz, plutôt que de GitHub
+  --major           prendre une version majeure, une fois faite l'action que
+                    demandent ses notes
+  --force           mettre à jour même si un direct ou une diffusion de
+                    l'Agenda est à l'antenne ou commence bientôt
+  --yes             sans confirmation, pour un script
+
+Voir docs/deploiement.md, « Mettre à jour ».
+EOF
+      ;;
     status)
       cat <<'EOF'
 Usage : station status [--dir DOSSIER]
@@ -380,10 +421,21 @@ stream_mount() {
 
 env_has() { grep -qE "^$1=" "$env_file" 2>/dev/null; }
 
-# Une variable qui manque à .env, à la fin, sous une ligne qui date l'ajout.
+# Une variable qui manque à .env, à la fin, sous une ligne qui date l'ajout et
+# dit quelle commande l'a ajoutée : install, sauf env_by. station update
+# (env_new_only) n'ajoute que le nouveau : un secret qui manque, sans lequel
+# rien ne démarre, ou une variable que la version d'avant ne connaissait pas,
+# absente de son .env.example (env_known). Une variable connue que .env n'a
+# plus a été retirée exprès, COMPOSE_PROFILES derrière un autre proxy par
+# exemple : elle ne revient pas, et se note dans env_left_out.
 env_add() { # clé, valeur
+  if [[ -n ${env_new_only:-} && $1 != *PASSWORD* && $1 != *SECRET* && $1 != *_KEY ]] &&
+    { [[ -z ${env_known:-} ]] || grep -qE "^#? *$1=" "$env_known"; }; then
+    env_left_out="${env_left_out:-} $1"
+    return 0
+  fi
   if [[ -z $env_added ]]; then
-    printf '\n# Ajouté par station install, le %s.\n' "$(date +%F)" >>"$env_file"
+    printf '\n# Ajouté par station %s, le %s.\n' "${env_by:-install}" "$(date +%F)" >>"$env_file"
   fi
   printf '%s=%s\n' "$1" "$2" >>"$env_file"
   env_added="$env_added $1"
@@ -796,7 +848,8 @@ ICECAST_ADMIN_PASSWORD=$admin_icecast
 RT_NOWPLAYING_SECRET=$nowplaying
 MEILI_MASTER_KEY=$meili
 
-# Les mises à jour : auto, ou manual. La commande update les fera.
+# Les mises à jour : auto, ou manual. station update les fait à la main ;
+# auto, elles se feront seules, quand station update saura se lancer seule.
 BUTTON_UPDATES=$updates
 EOF
     if [[ $tls == internal ]]; then
@@ -982,11 +1035,16 @@ cleanup() {
   if [[ -n ${station_stopped:-} ]]; then
     restore_undo
   fi
+  if ((${#updating[@]})); then
+    update_log échouée "pendant $update_stage"
+    updating=()
+  fi
   local path
   for path in "${prepared[@]}"; do
     rm -rf "$path"
   done
   [[ -z ${work:-} ]] || rm -rf "$work"
+  [[ -z ${staged:-} ]] || rm -rf "$staged"
 }
 
 # --- install ---
@@ -1191,10 +1249,11 @@ cmd_install() {
   say "  Direct : $domain, port $(env_value HARBOR_PORT 6800), avec le jeton d'encodeur de chaque compte"
   say "  Dossier : $dir, et la commande : station"
   if [[ $(env_value BUTTON_UPDATES auto) == auto ]]; then
-    say "  Mises à jour : automatiques, dès que la commande update existera"
+    say "  Mises à jour : station update, et automatiques dès qu'elle saura se lancer seule"
   else
-    say "  Mises à jour : à la main, dès que la commande update existera"
+    say "  Mises à jour : à la main, par station update"
   fi
+  record_versions
   if [[ -n $first ]]; then
     admin_password
   fi
@@ -1231,7 +1290,7 @@ choose_updates() {
     choose BUTTON_UPDATES updates "$updates" auto check_updates ""
     return
   fi
-  answer=$(ask "Mises à jour automatiques, quand la commande update existera ? (o/n)" o check_yes_no)
+  answer=$(ask "Mises à jour automatiques, dès que station update saura se lancer seule ? (o/n)" o check_yes_no)
   if [[ ${answer,,} == [oy]* ]]; then echo auto; else echo manual; fi
 }
 
@@ -1468,8 +1527,11 @@ engine_run() { # options de docker compose run…
 # backup-radiotomate.sh, dans l'image du moteur : la base, copiée sans couper
 # l'antenne, radiotomate.yaml et le reste de RT_DATA, avec leurs sommes. Sa
 # copie de travail va dans le dossier donné, pas dans le /tmp du conteneur.
-engine_backup() { # dossier où écrire radiotomate.tar.gz, dossier de travail
-  engine_run -v "$dir/scripts/backup-radiotomate.sh:/backup-radiotomate.sh:ro" -v "$1:/sauvegarde" \
+# Le script est celui du dossier de la station, ou celui d'une autre version :
+# update prend celui de la version visée, car celui d'une 0.2.0 demande
+# sqlite3, que l'image du moteur n'a pas.
+engine_backup() { # dossier où écrire radiotomate.tar.gz, dossier de travail, script ou rien
+  engine_run -v "${3:-$dir/scripts/backup-radiotomate.sh}:/backup-radiotomate.sh:ro" -v "$1:/sauvegarde" \
     -v "$2:/travail" -e TMPDIR=/travail \
     --entrypoint bash radiotomate-init /backup-radiotomate.sh /data /sauvegarde/radiotomate.tar.gz </dev/null >/dev/null
 }
@@ -1585,7 +1647,17 @@ updates_label() {
 }
 
 updates_report() {
-  say "Mises à jour : $(updates_label), dès que la commande update existera."
+  local line made from to result _backup detail
+  if [[ $(env_value BUTTON_UPDATES auto) == auto ]]; then
+    say "Mises à jour : $(updates_label), dès que station update saura se lancer seule. D'ici là, à la main : station update."
+  else
+    say "Mises à jour : à la main, par station update."
+  fi
+  line=$(grep -v '^#' "$dir/updates.log" 2>/dev/null | tail -n 1) || line=""
+  IFS=$'\t' read -r made from to result _backup detail <<<"$line"
+  if [[ $made =~ ^[0-9]+$ ]]; then
+    say "  La dernière : le $(station_date "$made"), de $from à $to, $result${detail:+, $detail}."
+  fi
   if [[ -f $dir/HOLD ]]; then
     say "  Bloquées, par $dir/HOLD :"
     sed 's/^/    /' "$dir/HOLD"
@@ -1733,11 +1805,17 @@ cmd_backup() {
 # backups/, dans le dossier de la station. Son nom dit l'heure, en UTC. Une
 # sauvegarde ne s'écrit jamais par-dessus un fichier.
 backup_target() {
-  local name
+  local name tries=0
   name=button-$(date -u +%Y%m%dT%H%M%SZ).tar
   if [[ -z $archive ]]; then
     install -d -m 700 "$dir/backups"
     archive=$dir/backups/$name
+    # Une autre sauvegarde de la même seconde, celle de station backup juste
+    # avant station update par exemple : celle-ci prend la seconde suivante.
+    while [[ -e $archive || -e $archive.part ]] && ((tries++ < 3)); do
+      sleep 1
+      archive=$dir/backups/button-$(date -u +%Y%m%dT%H%M%SZ).tar
+    done
   elif [[ -d $archive ]]; then
     archive=${archive%/}/$name
   fi
@@ -1751,17 +1829,18 @@ backup_target() {
 # La sauvegarde de la station, dans archive, en droits 600 : de quoi la
 # remettre, ici ou sur une autre machine, par station restore, même d'une
 # version plus récente. L'antenne continue. Une ligne de backups.log la note.
-# La commande update (MAJ-04) la fera avant chaque mise à jour. Tout s'écrit
-# à côté de l'archive : son disque est le seul dont la place compte.
-backup_station() { # archive, avec les sons (1) ou non
-  local archive=$1 with_media=$2 stage data caddy media="" data_kb caddy_kb media_kb=0 size_kb
+# station update la fait avant chaque mise à jour. Tout s'écrit à côté de
+# l'archive : son disque est le seul dont la place compte.
+backup_station() { # archive, avec les sons (1) ou non, script de sauvegarde ou rien
+  local archive=$1 with_media=$2 script=${3:-$dir/scripts/backup-radiotomate.sh}
+  local stage data caddy media="" data_kb caddy_kb media_kb=0 size_kb
   data=$(env_path RT_DATA ./data/radiotomate)
   caddy=$(env_path CADDY_DATA ./data/caddy)
   [[ -f $data/radiotomate.db ]] ||
     die "La station n'a pas de base : $data/radiotomate.db manque." \
       "Finir l'installation : station install. Ou vérifier RT_DATA, dans $env_file."
-  [[ -f $dir/scripts/backup-radiotomate.sh ]] ||
-    die "$dir/scripts/backup-radiotomate.sh manque." "station install le remet. Puis relancer."
+  [[ -f $script ]] ||
+    die "$script manque." "station install le remet. Puis relancer."
   if [[ -n $with_media ]]; then
     # La banque elle-même, au bout d'un lien : tar ne suit pas un lien.
     media=$(real_path "$(env_path BUTTON_MEDIA ./media)")
@@ -1791,7 +1870,7 @@ backup_station() { # archive, avec les sons (1) ou non
   stage=$work/sauvegarde
   mkdir "$stage" "$work/tmp"
   say "Sauvegarde : la base, sans couper l'antenne."
-  backup_stage "$stage" "$data_kb" "$media" "$media_kb"
+  backup_stage "$stage" "$data_kb" "$media" "$media_kb" "$script"
   backup_pack "$stage" "$archive" "$media"
 
   size_kb=$(size_kb "$archive")
@@ -1811,9 +1890,9 @@ backup_station() { # archive, avec les sons (1) ou non
 # station, sans le mot de passe admin ; caddy.tar.gz, ses certificats et son
 # compte Let's Encrypt. Une sauvegarde hors de la machine (SAV-01) peut
 # envoyer ce dossier tel quel.
-backup_stage() { # dossier, taille de RT_DATA en Ko, banque de sons ou rien, sa taille
+backup_stage() { # dossier, taille de RT_DATA en Ko, banque de sons ou rien, sa taille, script
   local stage=$1 caddy status=0
-  engine_backup "$stage" "$work/tmp" ||
+  engine_backup "$stage" "$work/tmp" "${5:-}" ||
     die "La base ne se sauvegarde pas : voir le message plus haut." "Voir l'état de la station, station status, puis relancer."
   # Le mot de passe admin ne s'écrit que dans .env, jusqu'à son affichage.
   install -m 600 /dev/null "$stage/env"
@@ -2115,6 +2194,7 @@ restore_station() { # archive, sans les sons (1) ou non
       "La restauration s'annule. Une fois réglé, relancer station restore."
   station_stopped=""
   rm -f "$dir/$JOURNAL"
+  record_versions
 
   # Le .env d'avant garde à côté le mot de passe admin d'une installation qui
   # ne l'a pas affiché : il ne sert plus, et ne s'écrit que dans .env.
@@ -2202,6 +2282,500 @@ restore_undo() {
     restart_others_up >/dev/null 2>&1
   else
     warn "la station d'avant ne repart pas. Voir pourquoi : cd $dir && docker compose up -d."
+  fi
+}
+
+# --- update ---
+
+cmd_update() {
+  local dir="" env_file="" assume_yes="" aborted="Rien n'est changé." installed target="" from="" packed option
+  local -A opts=()
+  local args=() forwarded=()
+  parse_options "--yes --major --force -h --help" "--dir --version --from" "$@"
+  if help_asked; then
+    usage_command update
+    return 0
+  fi
+  ((${#args[@]} == 0)) || usage_error "Argument inattendu : ${args[0]}."
+  assume_yes=${opts[--yes]:-}
+  target=${opts[--version]:-}
+  from=${opts[--from]:-}
+  [[ -z $target ]] || check_version "$target" || exit 2
+  if [[ -n $from ]]; then
+    [[ $from == /* ]] || from=$PWD/$from
+    [[ -f $from ]] || usage_error "--from : $from n'existe pas."
+  fi
+  open_station update "${opts[--dir]:-}"
+  [[ -f $dir/VERSION ]] ||
+    die "La station de $dir n'a pas de fichier VERSION : elle n'a pas été installée par station install." \
+      "La mettre à jour à la main : voir docs/deploiement.md, « Mettre à jour »."
+  update_blocked
+  installed=$(env_value BUTTON_VERSION)
+  [[ -n $installed ]] ||
+    die "BUTTON_VERSION manque dans $env_file." "Y remettre la version de la station, celle du fichier VERSION du dossier, puis relancer."
+  docker_ok || die "Docker ne répond pas : la station ne se met pas à jour sans lui." "Voir pourquoi : systemctl status docker. Puis relancer."
+  trap cleanup EXIT
+  work=$(mktemp -d)
+  if [[ -n $from ]]; then
+    unpack "$from"
+    packed=$(<"$work/files/VERSION")
+    [[ $packed == main ]] || check_version "$packed" >/dev/null 2>&1 ||
+      die "$from se dit de la version « $packed »." "Prendre station.tar.gz d'une version publiée."
+    [[ -z $target || $target == "$packed" ]] ||
+      die "$from est la version $packed, pas $target." "Prendre l'archive de la version $target, ou retirer --version."
+    target=$packed
+    update_compare quiet || return 0
+  else
+    if [[ -z $target ]]; then
+      target=$(latest_version)
+      check_version "$target" >/dev/null 2>&1 ||
+        die "GitHub donne une version inattendue, « $target » : ne pas mettre à jour, et le signaler."
+    fi
+    update_compare quiet || return 0
+    fetch_version "$target"
+    unpack "$work/station.tar.gz"
+    [[ $(<"$work/files/VERSION") == "$target" ]] ||
+      die "L'archive de la version $target se dit $(<"$work/files/VERSION")." "Archive inattendue : ne pas mettre à jour, et le signaler."
+    from=$work/station.tar.gz
+  fi
+  if update_handoff_needed; then
+    for option in --yes --major --force; do
+      [[ -z ${opts[$option]:-} ]] || forwarded+=("$option")
+    done
+    say "Mise à jour : la commande station de la version $target prend la main."
+    STATION_SELF=$(self_command) STATION_UPDATE_HANDOFF=1 \
+      bash "$work/files/station" update --from "$from" --dir "$dir" "${forwarded[@]}"
+    return
+  fi
+
+  lock_station update
+  update_blocked
+  update_compare || return 0
+  say "BUTTON : mise à jour de la station de $dir, de $installed à $target."
+  update_major
+  if [[ -n ${opts[--force]:-} ]]; then
+    say "Fenêtre : pas vérifiée (--force). L'antenne se coupera, même pendant un direct."
+  else
+    update_window
+  fi
+  if interactive; then
+    confirm update "Mettre la station à jour, de $installed à $target ? Une sauvegarde d'abord, puis l'antenne se coupe le temps de redémarrer. (o/n)"
+  fi
+  update_station
+}
+
+# Ce qui bloque toute mise à jour : HOLD, ou une restauration pas finie.
+update_blocked() {
+  if [[ -f $dir/HOLD ]]; then
+    warn "les mises à jour sont bloquées, par $dir/HOLD :"
+    sed 's/^/  /' "$dir/HOLD" >&2
+    die "Rien n'est changé."
+  fi
+  [[ ! -f $dir/$JOURNAL ]] ||
+    die "Une restauration ne s'est pas finie : $dir/$JOURNAL est encore là. Rien n'est changé." \
+      "Voir quoi faire : station status. Puis relancer."
+}
+
+# a < b, deux versions X.Y.Z déjà vérifiées : en nombres, et 0.10.0 passe
+# après 0.9.0.
+version_below() { # a, b
+  local IFS=. a b i
+  read -r -a a <<<"$1"
+  read -r -a b <<<"$2"
+  for i in 0 1 2; do
+    if ((10#${a[i]} != 10#${b[i]})); then
+      ((10#${a[i]} < 10#${b[i]}))
+      return
+    fi
+  done
+  return 1
+}
+
+# La version visée, $target, face à celle de la station, $installed. Rien à
+# faire : 1. Une version plus ancienne ne se prend pas, ni une version depuis
+# main : sa base peut avoir un schéma plus récent. main ne se prend que depuis
+# une archive, pour un essai.
+update_compare() { # quiet, ou rien
+  if [[ $target == "$installed" && $target != main ]]; then
+    say "La station est déjà en $installed. Rien à faire."
+    # Une mise à jour qui a échoué au redémarrage a déjà posé la version.
+    if [[ $(grep -v '^#' "$dir/updates.log" 2>/dev/null | tail -n 1 | cut -f3,4) == "$installed"$'\t'échouée ]]; then
+      warn "la mise à jour vers $installed a échoué : voir station status. station install la répare, sur cette version."
+    fi
+    return 1
+  fi
+  if [[ $installed == main ]]; then
+    [[ $target == main ]] ||
+      die "La station suit main, pour un essai : sa base peut avoir un schéma plus récent que celui de la version $target. Rien n'est changé." \
+        "Repasser à une version publiée se fait à la main : voir docs/deploiement.md, « Revenir en arrière »."
+    return 0
+  fi
+  check_version "$installed" >/dev/null 2>&1 ||
+    die "BUTTON_VERSION vaut « $installed », dans $env_file : station update ne met à jour qu'une station épinglée sur une version X.Y.Z, comme l'installe station install." \
+      "Y remettre la version de la station, celle du fichier VERSION du dossier, puis relancer."
+  if [[ $target == main ]]; then
+    [[ -n ${1:-} ]] ||
+      warn "main n'est pas une version publiée : pour un essai, jamais à l'antenne. En revenir se fait à la main."
+    return 0
+  fi
+  if version_below "$target" "$installed"; then
+    die "La version $target est plus ancienne que celle de la station, $installed : station update ne fait que monter. Rien n'est changé." \
+      "Revenir en arrière : voir docs/deploiement.md, « Revenir en arrière »."
+  fi
+}
+
+# Une version majeure demande une action à la station avant de la prendre :
+# station update la cite, d'après le CHANGELOG.md de la version visée, pour
+# chaque majeure qu'elle passe, puis s'arrête. --major la prend, l'action
+# faite. Les deux versions sont déjà vérifiées : des nombres.
+update_major() {
+  local from_major=${installed%%.*} to_major=${target%%.*} major action
+  [[ $target != main && $installed != main ]] && ((to_major > from_major)) || return 0
+  if [[ -n ${opts[--major]:-} ]]; then
+    say "Version majeure : l'action que demandent ses notes est faite (--major)."
+    return 0
+  fi
+  say "La version $target est une majeure : elle demande une action à la station avant de la prendre."
+  for ((major = from_major + 1; major <= to_major; major++)); do
+    action=$(major_action "$major.0.0" "$work/files/CHANGELOG.md")
+    if [[ -n $action ]]; then
+      say "La $major.0.0 demande :" "  ${action//$'\n'/$'\n'  }"
+    else
+      say "La $major.0.0 : voir ses notes, https://github.com/$REPO/releases/tag/v$major.0.0"
+    fi
+  done
+  die "" "Rien n'est changé. Une fois l'action faite : $(self_command) update --major."
+}
+
+# Le paragraphe « Mise en service » d'une version dans un CHANGELOG.md, en
+# texte : sans gras, et ses liens en adresses complètes, à cette version.
+major_action() { # version, CHANGELOG.md
+  [[ -f $2 ]] || return 0
+  awk -v version="$1" '
+    /^ *(```|~~~)/ { fenced = !fenced }
+    !fenced && /^## / { split(substr($0, 4), words, " "); inside = (words[1] == version); found = 0; next }
+    inside && !found && /^\*\*Mise en service\.\*\*/ { found = 1; sub(/^\*\*Mise en service\.\*\* */, "") }
+    found && /^ *$/ { exit }
+    found { print }
+  ' "$2" | sed -E -e 's/\*\*//g' -e 's#\]\((https?://[^)]*)\)# (\1)#g' \
+    -e "s#\\]\\(([^)]*)\\)# (https://github.com/$REPO/blob/v$1/\\1)#g" -e 's/\[//g'
+}
+
+# La fenêtre de la mise à jour, que dit le moteur qui tourne : ni direct ni
+# diffusion de l'Agenda à l'antenne, ni d'ici 30 minutes. Un moteur d'avant
+# radiotomate maintenance window, ou qui ne répond pas, la laisse inconnue :
+# la mise à jour se fait, et le dit.
+update_window() { # quiet, ou rien
+  local answer status=0
+  if ! station_running radiotomate-interface; then
+    [[ -n ${1:-} ]] || say "Fenêtre : pas vérifiée, le moteur ne tourne pas : l'antenne est déjà coupée."
+    return 0
+  fi
+  answer=$(compose exec -T radiotomate-interface radiotomate maintenance window </dev/null 2>/dev/null) || status=$?
+  if [[ $status == 1 && $answer == "occupée : "* ]]; then
+    # Vu une fois la sauvegarde faite et les images tirées : la mise à jour
+    # s'arrête là, et updates.log le note.
+    if ((${#updating[@]})); then
+      update_log arrêtée "${answer#occupée : }"
+      updating=()
+      die "Pas de mise à jour maintenant : ${answer#occupée : }. L'antenne se couperait pendant. La station reste en $installed, avec la sauvegarde d'avant${env_added:+, et ce que .env a reçu :$env_added}." \
+        "Relancer plus tard, ou mettre à jour quand même : $(self_command) update --force."
+    fi
+    die "Pas de mise à jour maintenant : ${answer#occupée : }. L'antenne se couperait pendant. Rien n'est changé." \
+      "Relancer plus tard, ou mettre à jour quand même : $(self_command) update --force."
+  elif [[ $status == 0 && $answer == "libre : "* ]]; then
+    [[ -n ${1:-} ]] || say "Fenêtre : libre, ${answer#libre : }."
+  elif [[ -z ${1:-} ]]; then
+    warn "la fenêtre n'est pas vérifiée : le moteur ne la dit pas, il ne répond pas, ou sa version n'a pas radiotomate maintenance window. Vérifier qu'aucun direct ne commence bientôt."
+  fi
+}
+
+# La commande à citer dans un message : station, celle de la station, ou le
+# script lancé, comme bash station pour la première mise à jour d'une 0.2.0,
+# dont la commande n'a pas update. Une commande qui passe la main dit la sienne.
+self_command() {
+  local script=${BASH_SOURCE[0]:-}
+  if [[ -n ${STATION_SELF:-} ]]; then
+    printf '%s\n' "$STATION_SELF"
+  elif [[ -n $script && $(readlink -f "$script" 2>/dev/null) == "$(readlink -f "$dir/station" 2>/dev/null)" ]]; then
+    echo station
+  else
+    printf 'bash %s\n' "${script:-station}"
+  fi
+}
+
+# La mise à jour se fait par la commande station de la version visée : elle
+# seule sait ce que sa version demande, à .env par exemple. Une autre lui
+# passe la main, avec ses options et l'archive vérifiée. Vrai si elle doit la
+# passer : son propre script n'est pas celui de l'archive.
+update_handoff_needed() {
+  local script=${BASH_SOURCE[0]:-}
+  [[ -z ${STATION_UPDATE_HANDOFF:-} ]] || return 1
+  [[ -n $script && -f $script ]] || return 0
+  ! cmp -s "$script" "$work/files/station"
+}
+
+# La mise à jour, une fois tout vérifié : la sauvegarde, .env, les images,
+# tirées pendant que l'antenne joue, les fichiers, le redémarrage, puis le
+# contrôle. updates.log la note, faite, ou échouée, par cleanup.
+update_station() {
+  local archive="" previous="" kept="" env_added="" env_left_out="" profiles=() others=() replaced=() mounting=()
+  local started cut tls domain back
+  # Les fichiers de la version, à part : backup_station prend work.
+  staged=$work
+  work=""
+  updating=("$dir" "$installed" "$target" "")
+  update_stage="la sauvegarde"
+  if previous_files; then
+    previous=$staged/avant/files
+  elif [[ $installed != main ]]; then
+    warn "les fichiers de la version $installed ne se téléchargent pas : chaque fichier que la mise à jour remplace sera gardé à côté."
+  fi
+  backup_target
+  # Le script de sauvegarde de la version visée, qui tourne dans l'image
+  # d'avant : celui d'une 0.2.0 demande sqlite3, que l'image n'a pas.
+  backup_station "$archive" "" "$staged/files/scripts/backup-radiotomate.sh"
+  updating[3]=$archive
+  backup_rotate "$archive"
+  back="Revenir à la version $installed : voir docs/deploiement.md, « Revenir en arrière », avec la sauvegarde $archive."
+
+  update_stage="les images"
+  update_env
+  update_pull
+  [[ -n ${opts[--force]:-} ]] || update_window quiet
+
+  update_stage="les fichiers"
+  update_files
+  env_set BUTTON_VERSION "$target" update
+  make_data_dirs
+  link_command
+  env_isolate
+  mounted_by_containers
+
+  update_stage="le redémarrage"
+  say "Mise à jour : la station repart en $target. L'antenne se coupe le temps du redémarrage."
+  started=$SECONDS
+  compose up -d --force-recreate "${ENGINE_SERVICES[@]}" ||
+    die "Le moteur ne repart pas en $target : voir le message de docker compose plus haut." \
+      "Voir pourquoi : cd $dir && docker compose logs radiotomate-init. $back"
+  compose up -d ||
+    die "La station ne repart pas en $target : voir le message de docker compose plus haut." "$back"
+  if ((${#others[@]})); then
+    compose "${profiles[@]}" up -d "${others[@]}" ||
+      die "Les services lancés à part ne repartent pas en $target : voir le message de docker compose plus haut." "$back"
+  fi
+  remount ||
+    die "Les services qui montent un fichier changé de la version ne repartent pas : voir le message de docker compose plus haut." "$back"
+
+  update_stage="le contrôle"
+  tls=$(env_value CADDY_TLS acme)
+  domain=$(env_value DOMAIN)
+  if [[ -n $domain && ,$(env_value COMPOSE_PROFILES), == *,vps,* ]]; then
+    https_ok ||
+      die "https://$domain ne répond pas au bout de $HTTPS_WAIT s, en $target." \
+        "Voir pourquoi : cd $dir && docker compose logs caddy. $back"
+  fi
+  smoke_ok || die "Le contrôle de la station a échoué en $target : voir plus haut." "$back"
+  cut=$((SECONDS - started))
+  record_versions
+  update_log faite "redémarrée et contrôlée en $cut s"
+  updating=()
+  update_stage=""
+
+  say "" "La station est à jour : $target, au lieu de $installed. Le contrôle passe."
+  say "  Redémarrée et contrôlée en $cut s, coupure de l'antenne comprise."
+  say "  La sauvegarde d'avant : $archive."
+  [[ -z $env_added ]] || say "  Ajouté à .env :$env_added."
+  [[ -z $env_left_out ]] ||
+    say "  Retirés de .env, et que la version d'avant connaissait : ils n'y reviennent pas :$env_left_out."
+  [[ -z $kept ]] ||
+    say "  Changés sur cette station, gardés à côté, en .local-… :$kept. Les changements d'une station vont dans compose.override.yml."
+}
+
+# Les fichiers de la version d'avant, dans $staged/avant/files : de quoi
+# reconnaître ce que la station a changé elle-même.
+previous_files() {
+  local base="https://github.com/$REPO/releases/download/v$installed" name expected
+  check_version "$installed" >/dev/null 2>&1 || return 1
+  mkdir -p "$staged/avant/files"
+  for name in station.tar.gz SHA256SUMS; do
+    curl --disable -fsSL --retry 3 --max-time 120 -o "$staged/avant/$name" "$base/$name" 2>/dev/null || return 1
+  done
+  expected=$(awk '$2 == "station.tar.gz" { print $1 }' "$staged/avant/SHA256SUMS")
+  [[ -n $expected && $(sha256sum "$staged/avant/station.tar.gz" | cut -d' ' -f1) == "$expected" ]] || return 1
+  tar -xzf "$staged/avant/station.tar.gz" -C "$staged/avant/files" 2>/dev/null
+}
+
+# Les KEEP_BACKUPS dernières archives de backups/ restent, les plus anciennes
+# s'effacent : celles de station backup aussi, quand elle écrit là. Leur nom
+# dit leur heure, en UTC : l'ordre des noms est celui des heures. Celle qui
+# vient de s'écrire reste, même quand une horloge en avance en a fait de plus
+# récentes.
+backup_rotate() { # l'archive qui vient de s'écrire
+  local expired=()
+  mapfile -t expired < <(find "$dir/backups" -maxdepth 1 -type f -name 'button-*.tar' ! -path "$1" | sort -r |
+    tail -n "+$KEEP_BACKUPS")
+  ((${#expired[@]})) || return 0
+  rm -f -- "${expired[@]}"
+  say "Sauvegardes : les $KEEP_BACKUPS dernières restent dans $dir/backups ; ${#expired[@]} plus ancienne(s) effacée(s)."
+}
+
+# .env : ce que la version visée y demande en plus, avec sa valeur par défaut,
+# par le write_env de la version, avant de tirer ses images : son compose.yml
+# peut en avoir besoin. Le nouveau seulement (env_add) : sans les fichiers de
+# la version d'avant, rien que les secrets qui manquent. Rien de posé ne
+# change ; la version, BUTTON_VERSION, change avec les fichiers.
+update_env() {
+  local version=$target first="" domain email timezone admin updates tls env_by=update
+  local env_new_only=1 env_known=""
+  [[ -z $previous || ! -f $previous/.env.example ]] || env_known=$previous/.env.example
+  domain=$(env_value DOMAIN)
+  email=$(env_value ACME_EMAIL)
+  timezone=$(env_value TZ Europe/Paris)
+  admin=$(env_value RT_ADMIN_USER admin)
+  updates=$(env_value BUTTON_UPDATES auto)
+  tls=$(env_value CADDY_TLS acme)
+  write_env
+}
+
+# Les images de la version, tirées pendant que l'antenne joue encore : avec
+# le compose.yml de la version, le compose.override.yml de la station et son
+# .env, à la version près. Aussi celles des services d'un autre profil qui
+# tournent, comme share lancé à part : ils repartiront avec la station.
+update_pull() {
+  local running active service files=(-f "$staged/files/compose.yml") unchanged
+  local again="Images privées : docker login ghcr.io, avec un jeton GitHub qui a read:packages. Sinon, vérifier l'accès de la machine à ghcr.io. Puis relancer."
+  unchanged="La station tourne toujours en $installed${env_added:+, mais .env a reçu :$env_added}."
+  [[ ! -f $dir/compose.override.yml ]] || files+=(-f "$dir/compose.override.yml")
+  all_profiles
+  running=$(compose "${profiles[@]}" ps --services --status running 2>/dev/null) || running=""
+  active=$(compose config --services 2>&1) ||
+    die "docker compose ne lit pas la station : $(head -n 1 <<<"$active") $unchanged" \
+      "Voir pourquoi : cd $dir && docker compose config. Puis relancer."
+  active=" $(tr '\n' ' ' <<<"$active") "
+  while IFS= read -r service; do
+    [[ -z $service || $active == *" $service "* ]] || others+=("$service")
+  done <<<"$running"
+  say "Mise à jour : les images de la version $target, pendant que l'antenne joue."
+  (cd "$dir" && BUTTON_VERSION=$target docker compose "${files[@]}" --project-directory "$dir" pull) ||
+    die "Les images de la version $target ne se tirent pas : voir le message de docker compose plus haut. $unchanged" "$again"
+  if ((${#others[@]})); then
+    (cd "$dir" && BUTTON_VERSION=$target docker compose "${files[@]}" --project-directory "$dir" "${profiles[@]}" pull "${others[@]}") ||
+      die "Les images de la version $target ne se tirent pas : voir le message de docker compose plus haut. $unchanged" "$again"
+  fi
+}
+
+# Les fichiers de la version remplacent ceux du dossier, chacun par un
+# renommage : bash lit encore, sans le relire en entier, le script qui l'a
+# lancé. Un fichier que la station a changé elle-même, autre que celui de la
+# version d'avant, est gardé à côté, en .local-…, comme le fait install. Sans
+# les fichiers de la version d'avant, chaque fichier remplacé l'est.
+update_files() {
+  local file mode stamp
+  stamp=$(date +%Y%m%d-%H%M%S)
+  while IFS= read -r file; do
+    file=${file#"$staged/files/"}
+    mode=$(stat -c %a "$staged/files/$file")
+    if [[ -e $dir/$file ]] && cmp -s "$staged/files/$file" "$dir/$file"; then
+      chmod "$mode" "$dir/$file"
+      continue
+    fi
+    if [[ -e $dir/$file ]] && { [[ -z $previous ]] || ! cmp -s "$dir/$file" "$previous/$file"; }; then
+      cp -p "$dir/$file" "$dir/$file.local-$stamp"
+      kept="$kept $file"
+    fi
+    install -D -m "$mode" "$staged/files/$file" "$dir/$file.station-$$"
+    mv -f "$dir/$file.station-$$" "$dir/$file"
+    replaced+=("$file")
+  done < <(find "$staged/files" -type f | sort)
+}
+
+# Les conteneurs qui tournent et montent un fichier que la version vient de
+# remplacer, dans mounting, « id|service » : un fichier monté seul reste
+# l'ancien dans le conteneur, jusqu'à sa recréation.
+mounted_by_containers() {
+  local ids=() id service mounts file real
+  ((${#replaced[@]})) || return 0
+  real=$(real_path "$dir")
+  mapfile -t ids < <(docker ps -q --no-trunc --filter "label=com.docker.compose.project=$PROJECT" \
+    --filter label=com.docker.compose.oneoff=False 2>/dev/null)
+  ((${#ids[@]})) || return 0
+  while IFS='|' read -r id service mounts; do
+    for file in "${replaced[@]}"; do
+      if [[ " $mounts " == *" $dir/$file "* || " $mounts " == *" $real/$file "* ]]; then
+        mounting+=("$id|$service")
+        break
+      fi
+    done
+  done < <(docker inspect --format '{{.Id}}|{{index .Config.Labels "com.docker.compose.service"}}|{{range .Mounts}}{{.Source}} {{end}}' \
+    "${ids[@]}" 2>/dev/null)
+}
+
+# Ceux que up n'a pas recréés, d'une image épinglée comme Caddy ou rclone :
+# recréés à leur tour, sans leurs dépendances, avec le fichier de la version.
+# Sinon, un Caddyfile changé ne servirait qu'au démarrage suivant.
+remount() {
+  local running entry service stale=" "
+  ((${#mounting[@]})) || return 0
+  running=" $(docker ps -q --no-trunc --filter "label=com.docker.compose.project=$PROJECT" 2>/dev/null | tr '\n' ' ') "
+  for entry in "${mounting[@]}"; do
+    service=${entry#*|}
+    [[ $running != *" ${entry%%|*} "* || $stale == *" $service "* ]] || stale="$stale$service "
+  done
+  [[ -n ${stale// /} ]] || return 0
+  say "Mise à jour : recréés avec les fichiers de la version :${stale% }."
+  # Les noms viennent du relevé : un mot chacun.
+  # shellcheck disable=SC2086
+  compose "${profiles[@]}" up -d --force-recreate --no-deps $stale
+}
+
+# Une ligne de updates.log, dans le dossier de la station : l'heure, la
+# version d'avant, la nouvelle, le résultat, la sauvegarde d'avant, et ce
+# qu'il faut en savoir. status dit la dernière.
+update_log() { # résultat, détail
+  local log=${updating[0]}/updates.log
+  if [[ ! -f $log ]]; then
+    printf '%s\n' "# Les mises à jour de station update, une par ligne : l'heure, en secondes depuis 1970, la version d'avant, la nouvelle, le résultat, la sauvegarde d'avant, et ce qu'il faut en savoir." \
+      >"$log"
+  fi
+  # Un champ vide se lirait mal : read fond deux tabulations qui se suivent.
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "${updating[1]}" "${updating[2]}" "$1" "${updating[3]:--}" "$2" >>"$log"
+}
+
+# La version de chaque service qui tourne, d'après Docker, dans versions.json,
+# dans RT_DATA : l'interface n'a pas accès à Docker, et GET
+# /system/version.json la lit là. Le fichier ne change qu'avec les versions :
+# son heure dit depuis quand elles tournent, et une relance d'install ne
+# change rien. Un échec ne fait qu'avertir.
+record_versions() {
+  local data file ids=() service image label version items=() body
+  data=$(env_path RT_DATA ./data/radiotomate)
+  [[ -d $data ]] || return 0
+  mapfile -t ids < <(docker ps -q --filter "label=com.docker.compose.project=$PROJECT" \
+    --filter label=com.docker.compose.oneoff=False 2>/dev/null)
+  if ((${#ids[@]})); then
+    while IFS='|' read -r service image label; do
+      [[ $service =~ ^[a-z0-9][a-z0-9_.-]*$ ]] || continue
+      [[ $image =~ ^[A-Za-z0-9][A-Za-z0-9._/:@-]*$ ]] || image=""
+      [[ $label =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]] || label=""
+      items+=("{\"service\":\"$service\",\"image\":\"$image\",\"version\":\"$label\"}")
+    done < <(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}|{{.Config.Image}}|{{index .Config.Labels "org.opencontainers.image.version"}}' \
+      "${ids[@]}" 2>/dev/null | sort -u)
+  fi
+  version=$(env_value BUTTON_VERSION)
+  [[ $version =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]] || version=""
+  body="\"version\":\"$version\",\"services\":[$(
+    IFS=,
+    printf '%s' "${items[*]}"
+  )]"
+  file=$data/versions.json
+  if [[ -f $file ]] && grep -qF -- "$body" "$file"; then
+    return 0
+  fi
+  if ! { printf '{"recorded_at":"%s",%s}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$body" >"$file.part" &&
+    chmod 644 "$file.part" && mv -f "$file.part" "$file"; } 2>/dev/null; then
+    rm -f "$file.part"
+    warn "la version des services ne s'écrit pas dans $file : la console ne la dira pas."
   fi
 }
 
@@ -2502,7 +3076,7 @@ main() {
   local command=${1:-help}
   (($# == 0)) || shift
   case $command in
-    install | status | logs | backup | restore | config | hold | unhold | cli | uninstall)
+    install | update | status | logs | backup | restore | config | hold | unhold | cli | uninstall)
       help_topic=$command
       "cmd_$command" "$@"
       ;;

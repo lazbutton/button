@@ -26,6 +26,15 @@ name: station
 # of /opt, open to every account: station install must keep it off .env and
 # off the folder. Each case pulls the images twice, about 3 GB each time:
 # hence the paths below, what a real install runs, and not every pull request.
+#
+# update: a real update, of a station installed by the highest published
+# version, with its own station command, to the folder of this checkout and
+# the :main images (scripts/version.py station main), by the station command
+# of this checkout. Before, the action that 1.0.0 asks: ICECAST_MOUNT keeps
+# the stream on the mount it was served on. During, it is read every second:
+# the antenna must not be cut 30 s or more (MAJ-04). After, the same accounts,
+# clocks, weekly shows, Agenda and settings, the backup of before, the line
+# of updates.log and versions.json, then status and the smoke check.
 
 on:
   push:
@@ -372,5 +381,180 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: installation-${{ matrix.docker }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/out/
+          retention-days: 14
+
+  update:
+    name: real update
+    # As install: Ubuntu 24.04, what station install takes.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    permissions:
+      contents: read
+      # The images still private on ghcr.io, as in install.
+      packages: read
+    concurrency:
+      group: station-update-${{ github.ref }}
+      cancel-in-progress: true
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - name: Files of a station, from this checkout
+        run: python3 scripts/version.py station main "$RUNNER_TEMP/station"
+      - name: Install the highest published version
+        # The runner keeps its Docker, as deja-la: install checks the rest.
+        timeout-minutes: 20
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/out" "$RUNNER_TEMP/publiee"
+          (umask 077 && printf '%s\n' "$TOKEN" > "$RUNNER_TEMP/token")
+          # The station command of that version, from its page, as on a VPS.
+          curl -fsSL -o "$RUNNER_TEMP/publiee/station" \
+            "https://github.com/$GITHUB_REPOSITORY/releases/latest/download/station"
+          sudo bash "$RUNNER_TEMP/publiee/station" install --tls internal --domain radio.example --yes \
+            --github-token-file "$RUNNER_TEMP/token" 2>&1 | tee "$RUNNER_TEMP/out/installation.log"
+          echo "Version publiée : $(cat /opt/button/VERSION)"
+      - name: Update to this checkout, the antenna listened to
+        timeout-minutes: 30
+        working-directory: /opt/button
+        run: |
+          out=$RUNNER_TEMP/out
+          # What a station keeps: an account, a clock, a weekly show, a dated
+          # live of the Agenda and a setting; their fingerprint, before and
+          # after. The station command of the version may only have install.
+          sudo docker compose exec -T radiotomate-interface \
+            radiotomate users add animateur-ci --password "$(openssl rand -hex 12)"
+          # The weekly show is three days from today: a version with the
+          # window of MAJ-04 would refuse to update during it.
+          sudo docker compose exec -T radiotomate-interface python3 - <<'PY'
+          import sqlite3
+          from contextlib import closing
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
+
+          day = (datetime.now(ZoneInfo("Europe/Paris")).weekday() + 3) % 7
+          with closing(sqlite3.connect("/data/radiotomate.db", timeout=30)) as con, con:
+              con.execute("insert into clocks (name) values ('Horloge de la CI')")
+              con.execute(
+                  "insert into emissions (scope, title, day_of_week, start_minute, end_minute, created, modified)"
+                  " values ('weekly', 'Émission de la CI', ?, 1200, 1320, datetime('now'), datetime('now'))",
+                  (day,),
+              )
+              con.execute(
+                  "insert into agenda_diffusions (kind, title, starts_at, ends_at, created, modified)"
+                  " values ('live', 'Direct de la CI', datetime('now', '+2 days'),"
+                  " datetime('now', '+2 days', '+1 hour'), datetime('now'), datetime('now'))"
+              )
+              con.execute("insert or replace into settings (key, value) values ('station.tagline', 'Gardée par la CI')")
+          PY
+          cat >"$RUNNER_TEMP/empreinte.py" <<'PY'
+          import hashlib
+          import sqlite3
+          from contextlib import closing
+
+          QUERIES = {
+              "comptes": "select username, password from users order by username",
+              "horloges": "select name from clocks order by name",
+              "émissions": "select title, day_of_week, start_minute from emissions order by id",
+              "Agenda": "select kind, title, starts_at from agenda_diffusions order by id",
+              "réglages": "select key, value from settings where key like 'station.%' order by key",
+          }
+          with closing(sqlite3.connect("/data/radiotomate.db", timeout=30)) as con:
+              for name, query in QUERIES.items():
+                  rows = con.execute(query).fetchall()
+                  print(name, len(rows), hashlib.sha256(repr(rows).encode()).hexdigest()[:16])
+          PY
+          # sudo is for docker compose, which reads .env; the script and the
+          # fingerprint are the runner's.
+          # shellcheck disable=SC2024
+          sudo docker compose exec -T radiotomate-interface python3 - <"$RUNNER_TEMP/empreinte.py" |
+            tee "$out/empreinte-avant.txt"
+          # The mount the station serves: button.mp3 before ICECAST_MOUNT came,
+          # radio.mp3 after, by default. The action that 1.0.0 asks of a
+          # station installed before it: keep that address, in .env.
+          mount=radio.mp3
+          code=$(curl -s -m 2 -o /dev/null -w '%{http_code}' http://127.0.0.1:18000/button.mp3 || true)
+          if [ "$code" = 200 ]; then mount=button.mp3; fi
+          echo "Mount servi : /$mount"
+          if ! sudo grep -q '^ICECAST_MOUNT=' .env; then
+            echo "ICECAST_MOUNT=$mount" | sudo tee -a .env >/dev/null
+          fi
+          # The antenna, read from Icecast's local port during the update: a
+          # second of the stream at a time, with its time, its status and what
+          # came.
+          (
+            while :; do
+              answer=$(curl -s -m 1 -o /dev/null -w '%{http_code} %{size_download}' \
+                "http://127.0.0.1:18000/$mount" || true)
+              echo "$(date +%s.%N) $answer"
+              [[ $answer == "200 "[1-9]* ]] || sleep 0.5
+            done
+          ) >"$out/antenne.txt" &
+          probe=$!
+          sudo bash "$RUNNER_TEMP/station/station" update --from "$RUNNER_TEMP/station/station.tar.gz" --yes 2>&1 |
+            tee "$out/mise-a-jour.log"
+          sleep 5
+          kill "$probe"
+          # The longest time without audio, in seconds: what the fiche MAJ-04
+          # accepts is under 30.
+          cut=$(awk '{ ok = ($2 == 200 && $3 > 0) }
+            !ok && !start { start = $1 }
+            ok && start { if ($1 - start > max) max = $1 - start; start = 0 }
+            END { if (start) print "-1"; else printf "%d\n", max }' "$out/antenne.txt")
+          echo "::notice title=Coupure de l'antenne::$cut s sans audio pendant la mise à jour."
+          if [ "$cut" -lt 0 ] || [ "$cut" -ge 30 ]; then
+            echo "::error title=Coupure de l'antenne::l'antenne s'est coupée $cut s (-1 : jamais revenue) : il faut moins de 30 s."
+            exit 1
+          fi
+          if [ "$(cat VERSION)" != main ] || [ "$(sudo sed -n 's/^BUTTON_VERSION=//p' .env | tail -n 1)" != main ]; then
+            echo "::error title=Version::la station n'est pas passée à main."
+            exit 1
+          fi
+          # shellcheck disable=SC2024
+          sudo docker compose exec -T radiotomate-interface python3 - <"$RUNNER_TEMP/empreinte.py" >"$out/empreinte-apres.txt"
+          if ! diff "$out/empreinte-avant.txt" "$out/empreinte-apres.txt"; then
+            echo "::error title=Données::la mise à jour a changé les comptes, les horloges, la grille, l'Agenda ou les réglages : voir le diff plus haut."
+            exit 1
+          fi
+          if [ "$(sudo find backups -name 'button-*.tar' | wc -l)" != 1 ] ||
+            ! sudo awk -F '\t' '$3 == "main" && $4 == "faite" { found = 1 } END { exit !found }' updates.log; then
+            echo "::error title=Mise à jour::il manque la sauvegarde d'avant, ou la ligne de updates.log."
+            exit 1
+          fi
+          # The version of each service, for GET /system/version.json.
+          sudo jq -e '.version == "main" and (.services | map(.service) | index("radiotomate-playout"))' \
+            data/radiotomate/versions.json
+          sudo station status 2>&1 | tee "$out/status.log"
+          sudo scripts/smoke.sh http://127.0.0.1:30126 "http://127.0.0.1:18000/$mount"
+      - name: Logs of the station
+        if: failure()
+        run: |
+          out=$RUNNER_TEMP/out
+          mkdir -p "$out"
+          if [ -f /opt/button/compose.yml ]; then
+            cd /opt/button
+            sudo ls -la /opt/button || true
+            sudo docker compose ps -a || true
+            # sudo is for docker compose, which reads .env; the file is the runner's.
+            # shellcheck disable=SC2024
+            sudo docker compose logs --no-color --timestamps > "$out/compose.log" 2>&1 || true
+          fi
+          # The secrets of .env stay on the runner: each value is masked.
+          if sudo test -f /opt/button/.env; then
+            sudo sed -n -E 's/^[A-Z0-9_]*(PASSWORD|SECRET|KEY)=//p' /opt/button/.env |
+              while IFS= read -r secret; do
+                # $ENV is perl's, not the shell's.
+                # shellcheck disable=SC2016
+                [ -z "$secret" ] || SECRET=$secret find "$out" -type f -exec perl -pi -e 's/\Q$ENV{SECRET}\E/***/g' {} +
+              done
+          fi
+      - name: Upload the logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mise-a-jour-${{ github.run_attempt }}
           path: ${{ runner.temp }}/out/
           retention-days: 14
