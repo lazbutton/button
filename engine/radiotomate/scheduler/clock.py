@@ -58,6 +58,7 @@ from radiotomate.scheduler.timing import (  # noqa: F401 — re-exported
     _next_anchor,
     anchor_in_daypart,
     can_push_sequential_jingle,
+    hard_anchor_since,
     next_hard_anchor,
     next_hard_anchor_minute,
     next_soft_anchor,
@@ -89,6 +90,14 @@ def _finish_tick(started: float, actions: list[str]) -> list[str]:
 SETTING_CLOCK_SEQ_CURSOR = "clock_seq_cursor"
 SETTING_CLOCK_SEQ_CLOCK_ID = "clock_seq_clock_id"
 SETTING_CLOCK_SEQ_EPOCH = "clock_seq_epoch"
+# ADR 0009: turned off, a soft anchor a hard one has overtaken goes after it, as
+# before, though the conducteur says it « sauté ».
+SETTING_SKIP_OVERTAKEN = "features.skip_overtaken_soft_anchors"
+_SETTING_OFF = {"0", "false", "off", ""}
+# Why an anchor line closes without going, as the conducteur shows it.
+HELD_BY_LIVE = "retenue pendant le direct"
+HELD_BY_SET = "retenue pendant un set de l'Agenda"
+OVERTAKEN = "dépassé par une ancre dure"
 TARGET_QUEUE_DEPTH = 2
 # Une seule avance dans la file jingles : fallback Liquidsoap les joue
 # tant qu'il en reste, donc un stock de 2 bouche l'Auto-DJ.
@@ -424,7 +433,9 @@ async def _clock_step(  # noqa: PLR0912, PLR0913, PLR0915
         _forget_fired_anchors(now)
         nxt = await AutoDJSlot.next_after(session, slot)
         slot_end = slot.daypart_end_minute(nxt)
-        await _hold_due_anchors(session, clock, slot.minute, slot_end, now, actions)
+        await _hold_due_anchors(
+            session, clock, slot.minute, slot_end, now, actions, reason=HELD_BY_LIVE
+        )
         await persist_sequencer_cursor(session)
         return
 
@@ -434,13 +445,16 @@ async def _clock_step(  # noqa: PLR0912, PLR0913, PLR0915
         _forget_fired_anchors(now)
         nxt = await AutoDJSlot.next_after(session, slot)
         slot_end = slot.daypart_end_minute(nxt)
-        await _hold_due_anchors(session, clock, slot.minute, slot_end, now, actions)
+        await _hold_due_anchors(
+            session, clock, slot.minute, slot_end, now, actions, reason=HELD_BY_SET
+        )
         if not agenda.fill:
             await persist_sequencer_cursor(session)
             return
 
-    from radiotomate.scheduler.execution import ensure_forecast
+    from radiotomate.scheduler.execution import close_past_anchor_lines, ensure_forecast
 
+    await close_past_anchor_lines(session, now)
     clock_id = clock.id
     weekday = now.weekday()
     await ensure_forecast(session, beets, now=now)
@@ -1043,6 +1057,22 @@ def _forget_fired_anchors(now: datetime) -> None:
     _state.fired_anchors = {k for k in _state.fired_anchors if k[0] >= since}
 
 
+def _close_line(line: RundownItem | None, reason: str, now: datetime) -> None:
+    """An anchor line that will never go says so: « sauté », and why."""
+    if line is None:
+        return
+    line.status = RundownStatus.SKIPPED.value
+    line.reason = reason
+    line.closed_at = now.replace(tzinfo=None)
+
+
+async def skip_overtaken_soft(session: ormSession) -> bool:
+    """Whether a soft anchor a hard one has overtaken is skipped. A missing key
+    says it is."""
+    row = await Setting.from_key(session, SETTING_SKIP_OVERTAKEN)
+    return row is None or str(row.value).strip().lower() not in _SETTING_OFF
+
+
 async def _hold_due_anchors(  # noqa: PLR0913
     session: ormSession,
     clock: Clock,
@@ -1050,8 +1080,14 @@ async def _hold_due_anchors(  # noqa: PLR0913
     slot_end: int,
     now: datetime,
     actions: list[str],
+    *,
+    reason: str,
 ) -> None:
-    """Drop due anchors while harbor is on air so they are not dumped after the live."""
+    """
+    Drop due anchors while harbor or a dated set is on air so they are not dumped
+    after it. Their planned lines will never go: they close, with ``reason``, and
+    the draw of their cart no longer counts them as to come.
+    """
     for pos in clock.anchored_positions():
         if pos.minute is None or not (pos.is_hard_sync or pos.is_soft_sync):
             continue
@@ -1065,12 +1101,14 @@ async def _hold_due_anchors(  # noqa: PLR0913
             continue
         _state.fired_anchors.add(key)
         actions.append(f"anchor:{pos.minute}:hold")
+        _close_line(await _planned_anchor_item(session, pos, now), reason, now)
     # A soft anchor of the hour before still waits for the title astride the hour.
-    for key, _line in await _soft_lines_astride_the_hour(session, now):
+    for key, line in await _soft_lines_astride_the_hour(session, now):
         if key in _state.fired_anchors:
             continue
         _state.fired_anchors.add(key)
         actions.append(f"anchor:{key[2]}:hold")
+        _close_line(line, reason, now)
 
 
 async def _fire_due_anchors(  # noqa: PLR0913
@@ -1120,15 +1158,34 @@ async def _fire_due_anchors(  # noqa: PLR0913
             _state.pending_autodj_skip_minute = now.minute
 
 
+def _skip_overtaken(
+    key: tuple[str, int, int],
+    line: RundownItem | None,
+    now: datetime,
+    actions: list[str],
+) -> None:
+    """A hard anchor came while this soft one waited: it does not go after it."""
+    _state.fired_anchors.add(key)
+    actions.append(f"soft-skip:{key[2]}")
+    _close_line(line, OVERTAKEN, now)
+
+
 async def _fire_soft_anchors_astride_the_hour(
     session: ormSession,
     gateway: PlayoutGateway,
     now: datetime,
     actions: list[str],
+    *,
+    overtaken,
 ) -> None:
     """The title astride the hour ends: the soft anchors it held go, with their line."""
     for key, line in await _soft_lines_astride_the_hour(session, now):
         if key in _state.fired_anchors:
+            continue
+        day, hour, minute = key
+        occurrence = datetime.fromisoformat(day).replace(hour=hour, minute=minute)
+        if await overtaken(occurrence):
+            _skip_overtaken(key, line, now, actions)
             continue
         if not await _push_existing_rundown_item(session, gateway, line, queue="carts"):
             continue
@@ -1149,11 +1206,26 @@ async def _fire_due_soft_anchors(  # noqa: PLR0913
     remaining = remaining_seconds(live_data)
     src = source_id(live_data)
     title_ends = remaining <= JINGLE_PREEMPT_REMAINING or src in {"", "starting"}
+    anchored = clock.anchored_positions()
+    switch: list[bool] = []
+
+    async def overtaken(occurrence: datetime) -> bool:
+        """A hard anchor has gone since this soft one was due: the conducteur
+        says « sauté », and the antenna does not play it after the hard one."""
+        if not hard_anchor_since(
+            occurrence, now, slot_start, slot_end, anchored, _state.fired_anchors
+        ):
+            return False
+        if not switch:
+            switch.append(await skip_overtaken_soft(session))
+        return switch[0]
+
     if title_ends:
         # The hour before goes first.
-        await _fire_soft_anchors_astride_the_hour(session, gateway, now, actions)
-    next_hard = next_hard_anchor(now, slot_start, slot_end, clock.anchored_positions())
-    for pos in clock.anchored_positions():
+        await _fire_soft_anchors_astride_the_hour(
+            session, gateway, now, actions, overtaken=overtaken
+        )
+    for pos in anchored:
         if pos.minute is None or not pos.is_soft_sync:
             continue
         if not anchor_in_daypart(slot_start, slot_end, now.hour, pos.minute):
@@ -1164,9 +1236,9 @@ async def _fire_due_soft_anchors(  # noqa: PLR0913
         key = (now.date().isoformat(), now.hour, pos.minute)
         if key in _state.fired_anchors:
             continue
-        if next_hard is not None and next_hard[0] <= now:
-            _state.fired_anchors.add(key)
-            actions.append(f"soft-skip:{pos.minute}")
+        if await overtaken(occurrence):
+            line = await _planned_anchor_item(session, pos, now)
+            _skip_overtaken(key, line, now, actions)
             continue
         if not title_ends:
             continue

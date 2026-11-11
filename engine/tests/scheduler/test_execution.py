@@ -598,8 +598,9 @@ async def test_anchor_leaves_the_line_of_an_earlier_hour(  # noqa: PLR0913
 ):
     """
     A line planned for the same anchor the day before, or the hour before, never
-    went: a live held the antenna, say. It stays planned, and it is not the line
-    of this hour: the antenna pushes its own.
+    went: the scheduler was stopped, say. It is not the line of this hour: the
+    antenna pushes its own. More than an hour past, it never goes: it closes,
+    « heure passée ».
     """
     planned_at, ticked_at = ("20:00", "20:05") if sync == "dure" else ("22:16", "22:15")
     pos = await _pub_anchor(dbsession, sync)
@@ -615,7 +616,12 @@ async def test_anchor_leaves_the_line_of_an_earlier_hour(  # noqa: PLR0913
     live = _anchor_due(f"2026-09-{day}T{hour}:{ticked_at}", sync)
     assert _fired(sync, 20) in await tick(dbsession, live, client, beets_integration)
     assert _pushed_ids(client) == [planned["id"]]
-    assert (await dbsession.get(RundownItem, earlier["id"])).status == "planned"
+    line = await dbsession.get(RundownItem, earlier["id"])
+    if day == 14:
+        # The hour before, 10:22:16 at 11:22:15: not quite an hour past.
+        assert line.status == "planned"
+    else:
+        assert (line.status, line.reason) == ("skipped", "heure passée")
 
 
 @pytest.mark.parametrize(

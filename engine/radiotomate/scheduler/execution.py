@@ -56,6 +56,11 @@ _CLOSED_DESK_STATUSES = {
     RundownStatus.REPLACED.value,
 }
 FLUSHED_REASON = "file vidée"
+PAST_REASON = "heure passée"
+# A hard anchor goes on its minute, a soft one at the end of the title astride
+# it, an hour after its minute at most (clock._planned_anchor_item): an anchor
+# line still planned an hour after its time will never go.
+PAST_ANCHOR_AFTER = timedelta(hours=1)
 PLAYOUT_QUEUES = ("autodj", "jingles", "carts")
 # A line Liquidsoap holds: what a flush takes out of its queues.
 _QUEUED_STATUSES = {
@@ -642,6 +647,35 @@ async def clear_live_forecast(session: ormSession) -> None:
     if doomed_ids:
         await session.flush()
         await session.execute(delete(RundownItem).where(RundownItem.id.in_(doomed_ids)))
+
+
+async def close_past_anchor_lines(session: ormSession, now: datetime) -> int:
+    """
+    Close the anchor lines still planned an hour after their time: skipped,
+    « heure passée ». They never went, the scheduler stopped at their minute say.
+    Left planned, they would stay in the conducteur for good, and the draw of
+    their cart would count them as to come. Returns how many it closed.
+    """
+    local = naive_datetime(now)
+    rows = list(
+        await session.scalars(
+            select(RundownItem).where(
+                RundownItem.status.in_(
+                    [RundownStatus.PLANNED.value, RundownStatus.RESCUE.value]
+                ),
+                RundownItem.when_mode == WhenMode.ANCHORED.value,
+                RundownItem.origin != DESK_ORIGIN,
+                RundownItem.planned_at < local - PAST_ANCHOR_AFTER,
+            )
+        )
+    )
+    for row in rows:
+        row.status = RundownStatus.SKIPPED.value
+        row.reason = PAST_REASON
+        row.closed_at = local
+    if rows:
+        await session.commit()
+    return len(rows)
 
 
 async def close_flushed_items(
