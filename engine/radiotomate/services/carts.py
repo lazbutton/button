@@ -14,6 +14,7 @@ from radiotomate.domain.autodj import require_expected_version
 from radiotomate.domain.errors import DomainConflict, DomainValidationError
 from radiotomate.models import Clock, ClockPosition, Sound
 from radiotomate.services.media_bank import (
+    REFUSAL_EMPTY,
     REFUSAL_TOO_MANY,
     REFUSALS_NAME,
     BankFolderTooLargeError,
@@ -41,6 +42,12 @@ _log = logging.getLogger(__name__)
 # A file changed this recently may still be on its way in: a copy that stalls,
 # or the end of an audio file that has not arrived yet. It is not refused yet.
 SETTLE_SECONDS = 10.0
+# An empty file waits longer: the console writes a sound it receives by 1 MB
+# blocks, and leaves a small one empty until the end of the whole upload.
+EMPTY_SETTLE_SECONDS = 45.0
+# The folders where .refus.json cannot be written: said once in the journal,
+# not at every pass.
+_unwritable: set[Path] = set()
 
 
 def require_cart_version(cart: Cart, expected: object) -> None:
@@ -157,7 +164,8 @@ async def _stable_new_files(
     files: list[Path], already: set[Path]
 ) -> tuple[dict[Path, float], set[Path]]:
     """New files whose size held still, with their last change, and the new
-    files that are maybe still on their way in."""
+    files that are still growing. An empty file has not grown: it is stable,
+    and probing it says so."""
     pending = [path for path in files if path.resolve() not in already]
     if not pending:
         return {}, set()
@@ -175,7 +183,7 @@ async def _stable_new_files(
             info = path.stat()
         except OSError:
             continue
-        if first <= 0 or info.st_size != first:
+        if info.st_size != first:
             moving.add(path)
             continue
         stable[path] = info.st_mtime
@@ -207,14 +215,21 @@ def _refusal_entries(
 
 
 async def _save_refusals(cart: Cart, folder: Path, entries: list[dict]) -> None:
-    """Write down what the cart did not take, without stopping the sync."""
+    """Write down what the cart did not take. Whatever happens, the sync goes on:
+    the sounds it took still go to the analysis."""
     try:
         changed = await asyncio.to_thread(write_refusals, folder, entries)
-    except OSError as exc:
-        _log.warning(
-            "bank sync: cannot write %s for cart %s: %s", REFUSALS_NAME, cart.id, exc
-        )
+    except Exception as exc:
+        if folder not in _unwritable:
+            _unwritable.add(folder)
+            _log.warning(
+                "bank sync: cannot write %s for cart %s: %s",
+                REFUSALS_NAME,
+                cart.id,
+                exc,
+            )
         return
+    _unwritable.discard(folder)
     if changed:
         _log.info(
             "bank sync: cart %s leaves %s file(s) of its folder out",
@@ -239,9 +254,10 @@ async def _note_refusals(
     waiting = set(moving)
     refused: dict[Path, str] = {}
     for path, (reason, changed) in failed.items():
+        settle = EMPTY_SETTLE_SECONDS if reason == REFUSAL_EMPTY else SETTLE_SECONDS
         # abs(): a file dated in the future, by a clock set wrong elsewhere,
         # is not waited for.
-        if abs(now - changed) < SETTLE_SECONDS:
+        if abs(now - changed) < settle:
             waiting.add(path)
         else:
             refused[path] = reason

@@ -22,20 +22,21 @@ test("an older engine gives no skipped files, and a relay follows no folder", ()
 
 test("the notice counts the files, and says what to do with them", () => {
   assert.equal(skippedNotice([], FOLDER), null);
+  // Le dossier de la station, et non Dropbox : retirer un fichier de Dropbox ne le retire pas de la station.
   assert.deepEqual(skippedNotice([faux], FOLDER), {
     title: "1 fichier n'est pas entré dans le bac",
-    help: "Remplace-le dans Bacs/12-Nouveautes par un son que l'automate lit, ou retire-le.",
+    help: "Dans le dossier de la station, sous Bacs/12-Nouveautes, remplace-le par un son que l'automate lit, ou retire-le.",
   });
   assert.deepEqual(skippedNotice([faux, ogg], FOLDER), {
     title: "2 fichiers ne sont pas entrés dans le bac",
-    help: "Remplace-les dans Bacs/12-Nouveautes par des sons que l'automate lit, ou retire-les.",
+    help: "Dans le dossier de la station, sous Bacs/12-Nouveautes, remplace-les par des sons que l'automate lit, ou retire-les.",
   });
 });
 
 test("a folder over the cap is named by the station folder", () => {
   assert.deepEqual(skippedNotice([dossier], FOLDER), {
     title: "Le dossier du bac a trop de fichiers",
-    help: "Déplace une partie des fichiers de Bacs/12-Nouveautes ailleurs : sous 2000, le bac reprend ceux qui y arrivent.",
+    help: "Dans le dossier de la station, déplace une partie des fichiers de Bacs/12-Nouveautes ailleurs : sous 2000, le bac reprend ceux qui y arrivent.",
   });
   assert.equal(skippedName(dossier, FOLDER), FOLDER);
   assert.equal(skippedName(ogg, FOLDER), "Album/b.ogg");

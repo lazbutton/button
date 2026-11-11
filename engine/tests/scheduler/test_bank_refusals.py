@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session as ormSession
 from radiotomate.beets import BeetsIntegration
 from radiotomate.enums import CartMode, ScheduleMode
 from radiotomate.models import Cart, User
+from radiotomate.services import carts as carts_service
 from radiotomate.services import media_bank
 from radiotomate.services.carts import sync_bank_folder
 from tests.scheduler.test_admin_json import ASSETS, _admin_client
@@ -18,7 +19,13 @@ MP3 = ASSETS / "ohradiotomateoh.mp3"
 TEXT = b"Ceci est un texte, pas un son.\n"
 NOT_AUDIO = "ce n'est pas un fichier audio"
 NO_LENGTH = "durée illisible"
+EMPTY = "fichier vide"
+UNREAD = "l'automate ne lit pas ce format"
+UNREADABLE = "lecture impossible"
 TOO_MANY = "plus de 2000 fichiers audio : le bac ne prend plus rien de son dossier"
+# L'en-tête d'un fichier ASF, celui d'un .wma.
+ASF = bytes.fromhex("3026b2758e66cf11a6d900aa0062ce6c")
+ROOT = os.geteuid() == 0
 
 
 def _drop(path: Path, data: bytes, *, age: float = 60.0) -> Path:
@@ -130,8 +137,8 @@ async def test_a_folder_over_the_cap_gets_one_entry(
     assert await _sync(dbsession, cart_id, uploader_id) == []
     assert media_bank.read_refusals(folder) == [{"path": ".", "reason": TOO_MANY}]
 
-    # Revenu à 2000, le dossier n'est plus refusé. Des fichiers vides ne sont pas
-    # refusés : ils peuvent être en train d'arriver.
+    # Revenu à 2000, le dossier n'est plus refusé. Des fichiers vides tout juste
+    # posés ne le sont pas encore : ils peuvent être en train d'arriver.
     (folder / "son-0000.mp3").unlink()
     assert await _sync(dbsession, cart_id, uploader_id) == []
     assert media_bank.read_refusals(folder) == []
@@ -178,6 +185,119 @@ async def test_a_file_on_its_way_in_is_not_refused_yet(
     assert media_bank.read_refusals(folder) == [
         {"path": "en-route.ogg", "reason": NOT_AUDIO}
     ]
+
+
+async def test_an_empty_file_is_listed_once_it_has_waited(
+    dbsession: ormSession, cart_id: int, uploader_id: int, folder: Path
+):
+    # Vide depuis une minute : un export raté.
+    old = _drop(folder / "Chronique.mp3", b"")
+    # Vide depuis un instant : la console écrit encore les sons qu'elle reçoit.
+    _drop(folder / "en-cours.mp3", b"", age=0)
+
+    await _sync(dbsession, cart_id, uploader_id)
+    assert media_bank.read_refusals(folder) == [
+        {"path": "Chronique.mp3", "reason": EMPTY}
+    ]
+    assert media_bank.cart_refusals("50-carts/depot") == [
+        {"path": "Chronique.mp3", "reason": EMPTY}
+    ]
+    # Rempli depuis, il ne se dit plus vide, sans attendre le passage suivant.
+    old.write_bytes(TEXT)
+    assert media_bank.cart_refusals("50-carts/depot") == []
+
+
+async def test_a_wma_is_not_said_to_be_something_else_than_audio(
+    dbsession: ormSession, cart_id: int, uploader_id: int, folder: Path
+):
+    _drop(folder / "Interview.wma", ASF + bytes(200))
+    _drop(folder / "Plateau.mp3", b"ID3" + bytes(300))
+
+    await _sync(dbsession, cart_id, uploader_id)
+    assert media_bank.read_refusals(folder) == [
+        {"path": "Interview.wma", "reason": UNREAD},
+        {"path": "Plateau.mp3", "reason": NO_LENGTH},
+    ]
+
+
+@pytest.mark.skipif(ROOT, reason="root lit tous les fichiers")
+async def test_an_unreadable_file_says_so(
+    dbsession: ormSession, cart_id: int, uploader_id: int, folder: Path
+):
+    locked = _drop(folder / "verrouillé.flac", b"fLaC" + bytes(100))
+    locked.chmod(0)
+    try:
+        await _sync(dbsession, cart_id, uploader_id)
+    finally:
+        locked.chmod(0o644)
+    assert media_bank.read_refusals(folder) == [
+        {"path": "verrouillé.flac", "reason": UNREADABLE}
+    ]
+
+
+@pytest.mark.skipif(ROOT, reason="root écrit dans tous les dossiers")
+async def test_a_list_it_cannot_write_does_not_stop_the_sync(
+    dbsession: ormSession,
+    cart_id: int,
+    uploader_id: int,
+    folder: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # Le journal de radiotomate ne remonte pas jusqu'à celui de pytest.
+    said: list[str] = []
+    monkeypatch.setattr(
+        carts_service._log,
+        "warning",
+        lambda message, *args: said.append(message % args),
+    )
+    _drop(folder / "faux.mp3", TEXT)
+    _drop(folder / "vrai.mp3", MP3.read_bytes())
+    folder.chmod(0o555)
+    try:
+        # Le son pris part à l'analyse, et le journal le dit une fois.
+        assert await _sync(dbsession, cart_id, uploader_id) == ["vrai.mp3"]
+        assert await _sync(dbsession, cart_id, uploader_id) == []
+    finally:
+        folder.chmod(0o755)
+    assert len(said) == 1
+    assert "cannot write .refus.json" in said[0]
+    assert not (folder / media_bank.REFUSALS_NAME).exists()
+
+
+async def test_no_failure_to_write_the_list_stops_the_sync(
+    dbsession: ormSession,
+    cart_id: int,
+    uploader_id: int,
+    folder: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    def broken(*_args):
+        raise ValueError("liste impossible à écrire")
+
+    monkeypatch.setattr(carts_service, "write_refusals", broken)
+    monkeypatch.setattr(carts_service._log, "warning", lambda *_args: None)
+    _drop(folder / "faux.mp3", TEXT)
+    _drop(folder / "vrai.mp3", MP3.read_bytes())
+
+    assert await _sync(dbsession, cart_id, uploader_id) == ["vrai.mp3"]
+
+
+def test_a_name_that_is_not_utf8_is_written_and_read_back(tmp_path: Path):
+    # Un zip de Windows décompressé tel quel : des octets qui ne sont pas de l'UTF-8.
+    entries = [{"path": "G\udc82n\udc82rique.wma", "reason": UNREAD}]
+    assert media_bank.write_refusals(tmp_path, entries) is True
+    assert media_bank.read_refusals(tmp_path) == entries
+    assert media_bank.write_refusals(tmp_path, entries) is False
+
+
+def test_a_strange_list_never_breaks_the_cart_json(folder: Path):
+    note = folder / media_bank.REFUSALS_NAME
+    note.write_text('[{"path": "a\\u0000b", "reason": "x"}]\n', encoding="utf-8")
+    assert media_bank.cart_refusals("50-carts/depot") == []
+    # Un tube à la place de la liste ne fait pas attendre l'interface.
+    note.unlink()
+    os.mkfifo(note)
+    assert media_bank.read_refusals(folder) == []
 
 
 def test_the_list_is_written_only_when_it_changes(tmp_path: Path):

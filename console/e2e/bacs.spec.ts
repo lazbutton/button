@@ -98,7 +98,7 @@ test("au-dessus de ses sons, un bac dit les fichiers de son dossier qu'il n'a pa
     "verrouillé.wav lecture impossible",
   ]);
   await expect(refus).toContainText(
-    /Remplace-les dans Bacs\/\d+-Musique-de-d-mo par des sons que l'automate lit, ou retire-les\./,
+    /Dans le dossier de la station, sous Bacs\/\d+-Musique-de-d-mo, remplace-les par des sons que l'automate lit, ou retire-les\./,
   );
   // Entre l'en-tête du bac et la liste de ses sons.
   const encart = await refus.boundingBox();

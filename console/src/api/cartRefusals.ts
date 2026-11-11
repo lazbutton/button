@@ -16,24 +16,28 @@ export function skippedFiles(cart: Pick<Cart, "mode" | "skipped_files">): Skippe
   return cart.skipped_files.filter((file) => typeof file?.path === "string" && typeof file.reason === "string");
 }
 
-/** Ce que dit l'encart des fichiers refusés. `folder` : le dossier du bac, vu du dossier de la station. */
+/**
+ * Ce que dit l'encart des fichiers refusés. `folder` : le dossier du bac, vu du
+ * dossier de la station. C'est là qu'un fichier se remplace ou se retire : le
+ * retirer de Dropbox ne le retire pas de la station.
+ */
 export function skippedNotice(files: SkippedFile[], folder: string): { title: string; help: string } | null {
   if (!files.length) return null;
   if (files.some((file) => file.path === WHOLE_FOLDER)) {
     return {
       title: "Le dossier du bac a trop de fichiers",
-      help: `Déplace une partie des fichiers de ${folder} ailleurs : sous 2000, le bac reprend ceux qui y arrivent.`,
+      help: `Dans le dossier de la station, déplace une partie des fichiers de ${folder} ailleurs : sous 2000, le bac reprend ceux qui y arrivent.`,
     };
   }
   if (files.length === 1) {
     return {
       title: "1 fichier n'est pas entré dans le bac",
-      help: `Remplace-le dans ${folder} par un son que l'automate lit, ou retire-le.`,
+      help: `Dans le dossier de la station, sous ${folder}, remplace-le par un son que l'automate lit, ou retire-le.`,
     };
   }
   return {
     title: `${files.length} fichiers ne sont pas entrés dans le bac`,
-    help: `Remplace-les dans ${folder} par des sons que l'automate lit, ou retire-les.`,
+    help: `Dans le dossier de la station, sous ${folder}, remplace-les par des sons que l'automate lit, ou retire-les.`,
   };
 }
 

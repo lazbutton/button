@@ -47,12 +47,17 @@ REFUSALS_NAME = ".refus.json"
 _REFUSALS_MAX_BYTES = 8 << 20
 # The reasons, in French: the console shows them as they are.
 REFUSAL_UNREADABLE = "lecture impossible"
+REFUSAL_EMPTY = "fichier vide"
 REFUSAL_NOT_AUDIO = "ce n'est pas un fichier audio"
+REFUSAL_FORMAT = "l'automate ne lit pas ce format"
 REFUSAL_NO_LENGTH = "durée illisible"
 REFUSAL_TOO_MANY = (
     f"plus de {MAX_BANK_ATTACH} fichiers audio : "
     "le bac ne prend plus rien de son dossier"
 )
+# In AUDIO_SUFFIXES, yet never read: _looks_like_audio knows neither the ASF
+# nor the EBML header. Such a file is audio all the same.
+_UNREAD_SUFFIXES = {".wma", ".webm"}
 _SLUG_RE = re.compile(r"[^A-Za-z0-9._-]+")
 HABILLAGE_TITLES = {
     "jingles": "30-habillage/jingles",
@@ -508,7 +513,11 @@ def probe_audio(path: Path) -> tuple[float | None, str | None]:
             head = handle.read(64)
     except OSError:
         return None, REFUSAL_UNREADABLE
+    if not head:
+        return None, REFUSAL_EMPTY
     if not _looks_like_audio(head):
+        if path.suffix.lower() in _UNREAD_SUFFIXES:
+            return None, REFUSAL_FORMAT
         return None, REFUSAL_NOT_AUDIO
     length = audio_length(path)
     if length is None:
@@ -522,8 +531,12 @@ def inspect_audio(path: Path) -> float | None:
 
 def read_refusals(folder: Path) -> list[dict]:
     """The entries of a folder's .refus.json, each with its path and reason."""
+    note = folder / REFUSALS_NAME
     try:
-        with (folder / REFUSALS_NAME).open("rb") as handle:
+        # Not a pipe left there in its place: the interface would wait on it.
+        if not note.is_file():
+            return []
+        with note.open("rb") as handle:
             raw = handle.read(_REFUSALS_MAX_BYTES + 1)
         entries = json.loads(raw) if len(raw) <= _REFUSALS_MAX_BYTES else None
     except (OSError, ValueError, RecursionError):
@@ -554,11 +567,12 @@ def write_refusals(folder: Path, entries: list[dict]) -> bool:
         return True
     if read_refusals(folder) == entries:
         return False
-    # One entry per line: easy to read, even for a shell script.
+    # One entry per line: easy to read, even for a shell script. A name that is
+    # not UTF-8 keeps its odd bytes as \udcXX escapes, which read back the same.
     lines = ",\n".join(json.dumps(entry, ensure_ascii=False) for entry in entries)
     fd, partial = tempfile.mkstemp(prefix=f"{REFUSALS_NAME}.", dir=folder)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        with os.fdopen(fd, "w", encoding="utf-8", errors="backslashreplace") as handle:
             os.fchmod(handle.fileno(), 0o644)
             handle.write(f"[\n{lines}\n]\n")
         Path(partial).replace(target)
@@ -571,7 +585,7 @@ def write_refusals(folder: Path, entries: list[dict]) -> bool:
 def _quiet_resolve(path: Path | str | None) -> Path | None:
     try:
         return Path(path).resolve() if path else None
-    except (OSError, RuntimeError):
+    except (OSError, RuntimeError, ValueError):
         return None
 
 
@@ -581,8 +595,9 @@ def cart_refusals(
     """The files of a cart's folder that the cart did not take, and why.
 
     From the scheduler's last pass, minus what changed since: a file that left
-    the folder, or that the cart now holds (held, its sounds' paths, read only
-    when there is something to check). Never raises.
+    the folder, an empty file that is empty no more, or a file that the cart now
+    holds (held, its sounds' paths, read only when there is something to check).
+    Never raises.
     """
     raw = str(bank_folder or "").strip()
     if not raw:
@@ -595,13 +610,20 @@ def cart_refusals(
     if not entries:
         return []
     taken = {resolved for resolved in map(_quiet_resolve, held) if resolved}
-    kept = []
-    for entry in entries:
-        target = _quiet_resolve(folder / entry["path"])
-        try:
-            gone = target is None or not target.exists()
-        except OSError:
-            gone = False
-        if not gone and target not in taken:
-            kept.append(entry)
-    return kept
+    return [entry for entry in entries if _still_refused(folder, entry, taken)]
+
+
+def _still_refused(folder: Path, entry: dict, taken: set[Path]) -> bool:
+    """The file is still there, still out of the cart, and still empty if the
+    scheduler found it empty."""
+    target = _quiet_resolve(folder / entry["path"])
+    if target is None or target in taken:
+        return False
+    try:
+        size = target.stat().st_size
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    except OSError:
+        # Out of reach from here: the scheduler's word stands.
+        return True
+    return size == 0 or entry["reason"] != REFUSAL_EMPTY
