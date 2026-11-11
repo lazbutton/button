@@ -265,8 +265,22 @@ async def replace_forecast_items(
     cutoff = naive_datetime(now)
     await session.execute(
         delete(RundownItem).where(
-            RundownItem.status.in_(list(REPLACEABLE_STATUSES)),
-            RundownItem.planned_at >= cutoff,
+            or_(
+                and_(
+                    RundownItem.status.in_(list(REPLACEABLE_STATUSES)),
+                    RundownItem.planned_at >= cutoff,
+                ),
+                # A line the forecast already knew it could not play ("manquant":
+                # no title, no cart) is a forecast too, never sent: this draw
+                # replaces it, even just past. Kept, it piled up at every tick of
+                # a station with nothing to play, where nothing counts as runway
+                # and each tick draws anew: 17 lines a second, 7 days kept.
+                and_(
+                    RundownItem.status == RundownStatus.FAILED.value,
+                    RundownItem.sent_at.is_(None),
+                    RundownItem.closed_at.is_(None),
+                ),
+            ),
             RundownItem.origin != DESK_ORIGIN,
         )
     )

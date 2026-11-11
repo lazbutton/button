@@ -214,7 +214,24 @@ def move_in(storage: Path, target: Path) -> str | None:
     except OSError as exc:
         target.unlink(missing_ok=True)
         return "pas assez de place sur le disque" if exc.errno == errno.ENOSPC else "copie impossible"
+    give_like_folder(target)
     return None
+
+
+def give_like_folder(path: Path) -> None:
+    """Give a file the owner of its folder, best effort.
+
+    The catalogue runs as root, so its copy is root's. The bank is the engine's
+    (rtuser): the Beets loop writes the tags of what it indexes, and could not
+    in a root file.
+    """
+    try:
+        folder = path.parent.stat()
+        current = path.stat()
+        if (current.st_uid, current.st_gid) != (folder.st_uid, folder.st_gid):
+            os.chown(path, folder.st_uid, folder.st_gid)
+    except OSError:
+        pass
 
 
 def drop_upload(storage: Path) -> None:
