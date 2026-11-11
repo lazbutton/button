@@ -47,6 +47,16 @@ export const test = base.extend({
           : route.abort("blockedbyclient"),
     );
     await use(context);
+    // La page s'est défaite avant le contexte : l'analyse d'axe de la fin du
+    // parcours est faite. Un relais du parcours, route.fetch() puis
+    // reponse.json(), peut encore être en route : la console relit l'antenne
+    // toutes les 5 s, et le conducteur toutes les 3 s. En se fermant, le
+    // contexte jette sa réponse : le relais lèverait « Response has been
+    // disposed », ou « Test ended », après un parcours réussi. Les page.route se
+    // retirent donc avant, sans attendre les relais en route, dont les erreurs
+    // se taisent. La route du banc, plus haut, reste jusqu'à la fermeture : rien
+    // ne sort de la machine d'ici là.
+    for (const page of context.pages()) await page.unrouteAll({ behavior: "ignoreErrors" });
   },
   page: async ({ page }, use, testInfo) => {
     const errors: string[] = [];
