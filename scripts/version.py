@@ -7,6 +7,7 @@
     scripts/version.py images
     scripts/version.py lignes <CHANGELOG d'avant> <CHANGELOG d'après> [v0.1.0 …]
     scripts/version.py station 0.1.0 <dossier>
+    scripts/version.py source 0.1.0 <dossier>
 
 notes : les notes de la version, sa partie de CHANGELOG.md sans son titre,
 `## 0.1.0`, seul sur sa ligne ou suivi d'une espace. Un `## ` dans un bloc de
@@ -44,6 +45,16 @@ seconde cite dans CHANGELOG.md l'action que demande une version majeure. La
 version s'écrit X.Y.Z, ou main pour un essai. Échoue si compose.yml monte un
 fichier du dossier qui n'y est pas.
 
+source : le code source du commit en cours, HEAD, écrit dans le dossier donné.
+`button-0.1.0-source.tar.gz`, ce que git archive fait du commit, sous un
+dossier `button-0.1.0/` ; `source.json`, qui le décrit à la console : la
+version, le commit et le nom de l'archive. version.yml joint l'archive à la
+version ; console.yml met les deux dans l'image de la console, dont nginx les
+sert à chaque compte, pour le lien « Code source » que l'AGPL demande. Les
+changements pas encore commités n'y sont pas. Les mêmes octets d'une fois à
+l'autre, pour un même commit. La version s'écrit X.Y.Z, ou main. Échoue hors
+d'un clone du dépôt.
+
 Stdlib seule.
 """
 
@@ -52,7 +63,9 @@ from __future__ import annotations
 import gzip
 import hashlib
 import io
+import json
 import re
+import subprocess
 import sys
 import tarfile
 from collections import Counter
@@ -84,6 +97,8 @@ BUILD_LINE = re.compile(r" *build:[ \t]+[^#\s]")
 MOUNTED = re.compile(r"^ *(?:- *[\"']?|source: *[\"']?)\./([^:\s\"']+)", re.MULTILINE)
 # Les fichiers joints à une version, dans l'ordre de SHA256SUMS.
 STATION_ASSETS = ("station", "station.tar.gz")
+# Ce qui décrit l'archive du code à la console, à côté d'elle.
+SOURCE_DESCRIPTOR = "source.json"
 
 
 def parse(version: str) -> tuple[int, int, int]:
@@ -311,6 +326,39 @@ def write_station(version: str, out: Path, deploy: Path = DEPLOY) -> None:
     )
 
 
+def source_name(version: str) -> str:
+    """Le nom de l'archive du code de cette version."""
+    return f"button-{version}-source.tar.gz"
+
+
+def _git(root: Path, *args: str) -> bytes:
+    try:
+        return subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True).stdout
+    except (OSError, subprocess.CalledProcessError) as error:
+        said = getattr(error, "stderr", None) or b""
+        detail = said.decode(errors="replace").strip() or str(error)
+        raise ValueError(f"git {args[0]} : {detail}. Lancer depuis un clone du dépôt.") from error
+
+
+def write_source(version: str, out: Path, root: Path = ROOT) -> None:
+    """L'archive du code du commit en cours, et source.json, dans out. git
+    archive date chaque fichier du commit, et note le commit dans l'en-tête de
+    l'archive ; gzip n'y ajoute ni date ni nom."""
+    if version != "main":
+        parse(version)
+    commit = _git(root, "rev-parse", "--verify", "HEAD^{commit}").decode().strip()
+    tar = _git(root, "archive", "--format=tar", f"--prefix=button-{version}/", commit)
+    name = source_name(version)
+    out.mkdir(parents=True, exist_ok=True)
+    with (out / name).open("wb") as raw:
+        with gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as packed:
+            packed.write(tar)
+    (out / SOURCE_DESCRIPTOR).write_text(
+        json.dumps({"version": version, "commit": commit, "file": name}) + "\n",
+        encoding="utf-8",
+    )
+
+
 def main(args: list[str]) -> int:
     try:
         if len(args) == 2 and args[0] == "notes":
@@ -334,6 +382,9 @@ def main(args: list[str]) -> int:
             return 0
         if len(args) == 3 and args[0] == "station":
             write_station(args[1], Path(args[2]))
+            return 0
+        if len(args) == 3 and args[0] == "source":
+            write_source(args[1], Path(args[2]))
             return 0
     except ValueError as error:
         print(error, file=sys.stderr)

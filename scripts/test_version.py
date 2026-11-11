@@ -5,7 +5,9 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import io
+import json
 import re
+import subprocess
 import tarfile
 import tempfile
 import unittest
@@ -332,6 +334,58 @@ class StationTest(unittest.TestCase):
             self.assertNotIn("data", str(raised.exception))
 
 
+class SourceTest(unittest.TestCase):
+    """L'archive du code de la version : jointe à sa page, et servie par la
+    console de la station, pour le lien « Code source » (AGPL)."""
+
+    def test_the_code_of_the_commit_and_what_names_it(self) -> None:
+        commit = subprocess.run(
+            ["git", "-C", str(version.ROOT), "rev-parse", "HEAD"], check=True, capture_output=True, text=True
+        ).stdout.strip()
+        tracked = subprocess.run(
+            ["git", "-C", str(version.ROOT), "ls-tree", "-r", "--name-only", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.splitlines()
+        with tempfile.TemporaryDirectory() as tmp:
+            first, second = Path(tmp, "a"), Path(tmp, "b")
+            version.write_source("0.1.0", first)
+            version.write_source("0.1.0", second)
+            names = sorted(path.name for path in first.iterdir())
+            self.assertEqual(names, ["button-0.1.0-source.tar.gz", "source.json"])
+            # Les mêmes octets d'une fois à l'autre : l'archive jointe à la
+            # version est celle que porte l'image de la console.
+            for name in names:
+                self.assertEqual((first / name).read_bytes(), (second / name).read_bytes(), name)
+            self.assertEqual(
+                json.loads((first / "source.json").read_text(encoding="utf-8")),
+                {"version": "0.1.0", "commit": commit, "file": "button-0.1.0-source.tar.gz"},
+            )
+            with tarfile.open(first / "button-0.1.0-source.tar.gz") as tar:
+                # git archive note le commit dans l'en-tête de l'archive.
+                self.assertEqual(tar.pax_headers.get("comment"), commit)
+                files = {member.name for member in tar.getmembers() if member.isfile() or member.issym()}
+                self.assertEqual(files, {f"button-0.1.0/{path}" for path in tracked})
+                extracted = tar.extractfile("button-0.1.0/LICENSE")
+                assert extracted is not None
+                self.assertEqual(extracted.read(), (version.ROOT / "LICENSE").read_bytes())
+
+    def test_a_version_or_main(self) -> None:
+        self.assertEqual(version.source_name("main"), "button-main-source.tar.gz")
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(ValueError):
+                version.write_source("0.1", Path(tmp))
+            self.assertEqual(list(Path(tmp).iterdir()), [])
+
+    def test_outside_a_clone_says_so(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(ValueError) as raised:
+                version.write_source("0.1.0", Path(tmp, "out"), root=Path(tmp))
+            self.assertIn("Lancer depuis un clone du dépôt.", str(raised.exception))
+            self.assertFalse(Path(tmp, "out").exists())
+
+
 class MainTest(unittest.TestCase):
     def run_main(self, *args: str) -> tuple[int, str]:
         out = io.StringIO()
@@ -355,6 +409,11 @@ class MainTest(unittest.TestCase):
             self.assertEqual(self.run_main("station", "0.1", tmp)[0], 1)
             self.assertEqual(self.run_main("station", "main", tmp), (0, ""))
             self.assertTrue(Path(tmp, "station.tar.gz").is_file())
+        self.assertEqual(self.run_main("source", "main")[0], 64)
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(self.run_main("source", "0.1", tmp)[0], 1)
+            self.assertEqual(self.run_main("source", "main", tmp), (0, ""))
+            self.assertTrue(Path(tmp, "button-main-source.tar.gz").is_file())
 
 
 class RepositoryTest(unittest.TestCase):
