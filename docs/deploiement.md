@@ -236,7 +236,7 @@ Icecast voit l'adresse de Caddy pour chaque auditeur. Il compte toujours les aud
 
 ## Le direct
 
-Le harbor, l'entrée du direct, est publié sur le port 6800 de la machine, ou sur `HARBOR_PORT`, et sur toutes ses interfaces : un encodeur s'y branche de n'importe où. `BIND_ADDRESS` ne le ferme pas, et il ne passe pas par Caddy. Avec un autre port que 6800, le donner aux animateurs : le panneau « Passer en direct » de la console affiche encore 6800.
+Le harbor, l'entrée du direct, est publié sur le port 6800 de la machine, ou sur `HARBOR_PORT`, et sur toutes ses interfaces : un encodeur s'y branche de n'importe où. `BIND_ADDRESS` ne le ferme pas, et il ne passe pas par Caddy. Avec un autre port que 6800, le régler aussi dans la console, **Réglages → Station** : le panneau « Passer en direct » le donne alors à chaque compte, avec l'hôte du direct. `station install` règle les deux. Sans hôte réglé, le panneau ne donne pas d'adresse : il dit qu'un admin la règle.
 
 Pour l'écouter sur une seule adresse, la mettre devant le port : `HARBOR_PORT=127.0.0.1:6800` le ferme aux autres machines. Un ancien `compose.override.yml` qui publiait le harbor se retire **avant** la mise à jour : s'il le publiait sur une adresse précise, le port est pris deux fois, et le playout ne démarre plus.
 

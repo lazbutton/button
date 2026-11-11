@@ -123,7 +123,7 @@ L’image du playout passe `apt-get upgrade` sur celle de Liquidsoap, que ses au
 
 ## Marque et interface
 
-`brand.json` et `brand.py` portent le nom affiché (`INTERFACE_NAME`), le logo et les libellés. Le nom de la station, les adresses de son flux et de son direct, et le lien de son code source se règlent aussi dans la console : des clés `station.*` de la table `settings` (`services/station.py`), sans migration. La console les pose sur son `brand.json`, qui reste le repli. Les pages HTMX gardent le nom de `brand.json`. `layout.jinja` est en `lang=fr`, avec `suite.css`. La feuille `sass/_suite.scss` est la charte noir et blanc du pupitre. Les pages HTMX d’origine (live, carts, auto-DJ, utilisateurs) restent servies par le même processus.
+`brand.json` et `brand.py` portent le nom affiché (`INTERFACE_NAME`), le logo et les libellés, ceux du logiciel : le `brand.json` du paquet ne donne aucune adresse. Le nom de la station, les adresses de son flux et de son direct, et le lien de son code source se règlent dans la console : des clés `station.*` de la table `settings` (`services/station.py`), sans migration. La console les pose sur son `brand.json`, qui reste le repli. L'adresse du direct se lit aussi par tout compte, pour « Passer en direct » : `GET /station/harbor.json`. Les pages HTMX gardent le nom de `brand.json`. `layout.jinja` est en `lang=fr`, avec `suite.css`. La feuille `sass/_suite.scss` est la charte noir et blanc du pupitre. Les pages HTMX d’origine (live, carts, auto-DJ, utilisateurs) restent servies par le même processus.
 
 ## Schéma, de v7 à v18
 
