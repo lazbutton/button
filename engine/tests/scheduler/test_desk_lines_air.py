@@ -80,11 +80,21 @@ async def _switch(dbsession: ormSession, value: str | None) -> None:
 
 
 async def _two_sent(dbsession: ormSession, beets: BeetsIntegration) -> list[dict]:
-    """The music lines of the night file, the first two sent to the playout."""
+    """The music lines of the night file, the first two sent to the playout. The
+    jingle before them has aired, as at the start: left planned, it would take its
+    turn among the lines of these tests (``features.motif_jingles_air``)."""
     music = await _night_music(dbsession, beets)
     client = _client()
     await tick(dbsession, _autodj_wants_two(), client, beets)
     assert _pushed_ids(client) == [music[0]["id"], music[1]["id"]]
+    jingle = await dbsession.scalar(
+        select(RundownItem)
+        .where(RundownItem.kind == "jingle")
+        .order_by(RundownItem.planned_at)
+        .limit(1)
+    )
+    jingle.status = RundownStatus.PLAYED.value
+    await dbsession.commit()
     return music
 
 
@@ -260,7 +270,8 @@ async def test_a_sound_never_delays_a_hard_anchor(
 ):
     """A sound in the carts queue is not cut by the pubs: at its turn, it waits for
     them, and the lines after it wait with it. Once the pubs are on air, it goes
-    behind them in the carts, before the music queued after it."""
+    behind them in the carts, before the music queued after it. The jingle of the
+    clock after it in the file goes behind it, at its turn."""
     first = await _journee_file(dbsession, beets_integration)
     line = await _put_next(dbsession, first["at"], "son", duration=60)
 
@@ -286,7 +297,10 @@ async def test_a_sound_never_delays_a_hard_anchor(
         autodj_queued=len(after),
     )
     await tick(dbsession, behind, client, beets_integration)
-    assert _pushes(client) == [("/queue/carts", line.id)]
+    assert _pushes(client) == [
+        ("/queue/carts", line.id),
+        ("/queue/jingles", first["id"]),
+    ]
 
 
 @pytest.mark.parametrize(("value", "airs"), [(None, True), ("1", True), *OFF])

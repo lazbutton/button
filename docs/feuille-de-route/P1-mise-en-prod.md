@@ -24,7 +24,7 @@ Le format des fiches, les tailles et la façon de prendre une fiche sont dans le
 | [MAJ-01](#maj-01--versions-et-canal-stable) | Versions et canal stable | M | — | fait, `38e12a5` |
 | [MAJ-02](#maj-02--copie-de-la-base-avant-chaque-migration) | Copie de la base avant chaque migration | S | — | fait, `26f0fcc` |
 | [MAJ-03](#maj-03--contrôle-après-déploiement) | Contrôle après déploiement | S | SEC-01 | fait, `bd65070` |
-| [MAJ-04](#maj-04--commande-de-mise-à-jour) | Commande de mise à jour | L | MAJ-01, MAJ-02, MAJ-03, INS-03 | à faire |
+| [MAJ-04](#maj-04--commande-de-mise-à-jour) | Commande de mise à jour | L | MAJ-01, MAJ-02, MAJ-03, INS-03 | fait, `5df65e5` |
 | [MAJ-05](#maj-05--retour-arrière-automatique) | Retour arrière automatique | M | MAJ-04 | à faire |
 | [INS-01](#ins-01--https-par-un-reverse-proxy) | HTTPS par un reverse proxy | M | SEC-01, SEC-02, SEC-05, SEC-07 | fait, `eaeb106` |
 | [INS-02](#ins-02--installer-en-une-commande) | Installer en une commande | L | INS-01, GEN-01, MAJ-01, SEC-06 | fait, `f37f425` |
@@ -38,7 +38,7 @@ Le format des fiches, les tailles et la façon de prendre une fiche sont dans le
 | [FON-14](#fon-14--les-lignes-mises-à-la-suite-passent-à-lantenne) | Les lignes mises à la suite passent à l'antenne | M | — | fait, `d4a2dd9` |
 | [FON-39](#fon-39--les-jingles-du-motif-passent-à-leur-tour) | Les jingles du motif passent à leur tour | M | FON-14 | à faire |
 
-En tout : 29 fiches, 12 de taille S, 14 de taille M et 3 de taille L. Au 11 novembre 2026, 21 sont faites. Il en reste 8 : 2 de taille S, 5 de taille M et 1 de taille L.
+En tout : 29 fiches, 12 de taille S, 14 de taille M et 3 de taille L. Au 11 novembre 2026, 22 sont faites. Il en reste 7 : 2 de taille S et 5 de taille M.
 
 ## L'ordre
 
@@ -46,15 +46,15 @@ Ce qui reste, relevé le 11 novembre 2026. Les fiches de deux files différentes
 
 | File | Fiches, dans l'ordre | Fichier partagé |
 |---|---|---|
-| commande `station` | MAJ-04, MAJ-05, SAV-01, SUR-01 | `deploy/station` |
+| commande `station` | MAJ-05, SAV-01, SUR-01 | `deploy/station` |
 | marque | LEG-02 | `console/src/lib/brand.ts` |
 | scheduler | FON-39 | `engine/radiotomate/scheduler/clock.py` |
 | mesure | INS-04 | aucun |
 | guide | DOC-01, en dernier | `docs/` |
 
-- **MAJ-04 est prête, et passe en tête** : ses quatre dépendances sont faites, et GEN-02, qui touchait le même script, est fusionnée. MAJ-05 la suit, puis SAV-01. Leurs « Accepté quand » demandent une machine jetable en x86-64 : la vraie installation de la CI (`.github/workflows/station.yml`) en est une.
+- **MAJ-04 est fusionnée**, par la PR 141 : MAJ-05 passe en tête de sa file, puis SAV-01. Leurs « Accepté quand » demandent une machine jetable en x86-64 : la vraie installation de la CI (`.github/workflows/station.yml`) en est une, et son job `update` y fait maintenant une vraie mise à jour.
 - **SUR-01** pose ses réglages à l'installation, qui est maintenant `station install` : elle est donc dans la file de la commande `station`. Elle peut y passer plus tôt : MAJ-05 se sert de ses alertes.
-- **LEG-02 et MAJ-04** peuvent toutes deux toucher `.github/workflows/version.yml` : la seconde à fusionner se rebase.
+- **LEG-02 n'attend rien.** MAJ-04, fusionnée, a changé `scripts/version.py`, qui fait les fichiers joints à une version : LEG-02 part du `main` d'après.
 - **FON-14 est fusionnée**, par la PR 139. Son « Accepté quand » reste à vérifier sur une station de test : le banc de la PR tournait sans fondu.
 - **FON-39 n'attend plus rien.** Elle touche `clock.py`, et reprend peut-être la règle de FON-14 pour faire partir une ligne à la fin du titre qui la précède. Le défaut qu'elle corrige est déjà dans la 0.2.0, et a été vu sur un banc, pas sur une station : son premier pas est de le montrer par un test. FON-33 et FON-35 à FON-38, en P2, touchent le même fichier : une à la fois.
 - **INS-04 n'a aucun conflit.** Elle se mesure sur la version qui suit la 0.2.0 : celle-ci a encore le défaut d'une station vide, dont le conducteur s'empilait.
@@ -329,13 +329,26 @@ L · dépend de MAJ-01, MAJ-02, MAJ-03, INS-03 · conflits : le script d'exploit
   7. `GET /system/version.json`, pour les admins : la version de chaque service.
 - **Tests** : ShellCheck et `bats` pour le script ; sur une machine jetable, une mise à jour d'une version publiée vers la suivante. La vraie installation de la CI (`.github/workflows/station.yml`) peut la porter : une version publiée installée, puis `update` vers `main`.
 - **Accepté quand** : sur une machine jetable, une mise à jour normale coupe l'antenne moins de 30 secondes, et `status` affiche la version installée et la dernière disponible.
+- **Résultat**, le 11 novembre 2026, par la PR 141 :
+  - `sudo station update` met une station à la plus haute version publiée, ou à `--version X.Y.Z`. La commande de la version visée fait la suite : une plus ancienne lui passe la main.
+  - Elle s'arrête devant `HOLD`, une restauration pas finie, une version plus ancienne, une majeure sans `--major`, et un direct ou une diffusion de l'Agenda à l'antenne ou dans les 30 minutes, sauf `--force` (`radiotomate maintenance window`). Devant une image qui n'a pas cette commande, la fenêtre est « inconnue », et la mise à jour se fait en le disant.
+  - La sauvegarde prend le script de la version visée : celui de la 0.2.0 demande `sqlite3`, que l'image du moteur n'a pas. `update` ne garde dans `backups/` que les cinq dernières archives (`backup_rotate`). `.env` ne reçoit que ce que la version demande de nouveau : une variable retirée exprès ne revient pas.
+  - `updates.log` note chaque mise à jour, et `station status` dit la dernière. `GET /system/version.json` rend la version de chaque service, d'après `versions.json`, que `install`, `update` et `restore` relèvent : l'interface n'a pas accès à Docker.
+  - Chaque version joint `CHANGELOG.md` à `station.tar.gz` : `update` y lit la « Mise en service » d'une majeure.
+  - L'« Accepté quand » est porté par la CI. Le job `update` de `station.yml` installe la plus haute version publiée, la met à jour vers les fichiers de la branche et les images `main`, lit le flux chaque seconde, et échoue à 30 secondes de coupure. Il est passé sur la PR, par la fenêtre « inconnue » : les images `main` n'avaient pas encore la commande `window`.
+  - Une station en 0.2.0 n'a pas `update` : elle prend d'abord la commande de la version publiée. `docs/deploiement.md` le dit, dans « Avec la commande station ».
+  - Laissé à d'autres fiches : le retour arrière, qui se fait à la main avec la sauvegarde d'avant (MAJ-05) ; la mise à jour automatique la nuit (MAJ-06) ; la console, qui ne montre pas `/system/version.json` (MAJ-07) ; la fenêtre, qui tient pour vrai un direct annulé (FON-34) ; `next-live`, qui lit encore l'horloge du conteneur comme l'heure de Paris (GEN-05).
+  - Laissé sans fiche : une coupure de la connexion SSH en plein redémarrage arrête la mise à jour. La doc conseille `tmux` ou `screen`.
 
 #### MAJ-05 · Retour arrière automatique
 
 M · dépend de MAJ-04 · conflits : le script d'exploitation
 
 - **Pourquoi** : une mise à jour ne doit jamais laisser l'antenne en panne, même la nuit sans personne.
-- **Aujourd'hui** : `restore` revient déjà seule à la station d'avant quand la station restaurée ne repart pas (`restore_undo`, `deploy/station`). `hold` pose `HOLD` avec sa date et sa raison (`hold_write`), et `status` l'affiche. Le retour arrière d'une mise à jour peut s'en inspirer.
+- **Aujourd'hui** :
+  - `restore` revient déjà seule à la station d'avant quand la station restaurée ne repart pas (`restore_undo`, `deploy/station`). `hold` pose `HOLD` avec sa date et sa raison (`hold_write`), et `status` l'affiche. Le retour arrière d'une mise à jour peut s'en inspirer.
+  - Depuis MAJ-04, `update` existe (`update_station`). Il sauvegarde avant de toucher à la station, et note dans `updates.log` chaque mise à jour, faite, arrêtée ou échouée, avec la sauvegarde d'avant. Quand le redémarrage ou le contrôle échoue, il dit de revenir à la main, avec cette sauvegarde. Relancé après un échec au redémarrage, il dit de réparer par `install`.
+  - Le job `update` de la CI (`.github/workflows/station.yml`) fait une vraie mise à jour sur une machine jetable : les trois cas des tests peuvent s'y ajouter.
 - **À faire** : si le contrôle échoue après une mise à jour :
   1. retour aux images d'avant pour **tous** les services ;
   2. si le schéma a migré, restauration de la copie de la base d'avant, car l'ancienne version ne sait pas lire le schéma récent. Les minutes écoulées depuis la mise à jour sont perdues, et le journal le dit ;
@@ -409,7 +422,7 @@ S · dépend de INS-02 · conflits : aucun
 M · dépend de INS-03 · conflits : le script d'exploitation
 
 - **Pourquoi** : une sauvegarde sur la machine disparaît avec elle.
-- **Aujourd'hui** : `station backup` écrit son archive dans `backups/`, sur la machine. `backup_stage` (`deploy/station`) prépare le dossier de la sauvegarde, qu'un envoi hors de la machine peut reprendre tel quel, et `backup_pack` en fait l'archive.
+- **Aujourd'hui** : `station backup` écrit son archive dans `backups/`, sur la machine. `backup_stage` (`deploy/station`) prépare le dossier de la sauvegarde, qu'un envoi hors de la machine peut reprendre tel quel, et `backup_pack` en fait l'archive. Depuis MAJ-04, `update` y écrit aussi la sienne, et n'y garde que les cinq dernières (`backup_rotate`).
 - **À faire** :
   1. `backup --remote` avec restic, vers un stockage S3 ou SFTP réglé par `config`. Chaque nuit par un minuteur systemd, chiffré avant l'envoi, avec une rotation : 7 quotidiennes, 4 hebdomadaires, 6 mensuelles.
   2. La doc dit la règle : un autre fournisseur que celui du VPS, pour qu'une panne ou une erreur de compte ne touche pas les deux.
@@ -438,7 +451,7 @@ M · dépend de rien · conflits : `engine/radiotomate/scheduler/alerts.py`, `de
 
 M · dépend de INS-04, MAJ-05, SAV-01 · conflits : `docs/`
 
-- **Aujourd'hui** : `docs/deploiement.md` porte déjà « Installer sur un VPS », avec « Exploiter la station », puis « Mettre à jour » et « Revenir en arrière ». `docs/exploitation/sauvegarde.md` porte la sauvegarde et la restauration. Les trois pages de la fiche se taillent dans ces parties, une fois `update`, `rollback` et `backup --remote` écrites.
+- **Aujourd'hui** : `docs/deploiement.md` porte déjà « Installer sur un VPS », avec « Exploiter la station », puis « Mettre à jour » et « Revenir en arrière ». `docs/exploitation/sauvegarde.md` porte la sauvegarde et la restauration. Les trois pages de la fiche se taillent dans ces parties, une fois `rollback` et `backup --remote` écrites : `update` l'est, depuis MAJ-04.
 - **À faire** :
   1. `docs/installer.md` remplace la partie « Installer » de `docs/deploiement.md` : choisir un VPS, avec la taille mesurée par INS-04, un processeur x86-64 et le trafic compté ; le DNS ; l'installation ; le premier réglage dans la console ; brancher un encodeur ; la sécurité de la machine, c'est-à-dire SSH par clé, `unattended-upgrades` et le pare-feu du fournisseur.
   2. `docs/mettre-a-jour.md` et `docs/sauvegarder.md`.
