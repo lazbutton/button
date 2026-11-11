@@ -3,6 +3,7 @@
 import pytest
 
 from radiotomate.fiches.normalize import (
+    latin_words,
     normalize_text,
     parse_title,
     search_terms,
@@ -37,6 +38,24 @@ def test_search_terms_keep_the_version(title, terms):
 )
 def test_normalize_text(text, normalized):
     assert normalize_text(text) == normalized
+
+
+@pytest.mark.parametrize(
+    ("text", "words"),
+    [
+        ("Группа крови", ["gruppa", "krovi"]),
+        ("Από λιμάνι σε λιμάνι", ["apo", "limani", "se", "limani"]),
+        ("Lotte Kærså", ["lotte", "kaersa"]),
+        ("Łobaszewska", ["lobaszewska"]),
+        # Les voyelles coréennes valent toutes « a ».
+        ("서울", ["saal"]),
+        ("Don't Stop", ["dont", "stop"]),
+    ],
+)
+def test_latin_words(text, words):
+    """Le texte en latin, mot par mot : d'après les exemples de `normalize.ts`, que
+    ses tests ne lisent pas directement."""
+    assert latin_words(text) == words
 
 
 @pytest.mark.parametrize(

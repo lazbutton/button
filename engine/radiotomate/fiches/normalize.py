@@ -300,6 +300,59 @@ def parse_title(title: str) -> ParsedTitle:
     )
 
 
+def _pairs(text: str) -> dict[str, str]:
+    words = text.split(" ")
+    return {words[at]: words[at + 1].replace("_", "") for at in range(0, len(words), 2)}
+
+
+def _jamo(first: int, text: str) -> dict[str, str]:
+    return {
+        chr(first + at): latin.replace("_", "")
+        for at, latin in enumerate(text.split(" "))
+    }
+
+
+# Les lettres d'autres écritures, en latin : un artiste écrit en cyrillique chez l'un,
+# en latin chez l'autre (Кино, Kino). Ces lettres ressemblent aux nôtres : ruff le
+# signale, à tort ici.
+_LATIN = {
+    **_pairs("ß ss ł l đ d ð d þ th ħ h ı i ø o æ ae œ oe ŋ ng"),  # noqa: RUF001
+    # Cyrillique (russe, ukrainien, serbe) : « Группа крови » → gruppa krovi.
+    **_pairs(
+        "а a б b в v г g д d е e ё yo ж zh з z и i й y к k л l м m н n о o п p "  # noqa: RUF001
+        "р r с s т t у u ф f х kh ц ts ч ch ш sh щ shch ъ _ ы i ь _ э e ю yu "  # noqa: RUF001
+        "я ya є ye і i ї yi ґ g ђ dj ј j љ lj њ nj ћ c џ dz ў u"  # noqa: RUF001
+    ),
+    # Grec, accents retirés au passage (NFKD).
+    **_pairs(
+        "α a β v γ g δ d ε e ζ z η i θ th ι i κ k λ l μ m ν n ξ x ο o π p ρ r "  # noqa: RUF001
+        "σ s ς s τ t υ i φ f χ ch ψ ps ω o"  # noqa: RUF001
+    ),
+    # Coréen : chaque syllabe se décompose (NFKD) en consonne initiale, voyelle (21,
+    # notées a) et consonne finale.
+    **_jamo(0x1100, "g kk n d tt r m b pp s ss _ j jj ch k t p h"),
+    **_jamo(0x1161, " ".join(["a"] * 21)),
+    **_jamo(0x11A8, "k k k n n n t l k m l l l p l m p p t t ng t t k t p t"),
+}
+
+
+def latin_words(text: str) -> list[str]:
+    """Le texte en latin, mot par mot : les lettres connues de `_LATIN`, les autres
+    décomposées, puis privées de leurs accents.
+
+    « Από λιμάνι σε λιμάνι » → apo, limani, se, limani.
+    """
+    out: list[str] = []
+    for char in unicodedata.normalize("NFC", text.lower()):
+        latin = _LATIN.get(char)
+        if latin is None:
+            parts = without_marks(unicodedata.normalize("NFKD", char))
+            latin = "".join(_LATIN.get(part, part) for part in parts)
+        out.append(latin)
+    joined = _APOSTROPHES.sub("", "".join(out))
+    return [word for word in re.split(r"[^a-z0-9]+", joined) if word]
+
+
 def search_terms(title: str) -> str:
     """Les mots qui cherchent un titre : sa base et sa version, pour trouver la bonne.
 

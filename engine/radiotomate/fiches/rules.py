@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Sequence
 
 
-def _js_round(value: float) -> int:
+def js_round(value: float) -> int:
     """Le `Math.round` de JavaScript : une demie va vers le haut, -2,5 donne -2."""
     whole = math.floor(value)
     return whole + 1 if value - whole >= 0.5 else whole
@@ -61,7 +61,7 @@ def duration_level(
     """
     if not radio_seconds or not found_seconds:
         return DurationLevel("à revoir", why="durée du morceau trouvé inconnue")
-    gap = _js_round(found_seconds - radio_seconds)
+    gap = js_round(found_seconds - radio_seconds)
     if abs(gap) <= DURATION_TOLERANCE_S:
         return DurationLevel("sûr", gap)
     why = f"durée : {clock(radio_seconds)} ici, {clock(found_seconds)} trouvé"
@@ -70,7 +70,7 @@ def duration_level(
 
 def clock(seconds: float) -> str:
     """244 → « 4:04 »."""
-    total = _js_round(seconds)
+    total = js_round(seconds)
     return f"{total // 60}:{total % 60:02d}"
 
 
@@ -149,6 +149,61 @@ def without_foreign_mentions(found: str, radio: str) -> str:
         if mention and not written(mention[1]):
             out = out[: mention.start()]
     return out.strip() or found.strip()
+
+
+_GROUP_TAIL = re.compile(r"\s*[(\[][^()\[\]]*[)\]]\Z")
+_FEAT_END = re.compile(
+    r"\s(?:feat\.?|ft\.?|featuring)\s+(?:(?!\s[-\u2013\u2014]\s).)+\Z", re.IGNORECASE
+)
+
+
+def split_tail(title: str) -> tuple[str, str]:
+    """Un titre et ses mentions de fin : parenthèses ou crochets, « - Remix »,
+    « feat. X ».
+
+    « Murky Racing - Featuring Mocky » donne « Murky Racing » et « - Featuring
+    Mocky » : corriger le premier ne fait pas perdre les secondes.
+    """
+    whole = title.strip()
+    base = whole
+    while True:
+        group = _GROUP_TAIL.search(base)
+        if group and group.start() > 0:
+            base = base[: group.start()]
+            continue
+        dash = _DASH_TAIL.search(base)
+        if dash and parse_title(f"x - {dash[1]}").base == "x":
+            base = base[: dash.start()]
+            continue
+        # « feat. X » à la fin seulement : pas « Sleepin Giant ft. Romaine Smith - Hey
+        # Girl ».
+        feat = _FEAT_END.search(base)
+        if feat and feat.start() > 0:
+            base = base[: feat.start()]
+            continue
+        return base.strip(), whole[len(base) :].strip()
+
+
+def calmed(text: str) -> str:
+    """Un texte en capitales, une capitale par mot : « FEAT PRINCE RAPID » → « Feat
+    Prince Rapid »."""
+    if not _shouting(text):
+        return text
+
+    def replace(run: str, offset: int) -> str:
+        previous = text[offset - 1] if offset else ""
+        return run.lower() if previous in _JOINS else _capitalized(run)
+
+    return _replace_runs(text, replace)
+
+
+def exotic_letters(text: str) -> bool:
+    """Des lettres au-delà de l'alphabet latin étendu (« ḗ », « ượ ») : rares, souvent
+    une erreur de saisie de la source."""
+    return any(
+        char.isalpha() and ord(char) > 0x24F
+        for char in unicodedata.normalize("NFC", text)
+    )
 
 
 def plain_punctuation(text: str) -> str:
