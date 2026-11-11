@@ -284,7 +284,7 @@ Derrière un reverse proxy, le journal de `radiotomate-interface` peut afficher 
 
 ## Avant d'exposer une station à Internet
 
-Une installation sur une machine exposée reste un essai tant que les fiches [P1](feuille-de-route/P1-mise-en-prod.md) ne sont pas faites, en particulier celles de sécurité : catalogue protégé, essais de connexion limités, identifiants d'encodeur, en-têtes. Sur une telle machine, fermer aussi les ports avec `BIND_ADDRESS=127.0.0.1`, derrière Caddy : voir [HTTPS](#https).
+Une installation sur une machine exposée reste un essai tant que les fiches [P1](feuille-de-route/P1-mise-en-prod.md) ne sont pas toutes faites. Celles de sécurité le sont : catalogue protégé, essais de connexion limités, identifiants d'encodeur, en-têtes. Restent surtout la commande de mise à jour, son retour arrière, les sauvegardes hors de la machine et les alertes. Sur une telle machine, fermer aussi les ports avec `BIND_ADDRESS=127.0.0.1`, derrière Caddy : voir [HTTPS](#https).
 
 ## Régler le moteur
 
