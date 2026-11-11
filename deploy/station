@@ -587,6 +587,12 @@ check_disk() {
   fi
 }
 
+# Docker répond : sinon, docker compose ps ne voit aucun conteneur, et la
+# station aurait l'air arrêtée.
+docker_ok() {
+  docker info >/dev/null 2>&1
+}
+
 # Les conteneurs de la station de ce dossier qui tournent : tous, ou ceux du
 # service donné. Une relance ne vérifie pas les ports qu'ils tiennent.
 station_running() { # [service]
@@ -1414,12 +1420,17 @@ all_profiles() {
   done < <(compose config --profiles 2>/dev/null)
 }
 
-# Oui ou non, au clavier ; --yes répond oui. Sans terminal ni --yes, la
-# commande ne se fait pas.
+# Sans terminal ni --yes, ce qui se confirme ne se fait pas : à vérifier
+# avant le travail, que la question vienne au début ou à la fin.
+confirm_possible() { # commande
+  [[ -n $assume_yes ]] || interactive ||
+    die "Sans terminal, station $1 attend --yes pour se faire." "Relancer avec --yes, une fois sûr."
+}
+
+# Oui ou non, au clavier ; --yes répond oui.
 confirm() { # commande, question
   [[ -z $assume_yes ]] || return 0
-  interactive ||
-    die "Sans terminal, station $1 attend --yes pour se faire." "Relancer avec --yes, une fois sûr."
+  confirm_possible "$1"
   local answer
   answer=$(ask "$2" n check_yes_no)
   [[ ${answer,,} == [oy]* ]] || die "" "$aborted"
@@ -1428,8 +1439,7 @@ confirm() { # commande, question
 # Un mot à taper, pour ce qui ne se défait pas ; --yes le tape.
 confirm_word() { # commande, mot, question
   [[ -z $assume_yes ]] || return 0
-  interactive ||
-    die "Sans terminal, station $1 attend --yes pour se faire." "Relancer avec --yes, une fois sûr."
+  confirm_possible "$1"
   local answer
   printf '  %s ' "$3" >&2
   IFS= read -r answer || die "" "$aborted"
@@ -1440,6 +1450,8 @@ confirm_word() { # commande, mot, question
 # radiotomate-init, en root, qui ne démarre rien d'autre, que la station tourne
 # ou non. L'image a bash, tar et Python : l'hôte n'a besoin ni de sqlite3, ni de
 # Python. Ce qu'il écrit sur sa sortie d'erreur ne s'affiche que s'il échoue.
+# Il lit l'entrée standard : un script qui n'en a pas besoin reçoit /dev/null,
+# et ne prend rien de ce qui se tape au clavier.
 engine_run() { # options de docker compose run…
   compose run --rm --no-deps -T "$@" 2>"$work/moteur.log" || {
     cat "$work/moteur.log" >&2
@@ -1453,7 +1465,7 @@ engine_run() { # options de docker compose run…
 engine_backup() { # dossier où écrire radiotomate.tar.gz, dossier de travail
   engine_run -v "$dir/scripts/backup-radiotomate.sh:/backup-radiotomate.sh:ro" -v "$1:/sauvegarde" \
     -v "$2:/travail" -e TMPDIR=/travail \
-    --entrypoint bash radiotomate-init /backup-radiotomate.sh /data /sauvegarde/radiotomate.tar.gz >/dev/null
+    --entrypoint bash radiotomate-init /backup-radiotomate.sh /data /sauvegarde/radiotomate.tar.gz </dev/null >/dev/null
 }
 
 # restore-radiotomate.sh, dans l'image du moteur : l'archive de la base, ses
@@ -1461,7 +1473,7 @@ engine_backup() { # dossier où écrire radiotomate.tar.gz, dossier de travail
 engine_restore() { # radiotomate.tar.gz, dossier vide, dossier de travail
   engine_run -v "$dir/scripts/restore-radiotomate.sh:/restore-radiotomate.sh:ro" \
     -v "$1:/sauvegarde.tar.gz:ro" -v "$2:/cible" -v "$3:/travail" -e TMPDIR=/travail \
-    --entrypoint bash radiotomate-init /restore-radiotomate.sh /sauvegarde.tar.gz /cible >/dev/null
+    --entrypoint bash radiotomate-init /restore-radiotomate.sh /sauvegarde.tar.gz /cible </dev/null >/dev/null
 }
 
 # La version du schéma de la base en place, puis celle de la base d'un dossier.
@@ -1577,6 +1589,10 @@ updates_report() {
 # Chaque service attendu, avec son état. Échoue si l'un ne va pas.
 services_report() {
   local services states service line state health code label bad=""
+  if ! docker_ok; then
+    say "Services : inconnus, Docker ne répond pas. Voir pourquoi : systemctl status docker."
+    return 1
+  fi
   services=$(compose config --services 2>/dev/null | sort) || services=""
   states=$(compose ps -a --format '{{.Name}}|{{.Service}}|{{.State}}|{{.Health}}|{{.ExitCode}}' 2>/dev/null) || states=""
   if [[ -z $services ]]; then
@@ -1636,7 +1652,9 @@ disk_report() {
 
 next_live_report() {
   local live
-  if ! station_running radiotomate-interface; then
+  if ! docker_ok; then
+    say "Prochain direct : inconnu, Docker ne répond pas."
+  elif ! station_running radiotomate-interface; then
     say "Prochain direct : inconnu, le moteur ne tourne pas."
   elif live=$(compose exec -T radiotomate-interface radiotomate maintenance next-live </dev/null 2>/dev/null) && [[ -n $live ]]; then
     say "Prochain direct : $live."
@@ -1753,6 +1771,15 @@ backup_station() { # archive, avec les sons (1) ou non
   caddy_kb=$(size_kb "$caddy")
   space_for "${archive%/*}" $((2 * data_kb + caddy_kb + media_kb)) \
     "Libérer de la place, ou écrire la sauvegarde ailleurs : station backup /un/autre/dossier."
+  # L'archive naît vide, en 600, avant le reste : une ACL par défaut sur le
+  # dossier passe outre le umask, mais pas le mode donné à la création. Un
+  # dossier qui ne garde pas les droits, comme un partage Windows, la
+  # laisserait lisible par d'autres, avec les secrets de .env.
+  partial=$archive.part
+  if ! install -m 600 /dev/null "$partial" 2>/dev/null || [[ $(stat -c %a "$partial") != 600 ]]; then
+    die "${archive%/*} ne garde pas les droits des fichiers : l'archive, qui porte les secrets de .env, y serait lisible par d'autres." \
+      "L'écrire sur un disque de cette machine, station backup /un/autre/dossier, puis la copier là."
+  fi
 
   work=$(mktemp -d "${archive%/*}/.station-XXXXXX")
   stage=$work/sauvegarde
@@ -1810,9 +1837,8 @@ EOF
 
 # L'archive : MANIFEST, SHA256SUMS, les autres fichiers, puis les sons. Une
 # tar sans compression : ses fichiers le sont déjà, les sons aussi, et
-# restore lit MANIFEST sans lire le reste. Elle naît vide, en 600, avant d'y
-# écrire : une ACL par défaut sur le dossier passe outre le umask, mais pas
-# le mode donné à la création.
+# restore lit MANIFEST sans lire le reste. Elle s'écrit dans partial, que
+# backup_station a créé en 600, puis prend son nom.
 backup_pack() { # dossier, archive, banque de sons ou rien
   local stage=$1 archive=$2 media=$3 parent status=0 members=()
   members=(-C "$stage" MANIFEST SHA256SUMS "${BACKUP_FILES[@]:1}")
@@ -1820,8 +1846,6 @@ backup_pack() { # dossier, archive, banque de sons ou rien
     parent=${media%/*}
     members+=(-C "${parent:-/}" "${media##*/}")
   fi
-  partial=$archive.part
-  install -m 600 /dev/null "$partial"
   say "Sauvegarde : l'archive$([[ -z $media ]] || echo ', avec les sons'), dans ${archive%/*}."
   tar -cf - "${members[@]}" >"$partial" || status=$?
   if ((status == 1)) && [[ -n $media ]]; then
@@ -1850,6 +1874,7 @@ cmd_restore() {
   [[ $archive == /* ]] || archive=$PWD/$archive
   assume_yes=${opts[--yes]:-}
   open_station restore "${opts[--dir]:-}"
+  confirm_possible restore
   [[ -f $archive && -r $archive ]] ||
     die "$archive n'existe pas, ou ne se lit pas." "Donner le chemin d'une archive de station backup."
   lock_station restore
@@ -1974,7 +1999,6 @@ restore_station() { # archive, sans les sons (1) ou non
       "Restaurer sans les sons, station restore --without-media, puis y remettre ceux de la sauvegarde : tar -xf ARCHIVE -C $media_dir --strip-components=1 $media."
   fi
   say "Sauvegarde du $(station_date "$saved_at"), d'une station en version ${version:-inconnue}$([[ -z $media ]] || echo ', avec ses sons')."
-  confirm restore "Remplacer les données de la station de $dir par celles de la sauvegarde ? Celles d'aujourd'hui restent à côté, et l'antenne se coupe le temps de redémarrer. (o/n)"
   # La place : la base deux fois à côté de la sienne, le temps de la vérifier ;
   # les sons à côté de la banque.
   if [[ -n $media && $(mount_of "$data") == "$(mount_of "$media_dir")" ]]; then
@@ -2000,16 +2024,25 @@ restore_station() { # archive, sans les sons (1) ou non
   ((restored <= current)) ||
     die "La sauvegarde vient de la version ${version:-inconnue} : sa base est au schéma v$restored, que cette station, en $(installed_version), ne sait pas lire. Rien n'a changé." \
       "La remettre sur une station de la même version, ou d'une plus récente : sur une machine neuve, station install --version ${version:-X.Y.Z}."
+  # La sauvegarde se remet : la question vient avant le reste, et l'arrêt.
+  confirm restore "Remplacer les données de la station de $dir par celles de la sauvegarde ? Celles d'aujourd'hui restent à côté, et l'antenne se coupe le temps de redémarrer. (o/n)"
 
-  # Caddy : ses certificats et son compte, s'il y en a.
-  listing=$(tar -tzf "$in/caddy.tar.gz") ||
-    die "Les certificats de Caddy de la sauvegarde ne se lisent pas. Rien n'a changé." "En prendre une autre."
-  if grep -qvE '^\./?$' <<<"$listing"; then
-    new_caddy=$caddy.restauration-$stamp
-    prepared+=("$new_caddy")
-    mkdir "$new_caddy"
-    tar -xzf "$in/caddy.tar.gz" -C "$new_caddy" ||
-      die "Les certificats de Caddy de la sauvegarde ne s'extraient pas : voir le message de tar plus haut. Rien n'a changé." "Vérifier la place, puis relancer."
+  # Caddy : ses certificats et son compte, s'il y en a, pour le domaine de
+  # cette station. Une sauvegarde d'un autre domaine ne les a pas : la station
+  # garde les siens, sans quoi Caddy devrait en demander de nouveaux pendant
+  # la restauration.
+  saved_domain=$(env_value_in "$in/env" DOMAIN)
+  domain=$(env_value DOMAIN)
+  if [[ $saved_domain == "$domain" ]]; then
+    listing=$(tar -tzf "$in/caddy.tar.gz") ||
+      die "Les certificats de Caddy de la sauvegarde ne se lisent pas. Rien n'a changé." "En prendre une autre."
+    if grep -qvE '^\./?$' <<<"$listing"; then
+      new_caddy=$caddy.restauration-$stamp
+      prepared+=("$new_caddy")
+      mkdir "$new_caddy"
+      tar -xzf "$in/caddy.tar.gz" -C "$new_caddy" ||
+        die "Les certificats de Caddy de la sauvegarde ne s'extraient pas : voir le message de tar plus haut. Rien n'a changé." "Vérifier la place, puis relancer."
+    fi
   fi
   # Les sons, sous leur nom dans l'archive, à côté de la banque en place.
   if [[ -n $media ]]; then
@@ -2036,7 +2069,6 @@ restore_station() { # archive, sans les sons (1) ou non
     esac
     [[ $(env_value_in "$in/env" "$key") == "$(env_value_in "$new_env" "$key")" ]] || differs="$differs${differs:+,} $key"
   done < <(sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' "$in/env" "$new_env" | sort -u)
-  saved_domain=$(env_value_in "$in/env" DOMAIN)
 
   # Tous les profils s'arrêtent, share compris s'il est lancé à part : sinon,
   # il garderait la banque mise de côté. Ceux qui tournaient repartent.
@@ -2053,7 +2085,6 @@ restore_station() { # archive, sans les sons (1) ou non
   [[ -z $new_media ]] || swap "$media_dir" "$new_media/$media" "$stamp"
   swap "$env_file" "$new_env" "$stamp"
   env_isolate
-  domain=$(env_value DOMAIN)
   # La station garde son domaine : les adresses publiques de la base qui
   # suivaient celui de la sauvegarde passent au sien.
   if [[ -n $saved_domain && -n $domain && $saved_domain != "$domain" ]]; then
@@ -2091,11 +2122,11 @@ restore_station() { # archive, sans les sons (1) ou non
   fi
   say "  Les comptes sont ceux de la sauvegarde : le mot de passe admin de cette installation ne sert plus."
   [[ -z $taken ]] || say "  De la sauvegarde, dans .env :$taken."
-  if [[ -n $saved_domain && $saved_domain != "$domain" ]]; then
+  if [[ -n $saved_domain && -n $domain && $saved_domain != "$domain" ]]; then
     if [[ -n $keys ]]; then
-      say "  La sauvegarde servait $saved_domain : la station garde $domain, et les adresses de Réglages → Station qui suivaient $saved_domain passent à $domain."
+      say "  La sauvegarde servait $saved_domain : la station garde $domain et ses certificats, et les adresses de Réglages → Station qui suivaient $saved_domain passent à $domain."
     else
-      say "  La sauvegarde servait $saved_domain : la station garde $domain. Vérifier les adresses de Réglages → Station, dans la console."
+      say "  La sauvegarde servait $saved_domain : la station garde $domain et ses certificats. Vérifier les adresses de Réglages → Station, dans la console."
     fi
     say "  Pour reprendre $saved_domain : station config --domain $saved_domain."
   fi
@@ -2354,6 +2385,7 @@ cmd_cli() {
     esac
   done
   open_station cli "$dir"
+  docker_ok || die "Docker ne répond pas : station cli passe par le moteur." "Voir pourquoi : systemctl status docker."
   station_running radiotomate-interface ||
     die "Le moteur ne tourne pas : station cli passe par lui." "Voir pourquoi : station status. Puis le démarrer : cd $dir && docker compose up -d."
   [[ -t 0 && -t 1 ]] || tty=(-T)
