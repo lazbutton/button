@@ -139,6 +139,12 @@ export type PublicStation = {
   source_url: string | null;
 };
 
+/**
+ * `GET /station/harbor.json`, pour tout compte : ce que vise l'encodeur. `host` est `null`
+ * tant qu'un admin ne l'a pas réglé ; le port et le mount sont ceux du logiciel par défaut.
+ */
+export type StationHarbor = { host: string | null; port: number; mount: string };
+
 /** `GET` et `PUT /station.json` : tous les réglages, et le fuseau, en lecture seule. */
 export type StationSettings = PublicStation & {
   harbor_host: string | null;

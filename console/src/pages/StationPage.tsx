@@ -9,7 +9,7 @@ import {
   apiPut,
 } from "../api/client";
 import {
-  harborAddress,
+  HARBOR_DEFAULTS,
   publicStation,
   STATION_FIELDS,
   stationBody,
@@ -49,7 +49,8 @@ const GROUPS: { legend: string; description: string; fields: FieldSpec[] }[] = [
   },
   {
     legend: "Écoute",
-    description: "Les adresses publiques, celles de l’auditeur. Le casque de la console écoute le même flux.",
+    description:
+      "Les adresses publiques, celles de l’auditeur. Le casque de la console écoute le même flux : sans flux public, il n’a rien à écouter.",
     fields: [
       { key: "public_stream_url", label: "Flux public", kind: "url" },
       { key: "now_url", label: "Titre en cours (now.json)", kind: "url" },
@@ -59,7 +60,7 @@ const GROUPS: { legend: string; description: string; fields: FieldSpec[] }[] = [
   {
     legend: "Direct",
     description:
-      "L’hôte, le port et le mount que vise l’encodeur, BUTT ou Mixxx. Pour l’instant, le panneau « Passer en direct » montre toujours ceux de l’image : les valeurs grisées.",
+      "L’hôte, le port et le mount que vise l’encodeur, BUTT ou Mixxx. Le panneau « Passer en direct » les donne à chaque compte. Sans hôte, il dit de le régler ici. Un port ou un mount vide garde la valeur grisée, celle du logiciel.",
     fields: [
       { key: "harbor_host", label: "Hôte" },
       { key: "harbor_port", label: "Port", kind: "port" },
@@ -74,16 +75,18 @@ const GROUPS: { legend: string; description: string; fields: FieldSpec[] }[] = [
 ];
 
 const HEAD_DESCRIPTION =
-  "Ce que les auditeurs et l’équipe voient de la radio. Un champ vide garde la valeur grisée : celle de l’image de la console (brand.json).";
+  "Ce que les auditeurs et l’équipe voient de la radio. Un champ vide garde la valeur grisée, s’il y en a une : celle de l’image de la console (brand.json), ou du logiciel.";
 
 function isField(name: string | undefined): name is StationField {
   return (STATION_FIELDS as readonly string[]).includes(name ?? "");
 }
 
-/** Ce que la console garde quand un champ reste vide : la valeur de son image. */
+/**
+ * Ce que la console garde quand un champ reste vide : la valeur de son image, qui ne
+ * donne aucune adresse, ou pour le harbor celle du logiciel.
+ */
 function fallbacks(brand: Brand): Partial<StationForm> {
-  const [listen] = monitorSources(brand);
-  const harbor = harborAddress(brand);
+  const listen = monitorSources(brand).find((source) => source.id === "public");
   return {
     name: brand.suite.name,
     short: brand.suite.short,
@@ -91,9 +94,8 @@ function fallbacks(brand: Brand): Partial<StationForm> {
     public_stream_url: listen?.stream,
     now_url: listen?.nowUrl,
     status_url: listen?.statusUrl,
-    harbor_host: harbor.host,
-    harbor_port: harbor.port,
-    harbor_mount: harbor.mount,
+    harbor_port: HARBOR_DEFAULTS.port,
+    harbor_mount: HARBOR_DEFAULTS.mount,
     source_url: brand.suite.sourceUrl || DEFAULT_SOURCE_URL,
   };
 }

@@ -16,8 +16,6 @@ import {
   monitorSources,
   readMonitorSourceId,
   sourceById,
-  streamReachable,
-  fallbackMp3Stream,
   writeMonitorSourceId,
   type MonitorSource,
   type MonitorSourceId,
@@ -59,33 +57,21 @@ export function MonitorProvider({
   const [sourceId, setSourceIdState] = useState<MonitorSourceId>(
     () => (lockPublic ? "public" : readMonitorSourceId() ?? "public"),
   );
+  // Sans flux public réglé, aucune source : le casque n'écoute rien, et son bouton dit quoi régler.
   const source = sourceById(sources, sourceId);
-  const [listenStream, setListenStream] = useState(source.stream);
+  const listenStream = source?.stream ?? "";
   const live = useApiJson<LiveSnapshot>("/live.json", 2000);
-  const filesWanted = sourceId === "files";
+  const filesWanted = source?.id === "files";
   const harbor = filesWanted && isHarborSource(live.data?.source);
   const filesOn = filesWanted && !harbor;
   const filesAudioRef = useRef<HTMLAudioElement | null>(null);
 
-  useEffect(() => {
-    setListenStream(source.stream);
-    if (!source.stream.includes("studio.wav")) return;
-    let cancelled = false;
-    void streamReachable(source.stream, 800).then((ok) => {
-      if (cancelled || ok) return;
-      setListenStream(fallbackMp3Stream(source.stream));
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [source.id, source.stream]);
-
   const icecast = useMonitor(
     listenStream,
-    source.nowUrl,
-    source.statusUrl,
-    !filesOn,
-    `${source.id}:${listenStream}`,
+    source?.nowUrl ?? "",
+    source?.statusUrl ?? "",
+    !filesOn && Boolean(listenStream),
+    `${source?.id ?? "aucune"}:${listenStream}`,
   );
   const graph = useMemo<RundownGraph>(
     () => ({
@@ -140,7 +126,7 @@ export function MonitorProvider({
       remaining: filesOn ? rundown.remaining : icecast.remaining,
       lagMs: filesOn ? rundown.lagMs : icecast.lagMs,
       toggleMute,
-      sourceId: source.id,
+      sourceId: source?.id ?? sourceId,
       sources,
       setSourceId,
       canChooseSource: !lockPublic,
@@ -167,7 +153,8 @@ export function MonitorProvider({
       rundown.toggleMute,
       setSourceId,
       lockPublic,
-      source.id,
+      source?.id,
+      sourceId,
       sources,
       toggleMute,
     ],

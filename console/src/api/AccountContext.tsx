@@ -34,7 +34,7 @@ async function loadAccount(): Promise<Account | null> {
   try {
     return await apiGet<Account>("/account.json");
   } catch {
-    /* Nasgul ancien : pas de /account.json — repli via users.json + identifiant mémorisé. */
+    /* Moteur ancien : pas de /account.json — repli via users.json + identifiant mémorisé. */
   }
   const username = rememberedUsername();
   if (!username) return null;

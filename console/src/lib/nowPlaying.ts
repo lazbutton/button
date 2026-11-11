@@ -146,13 +146,8 @@ export function formatRemain(sec: number): string {
   return `−${m}:${r.toString().padStart(2, "0")}`;
 }
 
-const NOW_URL = "https://radio.lazbutton.xyz/now.json";
-const ICECAST_STATUS_URL = "https://radio.lazbutton.xyz/status-json.xsl";
-
-export async function fetchNowPlaying(
-  nowUrl = NOW_URL,
-  statusUrl = ICECAST_STATUS_URL,
-): Promise<NowPlaying | null> {
+/** Le titre en cours : `now.json`, puis le statut d'Icecast. Sans adresse réglée, rien. */
+export async function fetchNowPlaying(nowUrl: string, statusUrl: string): Promise<NowPlaying | null> {
   if (nowUrl) {
     try {
       const res = await fetch(nowUrl, { cache: "no-store" });

@@ -1,5 +1,8 @@
-import { DropdownMenu, Tooltip } from "@radix-ui/themes";
-import { ChevronDown, Headphones, TriangleAlert } from "lucide-react";
+import { DropdownMenu, Popover, Tooltip } from "@radix-ui/themes";
+import { ArrowRight, ChevronDown, HeadphoneOff, Headphones, TriangleAlert } from "lucide-react";
+import { useId, useState } from "react";
+import { Link } from "react-router-dom";
+import { useAccount } from "../../api/AccountContext";
 import { listenHint } from "../../api/topbar";
 import { useMonitorState } from "../../lib/MonitorContext";
 import type { MonitorSourceId } from "../../lib/monitorSource";
@@ -14,8 +17,53 @@ function shortStream(url: string): string {
   }
 }
 
+/**
+ * Sans flux public réglé, le casque n'a rien à écouter : son bouton ouvre une bulle qui
+ * dit quoi régler, et à l'admin où (ADR 0007).
+ */
+function ListenUnset() {
+  const { isAdmin } = useAccount();
+  const [open, setOpen] = useState(false);
+  const titleId = useId();
+  return (
+    <div className="tb-listen" data-on="false" data-error="false" data-unset="true">
+      <Popover.Root open={open} onOpenChange={setOpen}>
+        <Popover.Trigger>
+          <button type="button" className="tb-listen-toggle" aria-label="Écouter au casque : aucun flux réglé">
+            <HeadphoneOff size={16} strokeWidth={1.9} aria-hidden="true" />
+            <span className="tb-listen-label">Écouter</span>
+          </button>
+        </Popover.Trigger>
+        <Popover.Content className="tb-pop" align="end" sideOffset={6} size="1" maxWidth="20rem" aria-labelledby={titleId}>
+          <div className="tb-pop-head">
+            <strong id={titleId}>Aucun flux à écouter</strong>
+          </div>
+          <p className="tb-pop-text">
+            L’adresse du flux public n’est pas réglée : le casque n’a rien à écouter.
+            {isAdmin ? "" : " Un admin la règle dans Réglages → Station."}
+          </p>
+          {isAdmin ? (
+            <div className="tb-pop-foot">
+              <Link to="/reglages?onglet=station" onClick={() => setOpen(false)}>
+                Régler le flux public
+                <ArrowRight size={14} aria-hidden="true" />
+              </Link>
+            </div>
+          ) : null}
+        </Popover.Content>
+      </Popover.Root>
+    </div>
+  );
+}
+
 /** Casque de contrôle : écouter, niveau, et pour l'admin la source (antenne ou fichiers du conducteur). */
 export function ListenControl() {
+  const monitor = useMonitorState();
+  if (!monitor.sources.length) return <ListenUnset />;
+  return <ListenSources />;
+}
+
+function ListenSources() {
   const monitor = useMonitorState();
   const source = monitor.sources.find((row) => row.id === monitor.sourceId) ?? monitor.sources[0];
   const listening = !monitor.muted;
