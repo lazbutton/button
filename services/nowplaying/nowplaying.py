@@ -25,8 +25,6 @@ PLAYOUT_YAML = Path(os.environ.get("RT_PLAYOUT_YAML", "/config/radiotomate.yaml"
 MEDIA_CANDIDATES = (
     os.environ.get("BUTTON_MEDIA_ROOT", "").strip(),
     "/media",
-    "/mnt/data/media/button",
-    "/mnt/data/media/button",
 )
 LOCK = threading.Lock()
 NEXT_KEYS = ("next_autodj", "next_jingle", "next_cart")
