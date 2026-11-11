@@ -179,6 +179,7 @@ Un moteur plus ancien que la console n'a pas ces routes : il répond 404, et la 
 Les réglages de la station sont dans la table `settings` du moteur, sous des clés `station.*` : `name`, `short`, `tagline`, `locale`, `public_stream_url`, `now_url`, `status_url`, `harbor_host`, `harbor_port`, `harbor_mount` et `source_url`. Chaque valeur est une chaîne, ou `null` quand la station ne l'a pas réglée. `harbor_port` est un entier. Une station les change dans la console, Réglages → Station, sans reconstruire d'image.
 
 - `GET /public/station.json`, sans session → ce qu'un auditeur voit : `{name, short, tagline, locale, public_stream_url, now_url, status_url, source_url}`, jamais le harbor. La réponse porte `Cache-Control: no-store`.
+- `GET /station/harbor.json`, pour tout compte connecté → ce que vise l'encodeur : `{host, port, mount}`, rien d'autre. `host` vaut `null` tant qu'un admin ne l'a pas réglé. Sans réglage, `port` vaut 6800 et `mount` `/stream`, ceux du logiciel. Sans session : 401.
 - `GET /station.json`, admin seulement → les onze réglages, plus `timezone`, le fuseau, en lecture seule. C'est la variable `TZ` des conteneurs ([ADR 0005](decisions/0005-le-fuseau-est-celui-des-conteneurs.md)).
 - `PUT /station.json`, admin seulement → la même forme que `GET`. Seules les clés présentes changent, et une valeur vide ou `null` efface le réglage. Les autres clés sont ignorées. C'est tout ou rien : une valeur refusée répond 400 `validation_error` avec son `field`, et rien n'est écrit. `timezone` est refusé s'il diffère du fuseau en place.
 

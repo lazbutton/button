@@ -1,5 +1,6 @@
 """The station's settings, for an admin: Réglages → Station in the console. What a
-listener may see is in ``public.py``, without a session."""
+listener may see is in ``public.py``, without a session. What an encoder needs, the
+harbor's address, is for every account."""
 
 from quart import Blueprint, g, jsonify
 
@@ -17,6 +18,14 @@ async def station_json():
     if deny:
         return deny
     return jsonify(await station.admin_payload(g.dbsession))
+
+
+@blueprint.get("/station/harbor.json")
+@login_required
+async def harbor_json():
+    # « Passer en direct » is open to every account: the harbor's host, port and
+    # mount, and none of the other settings.
+    return jsonify(await station.harbor_payload(g.dbsession))
 
 
 @blueprint.put("/station.json")
