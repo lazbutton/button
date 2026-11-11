@@ -10,28 +10,28 @@ Ce qui reste à faire, rangé par priorité. Chaque tâche est une **fiche** : a
 
 ## Où on en est
 
-Relevé le 11 novembre 2026, sur `main` après la PR 130. La dernière version publiée est la 0.2.0, du 10 novembre. P1 a 19 fiches faites sur 28, P2 une sur 46. La personne qui fusionne tient cette partie à jour, comme les tableaux.
+Relevé le 11 novembre 2026, sur `main` après la PR 135. La dernière version publiée est la 0.2.0, du 10 novembre. P1 a 20 fiches faites sur 28, P2 trois sur 47. La personne qui fusionne tient cette partie à jour, comme les tableaux.
 
-**D'abord**, parce que le dépôt est public, et qu'une station a été installée sur un VPS en 0.2.0 :
+**D'abord** :
 
-1. **Le correctif du tirage des bacs, puis la version suivante.** Depuis les PR 115 et 121, `main` a quatre défauts du tirage, relevés à leur relecture du 11 novembre : « Diffuser maintenant » qui rejoue le son entendu à l'instant, ou toujours le même après un direct qui a retenu une coupure, un bac bloqué sur un son que l'antenne ne dit jamais, et des sons sautés en Boucle. La 0.2.0 n'a pas ce tirage, donc pas ces défauts. La version suivante attend leur correctif, qui touche `clock.py`, `execution.py`, `rundown.py` et `cart_draw.py` : dans les tableaux, c'est « le correctif du tirage des bacs ». Elle porte aussi ce qu'il faut à une station neuve : la banque de sons rendue au moteur, et un conducteur qui ne s'empile plus.
-2. **PUB-03, les réglages du dépôt public, et PUB-01, les secrets dans l'historique.** Les réglages se posent en quelques minutes, par la personne qui tient le dépôt.
-3. **GEN-02**, qui retire du code les données de la station d'origine.
-4. **TST-06** : depuis le 10 novembre, un passage des parcours sur trois rougit sans défaut.
+1. **La version qui suit la 0.2.0.** Plus rien ne la retient : le correctif du tirage des bacs est fusionné (`550e7f1`). Elle porte ce qu'il faut à une station neuve : la banque de sons rendue au moteur, et un conducteur qui ne s'empile plus. Mais elle demande une action à chaque station, dite dans la « Mise en service » du [CHANGELOG](../../CHANGELOG.md) : régler ses adresses dans Réglages → Station, et poser `ICECAST_MOUNT=button.mp3` dans `.env` pour garder l'adresse de son flux. D'après la règle des numéros ([developpement.md](../developpement.md#publier-une-version)), une version qui demande une action est une majeure. À trancher avant de la publier : la numéroter ainsi, ou rendre l'action inutile.
+2. **PUB-03, les réglages du dépôt public.** Ils se posent en quelques minutes, par la personne qui tient le dépôt.
+3. **MAJ-04**, la commande de mise à jour : elle est prête, et plus rien ne passe devant elle.
 
-**Ensuite, ce qui reste de P1**, par files : voir [l'ordre](P1-mise-en-prod.md#lordre). GEN-02 ouvre la file de la commande `station` : MAJ-04, prête, la suit, puis MAJ-05, SAV-01 et SUR-01. LEG-02 passe après GEN-02, FON-14 après le correctif du tirage, INS-04 sur la version suivante, et DOC-01 en dernier.
+**Ensuite, ce qui reste de P1**, par files : voir [l'ordre](P1-mise-en-prod.md#lordre). MAJ-05, SAV-01 et SUR-01 suivent MAJ-04 dans la file de la commande `station`. LEG-02 et FON-14 n'attendent rien, INS-04 se mesure sur la version suivante, et DOC-01 vient en dernier.
 
 **À côté, dans P2**, ce qui n'attend rien de P1 :
 
-- l'antenne, une fiche à la fois sur un même fichier. FON-17 puis FON-18, sur le pupitre (`desk.py`), n'attendent rien, mais pas en même temps que FON-14. FON-33 et FON-35 à FON-38 attendent le correctif du tirage, comme FON-14 : elles touchent `clock.py`. FON-19 et FON-32 touchent `execution.py`, que le correctif touche aussi : elles partent après lui, ou se rebasent ;
+- l'antenne, une fiche à la fois sur un même fichier : FON-17 puis FON-18 sur le pupitre (`desk.py`), que FON-14 touche aussi ; FON-33 et FON-35 à FON-38 sur `clock.py` ; FON-19 et FON-32 sur `execution.py` ;
 - les bacs et la banque : FON-16 puis FON-21, qui touchent le même inspecteur, FON-20 et FON-31 ;
 - les fiches de la bibliothèque : FON-22, FON-23 et FON-24, l'une après l'autre, et ARC-06 à côté. FON-25 à FON-30 les suivent ;
-- sans ordre, chacune avec ses conflits : FON-34, qui partage `alerts.py` avec SUR-01, TST-04, TST-05, DEV-01 à DEV-04, PUB-02, GEN-04, SEC-08, SEC-10 et ARC-01.
+- sans ordre, chacune avec ses conflits : FON-34, qui partage `alerts.py` avec SUR-01, TST-04, TST-05, TST-07, DEV-01 à DEV-04, PUB-02, GEN-04, SEC-08, SEC-10 et ARC-01.
 
 Le reste de P2 attend P1 : MAJ-06 et SUR-03 écrivent dans la commande `station`, MAJ-07 suit MAJ-06, MAJ-08 se mesure pendant une mise à jour, SUR-02 suit SUR-01, et SEC-09 relit le tout.
 
 **Ce qui n'est pas du code**, et qu'une personne doit faire ou trancher :
 
+- le numéro de la version suivante, et l'action qu'elle demande ;
 - les réglages du dépôt, et le sort des cinq images encore privées (PUB-03) ;
 - une clé d'application AcoustID pour BUTTON, avant FON-25 ;
 - le nom des fichiers de l'export audio de Rivendell, avant FON-29 ;
