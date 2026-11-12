@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { airBanner, derivePillars, formatDuration, incidentLabel, worstTone } from "./antenneState.ts";
+import { airBanner, derivePillars, formatDuration, incidentAdvice, incidentLabel, worstTone } from "./antenneState.ts";
 import type { AntenneState } from "./types";
 
 /** Les incidents qu'ouvre le moteur : chaque `active["…"]` de sa surveillance. */
@@ -165,6 +165,43 @@ test("air banner is the same story for every role", () => {
   );
 });
 
+test("a stalled playout is named before a silence, and says what to do", () => {
+  const stalled = {
+    kind: "playout_stalled",
+    detail: "« Dahlia » n'avance plus depuis 45 s : le même son passe en boucle (source autodj)",
+    since_s: 45,
+    notified: true,
+  };
+  const banner = (over: { harbor?: boolean; silenceS?: number; incidentKinds: string[] }) =>
+    airBanner({ harbor: false, directTitle: "QG", offline: false, silenceS: 0.2, playoutReachable: true, ...over });
+  assert.deepEqual(banner({ incidentKinds: ["playout_stalled"] }), {
+    label: "Problème",
+    cause: "Antenne figée",
+    tone: "problem",
+    hot: false,
+  });
+  // Le son figé peut être un blanc : le gel reste la cause, et « Suivant » n'est pas son remède.
+  assert.equal(banner({ silenceS: 40, incidentKinds: ["silence", "playout_stalled"] }).cause, "Antenne figée");
+  // Sans nouvelles du playout, rien ne dit que le gel dure encore.
+  assert.equal(banner({ incidentKinds: ["heartbeat", "playout_stalled"] }).cause, "Battement perdu");
+  // Un direct qui a pris l'antenne reste un direct.
+  assert.equal(banner({ harbor: true, incidentKinds: ["playout_stalled"] }).label, "Direct : QG");
+
+  assert.equal(incidentLabel(stalled), "Antenne figée");
+  assert.match(incidentAdvice(stalled), /« Suivant » et « Vider les files » n’y changent rien/);
+  assert.match(incidentAdvice(stalled), /relancer le moteur, sur la machine de la station/);
+  assert.equal(incidentAdvice({ kind: "silence", detail: "", since_s: 0, notified: false }), "");
+
+  // Le niveau est bon, et le pilier Antenne ne reste pas vert pour autant.
+  const pillars = derivePillars(state({ incidents: [stalled] }), false);
+  const antenne = pillars.find((pillar) => pillar.key === "antenne");
+  assert.equal(antenne?.value, "figée");
+  assert.equal(antenne?.tone, "alert");
+  assert.equal(antenne?.detail[0], stalled.detail);
+  assert.equal(antenne?.detail[1], incidentAdvice(stalled));
+  assert.equal(worstTone(pillars), "alert");
+});
+
 test("a disk almost full is named in the alerts", () => {
   const pillars = derivePillars(
     state({
@@ -180,8 +217,9 @@ test("a disk almost full is named in the alerts", () => {
 
 test("each incident the engine opens has a name, the Agenda's too", () => {
   const kinds = engineIncidentKinds();
-  // Sept aujourd'hui : si le moteur les ouvre autrement, relire ce test.
-  assert.ok(kinds.length >= 7, `incidents du moteur introuvables : ${kinds.join(", ")}`);
+  // Huit aujourd'hui : si le moteur les ouvre autrement, relire ce test.
+  assert.ok(kinds.length >= 8, `incidents du moteur introuvables : ${kinds.join(", ")}`);
+  assert.ok(kinds.includes("playout_stalled"), "le moteur n’ouvre plus l’incident « playout_stalled »");
   for (const kind of kinds) {
     const label = incidentLabel({ kind, detail: "", since_s: 0, notified: false });
     assert.notEqual(label, kind, `l’incident « ${kind} » n’a pas de nom dans la console`);

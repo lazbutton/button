@@ -1,5 +1,6 @@
-"""Antenna alerts: silence, playout unreachable, heartbeat lost, live slot empty,
-Icecast output (local or public relay) disconnected, disk almost full.
+"""Antenna alerts: silence, playout unreachable, heartbeat lost, playout stalled,
+live slot empty, Icecast output (local or public relay) disconnected, disk
+almost full.
 
 Runs inside the scheduler process, polls Liquidsoap ``/health`` and the runtime
 metrics, and notifies once per incident (plus a recovery note) through:
@@ -31,6 +32,7 @@ Configuration (``radiotomate.yaml``)::
       interval_seconds: 15
       silence_seconds: 20
       heartbeat_max_age_seconds: 10
+      stall_seconds: 15
       cooldown_seconds: 900
       live_grace_seconds: 90
       disk_min_free_percent: 10
@@ -66,6 +68,19 @@ net is the clock, by construction, never silence.
 ``disk_min_free_gb`` gigabytes, as ``/system/disk.json`` measures it. It
 resolves once a tenth more is free again. A disk fills for days: it reminds
 once a day (``disk_cooldown_seconds``), not every ``cooldown_seconds``.
+
+``playout_stalled``: the playout airs the same sound in a loop, its queue no
+longer advancing, as the crossfade of the Auto-DJ once made it. Two signs, both
+needed (:mod:`radiotomate.scheduler.stall`): the remaining time of the
+heartbeats has not moved for ``stall_seconds`` of antenna, and the level of
+``/health``, read twice a moment apart, is the same to the last digit. Once
+open, it holds through what cuts the stalled queue for a while, a jingle or a
+cart, as long as the remaining time still stands. It closes when the remaining
+time moves again, when the heartbeats stop, or after five minutes of an antenna
+whose level moves. Skipping or flushing does not restart such a queue: the
+three services of the engine are recreated. The setting
+``features.stalled_playout_alert`` of the ``settings`` table, set to false,
+switches this incident off, and it alone (ADR 0009).
 """
 
 from __future__ import annotations
@@ -97,6 +112,7 @@ from radiotomate.domain.emission import (
 from radiotomate.quart import ShutdownError, or_shutdown
 from radiotomate.scheduler.metrics import runtime_metrics
 from radiotomate.scheduler.playout import gateway_for
+from radiotomate.scheduler.stall import Stall, level_stands_still, stall_watch
 
 _log = logging.getLogger(__name__)
 
@@ -107,6 +123,19 @@ DEFAULT_HEARTBEAT_MAX_AGE = 10.0
 DEFAULT_COOLDOWN = 900.0
 DEFAULT_LIVE_GRACE = 90.0
 PLAYOUT_DOWN_AFTER = 3  # consecutive failed /health polls
+# A stalled playout: the remaining time of its heartbeats has not moved for
+# this many seconds of antenna.
+DEFAULT_STALL_SECONDS = 15.0
+# Then the level of /health is read again this long after the turn's reading:
+# the same to the last digit, the same sound airs in a loop.
+LEVEL_GAP_SECONDS = 1.0
+# An open stall holds this long through an antenna whose level moves, a jingle
+# or a cart that cuts the stalled queue: its end would be false good news.
+STALL_HOLD_SECONDS = 300.0
+# ADR 0009: set to false, a stalled playout opens no incident. A missing key
+# says it does.
+SETTING_STALL_ALERT = "features.stalled_playout_alert"
+SETTING_OFF = {"0", "false", "off", ""}
 # Disk almost full: less than this share of the disk free, and less than this
 # many gigabytes. Both, so that neither a small VPS nor a big disk alerts too
 # early. Once open, the incident waits for a tenth more room to resolve.
@@ -126,6 +155,9 @@ HEADLINES = {
     "silence": ("Silence à l'antenne", "Le son est revenu"),
     "playout_down": ("Le playout ne répond plus", "Le playout répond de nouveau"),
     "heartbeat": ("Battement de Liquidsoap perdu", "Battement de Liquidsoap retrouvé"),
+    # Not "the antenna advances again": the incident also ends when a long
+    # programme covers the stalled queue, or when the heartbeats stop.
+    "playout_stalled": ("L'antenne est figée", "L'antenne n'est plus figée"),
     "icecast_down": (
         "Le flux ne part plus vers Icecast",
         "Le flux repart vers Icecast",
@@ -244,6 +276,7 @@ class AlertSettings:
     interval: float = DEFAULT_INTERVAL
     silence_seconds: float = DEFAULT_SILENCE_SECONDS
     heartbeat_max_age: float = DEFAULT_HEARTBEAT_MAX_AGE
+    stall_seconds: float = DEFAULT_STALL_SECONDS
     cooldown: float = DEFAULT_COOLDOWN
     live_grace: float = DEFAULT_LIVE_GRACE
     disk_free_percent: float = DEFAULT_DISK_FREE_PERCENT
@@ -274,6 +307,7 @@ class AlertSettings:
             heartbeat_max_age=_float(
                 raw.get("heartbeat_max_age_seconds"), DEFAULT_HEARTBEAT_MAX_AGE
             ),
+            stall_seconds=_float(raw.get("stall_seconds"), DEFAULT_STALL_SECONDS),
             cooldown=_float(raw.get("cooldown_seconds"), DEFAULT_COOLDOWN),
             live_grace=_float(raw.get("live_grace_seconds"), DEFAULT_LIVE_GRACE),
             disk_free_percent=_float(
@@ -434,6 +468,16 @@ def live_slot_without_encoder(
     return None
 
 
+def stall_detail(stall: Stall, lasted: float) -> str:
+    """The detail of a stalled playout: the title that stopped, when the
+    heartbeats name it, and for how long."""
+    what = f"« {stall.title} »" if stall.title else "Le titre de la file"
+    return (
+        f"{what} n'avance plus depuis {duration_label(lasted)} :"
+        f" le même son passe en boucle (source {stall.source})"
+    )
+
+
 def disk_paths(data_root: Path | str) -> list[tuple[str, str]]:
     """The disks to watch: the sound bank, as ``/system/disk.json`` reads it,
     and the engine's data."""
@@ -497,6 +541,10 @@ class AlertMonitor:
         self.agenda_issues: list[str] = []
         # The disks to watch, with their label: none, unless the loop sets them.
         self.disk_paths: list[tuple[str, str]] = []
+        # A stalled playout: when its two signs last held together, and when
+        # the level was last seen to move while the remaining time stood.
+        self.stall_seen: float | None = None
+        self.stall_moved: float | None = None
         # Open incidents (and their Vikunja tasks) survive a scheduler restart
         # so the recovery closes the right task instead of leaving it open.
         self.state_path = state_path
@@ -559,11 +607,48 @@ class AlertMonitor:
 
     # -- evaluation ------------------------------------------------------------
 
+    def _stalled(
+        self, stall: Stall | None, level_still: bool | None
+    ) -> dict[str, Condition]:
+        """A stalled playout, once both its signs have held together: the
+        remaining time of a queue stands (``stall``), and so does the level of
+        the antenna (``level_still``; None, not read). Then it holds while the
+        remaining time stands, through a level that moves for a while: what
+        cuts the stalled queue, a jingle or a cart, is not its end."""
+        active: dict[str, Condition] = {}
+        clock = time()
+        if stall is None:
+            self.stall_seen = self.stall_moved = None
+            return active
+        if level_still:
+            self.stall_seen = clock
+        elif level_still is False:
+            self.stall_moved = clock
+        if self.stall_seen is None or clock - self.stall_seen > STALL_HOLD_SECONDS:
+            return active
+        # From when the remaining time last moved; or, when a cart or a live
+        # was on air over a title cut since, from the last level seen to move.
+        lasted = stall.seconds
+        if self.stall_moved is not None:
+            lasted = min(lasted, clock - self.stall_moved)
+        incident = self.open.get("playout_stalled")
+        since = lasted if incident is None else clock - incident.opened_at
+        active["playout_stalled"] = Condition(stall_detail(stall, since), lasted)
+        return active
+
+    def forget(self, kind: str) -> None:
+        """Drops an open incident without a word, when its watch is switched
+        off: a recovery never goes out for it."""
+        if self.open.pop(kind, None) is not None:
+            self.save_state()
+
     def evaluate(
         self,
         health: dict | None,
         heartbeat_age: float | None,
         now: datetime | None = None,
+        stall: Stall | None = None,
+        level_still: bool | None = None,
     ) -> dict[str, Condition]:
         """Return the conditions currently true, keyed by kind."""
         active: dict[str, Condition] = {}
@@ -609,6 +694,7 @@ class AlertMonitor:
             active["heartbeat"] = Condition(
                 f"Dernier battement Liquidsoap : {age}", heartbeat_age or 0.0
             )
+        active.update(self._stalled(stall, level_still))
         disk = disk_almost_full(
             self.disk_paths,
             self.settings.disk_free_percent,
@@ -624,9 +710,11 @@ class AlertMonitor:
         health: dict | None,
         heartbeat_age: float | None,
         now: datetime | None = None,
+        stall: Stall | None = None,
+        level_still: bool | None = None,
     ) -> list[str]:
         """Update incidents; returns the notifications emitted (for tests/logs)."""
-        active = self.evaluate(health, heartbeat_age, now)
+        active = self.evaluate(health, heartbeat_age, now, stall, level_still)
         now = time()
         before = set(self.open)
         # Without a target, an incident goes to the log only.
@@ -969,6 +1057,39 @@ async def load_agenda_issues(app) -> list[str]:
         return await agenda.agenda_issues(session, now_paris())
 
 
+async def stall_alert_on(app) -> bool:
+    """ADR 0009: whether a stalled playout opens an incident. A missing key
+    says it does, and so does a base that does not answer."""
+    from radiotomate.models import Setting
+
+    db = app.extensions.get("sqlalchemy")
+    if db is None:
+        return True
+    try:
+        async with db.session() as session:
+            row = await Setting.from_key(session, SETTING_STALL_ALERT)
+    except Exception:
+        _log.exception("alerts: cannot read %s, kept on", SETTING_STALL_ALERT)
+        return True
+    return row is None or str(row.value).strip().lower() not in SETTING_OFF
+
+
+async def read_stall(
+    app, settings: AlertSettings, health: dict | None
+) -> tuple[Stall | None, bool | None]:
+    """The two signs of a stalled playout. The heartbeats first: a queue whose
+    remaining time has not moved. Only then the level of the antenna, read
+    again a moment after the turn's ``health``: whether it stands still (None,
+    not read)."""
+    stall = stall_watch.stalled(
+        settings.stall_seconds, max_age=settings.heartbeat_max_age
+    )
+    if stall is None or health is None:
+        return stall, None
+    await or_shutdown(asyncio.sleep(LEVEL_GAP_SECONDS))
+    return stall, level_stands_still(health, await _poll_health(app))
+
+
 class ConfigWatch:
     """The ``alerts:`` block of ``radiotomate.yaml``, read again when the file
     changes: ``station config`` sets ntfy and the e-mail through
@@ -1073,7 +1194,18 @@ async def loop(app) -> None:
             except Exception:
                 _log.exception("alerts: cannot load agenda issues")
             health = await _poll_health(app)
-            await monitor.step(health, runtime_metrics.heartbeat_age())
+            stall, level_still = None, None
+            if await stall_alert_on(app):
+                stall, level_still = await read_stall(app, settings, health)
+            else:
+                # Switched off: nothing open survives, as for the whole watch.
+                monitor.forget("playout_stalled")
+            await monitor.step(
+                health,
+                runtime_metrics.heartbeat_age(),
+                stall=stall,
+                level_still=level_still,
+            )
         except (ShutdownError, asyncio.CancelledError):
             break
         except Exception:

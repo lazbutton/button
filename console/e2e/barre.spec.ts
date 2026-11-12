@@ -1,10 +1,10 @@
 import type { Page, Route } from "@playwright/test";
 import { DEFAULT_SOURCE_URL } from "../src/api/sourceCode.ts";
 import { withStation } from "../src/api/station.ts";
-import type { PublicStation } from "../src/api/types.ts";
+import type { AntenneIncident, AntenneState, PublicStation } from "../src/api/types.ts";
 import type { Brand } from "../src/lib/brand.ts";
 import { monitorSources, sourceById } from "../src/lib/monitorSource.ts";
-import { antenne, expect, seConnecter, tenirLAntenne, test } from "./banc.ts";
+import { alerte, antenne, expect, seConnecter, tenirLAntenne, test } from "./banc.ts";
 import { engineRoutes } from "./routes.ts";
 
 // La barre du haut, la même sur toutes les pages : ce qui passe, l'état de
@@ -95,6 +95,44 @@ test("la barre dit ce qui passe, et l’état de l’antenne s’ouvre en détai
   await enCours.click();
   await expect(page).toHaveURL(/\/antenne$/);
   await expect(antenne(page)).toBeVisible();
+});
+
+/** Un playout figé, comme le relevé du moteur le donne. */
+const FIGEE: AntenneIncident = {
+  kind: "playout_stalled",
+  detail: "« Dahlia » n'avance plus depuis 45 s : le même son passe en boucle (source autodj)",
+  since_s: 45,
+  notified: true,
+};
+
+test("une antenne figée : la barre et le pupitre disent quoi faire", async ({ page }) => {
+  // Le moteur de démo n'a pas d'incident : son relevé en reçoit un.
+  await page.route("**/antenne/state.json", async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    const reponse = await route.fetch();
+    const releve = (await reponse.json()) as AntenneState;
+    await route.fulfill({ response: reponse, json: { ...releve, incidents: [FIGEE] } });
+  });
+  await seConnecter(page, "animateur");
+
+  // La pastille le dit sur toutes les pages, sans tronquer son libellé.
+  const etat = barre(page).getByRole("button", { name: /^Antenne : / });
+  await expect(etat).toHaveAccessibleName("Antenne : Antenne figée. Santé : alerte, 1 incident ouvert.");
+  const libelle = etat.getByText("Antenne figée", { exact: true });
+  expect(await libelle.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+  // Au pupitre, le bandeau dit pourquoi « Suivant » ne sert à rien.
+  await expect(alerte(page, "Antenne figée")).toContainText(
+    "« Suivant » et « Vider les files » n’y changent rien : il faut relancer le moteur, sur la machine de la station.",
+  );
+
+  // Le détail de la pastille : le pilier Antenne, l'incident et le conseil.
+  await etat.click();
+  const detail = page.getByRole("dialog", { name: "État de l’antenne" });
+  const sante = detail.getByRole("list", { name: "Santé antenne" }).getByRole("listitem");
+  await expect(sante.filter({ hasText: "Antenne" })).toContainText("figée");
+  const incident = detail.getByRole("listitem").filter({ hasText: "Antenne figée" });
+  await expect(incident).toContainText("« Dahlia » n'avance plus depuis 45 s");
+  await expect(incident).toContainText("il faut relancer le moteur, sur la machine de la station.");
 });
 
 test("moteur injoignable : le titre en cours dit qu’il n’a plus de nouvelles, puis repart", async ({ page }) => {

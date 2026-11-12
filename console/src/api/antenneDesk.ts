@@ -2,6 +2,7 @@
  * Le pupitre (page Antenne) : raccourci Suivant, ancre à venir, alerte, temps.
  * Pur : pas de React, testable en node.
  */
+import { STALLED_ADVICE, STALLED_LABEL } from "./antenneState.ts";
 
 /** Deux appuis sur Espace plus rapprochés que ça ne passent qu'un titre. */
 export const SKIP_GUARD_MS = 1500;
@@ -104,7 +105,9 @@ export function deskAlert(
   const help =
     cause === "Sortie Icecast coupée"
       ? "Le moteur tourne, mais le flux public ne part plus vers les auditeurs."
-      : cause === "Battement perdu"
+      : cause === STALLED_LABEL
+        ? `Les auditeurs entendent le même son en boucle : le playout n’avance plus dans sa file. ${STALLED_ADVICE}`
+        : cause === "Battement perdu"
         ? "Le moteur ne reçoit plus de nouvelles du playout : l’antenne peut être figée."
         : "Le moteur ne joint plus le playout : l’antenne peut être coupée.";
   return { tone: "problem", title: cause, live: "", help };

@@ -20,6 +20,12 @@ export type Pillar = {
 export const SILENCE_WARN_S = 3;
 export const SILENCE_ALERT_S = 20;
 
+/** Le playout rejoue le même son : l'incident `playout_stalled` du moteur. */
+export const STALLED_LABEL = "Antenne figée";
+/** Ce qu'il faut faire : relevé sur le banc d'antenne, ni « Suivant » ni « Vider les files » ne relancent la file. */
+export const STALLED_ADVICE =
+  "« Suivant » et « Vider les files » n’y changent rien : il faut relancer le moteur, sur la machine de la station.";
+
 export type AirTone = "on" | "silence" | "direct" | "problem";
 
 function airCause(input: {
@@ -36,6 +42,8 @@ function airCause(input: {
     return "Playout injoignable";
   }
   if (input.incidentKinds.includes("heartbeat")) return "Battement perdu";
+  // Avant le silence : le son figé peut être un blanc, et le remède n'est pas le même.
+  if (input.incidentKinds.includes("playout_stalled")) return STALLED_LABEL;
   if (input.incidentKinds.includes("icecast_down")) return "Sortie Icecast coupée";
   const silence = input.silenceS ?? 0;
   if (silence >= SILENCE_WARN_S || input.incidentKinds.includes("silence")) {
@@ -100,6 +108,8 @@ export function incidentLabel(incident: AntenneIncident): string {
       return "Playout injoignable";
     case "heartbeat":
       return "Battement perdu";
+    case "playout_stalled":
+      return STALLED_LABEL;
     case "icecast_down":
       return "Sortie Icecast";
     case "live_absent":
@@ -111,6 +121,11 @@ export function incidentLabel(incident: AntenneIncident): string {
     default:
       return incident.kind;
   }
+}
+
+/** Ce qu'il faut faire d'un incident, quand la console le sait. Vide sinon. */
+export function incidentAdvice(incident: AntenneIncident): string {
+  return incident.kind === "playout_stalled" ? STALLED_ADVICE : "";
 }
 
 export function sourceLabelFr(source: string | undefined): string {
@@ -189,8 +204,18 @@ export function derivePillars(state: AntenneState | null, harborOnAir: boolean):
 
   // Antenne : silence et niveau
   let antenne: Pillar;
+  const stalled = incidents.find((incident) => incident.kind === "playout_stalled");
   if (!playout.reachable) {
     antenne = { key: "antenne", label: "Antenne", value: "playout ?", tone: "alert", detail: ["Liquidsoap /health injoignable."] };
+  } else if (stalled) {
+    // Le niveau est bon, et pourtant rien ne va : le même son passe en boucle.
+    antenne = {
+      key: "antenne",
+      label: "Antenne",
+      value: "figée",
+      tone: "alert",
+      detail: [stalled.detail, STALLED_ADVICE, `Source Liquidsoap : ${sourceLabelFr(playout.source)}`].filter(Boolean),
+    };
   } else {
     const silence = playout.silence_s ?? 0;
     const level = playout.rms_db != null ? `${Math.round(playout.rms_db)} dB` : "niveau ?";

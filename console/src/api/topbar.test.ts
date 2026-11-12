@@ -85,6 +85,27 @@ test("problems name their cause", () => {
   assert.equal(icecast.label, "Sortie Icecast coupée");
 });
 
+test("a stalled playout is named in the bar, on every page", () => {
+  const stalled = state({
+    incidents: [
+      { kind: "playout_stalled", detail: "« Titre » n'avance plus depuis 45 s : le même son passe en boucle (source autodj)", since_s: 45, notified: false },
+    ],
+  });
+  // Le libellé seul : un détail à côté le ferait tronquer. Ce qu'il faut faire est dans le panneau de la pastille.
+  assert.deepEqual(topAir({ live: playing, antenne: stalled, loading: false, unreachable: false }), {
+    tone: "alert",
+    label: "Antenne figée",
+    detail: "",
+  });
+  // Un direct a pris l'antenne : la barre le dit, et l'incident reste dans son panneau.
+  const live: LiveSnapshot = { ...playing, source: "stream", emission: { id: 2, title: "QG", artist: "", state: "on_air" } };
+  assert.equal(topAir({ live, antenne: stalled, loading: false, unreachable: false }).label, "Direct");
+  const health = topHealth(stalled, playing, NOW);
+  assert.equal(health.open, 1);
+  assert.equal(health.tone, "alert");
+  assert.equal(health.pillars.find((pillar) => pillar.key === "antenne")?.value, "figée");
+});
+
 test("before the first answer, loading or unreachable", () => {
   assert.equal(topAir({ live: null, antenne: null, loading: true, unreachable: false }).tone, "off");
   assert.deepEqual(topAir({ live: null, antenne: null, loading: false, unreachable: true }), {
