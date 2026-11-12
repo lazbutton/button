@@ -390,3 +390,92 @@ async def test_window_is_free_before_a_show_cancelled_in_the_agenda(
     result = _window(config_path, timezone)
     assert result.returncode == 0, result.stderr
     assert result.stdout.startswith("libre : "), result.stdout
+
+
+# --- The requests of the console (MAJ-07) ---
+
+
+def _updates(
+    config_path: Path, *args: str, stdin: str = ""
+) -> subprocess.CompletedProcess:
+    """``radiotomate maintenance updates …``, as station requests runs it."""
+    return subprocess.run(
+        ["radiotomate", "-c", str(config_path), "maintenance", "updates", *args],
+        input=stdin,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+HOST = {
+    "requests": "yes",
+    "command": "1.2.0",
+    "version": "1.2.0",
+    "repo": "lazbutton/button",
+    "hold": "",
+    "updates": [],
+}
+
+
+def test_updates_requests_through_the_command(config_path: Path):
+    import json
+
+    from radiotomate.services import updates as service
+
+    root = config_path.parent
+    # Nothing asked: the host says what it is, and hears nothing back.
+    result = _updates(config_path, "host", stdin=json.dumps(HOST))
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == ""
+    assert service.read_host(root)["version"] == "1.2.0"
+    assert _updates(config_path, "show").stdout == ""
+
+    # The button asks: the host reads its id and its state.
+    request = service.ask(root, "admin", "1.3.0", "1.2.0")
+    line = f"{request['id']} pending\n"
+    assert _updates(config_path, "show").stdout == line
+    assert _updates(config_path, "host", stdin=json.dumps(HOST)).stdout == line
+
+    # It waits for the antenna, then starts, then ends.
+    waited = _updates(
+        config_path, "wait", request["id"], stdin="QG, un direct, en cours"
+    )
+    assert waited.returncode == 0, waited.stderr
+    assert service.read_request(root)["waiting"] == "QG, un direct, en cours"
+    assert _updates(config_path, "start", request["id"]).returncode == 0
+    assert _updates(config_path, "start", request["id"]).returncode == 1
+    assert _updates(config_path, "show").stdout == f"{request['id']} running\n"
+    finished = _updates(
+        config_path,
+        "finish",
+        request["id"],
+        "done",
+        "--from",
+        "1.2.0",
+        "--to",
+        "1.3.0",
+        stdin="redémarrée et contrôlée en 18 s",
+    )
+    assert finished.returncode == 0, finished.stderr
+    assert _updates(config_path, "show").stdout == ""
+    last = service.read_last(root)
+    assert (last["result"], last["went_from"], last["went_to"]) == (
+        "done",
+        "1.2.0",
+        "1.3.0",
+    )
+    assert last["detail"] == "redémarrée et contrôlée en 18 s"
+    # Closed: nothing more to close.
+    again = _updates(config_path, "finish", request["id"], "failed")
+    assert again.returncode == 1
+    assert _updates(config_path, "wait", request["id"]).returncode == 1
+
+
+def test_updates_command_refuses_what_it_does_not_read(config_path: Path):
+    refused = _updates(config_path, "host", stdin="{pas du JSON")
+    assert refused.returncode == 1
+    assert "l'état de la machine ne se lit pas" in refused.stderr
+    assert _updates(config_path, "host", stdin="[1]").returncode == 1
+    unknown = _updates(config_path, "finish", "0123456789ab", "réussie")
+    assert unknown.returncode == 2

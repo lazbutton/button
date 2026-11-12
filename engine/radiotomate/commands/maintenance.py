@@ -10,6 +10,9 @@ print: in French, like the rest of its output.
 * ``next-live``: the next live, as the Antenne page of the console shows it.
 * ``window``: whether an update may start now, with no live, named slot or dated
   broadcast of the Agenda on air or starting within ``WINDOW_MINUTES``.
+* ``updates …``: the requests of the console's page « Mises à jour » (MAJ-07),
+  which ``station requests`` reads and closes, and what the host tells of itself:
+  ``radiotomate.services.updates``.
 """
 
 from __future__ import annotations
@@ -230,3 +233,122 @@ def window(config):
         return
     click.echo(f"occupée : {blocker}")
     raise SystemExit(1)
+
+
+# --- The requests of the console (MAJ-07) ---
+
+# What the host sends on the standard input, at most: its state, or a text.
+STDIN_LIMIT = 64 * 1024
+
+
+def _data_root(config):
+    from pathlib import Path
+
+    return Path(config["data"]["root"])
+
+
+def _stdin_text() -> str:
+    return click.get_binary_stream("stdin").read(STDIN_LIMIT).decode("utf-8", "replace")
+
+
+def _say_request(request: dict | None) -> None:
+    """The open request, for the station command: its id and its state, on one
+    line; nothing when none is open."""
+    if request is not None:
+        click.echo(f"{request['id']} {request['state']}")
+
+
+@maintenance.group()
+def updates():
+    """
+    The requests of the console's page « Mises à jour », for the station command
+    """
+
+
+@updates.command("host")
+@click.pass_obj
+def updates_host(config):
+    """
+    What the host says, in JSON on the standard input: kept, then the open request
+    """
+    import json
+
+    from radiotomate.services import updates as service
+
+    try:
+        raw = json.loads(_stdin_text())
+    except ValueError as error:
+        raise click.ClickException(
+            f"l'état de la machine ne se lit pas : {error}"
+        ) from None
+    if not isinstance(raw, dict):
+        raise click.ClickException("l'état de la machine n'est pas un objet JSON")
+    _say_request(service.record_host(_data_root(config), raw))
+
+
+@updates.command("show")
+@click.pass_obj
+def updates_show(config):
+    """
+    The open request: its id and its state, or nothing
+    """
+    from radiotomate.services import updates as service
+
+    _say_request(service.read_request(_data_root(config)))
+
+
+@updates.command("wait")
+@click.argument("request_id")
+@click.pass_obj
+def updates_wait(config, request_id):
+    """
+    The request waits, for the reason on the standard input (exit 1: not open)
+    """
+    from radiotomate.services import updates as service
+
+    if not service.wait(_data_root(config), request_id, _stdin_text()):
+        raise SystemExit(1)
+
+
+@updates.command("start")
+@click.argument("request_id")
+@click.pass_obj
+def updates_start(config, request_id):
+    """
+    The update starts (exit 1: the request is no longer pending)
+    """
+    from radiotomate.services import updates as service
+
+    if not service.start(_data_root(config), request_id):
+        raise SystemExit(1)
+
+
+@updates.command("finish")
+@click.argument("request_id")
+@click.argument(
+    "result",
+    type=click.Choice(
+        [
+            "done",
+            "rolled_back",
+            "failed",
+            "refused",
+            "up_to_date",
+            "withdrawn",
+            "interrupted",
+        ]
+    ),
+)
+@click.option("--from", "went_from", default=None, help="The version of before")
+@click.option("--to", "went_to", default=None, help="The version of after")
+@click.pass_obj
+def updates_finish(config, request_id, result, went_from, went_to):
+    """
+    The request closed, with what to know on the standard input (exit 1: not open)
+    """
+    from radiotomate.services import updates as service
+
+    if not service.finish(
+        _data_root(config), request_id, result, _stdin_text(), (went_from, went_to)
+    ):
+        raise SystemExit(1)
