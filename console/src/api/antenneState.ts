@@ -104,6 +104,8 @@ export function incidentLabel(incident: AntenneIncident): string {
       return "Sortie Icecast";
     case "live_absent":
       return "Direct sans encodeur";
+    case "agenda":
+      return "Diffusion de l’Agenda";
     case "disk":
       return "Disque presque plein";
     default:
