@@ -10,7 +10,7 @@ Ce qui reste à faire, rangé par priorité. Chaque tâche est une **fiche** : a
 
 ## Où on en est
 
-Relevé le 12 novembre 2026, sur `main` après la PR 146. La dernière version publiée est la 0.2.0, du 10 novembre. P1 a 24 fiches faites sur 29, P2 cinq sur 52. La personne qui fusionne tient cette partie à jour, comme les tableaux.
+Relevé le 12 novembre 2026, sur `main` après la PR 146. La dernière version publiée est la 0.2.0, du 10 novembre. P1 a 24 fiches faites sur 29, P2 cinq sur 53. La personne qui fusionne tient cette partie à jour, comme les tableaux.
 
 **D'abord** :
 
@@ -25,7 +25,7 @@ Relevé le 12 novembre 2026, sur `main` après la PR 146. La dernière version p
 - l'antenne, une fiche à la fois sur un même fichier : FON-17 puis FON-18 sur le pupitre (`desk.py`) ; FON-33 et FON-35 à FON-38 sur `clock.py` ; FON-19 et FON-32 sur `execution.py`. FON-14 et FON-39 viennent de changer ces trois fichiers : rejouer chaque défaut avant de coder ;
 - les bacs et la banque : FON-21, FON-31, et FON-20 et FON-40, ces deux-là l'une après l'autre, sur le script du pont Dropbox ;
 - les fiches de la bibliothèque : FON-23 puis FON-24, et ARC-06 à côté. FON-25 à FON-30 les suivent ;
-- sans ordre, chacune avec ses conflits : FON-34, qui partage `alerts.py` avec SUR-01, TST-04, TST-05, TST-07, TST-08 puis TST-09, TST-10 après MAJ-05, DEV-01 à DEV-04, PUB-02, LEG-03, GEN-04, SEC-08, SEC-10, ARC-01, et MAJ-08, que MAJ-04 ne retient plus.
+- sans ordre, chacune avec ses conflits : FON-34, qui partage `alerts.py` avec SUR-01, TST-04, TST-05, TST-07 et FON-41, qui touchent le même parcours, TST-08 puis TST-09, TST-10 après MAJ-05, DEV-01 à DEV-04, PUB-02, LEG-03, GEN-04, SEC-08, SEC-10, ARC-01, et MAJ-08, que MAJ-04 ne retient plus.
 
 Le reste de P2 attend P1 : MAJ-06 et SUR-03 écrivent dans la commande `station`, MAJ-07 suit MAJ-06, SUR-02 suit SUR-01, et SEC-09 relit le tout.
 
