@@ -148,6 +148,16 @@ services:
       # Les mounts d'Icecast : le flux public et le casque WAV de la console.
       ICECAST_MOUNT: ${ICECAST_MOUNT:-radio.mp3}
       ICECAST_MONITOR_MOUNT: ${ICECAST_MONITOR_MOUNT:-studio.wav}
+      # Les alertes sur un téléphone et par e-mail, que station config règle :
+      # le script les écrit dans radiotomate.yaml, que le scheduler relit seul.
+      DOMAIN: ${DOMAIN:-}
+      BUTTON_ALERT_NTFY: ${BUTTON_ALERT_NTFY:-}
+      BUTTON_ALERT_NTFY_TOKEN: ${BUTTON_ALERT_NTFY_TOKEN:-}
+      BUTTON_ALERT_EMAIL: ${BUTTON_ALERT_EMAIL:-}
+      BUTTON_ALERT_FROM: ${BUTTON_ALERT_FROM:-}
+      BUTTON_ALERT_SMTP: ${BUTTON_ALERT_SMTP:-}
+      BUTTON_ALERT_SMTP_USER: ${BUTTON_ALERT_SMTP_USER:-}
+      BUTTON_ALERT_SMTP_PASSWORD: ${BUTTON_ALERT_SMTP_PASSWORD:-}
     volumes:
       - ${RT_DATA:-./data/radiotomate}:/data
       - ${BUTTON_MEDIA:-./media}:/media
