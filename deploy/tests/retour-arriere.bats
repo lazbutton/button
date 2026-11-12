@@ -385,6 +385,17 @@ EOF
   [ ! -e "$DIR/HOLD" ]
 }
 
+@test "le script n'a aucun return nu : sous le bash 5.2 des stations, cleanup en rendrait le code qui l'a lancé" {
+  # Dans le piège EXIT, bash 5.2, celui de Debian 12 et 13 et d'Ubuntu 24.04,
+  # fait rendre à un return sans code celui de la commande qui a déclenché la
+  # sortie, et non celui de la dernière commande de la fonction : env_set
+  # échouait, et le retour arrière avec lui. bash 5.3, celui de l'image de
+  # bats, ne le fait plus : seul ce relevé le voit ici.
+  run grep -nE '(^|[;&|[:space:]])return[[:space:]]*($|;|\)|\}|#)' "$STATION"
+  assert_failure 1
+  assert_output ""
+}
+
 # --- station rollback ---
 
 @test "rollback défait la dernière mise à jour, et bloque les suivantes" {

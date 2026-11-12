@@ -100,6 +100,7 @@ C'est un seul fichier, sans extension, celui de la commande posée dans `/usr/lo
 
 ## Pièges
 
+- Dans `deploy/station`, jamais de `return` sans code. Dans le piège EXIT, bash 5.2, celui de Debian 12 et 13 et d'Ubuntu 24.04, lui fait rendre le code de la commande qui a déclenché la sortie : une fonction appelée par `cleanup` y échoue alors sans rien dire, comme le retour arrière de MAJ-05 l'a fait dans la CI. bash 5.3, celui de l'image de bats, ne le fait plus : `retour-arriere.bats` relève donc tout `return` nu du script. Écrire `return 0`, ou `return $?`.
 - Une station installée par `station install` n'a pas les sources : son `compose.yml` n'a pas de sections `build:`. Une image qui manque y fait échouer `docker compose`.
 - Une station peut avoir encore Compose v2. Il évalue tout ce qu'un `${…}` contient, même la branche qui ne sert pas : un `:?` dans un `:-`, un `:+` ou un `:?` arrête toujours `docker compose`, sur son message. Compose 5, celui de `ubuntu-latest` dans la CI, ne l'évalue que s'il sert. Un garde qui arrête Compose sous condition passe donc par un champ typé, comme `x-rt-tag`. `services/catalog/test_compose.py` lit `compose.yml` avec le Compose de la machine, puis avec un Compose v2, dans la CI comme dans `verifier.sh services`.
 
