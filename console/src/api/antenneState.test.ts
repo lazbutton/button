@@ -81,6 +81,14 @@ test("harbor on air and EF-01 window without encoder", () => {
   assert.match(direct?.value ?? "", /encodeur absent/);
 });
 
+test("no live within the week, the weekly shows declared or not", () => {
+  // The engine also says null when the week's shows are cancelled in the Agenda.
+  const direct = derivePillars(state({ next_live_slot: null }), false).find((p) => p.key === "direct");
+  assert.equal(direct?.value, "aucun prévu");
+  assert.equal(direct?.tone, "off");
+  assert.deepEqual(direct?.detail, ["Aucun direct prévu d’ici 7 jours."]);
+});
+
 test("air banner is the same story for every role", () => {
   assert.deepEqual(
     airBanner({

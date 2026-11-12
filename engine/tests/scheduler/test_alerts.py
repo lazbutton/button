@@ -1,11 +1,17 @@
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import httpx
+from sqlalchemy.orm import Session as ormSession
 
+from radiotomate.domain.agenda import utc_naive
+from radiotomate.domain.emission import now_paris
+from radiotomate.models import AgendaDiffusion, Emission
+from radiotomate.quart import CustomQuart
 from radiotomate.scheduler import alerts, metrics
+from radiotomate.services import agenda
 
 PARIS = ZoneInfo("Europe/Paris")
 
@@ -189,6 +195,57 @@ def test_ef01_playout_down_does_not_double_report():
     assert (
         alerts.live_slot_without_encoder([slot], None, _paris(2, 20, 10), 90.0) is None
     )
+
+
+async def test_live_slots_skip_what_the_agenda_cancels_or_replaces(
+    container_tz: str, raw_app: CustomQuart, dbsession: ormSession
+):
+    today = now_paris().date()
+    tomorrow = today + timedelta(days=1)
+    next_week = today + timedelta(days=7)
+    qg = Emission(
+        scope="weekly",
+        title="QG",
+        artist="avec l'équipe",
+        day_of_week=today.weekday(),
+        start_minute=20 * 60,
+        end_minute=22 * 60,
+    )
+    matinale = Emission(
+        scope="weekly",
+        title="Matinale",
+        artist="avec l'équipe",
+        day_of_week=tomorrow.weekday(),
+        start_minute=8 * 60,
+        end_minute=9 * 60,
+    )
+    dbsession.add_all([qg, matinale])
+    await dbsession.flush()
+    # Tonight, a dated set of the Agenda takes the place of QG; next week, a
+    # dated live.
+    for day, kind, title in (
+        (today, "set", "Set invité"),
+        (next_week, "live", "Direct spécial"),
+    ):
+        start = datetime.combine(day, time(20, 30), tzinfo=PARIS)
+        dbsession.add(
+            AgendaDiffusion(
+                kind=kind,
+                title=title,
+                starts_at=utc_naive(start),
+                ends_at=utc_naive(start + timedelta(hours=1)),
+            )
+        )
+    # Tomorrow's Matinale is cancelled.
+    cancel = {"emission_id": matinale.id, "date": tomorrow.isoformat()}
+    await agenda.add_exception(dbsession, cancel)
+    await dbsession.commit()
+    slots = {slot.title: slot for slot in await alerts.load_live_slots(raw_app)}
+    assert slots["QG"].skip_dates == {today, next_week}
+    assert slots["Matinale"].skip_dates == {tomorrow}
+    # The live that replaces QG next week is read, whatever the hour.
+    assert isinstance(slots["Direct spécial"], alerts.DatedLiveSlot)
+    assert set(slots) == {"QG", "Matinale", "Direct spécial"}
 
 
 async def test_icecast_output_down_opens_and_resolves():
