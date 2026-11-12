@@ -5423,16 +5423,20 @@ cmd_requests() {
     [[ -f $from ]] || usage_error "--from : $from n'existe pas."
   fi
   open_station requests "${opts[--dir]:-}"
-  if ! requests_on; then
-    say "Les demandes de la console sont coupées : BUTTON_CONSOLE_REQUESTS=no, dans $env_file. Les rallumer : $(self_command) config --console-requests yes."
-    return 0
-  fi
   # Un seul passage à la fois, celui du minuteur ou un lancé à la main : le
   # second s'en va.
   mkdir -p "${REQUESTS_LOCK%/*}"
   exec 8>>"$REQUESTS_LOCK"
   if ! flock -n 8; then
-    ! terminal || say "Les demandes de la console sont déjà prises, par un autre passage."
+    by_timer || say "Les demandes de la console sont déjà prises, par un autre passage."
+    return 0
+  fi
+  if ! requests_on; then
+    # Coupées dans .env sans station config, le minuteur tourne encore : le
+    # moteur l'apprend, une fois, et refuse une demande qui attendait.
+    requests_sync
+    by_timer ||
+      say "Les demandes de la console sont coupées : BUTTON_CONSOLE_REQUESTS=no, dans $env_file. Les rallumer : $(self_command) config --console-requests yes."
     return 0
   fi
   # Docker arrêté, ou le moteur : chaque docker compose exec échoue, et le
@@ -5441,7 +5445,7 @@ cmd_requests() {
   requests_sync
   if [[ -z $pushed ]]; then
     if [[ ! -e $data/updates/request.json && ! -f $dir/$REQUEST_MARK ]]; then
-      ! terminal || say "Aucune demande de la console n'attend."
+      by_timer || say "Aucune demande de la console n'attend."
       return 0
     fi
     requests_show || return 0
@@ -5449,7 +5453,7 @@ cmd_requests() {
   if [[ -z $request_id ]]; then
     # Une marque sans demande : le moteur a déjà le résultat.
     rm -f "$dir/$REQUEST_MARK"
-    ! terminal || say "Aucune demande de la console n'attend."
+    by_timer || say "Aucune demande de la console n'attend."
     return 0
   fi
   case $request_state in
@@ -5459,6 +5463,12 @@ cmd_requests() {
   # Le moteur sait tout de suite ce que la mise à jour a changé : updates.log,
   # HOLD, la version.
   requests_sync force
+}
+
+# Lancée par son minuteur, sous systemd, qui pose INVOCATION_ID : rien au
+# journal, chaque minute, quand rien n'attend. sudo ne le passe pas.
+by_timer() {
+  [[ -n ${INVOCATION_ID:-} ]]
 }
 
 # Les demandes de la console se prennent, sauf BUTTON_CONSOLE_REQUESTS=no.

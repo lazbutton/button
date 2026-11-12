@@ -90,10 +90,15 @@ last_update() {
 
 @test "sans demande, un passage ne dit au moteur que ce qui change, ou au bout d'une heure" {
   installed
-  station requests
+  # Par le minuteur, sous systemd : rien au journal.
+  run env INVOCATION_ID=essai bash "$STATION" requests
   assert_success
   assert_output ""
   [ "$(engine_calls host)" = 1 ]
+  # À la main, la commande le dit.
+  station requests
+  assert_success
+  assert_output "Aucune demande de la console n'attend."
   host_said | grep -qF '"requests":"yes","command":"0.1.0","version":"0.1.0","repo":"lazbutton/button","hold":"","updates":[]'
   host_said | grep -qF '"nightly":"auto","time":"04:00","zone":"Europe/Paris"'
   # Rien de neuf : rien ne part au moteur, pas même une question.
@@ -279,7 +284,7 @@ last_update() {
   installed
   touch "$FAKE_STATE/updates-unknown"
   console_asks
-  station requests
+  run env INVOCATION_ID=essai bash "$STATION" requests
   assert_success
   assert_output ""
   [ "$(env_of BUTTON_VERSION)" = 0.1.0 ]
@@ -301,6 +306,8 @@ last_update() {
   assert_success
   assert_output --partial "Les demandes de la console sont coupées : BUTTON_CONSOLE_REQUESTS=no"
   [ "$(env_of BUTTON_VERSION)" = 0.1.0 ]
+  run env INVOCATION_ID=essai bash "$STATION" requests
+  assert_output ""
   station config
   assert_output --partial "Demandes de la console : coupées (station config --console-requests yes les rallume)"
   station status
@@ -313,6 +320,19 @@ last_update() {
   station config --console-requests oui
   assert_failure 2
   assert_output --partial "--console-requests « oui » : yes ou no."
+}
+
+@test "coupées à la main dans .env : le minuteur le dit au moteur, une fois, sans rien au journal" {
+  installed
+  station requests
+  echo "BUTTON_CONSOLE_REQUESTS=no" >>"$DIR/.env"
+  run env INVOCATION_ID=essai bash "$STATION" requests
+  assert_success
+  assert_output ""
+  host_said | grep -qF '"requests":"no"'
+  [ "$(engine_calls host)" = 2 ]
+  run env INVOCATION_ID=essai bash "$STATION" requests
+  [ "$(engine_calls host)" = 2 ]
 }
 
 @test "status dit les demandes, et un minuteur qui ne tourne pas" {
