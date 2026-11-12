@@ -54,6 +54,10 @@ _SENT_REMOVE = (
 )
 _SENT_MOVE = "Cette ligne est déjà partie vers l'antenne : elle ne se déplace plus."
 _SENT_EDIT = "Cette ligne est déjà partie vers l'antenne : elle ne se modifie plus."
+_MOVED_REMOVE = (
+    "La file a changé entre-temps : cette ligne n'est plus prévue à cette heure. "
+    "Réessaie."
+)
 # A sent line still not on air an hour after its time will not air: the queue
 # cleaner takes out of Liquidsoap what waits there longer than ten minutes, by
 # default (``queue_cleaner.max_age_seconds``).
@@ -119,8 +123,9 @@ def merge_desk_into_items(
     forecast: list[dict],
     desk_payloads: list[dict],
 ) -> list[dict]:
-    # A removal hides the clock rows it found at its time, by id: a row that a
-    # reorder later puts at that time stays shown. Without ids, by time.
+    # A removal hides the clock rows it noted, by id: the line it names, or from an
+    # older console every one it found at its time. A row that a reorder later
+    # puts at that time stays shown. Without ids, by time.
     hidden_ids: set[str] = set()
     hidden_at: set[str] = set()
     for row in desk_payloads:
@@ -412,20 +417,30 @@ async def _planned_at_for_insert(
     return floor
 
 
-async def _clock_row_ids_at(session: ormSession, at: datetime) -> list[str]:
-    """Ids of the clock rows planned at that very time: those a removal hides. A row
-    already sent to the playout would air anyway: the removal is refused."""
-    rows = list(
-        await session.scalars(
-            select(RundownItem).where(
-                RundownItem.planned_at == at,
-                RundownItem.origin != DESK_ORIGIN,
-                RundownItem.when_mode != WhenMode.ANCHORED.value,
-            )
-        )
+async def _clock_row_ids_at(
+    session: ormSession, at: datetime, row_id: str | None = None
+) -> list[str]:
+    """Ids of the clock rows planned at that very time: those a removal hides.
+
+    A recent console names the line removed (``row_id``, from ``suppress_id`` or
+    ``replace_id``): the removal hides it alone, as two clock rows can share a
+    time to the microsecond after reorders. If it names no clock row planned at
+    that time, the file changed in the meantime: the removal is refused. Without a
+    name, from an older console, every clock row at that time. A row already
+    sent to the playout would air anyway: the removal is refused.
+    """
+    query = select(RundownItem).where(
+        RundownItem.planned_at == at,
+        RundownItem.origin != DESK_ORIGIN,
+        RundownItem.when_mode != WhenMode.ANCHORED.value,
     )
+    if row_id is not None:
+        query = query.where(RundownItem.id == row_id)
+    rows = list(await session.scalars(query))
     if any(item_is_sent(row) for row in rows):
         raise DomainConflict(_SENT_REMOVE)
+    if row_id is not None and not rows:
+        raise DomainConflict(_MOVED_REMOVE)
     return [row.id for row in rows]
 
 
@@ -468,7 +483,8 @@ async def insert_desk_item(
     it follows it to the antenna like any line sent."""
     suppress_at = str(data.get("suppress_at") or "").strip()
     if suppress_at:
-        return await _insert_suppress(session, suppress_at)
+        suppress_id = str(data.get("suppress_id") or "").strip() or None
+        return await _insert_suppress(session, suppress_at, suppress_id)
 
     path, kind, artist, title, duration = read_desk_pin(data)
     sound = await Sound.from_media_path(session, path)
@@ -490,7 +506,11 @@ async def insert_desk_item(
     }
     if replace_at:
         details["hides_at"] = replace_at
-        details["hides_ids"] = await _clock_row_ids_at(session, planned_at)
+        details["hides_ids"] = await _clock_row_ids_at(
+            session,
+            planned_at,
+            str(data.get("replace_id") or "").strip() or None,
+        )
     item = RundownItem(
         id=str(uuid4()),
         programming_version_id=version.id,
@@ -519,7 +539,9 @@ async def insert_desk_item(
     return item
 
 
-async def _insert_suppress(session: ormSession, at: str) -> RundownItem:
+async def _insert_suppress(
+    session: ormSession, at: str, row_id: str | None
+) -> RundownItem:
     planned_at = _parse_iso(at)
     version = await ensure_programming_version(session)
     item = RundownItem(
@@ -535,7 +557,7 @@ async def _insert_suppress(session: ormSession, at: str) -> RundownItem:
         path=None,
         details={
             "suppress_at": at,
-            "hides_ids": await _clock_row_ids_at(session, planned_at),
+            "hides_ids": await _clock_row_ids_at(session, planned_at, row_id),
         },
         status=RundownStatus.PLANNED.value,
         origin=DESK_ORIGIN,
