@@ -137,7 +137,7 @@ Le scheduler surveille l’antenne (`scheduler/alerts.py`) : silence, playout in
 
 `radiotomate interface --port` et `radiotomate scheduler --port` changent le port d’écoute, 6811 et 6822 par défaut. En démo, l’interface tient lieu de scheduler sur son propre port : deux bancs tournent sur une machine.
 
-`radiotomate maintenance` regroupe les commandes d’exploitation d’une station, que lance la commande `station` (`commands/maintenance.py`). `maintenance next-live` dit le prochain direct, une émission hebdomadaire ou un direct de l’Agenda, comme la page Antenne de la console : `station status` l’affiche. Une émission hebdomadaire n’y compte pas un jour où l’Agenda l’annule, ou la remplace par une diffusion datée : le calcul passe à la suivante.
+`radiotomate maintenance` regroupe les commandes d’exploitation d’une station, que lance la commande `station` (`commands/maintenance.py`). `maintenance updates` tient les demandes de la page **Réglages → Mises à jour** (MAJ-07), que `station requests` lit, fait attendre, lance et ferme : `host`, `show`, `wait`, `start` et `finish`, sur les fichiers de `RT_DATA/updates/` (`services/updates.py`). Les routes `GET /system/updates.json` et `POST`, `DELETE /system/updates/request.json` les montrent à la console, avec les versions publiées, lues sur GitHub. `maintenance next-live` dit le prochain direct, une émission hebdomadaire ou un direct de l’Agenda, comme la page Antenne de la console : `station status` l’affiche. Une émission hebdomadaire n’y compte pas un jour où l’Agenda l’annule, ou la remplace par une diffusion datée : le calcul passe à la suivante.
 
 `beets/compat.py` corrige l’import de Beets 2.5 sous Python 3.14 : l’ioctl de taille de terminal demandait 4 octets, le noyau en écrit 8.
 

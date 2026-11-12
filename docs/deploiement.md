@@ -110,8 +110,9 @@ Une fois installée, la station s'exploite par la même commande, en root : `sud
 | `logs [service]` | les journaux, les 200 dernières lignes. `-f` les suit |
 | `backup [archive]` | une sauvegarde, sans couper l'antenne. `--with-media` y met la banque de sons. `--remote` l'envoie hors de la machine, chiffrée, comme chaque nuit |
 | `restore <archive>` | remettre une sauvegarde, sur la même machine ou sur une autre. `--without-media` garde la banque de sons en place. `--remote` la prend hors de la machine ; `--remote --list` montre les sauvegardes du dépôt, `--remote --test` en vérifie une |
-| `config` | voir ou changer le domaine, l'e-mail du compte Let's Encrypt, les mises à jour et leur heure, la sauvegarde hors de la machine, et les alertes |
+| `config` | voir ou changer le domaine, l'e-mail du compte Let's Encrypt, les mises à jour et leur heure, la sauvegarde hors de la machine, les alertes, et les demandes de la console |
 | `hold [raison]`, `unhold` | bloquer, puis débloquer les mises à jour |
+| `requests` | prendre les demandes de la console, comme « Mettre à jour maintenant » : un minuteur le fait chaque minute. Voir [depuis la console](#depuis-la-console) |
 | `cli <commande>` | une commande du moteur, par exemple `station cli users add studio --admin` |
 | `uninstall` | désinstaller, en gardant les données |
 
@@ -128,9 +129,9 @@ Sauvegarder et restaurer : voir [`exploitation/sauvegarde.md`](exploitation/sauv
 - les adresses publiques de **Réglages → Station** qui suivaient l'ancien domaine passent au nouveau. Celles qu'un admin a changées restent ;
 - les encodeurs du direct se branchent ensuite sur le nouveau domaine.
 
-**Les mises à jour.** `station update` les fait, à la main : voir [mettre à jour](#avec-la-commande-station). Réglées en automatique, le défaut, elles se feront seules quand la commande saura se lancer seule. `station config --updates manual` les passe à la main, `--update-time 03:30` change leur heure, à celle de la station, 04:00 par défaut. `station hold la grille de Noël` les bloque : elle pose le fichier `HOLD` dans le dossier de la station, avec la date et la raison. `station unhold` le retire. Un retour arrière le pose aussi : voir [revenir en arrière](#revenir-en-arrière).
+**Les mises à jour.** `station update` les fait, à la main : voir [mettre à jour](#avec-la-commande-station). Un admin les lance aussi d'un bouton, dans la console : voir [depuis la console](#depuis-la-console). Réglées en automatique, le défaut, elles se feront seules quand la commande saura se lancer seule. `station config --updates manual` les passe à la main, `--update-time 03:30` change leur heure, à celle de la station, 04:00 par défaut. `station hold la grille de Noël` les bloque : elle pose le fichier `HOLD` dans le dossier de la station, avec la date et la raison. `station unhold` le retire. Un retour arrière le pose aussi : voir [revenir en arrière](#revenir-en-arrière).
 
-**Désinstaller.** `sudo station uninstall` arrête la station, et retire ses conteneurs, ses images, les fichiers de sa version, la commande `station` et les minuteurs de la sauvegarde hors de la machine. Restent `.env`, `data/`, `media/` et `backups/` : le script d'une version publiée, `sudo bash station install`, reprend la même station, minuteurs compris. `sudo station uninstall --purge` efface tout le dossier, données et sauvegardes comprises, une fois le mot `effacer` tapé. Ce qui vit hors du dossier, comme une banque de sons ailleurs (`BUTTON_MEDIA`), reste, et la commande le dit. Docker reste installé, avec le jeton du registre s'il y en a un : `docker logout ghcr.io` le retire.
+**Désinstaller.** `sudo station uninstall` arrête la station, et retire ses conteneurs, ses images, les fichiers de sa version, la commande `station`, les minuteurs de la sauvegarde hors de la machine et celui des demandes de la console. Restent `.env`, `data/`, `media/` et `backups/` : le script d'une version publiée, `sudo bash station install`, reprend la même station, minuteurs compris. `sudo station uninstall --purge` efface tout le dossier, données et sauvegardes comprises, une fois le mot `effacer` tapé. Ce qui vit hors du dossier, comme une banque de sons ailleurs (`BUTTON_MEDIA`), reste, et la commande le dit. Docker reste installé, avec le jeton du registre s'il y en a un : `docker logout ghcr.io` le retire.
 
 ## Installer
 
@@ -404,6 +405,25 @@ La version de chaque service, d'après ses images, est relevée après chaque in
 curl -fsSLO https://github.com/lazbutton/button/releases/latest/download/station
 sudo bash station update
 ```
+
+### Depuis la console
+
+Un admin met la station à jour d'un bouton : **Réglages → Mises à jour**, « Mettre à jour maintenant ». La page dit la version de la station et la plus haute publiée, les notes de chaque version entre les deux, la demande en cours et la dernière, les dernières lignes de `updates.log`, et `HOLD` s'il bloque. Les autres rôles ne la voient pas.
+
+La console ne touche jamais la machine ([décision 0004](decisions/0004-la-console-ne-pilote-jamais-docker.md)). Le bouton écrit une demande dans le moteur. Chaque minute, un minuteur de systemd, `button-demandes`, lance `station requests` : la commande lit la demande par `docker compose exec`, lance `station update --yes`, comme une personne, puis écrit le résultat par le même chemin, d'après `updates.log`. La mise à jour est la même qu'à la main : la plus haute version publiée, une sauvegarde d'abord, le retour seul à la version d'avant si elle ne repart pas.
+
+- **Elle attend** un direct ou une diffusion de l'Agenda à l'antenne, ou qui commence dans les 30 minutes, comme `station update`, et une autre commande `station`, comme la sauvegarde de la nuit. La page dit pourquoi, avec les mots du moteur, et la machine réessaie chaque minute. Rien ne force la mise à jour depuis la console. Une demande qui attend se retire.
+- **Elle ne part pas** quand `HOLD` bloque les mises à jour : la page montre sa raison, et le bouton laisse place à la commande qui le lève, `sudo station unhold`, sur la machine. Une version majeure non plus : la page cite son paragraphe « Mise en service », puis, l'action faite, `sudo station update --major` la prend, sur la machine. Une majeure parue entre le clic et la minute de la machine fait refuser la demande.
+- **Arrêtée par l'antenne une fois sa sauvegarde faite**, elle attend une heure au moins avant de repartir, et ne fait de place dans `backups/` qu'une fois faite : sinon, chaque tentative referait une sauvegarde, et effacerait les plus anciennes.
+- **Pendant la mise à jour**, la console perd le contact avec le moteur, le temps qu'il redémarre : la page le dit, puis montre le résultat à son retour. Si la station a changé de version, elle propose de recharger la page, pour prendre la console nouvelle.
+- **Le résultat** : faite ; annulée, quand la station est revenue seule à la version d'avant, et `HOLD` bloque alors les suivantes ; échouée ; refusée par la machine ; rien à faire ; retirée de la console ; ou interrompue, quand la machine s'est arrêtée en route sans rien noter. Une machine qui s'arrête en pleine mise à jour le fait dire à la console au passage suivant du minuteur, d'après `updates.log`. Arrêtée par systemd, le service laisse au retour arrière le temps de finir.
+- **Une demande ouverte se refuse** quand la station est remise d'une sauvegarde, désinstallée, ou réinstallée : elle ne repart pas seule, des jours après.
+
+La machine dit aussi au moteur ce que la page montre d'elle : `HOLD`, les dernières lignes de `updates.log`, sa version, et si elle prend les demandes. Elle le dit quand cela change, et au moins une fois l'heure : une machine muette depuis deux heures, et la page le dit, au lieu du bouton. Quand rien n'attend et que le moteur répond, le minuteur ne fait que regarder si le moteur a écrit une demande, sans rien lui demander : pas de `docker compose exec` chaque minute. Un moteur arrêté, la machine le lui redit chaque minute, jusqu'à son retour.
+
+`sudo station config --console-requests no` coupe les demandes de la console : elles ne partent plus, la page le dit, et une demande qui attendait est refusée. Le minuteur ne fait plus que le dire au moteur, et finir une mise à jour qu'il avait lancée. `--console-requests yes` les rallume. `sudo station requests` prend une demande tout de suite, sans attendre la minute ; avec `--from station.tar.gz`, pour un essai, il met à jour depuis une archive, comme `station update --from`.
+
+Le bouton ne vaut qu'à partir de la version qui porte `station requests` et son minuteur. Une station plus ancienne se met à jour une fois sur la machine, avec `sudo station update`, et la page le dit d'ici là. Une station en 0.2.0 n'a même pas `station update` : voir plus haut, « Depuis la 0.2.0 ». Les mises à jour automatiques, la nuit, viennent ensuite, avec MAJ-06 : la page le dit, sans interrupteur.
 
 ### À la main
 

@@ -20,6 +20,7 @@ Les mots de la radio et ceux du code. Quand la console et le code n'emploient pa
 | Console | L'application web de l'équipe | `console/` |
 | Créneau | Une plage de la grille hebdomadaire, qui porte une horloge | `AutoDJSlot` |
 | Décrochage | Partager l'antenne avec une autre radio pendant une plage | voir `docs/exploitation/decrochage.md` |
+| Demande de la console | Ce que la console demande à la machine sans toucher Docker, comme « Mettre à jour maintenant » : elle l'écrit dans le moteur, et la machine la prend chaque minute, puis y écrit le résultat ([décision 0004](decisions/0004-la-console-ne-pilote-jamais-docker.md)) | `RT_DATA/updates/`, `services/updates.py`, `station requests`, minuteur `button-demandes` |
 | Diffusion | Une entrée de l'Agenda : un set ou un direct | `kind` vaut `set` ou `live` |
 | Direct | Une prise d'antenne par un encodeur branché sur le harbor | source `stream` |
 | Dropbox | Deux choses à ne pas confondre. Le conteneur qui surveille l'inbox, range les fichiers et met à jour Beets : lui ne parle pas à Dropbox. Et le stockage en ligne, où un bac ouvert reçoit des sons | `radiotomate-dropbox` ; `cloud-sync` |

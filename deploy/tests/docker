@@ -179,6 +179,20 @@ compose_run() {
           sed -n 's/^schema=//p' "$(host /data)/radiotomate.db"
           cat "$state/schema-${BUTTON_VERSION:-}" 2>/dev/null || echo 18
           ;;
+        "# relevé"*)
+          # versions.json, par un conteneur du moteur : sauf si les versions
+          # n'ont pas changé. Il échoue avec $state/versions-fails.
+          local body="" file
+          [[ ! -e $state/versions-fails ]] || exit 1
+          for spec in "${envs[@]}"; do
+            [[ $spec != BUTTON_VERSIONS=* ]] || body=${spec#*=}
+          done
+          file=$(host /data)/versions.json
+          if [[ ! -f $file ]] || ! grep -qF -- "$body" "$file"; then
+            printf '{"recorded_at":"%s",%s}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$body" >"$file"
+            chmod 644 "$file"
+          fi
+          ;;
         "# domaine"*)
           echo "réglages du domaine : ${envs[*]}" >>"$state/log"
           cat "$state/domain-keys" 2>/dev/null ||
@@ -416,6 +430,63 @@ restic_run() {
   esac
 }
 
+# radiotomate maintenance updates, les demandes de la console (MAJ-07), dans
+# le moteur qui tourne, dans RT_DATA/updates comme le vrai : la demande ouverte
+# dans demande, « ID ÉTAT », et request.json tant qu'elle l'est ; ce que la
+# machine dit d'elle dans host.json. Pourquoi elle attend va dans
+# $state/attente, et comment elle finit dans $state/resultat, ses options
+# puis son détail. Un moteur d'avant les demandes : $state/updates-unknown ;
+# un moteur qui ne répond pas : $state/engine-down ; qui ne prend pas un
+# résultat, ou une attente, une fois : $state/finish-fails, $state/wait-fails.
+engine_updates() {
+  local words=("$@") at=0 command id data=data/radiotomate/updates text
+  local request=$data/demande
+  while [[ ${words[at]} != updates ]]; do at=$((at + 1)); done
+  command=${words[at + 1]:-}
+  id=${words[at + 2]:-}
+  text=$(cat)
+  if [[ -e $state/updates-unknown ]]; then
+    echo "Error: No such command 'updates'." >&2
+    exit 2
+  fi
+  if [[ -e $state/engine-down ]]; then
+    echo 'service "radiotomate-interface" is not running' >&2
+    exit 1
+  fi
+  case $command in
+    host)
+      mkdir -p "$data"
+      printf '%s\n' "$text" >"$data/host.json"
+      [[ ! -f $request ]] || cat "$request"
+      ;;
+    show) [[ ! -f $request ]] || cat "$request" ;;
+    wait)
+      if [[ -e $state/wait-fails ]]; then
+        rm "$state/wait-fails"
+        exit 1
+      fi
+      [[ -f $request && $(cut -d' ' -f1 "$request") == "$id" ]] || exit 1
+      printf '%s\n' "$text" >"$state/attente"
+      echo "$id pending" >"$request"
+      ;;
+    start)
+      [[ -f $request && $(cat "$request") == "$id pending" ]] || exit 1
+      echo "$id running" >"$request"
+      ;;
+    finish)
+      # Un moteur qui redémarre à ce moment-là, une fois : $state/finish-fails.
+      if [[ -e $state/finish-fails ]]; then
+        rm "$state/finish-fails"
+        exit 1
+      fi
+      [[ -f $request && $(cut -d' ' -f1 "$request") == "$id" ]] || exit 1
+      rm -f "$request" "$data/request.json"
+      printf '%s\n%s\n' "${words[*]:at+2}" "$text" >"$state/resultat"
+      ;;
+    *) exit 2 ;;
+  esac
+}
+
 case $1 in
   version) echo 27.3.1 ;;
   info)
@@ -575,8 +646,20 @@ case $1 in
             rm "$state/window"
             exit 1
           fi
-          [[ ! -f $state/window-later ]] || mv "$state/window-later" "$state/window"
+          # Prise après tant de lectures libres : $state/window-later-reads, 1
+          # sans lui.
+          if [[ -f $state/window-later ]]; then
+            reads=$(cat "$state/window-later-reads" 2>/dev/null || echo 1)
+            if ((reads > 1)); then
+              echo $((reads - 1)) >"$state/window-later-reads"
+            else
+              mv "$state/window-later" "$state/window"
+              rm -f "$state/window-later-reads"
+            fi
+          fi
           echo "libre : ni direct ni diffusion de l'Agenda d'ici 30 min"
+        elif [[ " $* " == *" maintenance updates "* ]]; then
+          engine_updates "$@"
         else
           echo "le moteur : $*"
         fi

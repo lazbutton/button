@@ -52,7 +52,14 @@ name: station
 # was served on. During, the stream is read every second, and the antenna
 # must not be cut 30 s or more (MAJ-04). After, the same accounts, clocks,
 # weekly shows, Agenda and settings, the backup of before, the line of
-# updates.log and versions.json, then status and the smoke check.
+# updates.log and versions.json, then status and the smoke check. Last, the
+# requests of the console (MAJ-07), written in the engine as the button writes
+# them, taken by the timer of the host, button-demandes, which writes their
+# result in the engine: the first broken version, which must come back by
+# itself, rolled_back; then a request refused by the HOLD it left; then,
+# HOLD lifted, the folder of this checkout again, done. The engine of :main
+# has the command of the requests once this branch is merged: before, only
+# the timer and its service are checked.
 
 on:
   push:
@@ -608,7 +615,7 @@ jobs:
     # As install: Ubuntu 24.04, what station install takes.
     runs-on: ubuntu-24.04
     # Above the sum of the steps' own limits, as in install.
-    timeout-minutes: 110
+    timeout-minutes: 125
     permissions:
       contents: read
       # The images still private on ghcr.io, as in install.
@@ -941,6 +948,86 @@ jobs:
             data/radiotomate/versions.json
           sudo station status 2>&1 | tee "$out/status.log"
           sudo scripts/smoke.sh http://127.0.0.1:30126 "http://127.0.0.1:18000/$mount"
+      - name: Requests of the console, taken by the timer of the host
+        timeout-minutes: 25
+        working-directory: /opt/button
+        run: |
+          # shellcheck disable=SC1091
+          source "$RUNNER_TEMP/ci.sh"
+          # The timer of the requests, put by the update to this checkout, and
+          # its service, as systemd runs it each minute.
+          systemctl is-enabled --quiet button-demandes.timer ||
+            fail "Demandes" "le minuteur des demandes de la console n'est pas activé."
+          sudo systemctl start button-demandes.service ||
+            fail "Demandes" "le service des demandes de la console échoue : voir journalctl -u button-demandes."
+          if ! sudo docker compose exec -T radiotomate-interface radiotomate maintenance updates show </dev/null >/dev/null 2>&1; then
+            echo "::notice title=Demandes de la console::le moteur :main n'a pas encore radiotomate maintenance updates : le passage par une demande se fera une fois la branche fusionnée."
+            exit 0
+          fi
+
+          # A request, as the button writes it, by the function of its route;
+          # the timer takes it within a minute, and the update takes a few, the
+          # engine silent while it restarts. A station on main updates from an
+          # archive only: the timer takes the one given, by a drop-in of the
+          # CI, not of the station. The result of the request goes in result,
+          # once checked that it is the one asked.
+          ask() { # archive
+            local id open last deadline=$((SECONDS + 600))
+            result=""
+            sudo mkdir -p /etc/systemd/system/button-demandes.service.d
+            printf '[Service]\nExecStart=\nExecStart="/opt/button/station" requests --dir "/opt/button" --from "%s"\n' "$1" |
+              sudo tee /etc/systemd/system/button-demandes.service.d/ci.conf >/dev/null
+            sudo systemctl daemon-reload
+            id=$(sudo docker compose exec -T radiotomate-interface python3 -c '
+          from pathlib import Path
+          from radiotomate.services import updates
+          print(updates.ask(Path("/data"), "ci", None, "main")["id"])')
+            while :; do
+              open=$(sudo docker compose exec -T radiotomate-interface radiotomate maintenance updates show </dev/null 2>/dev/null || echo "?")
+              [ -n "$open" ] || break
+              [ "$SECONDS" -lt "$deadline" ] || fail "Demandes" "la demande $id n'est pas finie au bout de 10 min : $open"
+              sleep 10
+            done
+            last=$(sudo docker compose exec -T radiotomate-interface python3 -c '
+          import json
+          last = json.load(open("/data/updates/last.json"))
+          print(last["id"], last["result"])')
+            [ "${last%% *}" = "$id" ] || fail "Demandes" "la dernière demande close n'est pas $id : $last"
+            result=${last#* }
+            echo "Demande $id : $result"
+          }
+
+          # The first broken version: its console does not start, and the
+          # station comes back by itself; the engine is told so, and HOLD.
+          ask "$RUNNER_TEMP/console/station.tar.gz"
+          [ "$result" = rolled_back ] ||
+            fail "Demandes" "la mise à jour cassée, demandée par la console, a fini $result, pas annulée."
+          sudo test -f HOLD || fail "Demandes" "la mise à jour annulée n'a pas posé HOLD."
+          [ "$(sudo grep -v '^#' updates.log | tail -n 1 | cut -f2-4)" = "$(printf 'main\tmain\tannulée')" ] ||
+            fail "Demandes" "updates.log n'a pas la mise à jour annulée de la demande."
+          sudo docker compose exec -T radiotomate-interface python3 -c '
+          import json
+          assert json.load(open("/data/updates/host.json"))["hold"], "HOLD manque au moteur"' ||
+            fail "Demandes" "le moteur ne sait pas que HOLD bloque les mises à jour."
+
+          # HOLD refuses the next one, without updating.
+          lines=$(sudo sh -c 'wc -l < updates.log')
+          ask "$RUNNER_TEMP/station/station.tar.gz"
+          [ "$result" = refused ] || fail "Demandes" "une demande devant HOLD a fini $result, pas refusée."
+          [ "$(sudo sh -c 'wc -l < updates.log')" -eq "$lines" ] ||
+            fail "Demandes" "une demande refusée a lancé une mise à jour."
+
+          # HOLD lifted, the folder of this checkout: done.
+          sudo bash station unhold
+          ask "$RUNNER_TEMP/station/station.tar.gz"
+          [ "$result" = "done" ] || fail "Demandes" "la demande a fini $result, pas faite."
+          [ "$(sudo grep -v '^#' updates.log | tail -n 1 | cut -f2-4)" = "$(printf 'main\tmain\tfaite')" ] ||
+            fail "Demandes" "updates.log n'a pas la mise à jour de la demande."
+          sudo journalctl -u button-demandes --no-pager -o cat | grep -qF "Demande de la console : faite." ||
+            fail "Demandes" "le journal du service n'a pas le résultat de la demande."
+          sudo rm -r /etc/systemd/system/button-demandes.service.d
+          sudo systemctl daemon-reload
+          sudo scripts/smoke.sh http://127.0.0.1:30126 "http://127.0.0.1:18000/$mount"
       - name: Logs of the station
         if: failure()
         run: |
@@ -953,6 +1040,8 @@ jobs:
             # sudo is for docker compose, which reads .env; the file is the runner's.
             # shellcheck disable=SC2024
             sudo docker compose logs --no-color --timestamps > "$out/compose.log" 2>&1 || true
+            # The requests of the console, as the timer of the host ran them.
+            sudo journalctl -u button-demandes --no-pager > "$out/demandes.log" 2>&1 || true
             # The updates, HOLD, and the logs of a broken version that came back.
             for file in updates.log HOLD updates-failed.log; do
               # shellcheck disable=SC2024
