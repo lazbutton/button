@@ -395,7 +395,7 @@ function Summary({
 }) {
   const Icon = ICON[line.tone];
   return (
-    <section className={`reglages-card reglages-summary tone-${line.tone}`} aria-label={heading ?? line.title}>
+    <section className={`reglages-card reglages-summary tone-${line.tone}`}>
       <span className="reglages-summary-icon" aria-hidden="true">
         <Icon />
       </span>
