@@ -109,6 +109,8 @@ REMOTE_PENDING=en-attente
 # commande, dans le dossier de la station, que status lit.
 NTFY_SERVER=https://ntfy.sh
 ALERTS_LOG=alerts.log
+# Le message d'un essai des alertes.
+ALERT_TEST_TEXT="les alertes de la station arriveront ici : un silence à l'antenne, un disque presque plein, une mise à jour annulée, une sauvegarde ratée."
 # Ce que cleanup défait en sortant : le dossier de travail ; celui des
 # fichiers d'une version, que station update garde à part ; le conteneur de
 # la vérification du domaine s'il tourne encore ; Caddy, arrêté pour elle ;
@@ -349,18 +351,20 @@ plein, une mise à jour annulée, une sauvegarde ratée.
   --alert-ntfy ADRESSE    ntfy : un serveur seul, comme https://ntfy.sh, où
                           un sujet se tire au hasard, ou un sujet,
                           https://SERVEUR/SUJET ; "" l'arrête
-  --alert-ntfy-token-file FICHIER      le jeton d'un sujet protégé
+  --alert-ntfy-token-file FICHIER      le jeton d'un sujet protégé ; "" le retire
   --alert-email ADRESSES  les e-mails qui les reçoivent, séparés par des
                           virgules ; "" l'arrête
   --alert-smtp HÔTE:PORT  le serveur qui les envoie : 465 en TLS, sinon
                           STARTTLS, exigé (587)
-  --alert-smtp-user COMPTE             son compte
+  --alert-smtp-user COMPTE             son compte ; "" pour un serveur sans compte
   --alert-smtp-password-file FICHIER   son mot de passe, dans un fichier
-  --alert-from ADRESSE    l'expéditeur (le compte, s'il est une adresse)
+  --alert-from ADRESSE    l'expéditeur ; sans lui, ou "", le compte, s'il est
+                          une adresse, sinon button@ le domaine
   --alert-test            envoyer un essai, par chaque canal réglé
 
 Un canal qui change reçoit d'abord un essai : s'il ne part pas, rien ne
-change. Les alertes d'antenne suivent sans couper l'antenne.
+change. Un jeton ou un compte ne part jamais vers un autre serveur. Les
+alertes d'antenne suivent sans couper l'antenne.
 
 Changer le domaine ou l'e-mail redémarre Caddy : le flux se coupe un instant.
 EOF
@@ -1226,8 +1230,8 @@ cmd_install() {
   local given=" " option value
   # Les options des alertes, comme celles de station config, et leurs réglages.
   local -A opts=()
-  local alert_station="" alert_ntfy="" alert_ntfy_token="" alert_email="" alert_from="" alert_smtp=""
-  local alert_smtp_user="" alert_smtp_password=""
+  local alert_station="" alert_ntfy="" alert_ntfy_token="" alert_email="" alert_from="" alert_sender=""
+  local alert_smtp="" alert_smtp_user="" alert_smtp_password=""
   while (($#)); do
     option=$1
     case $option in
@@ -4326,13 +4330,13 @@ rollback_failed() {
 # dans le journal du système, journalctl -t button, puis par ntfy et par
 # e-mail, comme .env les règle, et se note dans alerts.log. Une note, moins
 # pressante, comme une mise à jour faite, ne sonne pas sur le téléphone. Elle
-# lit le dossier de la station
-# de l'appelant, dir : cleanup ne voit plus les variables des commandes. Une
-# alerte qui ne part pas n'arrête rien : elle se dit, et status la montre.
+# lit le dossier de la station de l'appelant, dir : cleanup ne voit plus les
+# variables des commandes. Une alerte qui ne part pas n'arrête rien : elle se
+# dit, et status la montre.
 station_alert() { # sujet, message, note ou rien
   local level=${3:-alerte} env_file=${dir:-.}/.env channel error sent="" failed=""
-  local alert_station="" alert_ntfy="" alert_ntfy_token="" alert_email="" alert_from="" alert_smtp=""
-  local alert_smtp_user="" alert_smtp_password=""
+  local alert_station="" alert_ntfy="" alert_ntfy_token="" alert_email="" alert_from="" alert_sender=""
+  local alert_smtp="" alert_smtp_user="" alert_smtp_password=""
   logger -t button -p "user.$([[ $level == note ]] && echo notice || echo warning)" -- "$1 : $2" >/dev/null 2>&1 || true
   [[ -n ${dir:-} && -f $env_file ]] || return 0
   alert_load
@@ -4350,7 +4354,7 @@ station_alert() { # sujet, message, note ou rien
 }
 
 # Les réglages des alertes, de .env : la station, nommée par son domaine,
-# puis ntfy et l'e-mail.
+# puis ntfy et l'e-mail, et son expéditeur.
 alert_load() {
   alert_station=$(env_value DOMAIN)
   alert_ntfy=$(env_value BUTTON_ALERT_NTFY)
@@ -4360,6 +4364,20 @@ alert_load() {
   alert_smtp=$(env_value BUTTON_ALERT_SMTP)
   alert_smtp_user=$(env_value BUTTON_ALERT_SMTP_USER)
   alert_smtp_password=$(env_value BUTTON_ALERT_SMTP_PASSWORD)
+  alert_sender_set
+}
+
+# L'expéditeur des e-mails : celui que --alert-from donne, sinon le compte
+# SMTP, s'il est une adresse, sinon button@ suivi du domaine de la station.
+# radiotomate-init le choisit de même.
+alert_sender_set() {
+  if [[ -n $alert_from ]]; then
+    alert_sender=$alert_from
+  elif [[ $alert_smtp_user == *@* ]]; then
+    alert_sender=$alert_smtp_user
+  else
+    alert_sender=button@${alert_station:-localhost}
+  fi
 }
 
 # Un canal réglé : ntfy, ou l'e-mail.
@@ -4420,7 +4438,7 @@ alert_mail() { # titre, message
   done
   alert_message "$1" "$2" |
     curl --disable -sS --max-time 60 --connect-timeout 15 --ssl-reqd --crlf --url "$scheme://$smtp_host:$smtp_port" \
-      --mail-from "$alert_from" "${rcpts[@]}" -K <(alert_smtp_config) -T -
+      --mail-from "$alert_sender" "${rcpts[@]}" -K <(alert_smtp_config) -T -
 }
 
 alert_smtp_config() {
@@ -4432,35 +4450,52 @@ alert_smtp_config() {
 alert_message() { # titre, texte
   local to=${alert_email// /}
   to=${to//,/, }
-  printf '%s\n' "From: BUTTON <$alert_from>" "To: $to" "Subject: $(mime_header "$1")" "Date: $(LC_ALL=C date -R)" \
+  printf '%s\n' "From: BUTTON <$alert_sender>" "To: $to" "Subject: $(mime_header "$1")" "Date: $(LC_ALL=C date -R)" \
     "Message-ID: <$(date +%s).$$.$RANDOM@${alert_station:-button.invalid}>" "MIME-Version: 1.0" \
     "Content-Type: text/plain; charset=UTF-8" "Content-Transfer-Encoding: base64" ""
   printf '%s\n' "$2" | base64 -w 76
 }
 
-# Un en-tête d'e-mail : tel quel en ASCII, sinon en mots encodés (RFC 2047)
-# de 45 octets au plus, coupés entre deux mots, sur des lignes repliées.
-# Chaque mot encodé, sauf le dernier, garde l'espace qui le suit : entre deux
-# mots encodés, les espaces ne comptent pas.
+# Un en-tête d'e-mail : tel quel en ASCII. Sinon, les mots en ASCII restent
+# tels quels, et chaque suite de mots qui ne le sont pas devient des mots
+# encodés (RFC 2047) de 39 octets au plus, soit 64 caractères : un seul tient
+# sur la première ligne, « Subject: » compris. Entre deux mots encodés, les
+# espaces ne comptent pas : chacun, sauf le dernier d'une suite, garde
+# l'espace qui le suit. Les lignes se replient avant 76 caractères.
 mime_header() { # texte
-  local LC_ALL=C ascii='^[ -~]*$' word chunk="" words=() parts=() part out=""
+  local LC_ALL=C ascii='^[ -~]*$' word words=() run="" tokens=() token line="" out=""
   if [[ $1 =~ $ascii ]]; then
     printf '%s' "$1"
     return 0
   fi
   read -ra words <<<"$1"
   for word in "${words[@]}"; do
-    if [[ -n $chunk ]] && ((${#chunk} + ${#word} > 45)); then
-      parts+=("$chunk")
-      chunk=""
+    if [[ $word =~ $ascii ]]; then
+      [[ -z $run ]] || tokens+=("$(mime_word "${run% }")")
+      run=""
+      tokens+=("$word")
+      continue
     fi
-    chunk+="$word "
+    if [[ -n $run ]] && ((${#run} + ${#word} + 1 > 39)); then
+      tokens+=("$(mime_word "$run")")
+      run=""
+    fi
+    run+="$word "
   done
-  parts+=("${chunk% }")
-  for part in "${parts[@]}"; do
-    out+="${out:+$'\n' }=?UTF-8?B?$(printf '%s' "$part" | base64 -w 0)?="
+  [[ -z $run ]] || tokens+=("$(mime_word "${run% }")")
+  for token in "${tokens[@]}"; do
+    if [[ -n $line ]] && ((${#line} + 1 + ${#token} > 66)); then
+      out+="$line"$'\n'
+      line=" $token"
+    else
+      line+="${line:+ }$token"
+    fi
   done
-  printf '%s' "$out"
+  printf '%s' "$out$line"
+}
+
+mime_word() { # texte
+  printf '=?UTF-8?B?%s?=' "$(printf '%s' "$1" | base64 -w 0)"
 }
 
 # Un texte en chaîne JSON, entre guillemets. Les caractères de contrôle, hors
@@ -4490,23 +4525,25 @@ alert_error() { # sortie d'erreur de curl
   printf '%s\n' "${text:-curl a échoué, sans rien dire}"
 }
 
-# alerts.log, dans le dossier de la station : une ligne par alerte de la
-# commande, que status lit, et par où elle est partie.
-alert_log() { # alerte ou note, sujet, partie par, pas partie par, message
+# alerts.log, dans le dossier de la station : une ligne par alerte, ou par
+# essai, de la commande, que status lit, et par où elle est partie.
+alert_log() { # alerte, note ou essai, sujet, partie par, pas partie par, message
   local log=$dir/$ALERTS_LOG message
   message=$(tr '\t\n' '  ' <<<"$5")
-  {
-    [[ -f $log ]] ||
-      printf '%s\n' "# Les alertes de la commande station, une par ligne : l'heure, en secondes depuis 1970, alerte ou note, le sujet, les canaux par où elle est partie, ceux par où elle n'est pas partie, avec ce que dit curl, et le message."
-    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$1" "$2" "${3:--}" "${4:--}" "$(trim "$message")"
-  } >>"$log" 2>/dev/null || warn "$log ne s'écrit pas."
+  if [[ ! -f $log ]]; then
+    printf '%s\n' "# Les alertes de la commande station, et ses essais, une par ligne : l'heure, en secondes depuis 1970, alerte, note ou essai, le sujet, les canaux par où elle est partie, ceux par où elle n'est pas partie, avec ce que dit curl, et le message." \
+      >"$log" 2>/dev/null || true
+  fi
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$1" "$2" "${3:--}" "${4:--}" "$(trim "$message")" \
+    >>"$log" 2>/dev/null || warn "$log ne s'écrit pas."
 }
 
-# Une alerte déjà notée dans alerts.log : ce sujet, avec ce texte dans son
-# message.
+# Une alerte déjà partie, par un canal au moins, d'après alerts.log : ce
+# sujet, avec ce texte dans son message. Une alerte qui n'est partie par aucun
+# repartira, un canal une fois réglé.
 alert_sent_before() { # sujet, texte
   [[ -f $dir/$ALERTS_LOG ]] || return 1
-  awk -F '\t' -v subject="$1" -v text="$2" '$3 == subject && index($6, text) { found = 1 } END { exit !found }' \
+  awk -F '\t' -v subject="$1" -v text="$2" '$3 == subject && $4 != "-" && index($6, text) { found = 1 } END { exit !found }' \
     "$dir/$ALERTS_LOG"
 }
 
@@ -4528,8 +4565,9 @@ alerts_label() { # full ou rien
   printf '%s\n' "${where:-aucune, hors du journal du système}"
 }
 
-# status : où partent les alertes, et la dernière de la commande, d'après
-# alerts.log. Avertit quand elle n'est pas partie par un canal.
+# status : où partent les alertes, et la dernière de la commande, ou son
+# dernier essai, d'après alerts.log. Avertit quand elle n'est pas partie par
+# un canal.
 alerts_report() {
   local line made level subject sent failed
   say "Alertes : $(alerts_label)."
@@ -4545,16 +4583,16 @@ alerts_report() {
 }
 
 # Les options des alertes, vérifiées avant tout : leur forme, et les fichiers
-# des secrets. Pour install et config.
+# des secrets. "" vide un réglage. Pour install et config.
 alert_check_options() {
   local option
   [[ -z ${opts[--alert-ntfy]:-} ]] || check_ntfy "${opts[--alert-ntfy]}" || exit 2
   [[ -z ${opts[--alert-email]:-} ]] || check_email_list "${opts[--alert-email]}" || exit 2
   [[ -z ${opts[--alert-smtp]+x} ]] || check_smtp "${opts[--alert-smtp]}" || exit 2
   [[ -z ${opts[--alert-smtp-user]+x} ]] || check_smtp_user "${opts[--alert-smtp-user]}" || exit 2
-  [[ -z ${opts[--alert-from]+x} ]] || check_email_list "${opts[--alert-from]}" one || exit 2
+  [[ -z ${opts[--alert-from]:-} ]] || check_email_list "${opts[--alert-from]}" one || exit 2
   for option in --alert-ntfy-token-file --alert-smtp-password-file; do
-    [[ -z ${opts[$option]+x} || -f ${opts[$option]} ]] || usage_error "$option : ${opts[$option]} n'existe pas."
+    [[ -z ${opts[$option]:-} || -f ${opts[$option]} ]] || usage_error "$option : ${opts[$option]} n'existe pas."
   done
   return 0
 }
@@ -4568,14 +4606,31 @@ alert_options_given() {
   return 1
 }
 
+# Un serveur que le moteur ne joindrait pas : il tourne dans un conteneur, où
+# localhost est le sien. L'essai passerait depuis la machine, et les alertes
+# d'antenne échoueraient.
+local_host() { # hôte
+  case ${1,,} in
+    localhost | *.localhost | 127.* | 0.0.0.0) return 0 ;;
+  esac
+  return 1
+}
+
 # Une adresse de ntfy : un serveur, comme https://ntfy.sh, ou un sujet,
 # https://SERVEUR/SUJET. ntfy.sh seul vaut https://ntfy.sh.
 check_ntfy() {
-  local url=$1 pattern='^https?://[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:[0-9]{1,5})?(/[A-Za-z0-9_-]{1,64})?/?$'
+  local url=$1 host pattern='^https?://[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:[0-9]{1,5})?(/[A-Za-z0-9_-]{1,64})?/?$'
   [[ $url == *://* ]] || url=https://$url
-  [[ $url =~ $pattern ]] && return 0
-  echo "  « $1 » n'est pas une adresse de ntfy : $NTFY_SERVER, où un sujet se tire au hasard, ou https://SERVEUR/SUJET, un sujet en lettres, chiffres, - et _." >&2
-  return 1
+  if [[ ! $url =~ $pattern ]]; then
+    echo "  « $1 » n'est pas une adresse de ntfy : $NTFY_SERVER, où un sujet se tire au hasard, ou https://SERVEUR/SUJET, un sujet en lettres, chiffres, - et _." >&2
+    return 1
+  fi
+  host=${url#*://}
+  host=${host%%[:/]*}
+  if local_host "$host"; then
+    echo "  « $1 » : le moteur, dans son conteneur, ne joint pas $host. Donner le nom, ou l'adresse sur le réseau, du serveur ntfy." >&2
+    return 1
+  fi
 }
 
 # Des e-mails séparés par des virgules, ou un seul avec one.
@@ -4598,17 +4653,20 @@ check_email_list() { # adresses, one ou rien
 # Le serveur SMTP : HÔTE, ou HÔTE:PORT.
 check_smtp() {
   local server='^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:([0-9]{1,5}))?$'
-  if [[ $1 =~ $server ]] && ((10#${BASH_REMATCH[3]:-587} >= 1 && 10#${BASH_REMATCH[3]:-587} <= 65535)); then
-    return 0
+  if [[ ! $1 =~ $server ]] || ((10#${BASH_REMATCH[3]:-587} < 1 || 10#${BASH_REMATCH[3]:-587} > 65535)); then
+    echo "  « $1 » : un serveur SMTP s'écrit HÔTE:PORT, comme smtp.radio.example:587, ou :465 en TLS dès le début." >&2
+    return 1
   fi
-  echo "  « $1 » : un serveur SMTP s'écrit HÔTE:PORT, comme smtp.radio.example:587, ou :465 en TLS dès le début." >&2
-  return 1
+  if local_host "${1%:*}"; then
+    echo "  « $1 » : le moteur, dans son conteneur, ne joint pas ${1%:*}. Donner le nom, ou l'adresse sur le réseau, du serveur SMTP." >&2
+    return 1
+  fi
 }
 
 # Le compte SMTP : une ligne, sans espace, ni guillemet, ni apostrophe, que
-# .env ne garderait pas.
+# .env ne garderait pas. Vide : un serveur sans compte.
 check_smtp_user() {
-  [[ -n $1 && ${#1} -le 256 && $1 != *[[:space:][:cntrl:]\'\"]* ]] && return 0
+  [[ ${#1} -le 256 && $1 != *[[:space:][:cntrl:]\'\"]* ]] && return 0
   echo "  « $1 » : un compte SMTP s'écrit sur une ligne, sans espace ni guillemet, comme alertes@radio.example." >&2
   return 1
 }
@@ -4629,7 +4687,8 @@ ntfy_url() { # adresse donnée
 }
 
 # Au clavier, à la première installation, sans option des alertes : celles du
-# téléphone, par ntfy.sh, proposées, et l'e-mail, facultatif.
+# téléphone, par ntfy.sh, proposées, et l'e-mail, facultatif, avec son
+# serveur, son compte, facultatif aussi, et son mot de passe.
 alert_questions() {
   local answer
   interactive || return 0
@@ -4640,48 +4699,60 @@ alert_questions() {
   [[ -n $answer ]] || return 0
   opts[--alert-email]=$answer
   opts[--alert-smtp]=$(ask "Serveur SMTP qui les envoie, HÔTE:PORT" "" check_smtp)
-  opts[--alert-smtp-user]=$(ask "Son compte" "${answer%%,*}" check_smtp_user)
-  opts[--alert-smtp-password]=$(ask_secret "Son mot de passe, qui ne s'affiche pas")
+  answer=$(ask "Son compte, rien pour un serveur sans compte" "" check_smtp_user)
+  opts[--alert-smtp-user]=$answer
+  [[ -z $answer ]] || opts[--alert-smtp-password]=$(ask_secret "Son mot de passe, qui ne s'affiche pas")
 }
 
 check_email_list_or_none() {
   [[ -z $1 ]] || check_email_list "$1"
 }
 
-# Un secret tapé au clavier, sans qu'il s'affiche : une ligne, sans
-# apostrophe, que .env ne garderait pas.
+# Un secret tapé au clavier, sans qu'il s'affiche, sans les espaces autour,
+# comme secret_from : une ligne, sans apostrophe, que .env ne garderait pas.
 ask_secret() { # question
   local answer
   while :; do
     printf '  %s : ' "$1" >&2
     IFS= read -rs answer || die "" "$aborted"
     printf '\n' >&2
+    answer=$(trim "$answer")
     if [[ -n $answer && ${#answer} -le 1024 && $answer != *[[:cntrl:]\']* ]]; then
       printf '%s\n' "$answer"
       return 0
     fi
-    echo "  Une ligne, sans apostrophe." >&2
+    echo "  Une ligne, sans apostrophe : .env ne la garderait pas. Un mot de passe qui en a une se change d'abord chez le fournisseur ; Ctrl-C arrête." >&2
   done
 }
 
 # Ce que install ou config change des alertes, vérifié avant que rien ne
 # s'écrive : les réglages donnés, sinon ceux de .env, dans les variables
 # alert_*. Chaque canal qui change reçoit un essai : s'il ne part pas, rien
-# ne change. L'expéditeur, sans option, est le compte s'il est une adresse,
-# sinon button@ le domaine.
+# ne change. Un jeton ou un compte ne vaut que pour son serveur : il ne part
+# jamais vers un autre.
 alert_verify() {
-  local ntfy_changed="" email_changed="" option
+  local ntfy_changed="" email_changed="" option old_ntfy old_smtp
   alert_options_given || return 0
   alert_load
+  # Le domaine que la même commande donne, ou celui de l'installation.
+  [[ -z ${opts[--domain]:-} || -z ${domain:-} ]] || alert_station=$domain
   alert_station=${alert_station:-${domain:-}}
+  old_ntfy=${alert_ntfy%/*}
+  old_smtp=${alert_smtp%:*}
   if [[ -n ${opts[--alert-ntfy]+x} ]]; then
     alert_ntfy=""
     [[ -z ${opts[--alert-ntfy]} ]] || alert_ntfy=$(ntfy_url "${opts[--alert-ntfy]}")
     ntfy_changed=1
   fi
   if [[ -n ${opts[--alert-ntfy-token-file]+x} ]]; then
-    alert_ntfy_token=$(secret_from "${opts[--alert-ntfy-token-file]}" "Le jeton ntfy")
+    alert_ntfy_token=""
+    [[ -z ${opts[--alert-ntfy-token-file]} ]] ||
+      alert_ntfy_token=$(secret_from "${opts[--alert-ntfy-token-file]}" "Le jeton ntfy" \
+        "Tirer un autre jeton sur le serveur ntfy, puis relancer.")
     ntfy_changed=1
+  elif [[ -n $alert_ntfy_token && -n $alert_ntfy && ${alert_ntfy%/*} != "$old_ntfy" ]]; then
+    alert_ntfy_token=""
+    say "Alertes : le jeton ntfy de $old_ntfy ne part pas vers ${alert_ntfy%/*}. Un sujet protégé de ce serveur : --alert-ntfy-token-file FICHIER."
   fi
   if [[ -n ${opts[--alert-email]+x} ]]; then
     alert_email=$(tr -d ' ' <<<"${opts[--alert-email]}")
@@ -4691,27 +4762,36 @@ alert_verify() {
     [[ -z ${opts[$option]+x} ]] || email_changed=1
   done
   alert_smtp=${opts[--alert-smtp]-$alert_smtp}
-  alert_smtp_user=${opts[--alert-smtp-user]-$alert_smtp_user}
   alert_from=${opts[--alert-from]-$alert_from}
+  if [[ -n ${opts[--alert-smtp-user]+x} ]]; then
+    alert_smtp_user=${opts[--alert-smtp-user]}
+    # Sans compte, pas de mot de passe.
+    [[ -n $alert_smtp_user ]] || alert_smtp_password=""
+  fi
   alert_smtp_password=${opts[--alert-smtp-password]-$alert_smtp_password}
   if [[ -n ${opts[--alert-smtp-password-file]+x} ]]; then
-    alert_smtp_password=$(secret_from "${opts[--alert-smtp-password-file]}" "Le mot de passe SMTP")
+    alert_smtp_password=""
+    [[ -z ${opts[--alert-smtp-password-file]} ]] ||
+      alert_smtp_password=$(secret_from "${opts[--alert-smtp-password-file]}" "Le mot de passe SMTP" \
+        "En choisir un autre chez le fournisseur du serveur SMTP, puis relancer.")
   fi
+  if [[ -n $old_smtp && ${alert_smtp%:*} != "$old_smtp" && -n $alert_smtp_user &&
+    -z ${opts[--alert-smtp-password-file]+x}${opts[--alert-smtp-password]+x} ]]; then
+    die "Le serveur SMTP change, de $old_smtp à ${alert_smtp%:*} : le compte et le mot de passe de l'ancien n'y partent pas. Rien n'est changé." \
+      "Donner ceux du nouveau : --alert-smtp-user COMPTE --alert-smtp-password-file FICHIER, ou --alert-smtp-user \"\" pour un serveur sans compte."
+  fi
+  alert_sender_set
   if [[ -n $alert_email ]]; then
     [[ -n $alert_smtp ]] ||
       die "Les alertes par e-mail demandent le serveur SMTP qui les envoie. Rien n'est changé." \
-        "Le donner avec le reste : --alert-smtp HÔTE:PORT, --alert-smtp-user COMPTE et --alert-smtp-password-file FICHIER."
+        "Le donner avec le reste : --alert-smtp HÔTE:PORT, et son compte, --alert-smtp-user COMPTE --alert-smtp-password-file FICHIER."
     [[ -z $alert_smtp_user || -n $alert_smtp_password ]] ||
       die "Le compte SMTP $alert_smtp_user n'a pas de mot de passe. Rien n'est changé." \
-        "Le donner dans un fichier : --alert-smtp-password-file FICHIER."
-    if [[ -z $alert_from ]]; then
-      alert_from=button@${alert_station:-localhost}
-      [[ $alert_smtp_user != *@* ]] || alert_from=$alert_smtp_user
-    fi
+        "Le donner dans un fichier : --alert-smtp-password-file FICHIER. Un serveur sans compte : --alert-smtp-user \"\"."
   fi
   if [[ -n $alert_ntfy && -n $ntfy_changed ]]; then
     [[ $alert_ntfy != http://* ]] ||
-      warn "le sujet ntfy se joint en http : les alertes y passent en clair. Préférer https."
+      warn "le sujet ntfy se joint en http : les alertes, et le jeton d'un sujet protégé, y passent en clair. Préférer https."
     alert_try ntfy
   fi
   if [[ -n $alert_email && -n $email_changed ]]; then
@@ -4719,20 +4799,37 @@ alert_verify() {
   fi
 }
 
-# Un essai par un canal, qui arrête tout s'il ne part pas.
-alert_try() { # ntfy ou e-mail
+# Un essai par un canal. S'il ne part pas, il rend 1, et ce que dit curl est
+# dans alert_failure, la variable de l'appelant.
+alert_essai() { # ntfy ou e-mail
   local error
+  error=$(alert_deliver "$1" "Essai des alertes" "$ALERT_TEST_TEXT" essai 2>&1 >/dev/null) && return 0
+  alert_failure=$(alert_error "$error")
+  return 1
+}
+
+# Un essai par un canal qui change, qui arrête tout s'il ne part pas. Dans le
+# dossier d'une station, alerts.log le note, comme une alerte : status voit
+# s'il est parti. À l'installation, il dit aussi comment s'en passer.
+alert_try() { # ntfy ou e-mail
+  local alert_failure="" without=""
   say "Alertes : un essai par $1."
-  if ! error=$(alert_deliver "$1" "Essai des alertes" \
-    "les alertes de la station arriveront ici : un silence à l'antenne, un disque presque plein, une mise à jour annulée, une sauvegarde ratée." \
-    essai 2>&1 >/dev/null); then
-    if [[ $1 == ntfy ]]; then
-      die "L'essai par ntfy ne part pas : $(alert_error "$error"). Rien n'est changé." \
-        "Vérifier l'adresse du sujet, le jeton d'un sujet protégé, et que la machine joint le serveur ntfy. Puis relancer."
-    fi
-    die "L'essai par e-mail ne part pas : $(alert_error "$error"). Rien n'est changé." \
-      "Vérifier le serveur SMTP et son port, 465 en TLS dès le début ou 587 en STARTTLS, le compte, le mot de passe, et l'expéditeur, que le serveur doit accepter. Puis relancer."
+  if alert_essai "$1"; then
+    [[ ! -f ${env_file:-} ]] || alert_log essai "Essai des alertes" "$1" "" "$ALERT_TEST_TEXT"
+    return 0
   fi
+  [[ ! -f ${env_file:-} ]] || alert_log essai "Essai des alertes" "" "$1 : $alert_failure" "$ALERT_TEST_TEXT"
+  if [[ ! -f ${env_file:-} && $1 == ntfy ]]; then
+    without=" Ou installer sans ntfy : répondre n à sa question, ou --alert-ntfy \"\" ; station config le règle ensuite."
+  elif [[ ! -f ${env_file:-} ]]; then
+    without=" Ou installer sans e-mail : ne donner aucune adresse, ou --alert-email \"\" ; station config le règle ensuite."
+  fi
+  if [[ $1 == ntfy ]]; then
+    die "L'essai par ntfy ne part pas : $alert_failure. Rien n'est changé." \
+      "Vérifier l'adresse du sujet, le jeton d'un sujet protégé, et que la machine joint le serveur ntfy. Puis relancer.$without"
+  fi
+  die "L'essai par e-mail ne part pas : $alert_failure. Rien n'est changé." \
+    "Vérifier le serveur SMTP et son port, 465 en TLS dès le début ou 587 en STARTTLS, le compte, le mot de passe, et l'expéditeur, que le serveur doit accepter. Puis relancer.$without"
 }
 
 # Les alertes d'une installation neuve, à la fin de son .env : vides, aucune.
@@ -4743,15 +4840,19 @@ alert_env_block() {
   [[ -z $alert_ntfy_token ]] || printf 'BUTTON_ALERT_NTFY_TOKEN=%s\n' "$(env_quote "$alert_ntfy_token")"
   printf 'BUTTON_ALERT_EMAIL=%s\n' "$(env_quote "$alert_email")"
   [[ -n $alert_email ]] || return 0
-  printf '%s=%s\n' BUTTON_ALERT_FROM "$(env_quote "$alert_from")" BUTTON_ALERT_SMTP "$(env_quote "$alert_smtp")" \
-    BUTTON_ALERT_SMTP_USER "$(env_quote "$alert_smtp_user")" BUTTON_ALERT_SMTP_PASSWORD "$(env_quote "$alert_smtp_password")"
+  [[ -z $alert_from ]] || printf 'BUTTON_ALERT_FROM=%s\n' "$(env_quote "$alert_from")"
+  printf 'BUTTON_ALERT_SMTP=%s\n' "$(env_quote "$alert_smtp")"
+  [[ -z $alert_smtp_user ]] ||
+    printf '%s=%s\n' BUTTON_ALERT_SMTP_USER "$(env_quote "$alert_smtp_user")" BUTTON_ALERT_SMTP_PASSWORD \
+      "$(env_quote "$alert_smtp_password")"
 }
 
-# Les réglages des alertes dans .env, une fois l'essai passé. Puis
-# radiotomate.yaml suit : radiotomate-init y écrit les alertes d'antenne, que
-# le scheduler relit seul, sans couper l'antenne.
+# Les réglages des alertes dans .env, une fois l'essai passé. Ceux de l'e-mail
+# s'écrivent aussi quand il est arrêté : ils serviront quand il reviendra.
+# L'expéditeur ne s'écrit que donné : sinon, il suit le compte. Puis
+# radiotomate.yaml suit (alert_engine).
 alert_apply() {
-  local before=$changed
+  local before=$changed option email_given=""
   alert_options_given || return 0
   if [[ -n ${opts[--alert-ntfy]+x} ]]; then
     remote_set BUTTON_ALERT_NTFY "$alert_ntfy"
@@ -4759,18 +4860,19 @@ alert_apply() {
   fi
   remote_set BUTTON_ALERT_NTFY_TOKEN "$alert_ntfy_token"
   remote_set BUTTON_ALERT_EMAIL "$alert_email"
-  if [[ -n $alert_email ]]; then
-    remote_set BUTTON_ALERT_FROM "$alert_from"
+  for option in --alert-smtp --alert-smtp-user --alert-smtp-password-file --alert-smtp-password; do
+    [[ -z ${opts[$option]+x} ]] || email_given=1
+  done
+  if [[ -n $alert_email || -n $email_given ]]; then
     remote_set BUTTON_ALERT_SMTP "$alert_smtp"
     remote_set BUTTON_ALERT_SMTP_USER "$alert_smtp_user"
     remote_set BUTTON_ALERT_SMTP_PASSWORD "$alert_smtp_password"
   fi
+  [[ -z ${opts[--alert-from]+x} ]] || remote_set BUTTON_ALERT_FROM "$alert_from"
+  [[ -n $alert_email || -z $email_given${opts[--alert-from]+x} ]] ||
+    say "Alertes : l'e-mail est arrêté. Ces réglages serviront quand --alert-email le rallumera."
   [[ $changed != "$before" ]] || return 0
-  if engine_run radiotomate-init </dev/null >/dev/null; then
-    say "Alertes d'antenne : radiotomate.yaml suit, et le scheduler les prend d'ici une minute, sans couper l'antenne."
-  else
-    warn "radiotomate.yaml ne suit pas : les alertes d'antenne, comme un silence, gardent l'ancien réglage. Voir le message plus haut, puis : cd $dir && docker compose up -d."
-  fi
+  alert_engine
   if [[ -n ${opts[--alert-ntfy]:-} ]]; then
     if terminal; then
       say "Alertes sur le téléphone : s'abonner, dans l'application ntfy, au sujet $alert_ntfy. Il ne se donne qu'aux personnes de la station : qui le connaît lit les alertes."
@@ -4780,19 +4882,40 @@ alert_apply() {
   fi
 }
 
-# --alert-test : un essai par chaque canal réglé.
+# radiotomate.yaml suit .env : radiotomate-init y écrit les alertes d'antenne,
+# avec le domaine, et le scheduler les relit seul, sans couper l'antenne.
+alert_engine() {
+  if engine_run radiotomate-init </dev/null >/dev/null; then
+    say "Alertes d'antenne : radiotomate.yaml suit, et le scheduler les prend d'ici une minute, sans couper l'antenne."
+  else
+    warn "radiotomate.yaml ne suit pas : les alertes d'antenne, comme un silence, gardent l'ancien réglage. Voir le message plus haut, puis : cd $dir && docker compose up -d."
+  fi
+}
+
+# --alert-test : un essai par chaque canal réglé, chacun dit, et une ligne
+# dans alerts.log, comme une alerte. Échoue si l'un ne part pas.
 alert_test() {
-  local channel any=""
+  local channel sent="" failed="" errors="" alert_failure=""
   alert_load
   for channel in ntfy e-mail; do
     alert_on "$channel" || continue
-    any=1
-    alert_try "$channel"
-    say "Alertes : l'essai par $channel est parti."
+    say "Alertes : un essai par $channel."
+    if alert_essai "$channel"; then
+      say "Alertes : l'essai par $channel est parti."
+      sent="$sent${sent:+, }$channel"
+    else
+      warn "l'essai par $channel ne part pas : $alert_failure."
+      failed="$failed${failed:+, }$channel"
+      errors="$errors${errors:+ ; }$channel : $alert_failure"
+    fi
   done
-  [[ -n $any ]] ||
+  [[ -n $sent$failed ]] ||
     die "Aucune alerte n'est réglée sur cette station : rien à essayer." \
       "Les régler : station config --alert-ntfy $NTFY_SERVER, ou --alert-email ADRESSE. Voir docs/exploitation/alertes.md."
+  alert_log essai "Essai des alertes" "$sent" "$errors" "$ALERT_TEST_TEXT"
+  [[ -z $failed ]] ||
+    die "L'essai ne part pas par $failed : voir plus haut." \
+      "Vérifier ses réglages, station config, puis relancer station config --alert-test. Voir docs/exploitation/alertes.md."
 }
 
 # La fin d'une installation : où partent les alertes, et comment s'abonner.
@@ -4817,8 +4940,8 @@ alert_summary() {
 cmd_config() {
   local dir="" env_file="" domain="" email="" old="" changed="" option asked="" changes=""
   local remote="" remote_password="" remote_access_key="" remote_secret_key="" generated="" fresh="" probed=""
-  local alert_station="" alert_ntfy="" alert_ntfy_token="" alert_email="" alert_from="" alert_smtp=""
-  local alert_smtp_user="" alert_smtp_password=""
+  local alert_station="" alert_ntfy="" alert_ntfy_token="" alert_email="" alert_from="" alert_sender=""
+  local alert_smtp="" alert_smtp_user="" alert_smtp_password=""
   local -A opts=()
   local args=()
   local valued="--dir --domain --email --updates --update-time --backup-remote --backup-s3-access-key"
@@ -4879,6 +5002,8 @@ cmd_config() {
   alert_apply
   if [[ -n ${opts[--domain]+x} && $domain != "$old" ]]; then
     domain_apply "$old"
+    # Les alertes nomment la station par son domaine.
+    [[ -z $(env_value BUTTON_ALERT_NTFY)$(env_value BUTTON_ALERT_EMAIL) ]] || alert_engine
   elif [[ $changed == *ACME_EMAIL* ]] && station_running caddy; then
     # Caddy lit l'e-mail à son démarrage : recréé, il s'en sert pour les
     # prochains certificats.
@@ -4953,7 +5078,7 @@ env_quote() { # valeur
 # un mot de passe ou une clé, jamais sur la ligne de commande, que ps montre.
 # .env le garde entre apostrophes, s'il le faut (remote_set) : il ne peut
 # pas en avoir une.
-secret_from() { # fichier, ce qu'il est
+secret_from() { # fichier, ce qu'il est, que faire d'un caractère refusé ou rien
   local value=""
   [[ -r $1 ]] || die "$2 ne se lit pas dans $1." "Donner un fichier lisible par root, qui le contient sur sa première ligne."
   IFS= read -r value <"$1" || true
@@ -4961,7 +5086,7 @@ secret_from() { # fichier, ce qu'il est
   [[ -n $value ]] || die "$2 manque dans $1 : sa première ligne est vide." "L'y mettre, puis relancer."
   [[ ${#value} -le 1024 && $value != *[[:cntrl:]]* && $value != *\'* ]] ||
     die "$2, dans $1, a un caractère que .env ne garde pas : une apostrophe, ou un caractère de contrôle." \
-      "Pour un dépôt neuf, en choisir un autre ; pour un dépôt qui existe, en ajouter un sans eux, avec restic key add."
+      "${3:-Pour un dépôt neuf, en choisir un autre ; pour un dépôt qui existe, en ajouter un sans eux, avec restic key add.}"
   printf '%s\n' "$value"
 }
 

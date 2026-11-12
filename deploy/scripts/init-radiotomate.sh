@@ -230,7 +230,10 @@ ppc["outputs"] = outputs
 # règle dans .env : le scheduler relit ce bloc quand le fichier change. Le
 # reste du bloc alerts:, seuils, webhook ou Vikunja, reste à la station. Sans
 # ntfy ni e-mail, ce que ce script y a mis s'en va.
-env = {key: os.environ.get(key, "").strip() for key in (
+# Les secrets tels quels, comme station les envoie ; le reste sans les espaces
+# autour.
+secrets = ("BUTTON_ALERT_NTFY_TOKEN", "BUTTON_ALERT_SMTP_PASSWORD")
+env = {key: os.environ.get(key, "") if key in secrets else os.environ.get(key, "").strip() for key in (
     "DOMAIN", "BUTTON_ALERT_NTFY", "BUTTON_ALERT_NTFY_TOKEN", "BUTTON_ALERT_EMAIL",
     "BUTTON_ALERT_FROM", "BUTTON_ALERT_SMTP", "BUTTON_ALERT_SMTP_USER",
     "BUTTON_ALERT_SMTP_PASSWORD",
@@ -241,13 +244,19 @@ if env["BUTTON_ALERT_NTFY"]:
     if env["BUTTON_ALERT_NTFY_TOKEN"]:
         targets["ntfy"]["token"] = env["BUTTON_ALERT_NTFY_TOKEN"]
 if env["BUTTON_ALERT_EMAIL"]:
+    user = env["BUTTON_ALERT_SMTP_USER"]
+    # L'expéditeur, comme station le choisit : celui de .env, sinon le compte
+    # s'il est une adresse, sinon button@ le domaine.
+    sender = env["BUTTON_ALERT_FROM"] or (
+        user if "@" in user else "button@" + (env["DOMAIN"] or "localhost")
+    )
     targets["email"] = {
         "to": [a.strip() for a in env["BUTTON_ALERT_EMAIL"].split(",") if a.strip()],
-        "from": env["BUTTON_ALERT_FROM"],
+        "from": sender,
         "server": env["BUTTON_ALERT_SMTP"],
     }
-    if env["BUTTON_ALERT_SMTP_USER"]:
-        targets["email"]["user"] = env["BUTTON_ALERT_SMTP_USER"]
+    if user:
+        targets["email"]["user"] = user
         targets["email"]["password"] = env["BUTTON_ALERT_SMTP_PASSWORD"]
 alerts = data.get("alerts")
 if not isinstance(alerts, dict):

@@ -218,6 +218,27 @@ def test_the_alerts_of_the_env_go_to_the_yaml_and_leave_the_rest(tmp_path: Path)
     assert _alerts(tmp_path) == {"silence_seconds": 30}
 
 
+def test_the_sender_follows_the_account_unless_given(tmp_path: Path):
+    """Without BUTTON_ALERT_FROM, the sender is the SMTP account when it is an
+    address, else button@ the domain, as the station command chooses it. A
+    password keeps its spaces, as the station sends it."""
+    base = {k: v for k, v in ALERTS_ENV.items() if k != "BUTTON_ALERT_FROM"}
+    base["BUTTON_ALERT_SMTP_PASSWORD"] = " espaces autour "
+    run = _init(tmp_path, "admin", "un mot de passe", **base)
+    assert run.returncode == 0, run.stderr
+    email = _alerts(tmp_path)["email"]
+    assert email["from"] == "alertes@radio.example"
+    assert email["password"] == " espaces autour "
+
+    no_account = {k: v for k, v in base.items() if "SMTP_USER" not in k}
+    again = _init(tmp_path, "admin", "", **no_account)
+    assert again.returncode == 0, again.stderr
+    email = _alerts(tmp_path)["email"]
+    assert email["from"] == "button@radio.example"
+    assert "user" not in email
+    assert "password" not in email
+
+
 def test_alerts_turned_off_leave_no_empty_block(tmp_path: Path):
     assert _init(tmp_path, "admin", "un mot de passe", **ALERTS_ENV).returncode == 0
     assert _alerts(tmp_path)["ntfy"]
