@@ -1,10 +1,11 @@
 import { Button, IconButton, SegmentedControl, Switch, TextArea, TextField, Tooltip } from "@radix-ui/themes";
-import { ArrowUpRight, Check, ChevronRight, Copy, FolderOpen, RotateCcw, Save, Trash2, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { ArrowUpRight, Check, ChevronRight, Copy, FolderOpen, RotateCcw, Save, Trash2, TriangleAlert, X } from "lucide-react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { titleTaken } from "../../api/cartErrors";
 import { cartFolderName, finderRel } from "../../api/cartFolder";
 import { MODE_HELP, relayUrlOk } from "../../api/cartMeta";
+import { keepEdits, unsavedEdits, type CartAnswer } from "../../api/cartSave";
 import { fetchBankFolders } from "../../api/cartSounds";
 import { fetchVolume, stationSmbUrl } from "../../api/volume";
 import type { Cart, CartMode } from "../../api/types";
@@ -61,30 +62,47 @@ export function CartInspector({
   /** Titles of the other bacs. */
   taken: string[];
   onClose: () => void;
-  onSave: (payload: Record<string, unknown>) => Promise<void>;
+  /** `base`: the bac the typing started from. Resolves with the bac written, or the refusal to show. */
+  onSave: (payload: Record<string, unknown>, base: Cart, stillHere: () => boolean) => Promise<CartAnswer | null>;
   onDelete: () => Promise<void>;
 }) {
   const [draft, setDraft] = useState(() => draftFromCart(cart));
+  const draftNow = useRef(draft);
+  draftNow.current = draft;
   const baseline = useRef(draftFromCart(cart));
   const baselineId = useRef(cart.id);
+  // The bac the typing started from: its version goes with the save. Read again while something
+  // typed is not saved, it stays: a change made elsewhere meanwhile is refused, not overwritten.
+  const base = useRef(cart);
+  // Mounted, and on the same bac since a save started: only then is its answer this form's to show.
+  const alive = useRef(false);
+  const session = useRef(0);
+  const [refusal, setRefusal] = useState("");
   const [bankPaths, setBankPaths] = useState<string[]>(HABILLAGE_FOLDERS);
   const [copied, setCopied] = useState(false);
   const [nameCopy, setNameCopy] = useState<"" | "ok" | "fail">("");
   const [volume, setVolume] = useState<{ name: string; host: string } | null>(null);
 
-  // A new bac resets the form. The same bac reloaded keeps the fields being edited.
   useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
+
+  // A new bac resets the form. The same bac reloaded, after a refusal for instance, keeps the fields
+  // being edited. The bac read before is taken now: the update may run after the refs move on.
+  // Before the paint: no keystroke lands between the bac read again and the base it decides.
+  useLayoutEffect(() => {
     const fresh = draftFromCart(cart);
-    setDraft((current) => {
-      if (cart.id === baselineId.current) {
-        const next = { ...fresh };
-        for (const key of Object.keys(fresh) as (keyof CartDraft)[]) {
-          if (current[key] !== baseline.current[key]) (next as Record<string, unknown>)[key] = current[key];
-        }
-        return next;
-      }
-      return fresh;
-    });
+    const before = baseline.current;
+    const sameBac = cart.id === baselineId.current;
+    setDraft((current) => (sameBac ? keepEdits(current, before, fresh) : fresh));
+    if (!sameBac || !unsavedEdits(draftNow.current, before, fresh)) base.current = cart;
+    if (!sameBac) {
+      session.current += 1;
+      setRefusal("");
+    }
     baseline.current = fresh;
     baselineId.current = cart.id;
   }, [cart]);
@@ -119,6 +137,12 @@ export function CartInspector({
 
   const saved = draftFromCart(cart);
   const dirty = JSON.stringify(draft) !== JSON.stringify(saved);
+
+  // Nothing left to save: the refusal no longer says anything true, even once the form changes again.
+  useEffect(() => {
+    if (!dirty) setRefusal("");
+  }, [dirty]);
+
   const relaySeconds = Number(draft.maxDuration);
   const clash = titleTaken(draft.title, taken);
   const becomesRelay = draft.mode === "relay" && cart.mode !== "relay";
@@ -154,15 +178,33 @@ export function CartInspector({
     );
   };
 
-  const save = () =>
-    onSave({
-      title: draft.title.trim(),
-      notes: draft.notes,
-      mode: draft.mode,
-      bank_folder: draft.bankFolder,
-      ident_pads: draft.mode === "relay" ? false : draft.identPads,
-      ...(draft.mode === "relay" ? { url: draft.url.trim(), max_duration: relaySeconds } : {}),
-    });
+  // The address and duration of a relay are sent only when the bac becomes one: the relay's own
+  // form edits them, and this one would send them back as it read them.
+  const save = async () => {
+    const sent = draft;
+    const started = session.current;
+    const stillHere = () => alive.current && session.current === started;
+    setRefusal("");
+    const answer = await onSave(
+      {
+        title: draft.title.trim(),
+        notes: draft.notes,
+        mode: draft.mode,
+        bank_folder: draft.bankFolder,
+        ident_pads: draft.mode === "relay" ? false : draft.identPads,
+        ...(becomesRelay ? { url: draft.url.trim(), max_duration: relaySeconds } : {}),
+      },
+      base.current.id === cart.id ? base.current : cart,
+      stillHere,
+    );
+    // Closed, or on another bac by now: the answer is not for this form, and the page said it.
+    if (!answer || !stillHere()) return;
+    base.current = answer.cart;
+    // Saved: what was sent takes the engine's values, a trimmed name or the folder « Automatique »
+    // stands for. A field typed again meanwhile stays.
+    if (answer.status === "saved") setDraft((current) => keepEdits(current, sent, draftFromCart(answer.cart)));
+    else setRefusal(answer.text);
+  };
 
   return (
     <aside className="bacs-inspector" aria-label="Réglages du bac">
@@ -347,6 +389,13 @@ export function CartInspector({
         </details>
       </form>
 
+      {refusal && dirty ? (
+        <p className="bacs-conflict" role="alert">
+          <TriangleAlert size={15} aria-hidden="true" />
+          <span>{refusal}</span>
+        </p>
+      ) : null}
+
       <footer className="bacs-inspector-foot">
         {usage.inClock ? (
           <Tooltip content="Une horloge utilise ce bac : retire-le d'abord dans Programmation.">
@@ -374,7 +423,18 @@ export function CartInspector({
         )}
         <span className="bacs-spacer" />
         {dirty ? (
-          <Button type="button" size="2" variant="ghost" color="gray" disabled={busy} onClick={() => setDraft(saved)}>
+          <Button
+            type="button"
+            size="2"
+            variant="ghost"
+            color="gray"
+            disabled={busy}
+            onClick={() => {
+              setDraft(saved);
+              setRefusal("");
+              base.current = cart;
+            }}
+          >
             <RotateCcw className="ui-button-icon" />
             Annuler
           </Button>

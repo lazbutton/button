@@ -169,7 +169,7 @@ Créer un relais : `POST /carts.json` avec `mode:"relay"`, une URL HTTP complèt
 
 Écritures, droit `carts` :
 
-- `POST /carts.json` → `201 {cart}`, `PUT /carts/{id}.json` avec la `version` lue → `{cart}`, `DELETE /carts/{id}.json`.
+- `POST /carts.json` → `201 {cart}`, `PUT /carts/{id}.json` avec la `version` lue → `{cart}`, `DELETE /carts/{id}.json`. Un bac changé depuis cette version est refusé, sans rien écrire : `409 {error, code:"conflict", message, field:"version"}`. Sans `version`, le moteur ne compare pas. La version suit la ligne du bac, et pas seulement ses réglages : la durée moyenne, quand les pages HTMX du moteur la recalculent à l'ajout d'un son, et les pads d'idents, retirés d'un bac quand un autre les prend, la font aussi monter. Sur ce refus, la console relit le bac, et ne renvoie, une fois, que si rien de ce qu'elle envoie n'a changé entre-temps, ou seulement pour la valeur qu'elle envoie.
 - `POST /carts/{id}/sounds.json` : des fichiers envoyés (multipart, `?delta=1` pour répondre seulement le cart), ou `{folders:[…]}` pour rattacher des dossiers de la banque. Un envoi coupé ou mal formé, ou un fichier dont le nom ne se lit pas, comme un nom qui finit par `\`, fait refuser tout l’envoi : `400 {error}`, avec `error` en français, et aucun fichier de l’envoi ne reste.
 - `POST /carts/{id}/sounds/delete.json` `{ids}` → `{cart}`.
 - `PUT /carts/{id}/sounds/{son}.json`, par exemple `{title}` ou `{active}` → `{cart, sound}` ; `DELETE` → `{cart}`.

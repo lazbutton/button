@@ -6,6 +6,8 @@ Le détail des changements du moteur par rapport à l'amont : [docs/moteur/chang
 
 ## Non publié
 
+- Corrigé : deux personnes qui modifiaient le même bac, dans deux onglets ou sur deux postes, s'écrasaient sans le savoir. La console renvoyait tous les réglages du bac tels qu'elle les avait lus : le dernier enregistrement gagnait, et remettait aussi ce que l'autre venait de changer. Elle envoie maintenant la version du bac sur lequel la saisie a commencé, depuis ses réglages comme depuis l'éditeur d'un relais, comme elle le fait déjà pour les heures types. Si ce que le formulaire enregistre a changé entre-temps, même quand la page a relu le bac pendant la saisie, le moteur refuse, et la console relit le bac : au-dessus des boutons du formulaire, elle dit « Ce bac vient d'être modifié ailleurs », avec ce qui a changé, et garde ce qui était saisi, à vérifier avant d'enregistrer de nouveau. Si les réglages ont été fermés, ou un autre bac ouvert, avant la réponse, un message nomme le bac, et dit que les changements n'y ont pas été enregistrés. Un changement qui ne touche pas ce que le formulaire enregistre, comme un son ajouté au bac par les pages du moteur, ne fait pas refuser : la console renvoie seule l'enregistrement, une fois, avec la nouvelle version. Elle fait de même face à un moteur plus ancien, dont chaque tirage d'un son montait la version du bac. Le moteur monte aussi la version d'un bac qui perd les pads d'idents quand un autre les prend : une console qui l'avait lu ne les lui remet plus. Enfin, quand un bac a été supprimé ailleurs pendant ses réglages, la console le dit en français, au lieu du message du moteur en anglais, et le quitte. Rien à faire sur une station.
+
 ## 1.0.0
 
 Le schéma de la base reste en v18 : aucune migration.
