@@ -62,13 +62,14 @@ Il aurait voulu que la mise à jour revienne seule en arrière, et le lui dise :
   - elle la contrôle, puis donne une fois le mot de passe admin ;
   - relancée, elle répare sans rien écraser.
 - La même commande l'exploite : `station status` dit en une fois la version, les services, la place, le prochain direct et la dernière sauvegarde. `station backup` sauvegarde sans couper l'antenne, et `station restore` remet la station sur une machine neuve. `config`, `hold`, `logs`, `cli` et `uninstall` font le reste.
+- Chaque nuit, la sauvegarde part hors de la machine, chiffrée, chez un autre fournisseur, et un test la restaure chaque mois : `station config --backup-remote` la règle, et `station restore --remote` la remet sur une machine neuve.
 
 ## Ce qui coince encore
 
 Toute la priorité [P1](../feuille-de-route/P1-mise-en-prod.md) est écrite pour lui. Tant qu'une fiche P1 reste ouverte, une installation sur un VPS est un essai, pas une production :
 
 - **Une commande de mise à jour** : MAJ-04. **Un retour arrière automatique** : MAJ-05.
-- **Des sauvegardes hors de la machine** : SAV-01. **Des alertes sur le téléphone et par e-mail** : SUR-01.
+- **Des alertes sur le téléphone et par e-mail** : SUR-01.
 - **Un guide d'installation sur VPS** : DOC-01.
 
 Puis, en [P2](../feuille-de-route/P2.md) : les mises à jour la nuit (MAJ-06), un réseau du moteur découplé (ARC-01), une sonde du flux lancée depuis une radio amie (SUR-02), un export de diagnostic à envoyer pour se faire aider (SUR-03). En [P3](../feuille-de-route/P3.md) : des images pour les VPS ARM (ARC-04).

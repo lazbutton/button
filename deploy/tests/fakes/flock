@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Le flock de util-linux, celui de Debian et d'Ubuntu, sur la machine des
+# tests, qui a celui de busybox : -w, l'attente d'un verrou pris, y manque. Il
+# se joue ici par des essais -n, jusqu'au délai. Le reste va au vrai flock,
+# sans changer le PATH de la commande qu'il lance, qui garde les faux outils.
+real=$(PATH=/usr/local/bin:/usr/bin:/bin command -v flock)
+if [[ ${1:-} == -w ]]; then
+  limit=$((SECONDS + ${2%.*}))
+  shift 2
+  until "$real" -n "$@"; do
+    ((SECONDS < limit)) || exit 1
+    sleep 0.2
+  done
+  exit 0
+fi
+exec "$real" "$@"
