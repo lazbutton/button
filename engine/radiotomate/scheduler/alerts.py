@@ -27,6 +27,7 @@ Configuration (``radiotomate.yaml``)::
       live_grace_seconds: 90
       disk_min_free_percent: 10
       disk_min_free_gb: 10
+      disk_cooldown_seconds: 86400
       webhook_url: ""
       vikunja:
         url: "http://127.0.0.1:3456"
@@ -55,7 +56,8 @@ net is the clock, by construction, never silence.
 ``disk``: the disk of the sound bank, or of the engine's data, has less than
 ``disk_min_free_percent`` of its size free, and less than
 ``disk_min_free_gb`` gigabytes, as ``/system/disk.json`` measures it. It
-resolves once a tenth more is free again.
+resolves once a tenth more is free again. A disk fills for days: it reminds
+once a day (``disk_cooldown_seconds``), not every ``cooldown_seconds``.
 """
 
 from __future__ import annotations
@@ -102,6 +104,8 @@ PLAYOUT_DOWN_AFTER = 3  # consecutive failed /health polls
 DEFAULT_DISK_FREE_PERCENT = 10.0
 DEFAULT_DISK_FREE_GB = 10.0
 DISK_RESOLVE_MARGIN = 1.1
+# A disk almost full stays so for days: a reminder a day, not every quarter.
+DEFAULT_DISK_COOLDOWN = 86400.0
 GIB = 1024**3
 # SMTP: implicit TLS on this port, STARTTLS (required) on any other.
 SMTPS_PORT = 465
@@ -206,6 +210,7 @@ class AlertSettings:
     live_grace: float = DEFAULT_LIVE_GRACE
     disk_free_percent: float = DEFAULT_DISK_FREE_PERCENT
     disk_free_gb: float = DEFAULT_DISK_FREE_GB
+    disk_cooldown: float = DEFAULT_DISK_COOLDOWN
     webhook_url: str = ""
     vikunja: dict = field(default_factory=dict)
     # The station's name in the title of a notification or an e-mail: its
@@ -237,6 +242,9 @@ class AlertSettings:
                 raw.get("disk_min_free_percent"), DEFAULT_DISK_FREE_PERCENT
             ),
             disk_free_gb=_float(raw.get("disk_min_free_gb"), DEFAULT_DISK_FREE_GB),
+            disk_cooldown=_float(
+                raw.get("disk_cooldown_seconds"), DEFAULT_DISK_COOLDOWN
+            ),
             webhook_url=str(raw.get("webhook_url") or "").strip(),
             vikunja=section("vikunja"),
             station=str(raw.get("station") or "").strip(),
@@ -550,10 +558,12 @@ class AlertMonitor:
                 incident = Incident(kind=kind, detail=detail, opened_at=now)
                 self.open[kind] = incident
             incident.detail = detail
-            due = (
-                incident.notified_at is None
-                or now - incident.notified_at >= self.settings.cooldown
+            cooldown = (
+                self.settings.disk_cooldown
+                if kind == "disk"
+                else self.settings.cooldown
             )
+            due = incident.notified_at is None or now - incident.notified_at >= cooldown
             if due:
                 incident.notified_at = now
                 runtime_metrics.record_alert(kind)
@@ -681,7 +691,8 @@ class Notifier:
         message["From"] = target["from"]
         message["To"] = ", ".join(target["to"])
         message["Date"] = formatdate(localtime=True)
-        message["Message-ID"] = make_msgid(domain=station or None)
+        # Never the machine's name: getfqdn() would ask the DNS, in the loop.
+        message["Message-ID"] = make_msgid(domain=station or "button.invalid")
         message.set_content(
             f"{payload['body']}\n\n"
             f"Une alerte de la station{' ' + station if station else ''}, envoyée"

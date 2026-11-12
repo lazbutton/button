@@ -252,6 +252,32 @@ async def test_a_disk_almost_full_opens_then_resolves_with_a_margin(
     assert await monitor.step(health, 1.0) == ["resolved:disk"]
 
 
+async def test_a_disk_almost_full_reminds_once_a_day_not_every_quarter(
+    tmp_path: Path, monkeypatch
+):
+    monkeypatch.setattr(
+        alerts.shutil, "disk_usage", lambda path: Usage(50 * GB, 46 * GB, 4 * GB)
+    )
+    spy = []
+
+    class Spy:
+        async def send(self, **payload):
+            spy.append(payload["kind"])
+
+    # A reminder at every turn for the other incidents, as a test.
+    monitor = alerts.AlertMonitor(_settings(cooldown_seconds=0.001), Spy())
+    monitor.disk_paths = [("la banque de sons", str(tmp_path))]
+    silence = {"silence_s": "30", "source": "autodj"}
+    assert sorted(await monitor.step(silence, 1.0)) == ["open:disk", "open:silence"]
+    time.sleep(0.01)
+    # The silence reminds; the disk, full for days, waits a day.
+    assert await monitor.step(silence, 1.0) == ["open:silence"]
+    assert alerts.AlertSettings.from_config({}).disk_cooldown == 86400
+    monitor.open["disk"].notified_at -= 86400
+    time.sleep(0.01)
+    assert await monitor.step(silence, 1.0) == ["open:silence", "open:disk"]
+
+
 def test_a_big_disk_with_room_does_not_alert(tmp_path: Path, monkeypatch):
     # 2 To, 150 Go free: under 10 %, but far over 10 Go.
     monkeypatch.setattr(
