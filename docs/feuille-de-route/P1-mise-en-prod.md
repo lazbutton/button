@@ -26,7 +26,7 @@ Le format des fiches, les tailles et la façon de prendre une fiche sont dans le
 | [MAJ-03](#maj-03--contrôle-après-déploiement) | Contrôle après déploiement | S | SEC-01 | fait, `bd65070` |
 | [MAJ-04](#maj-04--commande-de-mise-à-jour) | Commande de mise à jour | L | MAJ-01, MAJ-02, MAJ-03, INS-03 | fait, `5df65e5` |
 | [MAJ-05](#maj-05--retour-arrière-automatique) | Retour arrière automatique | M | MAJ-04 | fait, `de9278a` |
-| [MAJ-07](#maj-07--page--mises-à-jour--de-la-console) | Page « Mises à jour » de la console | M | MAJ-04 | à faire, commencée |
+| [MAJ-07](#maj-07--page--mises-à-jour--de-la-console) | Page « Mises à jour » de la console | M | MAJ-04 | fait, `d4c5644` |
 | [INS-01](#ins-01--https-par-un-reverse-proxy) | HTTPS par un reverse proxy | M | SEC-01, SEC-02, SEC-05, SEC-07 | fait, `eaeb106` |
 | [INS-02](#ins-02--installer-en-une-commande) | Installer en une commande | L | INS-01, GEN-01, MAJ-01, SEC-06 | fait, `f37f425` |
 | [INS-03](#ins-03--commandes-dexploitation) | Commandes d'exploitation | M | INS-02 | fait, `a5b2eb7` |
@@ -39,7 +39,7 @@ Le format des fiches, les tailles et la façon de prendre une fiche sont dans le
 | [FON-14](#fon-14--les-lignes-mises-à-la-suite-passent-à-lantenne) | Les lignes mises à la suite passent à l'antenne | M | — | fait, `d4a2dd9` |
 | [FON-39](#fon-39--les-jingles-du-motif-passent-à-leur-tour) | Les jingles du motif passent à leur tour | M | FON-14 | fait, `7a497fd` |
 
-En tout : 30 fiches, 12 de taille S, 15 de taille M et 3 de taille L. Au 12 novembre 2026, 27 sont faites. Il en reste 3 : 1 de taille S et 2 de taille M. MAJ-07 est venue de P2 le 12 novembre 2026, à la demande de l'utilisateur.
+En tout : 30 fiches, 12 de taille S, 15 de taille M et 3 de taille L. Au 12 novembre 2026, 28 sont faites. Il en reste 2 : INS-04, de taille S, et DOC-01, de taille M. MAJ-07 est venue de P2 le 12 novembre 2026, à la demande de l'utilisateur.
 
 ## L'ordre
 
@@ -47,16 +47,16 @@ Ce qui reste, relevé le 12 novembre 2026. Les fiches de deux files différentes
 
 | File | Fiches, dans l'ordre | Fichier partagé |
 |---|---|---|
-| commande `station` | MAJ-07 | `deploy/station` |
+| commande `station` | aucune fiche de P1 : MAJ-06 et TST-10, en P2 | `deploy/station` |
 | mesure | INS-04 | aucun |
 | guide | DOC-01, en dernier | `docs/` |
 
-- **SUR-01 est fusionnée**, par la PR 168, après SAV-01 (PR 156) et MAJ-05 (PR 149) : la file de la commande `station` n'a plus que MAJ-07, en cours. La vraie installation de la CI (`.github/workflows/station.yml`) est une machine jetable en x86-64 : son job `update` y essaie deux mises à jour cassées avant la vraie, et ses deux installations s'y sauvegardent hors de la machine, puis reviennent par `restore --remote`.
+- **MAJ-07 est fusionnée**, par la PR 175, après SUR-01 (PR 168), SAV-01 (PR 156) et MAJ-05 (PR 149) : la file de la commande `station` n'a plus de fiche de P1. La vraie installation de la CI (`.github/workflows/station.yml`) est une machine jetable en x86-64 : son job `update` y essaie deux mises à jour cassées avant la vraie, ses deux installations s'y sauvegardent hors de la machine, puis reviennent par `restore --remote`, et, une fois les images `:main` publiées, il passe par trois demandes de la console.
 - **Les alertes** partent maintenant par ntfy et par e-mail, du moteur comme de la commande `station` (`station_alert`). Sur une station sans alerte réglée, la page Antenne ne montre pas d'incident : c'est SUR-04, en P2.
 - **LEG-02 est fusionnée**, par la PR 146. Il reste à l'essayer sur une station d'essai : un animateur y télécharge le code de la version, et sans session la même adresse répond 401.
 - **FON-14 et FON-39 sont fusionnées**, par les PR 139 et 142 : la file du scheduler n'a plus de fiche en P1. Leurs « Accepté quand » restent à vérifier sur une station de test, fondu allumé : leur banc tournait sans. Pour FON-39, c'est une heure d'antenne. FON-33 et FON-35 à FON-38, en P2, touchent les fichiers qu'elles viennent de changer : rejouer chaque défaut avant de le prendre.
 - **INS-04 n'a aucun conflit.** Elle se mesure sur la version qui suit la 0.2.0 : celle-ci a encore le défaut d'une station vide, dont le conducteur s'empilait.
-- **MAJ-07 passe en P1**, le 12 novembre 2026, à la demande de l'utilisateur : « Je veux pouvoir mettre a jour avec un bouton le plus rapidement possible ». Le bouton n'attend pas MAJ-06 : son minuteur de l'hôte lit les demandes chaque minute, et l'interrupteur « Automatique la nuit » reste à MAJ-06. Elle est en cours, à partir de SUR-01, qui écrit aussi dans `deploy/station`.
+- **MAJ-07 est passée en P1** le 12 novembre 2026, à la demande de l'utilisateur : « Je veux pouvoir mettre a jour avec un bouton le plus rapidement possible ». Le bouton n'a pas attendu MAJ-06 : son minuteur de l'hôte lit les demandes chaque minute, et les mises à jour de la nuit restent à MAJ-06.
 - **DOC-01 vient en dernier** : MAJ-05 et SAV-01 sont faites, elle n'attend plus qu'INS-04. Le guide dira le bouton de MAJ-07.
 
 ## Déjà fait
@@ -382,6 +382,16 @@ M · dépend de MAJ-04 · conflits : `deploy/station`, `deploy/tests/`, `engine/
 - **Proposé, et pris par la session** : le bouton installe ce que `station update` installerait sans option ; une majeure ne part pas du bouton, la page montre sa « Mise en service » et dit la commande à lancer ; la fenêtre d'un direct vaut comme pour la commande, sans « forcer » ; `HOLD` désactive le bouton, avec sa raison ; la page suit la demande jusqu'à son résultat, et survit au redémarrage du moteur ; un interrupteur (ADR 0009) pour le minuteur de l'hôte.
 - **Tests** : bats pour le minuteur et la demande, sous bash 5.3 et 5.2 ; le moteur et la console pour les routes et la page ; si possible, le job `update` de `.github/workflows/station.yml` passe par une demande écrite comme le ferait le bouton.
 - **Accepté quand** : sur une machine jetable, un admin presse le bouton, la station passe à la version suivante, et la page dit le résultat ; une mise à jour qui échoue revient en arrière, et la page le dit.
+- **Résultat**, le 12 novembre 2026, par la PR 175 :
+  - Dans **Réglages → Mises à jour**, un admin voit la version de la station, la plus haute publiée et ses notes, la demande en cours et son résultat, `HOLD`, les dernières lignes de `updates.log` et la version de chaque service. « Mettre à jour maintenant » écrit une demande dans le moteur (`GET /system/updates.json`, `POST` et `DELETE /system/updates/request.json`).
+  - La machine la prend dans la minute, par le minuteur systemd `button-demandes` (`station requests`), puis lance `station update --yes`, avec son retour arrière, et rend le résultat au moteur. La page suit la demande jusqu'à son résultat, même pendant le redémarrage du moteur.
+  - Quand le bouton ne peut pas demander, la page dit pourquoi et quoi faire : `HOLD`, une majeure (sa « Mise en service », puis `sudo station update --major`), des demandes coupées, une machine muette, une version inconnue.
+  - Pris sans l'utilisateur, en plus des choix recommandés : une demande qui attend se retire de la console ; une autre commande `station` la fait attendre ; l'interrupteur (`BUTTON_CONSOLE_REQUESTS`, `station config --console-requests`) coupe les demandes, pas le minuteur ; les versions viennent de GitHub, lues par le moteur, gardées 30 minutes.
+  - La relecture a joué un moteur compromis. Quatre défauts importants, corrigés avec un test, dont deux venus de MAJ-04 : `record_versions` écrivait `versions.json` en root en suivant un lien posé par le moteur, et le texte de la fenêtre pouvait forger une ligne de `updates.log`.
+  - Vérifié : moteur, console, cinq parcours de la page, et 229 tests bats sous bash 5.3 et 5.2 ; la page essayée sur un banc, de la demande au résultat.
+  - Pas vérifié : le passage de la CI par les demandes, qui ne tourne qu'une fois les images `:main` publiées, après la fusion ; needrestart sur Ubuntu 24.04, qui pourrait relancer le service en pleine mise à jour (MAJ-09) ; `LogLevelMax` sous le systemd 252 de Debian 12 ; une station.
+  - Le bouton ne vaut qu'à partir de la version qui le porte : une station en 0.2.0 se met à jour une première fois en terminal.
+  - Fusionnée avant la fin de sa CI : le parcours des rôles attendait quatre onglets dans Réglages, et rougissait. La PR 176 le remet au vert.
 
 ### INS · Installer
 
