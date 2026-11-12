@@ -439,8 +439,11 @@ jobs:
           assert text.count(image) == 1, "the console image line has changed"
           compose.write_text(text.replace(image, "    image: button-ci/console-cassee:1\n    pull_policy: never\n"))
 
-          header = """# CI (MAJ-05) : des migrations de plus, dans l'image.
+          # Once per container: a second docker compose up starts the same
+          # radiotomate-init again, with the migrations already written.
+          header = """# CI (MAJ-05) : des migrations de plus, dans l'image, une fois par conteneur.
           ci_dir=$(python3 -c 'import radiotomate.commands.update as u; print(u.__path__[0])')
+          if [ ! -e "$ci_dir/.ci-maj05" ]; then
           ci_last=$(python3 -c 'import pkgutil, radiotomate.commands.update as u; print(max(int(m.name[1:]) for m in pkgutil.iter_modules(u.__path__) if m.name[1:].isdigit()))')
           cat >"$ci_dir/v$((ci_last + 1)).py" <<'EOF'
           async def upgrade(conn):
@@ -461,8 +464,11 @@ jobs:
               pass
           EOF
           """
+          closing = """: >"$ci_dir/.ci-maj05"
+          fi
+          """
           update = 'radiotomate -c "$RTCONFIG" update\n'
-          for case, migrations in (("console", header), ("migration", header + failing)):
+          for case, migrations in (("console", header + closing), ("migration", header + failing + closing)):
               init = root / case / "files/scripts/init-radiotomate.sh"
               text = init.read_text()
               assert text.count(update) == 1, "init-radiotomate.sh no longer migrates on its own line"
@@ -625,7 +631,9 @@ jobs:
           broken_update() { # case, stage where it fails
             local case=$1 stage=$2 probe status=0 cut line aside
             images >"$out/images-avant-$case.txt"
-            aside=$(sudo sh -c 'ls data/radiotomate/backups/avant-restauration-*.db 2>/dev/null' | wc -l)
+            # The pipe stays in sh -c: under pipefail, an ls that finds
+            # nothing would stop the step.
+            aside=$(sudo sh -c 'ls data/radiotomate/backups/avant-restauration-*.db 2>/dev/null | wc -l')
             listen "$out/antenne-$case.txt" &
             probe=$!
             sudo bash "$RUNNER_TEMP/station/station" update --from "$RUNNER_TEMP/$case/station.tar.gz" --yes 2>&1 |
@@ -657,7 +665,7 @@ jobs:
             engine_python "$RUNNER_TEMP/schema.py" >"$out/schema-$case.txt"
             diff "$out/schema-avant.txt" "$out/schema-$case.txt" ||
               fail "Base" "la base n'est pas celle d'avant la mise à jour ($case) : voir le diff plus haut."
-            [ "$(sudo sh -c 'ls data/radiotomate/backups/avant-restauration-*.db 2>/dev/null' | wc -l)" -eq $((aside + 1)) ] ||
+            [ "$(sudo sh -c 'ls data/radiotomate/backups/avant-restauration-*.db 2>/dev/null | wc -l')" -eq $((aside + 1)) ] ||
               fail "Base" "la base de la version cassée n'est pas gardée à côté ($case)."
             sudo scripts/smoke.sh http://127.0.0.1:30126 "http://127.0.0.1:18000/$mount"
             sudo bash "$RUNNER_TEMP/station/station" unhold

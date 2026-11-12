@@ -2673,9 +2673,11 @@ update_station() {
 
   update_stage="le contrôle"
   check_station "$target" || die "$failure"
-  # Faite : rien de ce qui suit ne la défait.
+  # Faite : rien de ce qui suit ne la défait, pas même un journal qui ne
+  # s'écrit pas.
   cut=$((SECONDS - started))
-  update_log faite "redémarrée et contrôlée en $cut s"
+  update_log faite "redémarrée et contrôlée en $cut s" ||
+    warn "updates.log ne s'écrit pas : la mise à jour, faite, n'y est pas notée. Voir la place sur le disque : station status."
   updating=()
   update_stage=""
   record_versions
@@ -2750,7 +2752,6 @@ update_undo() {
   [[ -n $work && -d $work ]] || work=$(mktemp -d)
   if [[ $stage != "les fichiers" ]]; then
     ! keep_failed_logs || logs=$dir/$FAILED_LOGS
-    all_profiles
     undo_database_check
   fi
   if [[ -z $failure ]]; then
@@ -2764,6 +2765,8 @@ update_undo() {
     env_isolate
   fi
   if [[ -n $reverted && $stage != "les fichiers" ]]; then
+    # Les profils du compose.yml d'avant, de nouveau en place.
+    all_profiles
     drop_new_services
     mounted_by_containers
     if [[ -z $copy ]] || undo_database_restore "$staged/files/scripts/restore-radiotomate.sh"; then
@@ -2784,7 +2787,7 @@ update_undo() {
     fi
     [[ -z $base ]] || say "  ${base^} ; la base de la $target reste à côté, dans $(env_path RT_DATA ./data/radiotomate)/backups."
     [[ -z $logs ]] || say "  Les journaux de la $target, pour voir pourquoi : $logs."
-    say "  Les mises à jour sont bloquées par $dir/HOLD. Les débloquer, une fois la cause trouvée : $(self_command) unhold."
+    say "  Les mises à jour sont bloquées par $dir/HOLD. Les débloquer, une fois la cause trouvée : $(self_command) unhold, ou rm $dir/HOLD."
   else
     update_log échouée "pendant $stage ; le retour en $installed a échoué : $failure"
     hold_write "Bloquées par station update" \
@@ -2793,10 +2796,14 @@ update_undo() {
       "la mise à jour de $installed à $target a échoué pendant $stage, et le retour en $installed aussi : $failure"
     if [[ -n $stopped ]]; then
       state="La station est arrêtée."
-    elif [[ -z $reverted ]]; then
-      state="La station reste en $target, comme la mise à jour l'a laissée : elle tourne peut-être encore."
-    else
+    elif [[ -n $reverted ]]; then
       state="La station est peut-être coupée."
+    elif [[ $stage == "les fichiers" ]]; then
+      state="Ses fichiers sont en partie ceux de la $target, et ses conteneurs, ceux de la $installed, tournent encore."
+    elif [[ $stage == "le redémarrage" ]]; then
+      state="La station reste en $target, qui n'a pas redémarré : l'antenne est sans doute coupée."
+    else
+      state="La station reste en $target, qui tourne, mais que le contrôle refuse."
     fi
     warn "le retour en $installed a échoué : $failure"
     printf '%s\n' "  $state Voir son état : $(self_command) status${logs:+ ; les journaux de la $target : $logs}." \
@@ -3313,7 +3320,7 @@ rollback_station() {
       lost=$(copy_time "$copy")
       script=$(restore_script) ||
         die "Aucun script de restauration à portée ne sait se passer de sqlite3, que l'image du moteur n'a pas : ni celui de la version $leaving, ni celui du dossier. Rien n'est changé." \
-          "Prendre la commande de la version $leaving, sur https://github.com/$REPO/releases, puis relancer avec elle."
+          "Celui de la version $leaving vient de son archive, sur GitHub : vérifier l'accès de la machine à github.com, puis relancer."
       need=$(($(size_kb "$(env_path RT_DATA ./data/radiotomate)/backups/$copy") + COPY_MARGIN_KB))
       room_for "$(env_path RT_DATA ./data/radiotomate)" "$need" ||
         die "Il manque de la place à côté de la base pour y remettre celle d'avant la mise à jour, $(human_kb "$need"). Rien n'est changé." \
@@ -3376,7 +3383,8 @@ rollback_station() {
   restart_station "$target" || die "$failure"
   update_stage="le contrôle"
   check_station "$target" || die "$failure"
-  update_log "retour arrière" "à la main${base:+ ; $base}"
+  update_log "retour arrière" "à la main${base:+ ; $base}" ||
+    warn "updates.log ne s'écrit pas : le retour arrière, fait, n'y est pas noté. Voir la place sur le disque : station status."
   updating=()
   update_stage=""
   rolling_back=""
@@ -3386,7 +3394,7 @@ rollback_station() {
 
   say "" "La station est revenue en $target, au lieu de $leaving : le contrôle passe."
   [[ -z $base ]] || say "  ${base^} ; la base de la $leaving reste à côté, dans $(env_path RT_DATA ./data/radiotomate)/backups."
-  say "  Les mises à jour sont bloquées par $dir/HOLD. Les débloquer, une fois la cause trouvée : $(self_command) unhold."
+  say "  Les mises à jour sont bloquées par $dir/HOLD. Les débloquer, une fois la cause trouvée : $(self_command) unhold, ou rm $dir/HOLD."
   [[ -z $kept ]] ||
     say "  Changés sur cette station, gardés à côté, en .local-… :$kept. Les changements d'une station vont dans compose.override.yml."
 }

@@ -64,7 +64,7 @@ database() {
   assert_output --partial "  Les journaux de la 0.2.0, pour voir pourquoi : $DIR/updates-failed.log."
   # La commande lancée, qui a unhold : celle de la station, revenue, ne l'a
   # peut-être pas, comme celle d'une 0.2.0.
-  assert_output --regexp "  Les mises à jour sont bloquées par $DIR/HOLD\. Les débloquer, une fois la cause trouvée : bash [^ ]*/station unhold\."
+  assert_output --regexp "  Les mises à jour sont bloquées par $DIR/HOLD\. Les débloquer, une fois la cause trouvée : bash [^ ]*/station unhold, ou rm $DIR/HOLD\."
   # Les fichiers d'avant, .env compris, tels qu'ils étaient.
   [ "$(cat "$DIR/VERSION")" = 0.1.0 ]
   [ "$(env_of BUTTON_VERSION)" = 0.1.0 ]
@@ -289,7 +289,7 @@ EOF
   station update
   assert_failure
   assert_output --regexp "Attention : le retour en 0\.1\.0 a échoué : La copie de la base d'avant la mise à jour, avant-v19-[0-9]{8}T[0-9]{6}Z\.db, est abîmée : database disk image is malformed\. La base ne peut pas revenir\."
-  assert_output --partial "  La station reste en 0.2.0, comme la mise à jour l'a laissée : elle tourne peut-être encore."
+  assert_output --partial "  La station reste en 0.2.0, qui tourne, mais que le contrôle refuse."
   [ "$(cat "$DIR/VERSION")" = 0.2.0 ]
   [ "$(env_of BUTTON_VERSION)" = 0.2.0 ]
   run ! logged "restaurée : "
@@ -341,15 +341,16 @@ EOF
   diff "$BATS_TEST_TMPDIR/base-avant" <(database)
 }
 
-@test "un service venu avec la mise à jour s'en va au retour arrière" {
+@test "un service venu avec la mise à jour s'en va au retour arrière ; les autres restent" {
   installed_then 0.2.0
-  printf 'id-nouveau\n' >"$FAKE_STATE/containers"
-  printf 'id-nouveau|nouveau-service\n' >"$FAKE_STATE/inspect-services"
+  printf 'id-nouveau\nid-caddy\n' >"$FAKE_STATE/containers"
+  printf 'id-nouveau|nouveau-service\nid-caddy|caddy\n' >"$FAKE_STATE/inspect-services"
   touch "$FAKE_STATE/smoke-fails"
   station update
   assert_failure
   assert_output --partial "Retour arrière : retirés, venus avec la mise à jour : nouveau-service."
   logged "docker rm -f id-nouveau"
+  run ! logged "docker rm -f id-caddy"
 }
 
 @test "une connexion coupée en plein contrôle : la station revient quand même" {
@@ -369,6 +370,19 @@ EOF
   [ "$(cat "$DIR/VERSION")" = 0.1.0 ]
   [ "$(last_update | cut -f3,5)" = "$(printf 'annulée\tpendant le contrôle ; revenue en 0.1.0')" ]
   [ -f "$DIR/HOLD" ]
+}
+
+@test "une mise à jour contrôlée reste faite, même quand updates.log ne s'écrit pas" {
+  installed_then 0.2.0
+  # Un dossier à sa place : rien ne s'y écrit, comme sur un disque plein.
+  mkdir "$DIR/updates.log"
+  station update
+  assert_success
+  assert_output --partial "Attention : updates.log ne s'écrit pas : la mise à jour, faite, n'y est pas notée."
+  assert_output --partial "La station est à jour : 0.2.0, au lieu de 0.1.0. Le contrôle passe."
+  refute_output --partial "s'annule"
+  [ "$(cat "$DIR/VERSION")" = 0.2.0 ]
+  [ ! -e "$DIR/HOLD" ]
 }
 
 # --- station rollback ---
