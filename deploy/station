@@ -130,6 +130,17 @@ REQUESTS_EVERY=3600
 # là, la mise à jour s'est arrêtée sans que la commande dise au moteur comment :
 # le passage suivant le lui dit, d'après updates.log.
 REQUEST_MARK=demande-en-cours
+# Le délai qu'a le moteur pour répondre à station requests, en secondes, et ce
+# qu'elle lit au plus de sa réponse, en octets.
+REQUESTS_WAIT=60
+REQUESTS_READ=4096
+# Après une mise à jour arrêtée par l'antenne, sa sauvegarde faite, une demande
+# de la console attend ce temps, en secondes, avant d'en lancer une autre :
+# chacune refait une sauvegarde, et le moteur dit la fenêtre.
+REQUESTS_PAUSE=3600
+# Le code de sortie d'une commande station qui trouve le verrou pris : station
+# requests sait alors que sa mise à jour attend, et n'a pas échoué.
+LOCK_BUSY=75
 # Ce que cleanup défait en sortant : le dossier de travail ; celui des
 # fichiers d'une version, que station update garde à part ; le conteneur de
 # la vérification du domaine s'il tourne encore ; Caddy, arrêté pour elle ;
@@ -421,7 +432,8 @@ majeure ne part pas d'une demande : station update --major, sur la machine.
 
 Elle dit aussi au moteur ce que la console montre de la machine : HOLD, les
 dernières lignes de updates.log, et si elle prend les demandes. Sans rien de
-neuf, elle ne fait rien. station config --console-requests no l'arrête.
+neuf, elle ne fait rien. station config --console-requests no coupe les
+demandes : elle ne fait plus que le dire au moteur.
 
   --from ARCHIVE    la version depuis cette archive, station.tar.gz, comme
                     station update --from : pour un essai
@@ -1507,8 +1519,10 @@ cmd_install() {
   record_versions
   # Les minuteurs de la sauvegarde hors de la machine, si .env la règle :
   # après une désinstallation qui a gardé les données, par exemple. Puis celui
-  # des demandes de la console.
+  # des demandes de la console, sans une demande restée d'avant : personne ne
+  # l'a redemandée.
   remote_timers || true
+  requests_forget "La station a été réinstallée, ou réparée : la redemander, si elle sert encore."
   requests_timer || true
   if [[ -n $first ]]; then
     admin_password
@@ -1636,6 +1650,8 @@ open_station() { # commande, --dir donné, ou rien
 # croisent pas. Le verrou tombe avec la commande. STATION_LOCK_WAIT, en
 # secondes, fait attendre qu'il se libère : les minuteurs de la sauvegarde
 # hors de la machine le posent, plutôt que d'échouer pendant une mise à jour.
+# Sans elle, une seconde : station requests le prend un instant, pour voir
+# s'il est libre. Pris, la commande sort avec LOCK_BUSY.
 lock_station() { # commande
   local wait=${STATION_LOCK_WAIT:-}
   mkdir -p "${LOCK%/*}"
@@ -1644,8 +1660,12 @@ lock_station() { # commande
   if [[ $wait =~ ^[0-9]{1,6}$ ]] && ((wait > 0)); then
     say "Une autre commande station tourne : station $1 attend qu'elle finisse, $([[ $wait -ge 120 ]] && echo "$((wait / 60)) min" || echo "$wait s") au plus."
     flock -w "$wait" 9 && return 0
+  elif flock -w 1 9; then
+    return 0
   fi
-  die "Une autre commande station tourne déjà sur cette machine." "Attendre qu'elle finisse, puis relancer station $1."
+  died="Une autre commande station tourne déjà sur cette machine."
+  printf '%s\n' "$died" "Attendre qu'elle finisse, puis relancer station $1." >&2
+  exit "$LOCK_BUSY"
 }
 
 # La version de la station : celle que .env épingle, sinon celle du dossier.
@@ -1975,7 +1995,7 @@ updates_report() {
     sed 's/^/    /' "$dir/HOLD"
   fi
   say "  Depuis la console, Réglages → Mises à jour : $(requests_label)."
-  if requests_on && [[ -e $UNITS/button-demandes.timer ]] && command -v systemctl >/dev/null 2>&1 &&
+  if [[ -e $UNITS/button-demandes.timer ]] && command -v systemctl >/dev/null 2>&1 &&
     ! systemctl is-active --quiet button-demandes.timer 2>/dev/null; then
     warn "le minuteur des demandes de la console ne tourne pas : le bouton de la console ne demande rien. Le relancer : station config --console-requests yes."
   fi
@@ -3154,6 +3174,9 @@ restore_station() { # archive ou rien, sans les sons (1) ou non
     values="$values${values:+, }$key=$(env_value_in "$in/env" "$key")"
   done < <(sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' "$in/env" "$new_env" | sort -u)
 
+  # Une demande de la console ouverte ne survit pas à l'échange : elle date
+  # d'avant la sauvegarde.
+  requests_forget "La station a été remise d'une sauvegarde : la redemander, si elle sert encore."
   # Tous les profils s'arrêtent, share compris s'il est lancé à part : sinon,
   # il garderait la banque mise de côté. Ceux qui tournaient repartent.
   say "Restauration : la station s'arrête, le temps d'échanger les données."
@@ -3200,7 +3223,7 @@ restore_station() { # archive ou rien, sans les sons (1) ou non
   remote_timers || true
   # Une demande de la console venue avec les données date d'avant : elle ne
   # part pas.
-  requests_forget
+  requests_forget "La station a été remise d'une sauvegarde : la redemander, si elle sert encore."
   requests_timer || true
 
   # Le .env d'avant garde à côté le mot de passe admin d'une installation qui
@@ -3480,14 +3503,16 @@ major_action() { # version, CHANGELOG.md
 # La fenêtre de la mise à jour, que dit le moteur qui tourne : ni direct ni
 # diffusion de l'Agenda à l'antenne, ni d'ici 30 minutes. Un moteur d'avant
 # radiotomate maintenance window, ou qui ne répond pas, la laisse inconnue :
-# la mise à jour se fait, et le dit.
+# la mise à jour se fait, et le dit. Sa réponse tient sur une ligne
+# (one_line) : elle va dans updates.log, et à une demande de la console.
 update_window() { # quiet, ou rien
   local answer status=0
   if ! station_running radiotomate-interface; then
     [[ -n ${1:-} ]] || say "Fenêtre : pas vérifiée, le moteur ne tourne pas : l'antenne est déjà coupée."
     return 0
   fi
-  answer=$(compose exec -T radiotomate-interface radiotomate maintenance window </dev/null 2>/dev/null) || status=$?
+  answer=$(engine_exec maintenance window </dev/null) || status=$?
+  answer=$(one_line "$answer")
   if [[ $status == 1 && $answer == "occupée : "* ]]; then
     # Vu une fois la sauvegarde faite et les images tirées : la mise à jour
     # s'arrête là, et updates.log le note.
@@ -3559,7 +3584,11 @@ update_station() {
   # d'avant : celui d'une 0.2.0 demande sqlite3, que l'image n'a pas.
   backup_station "$archive" "" "$staged/files/scripts/backup-radiotomate.sh"
   updating[3]=$archive
-  backup_rotate "$archive"
+  # Une mise à jour demandée depuis la console (STATION_REQUEST) ne fait de
+  # place dans backups/ qu'une fois faite : le moteur, qui dit la fenêtre,
+  # pourrait sinon en arrêter une après chaque sauvegarde, et faire effacer
+  # les plus anciennes.
+  [[ -n ${STATION_REQUEST:-} ]] || backup_rotate "$archive"
 
   update_stage="les images"
   update_env
@@ -3588,6 +3617,7 @@ update_station() {
     warn "updates.log ne s'écrit pas : la mise à jour, faite, n'y est pas notée. Voir la place sur le disque : station status."
   updating=()
   update_stage=""
+  [[ -z ${STATION_REQUEST:-} ]] || backup_rotate "$archive" || true
   record_versions
   # Les minuteurs que pose la commande de cette version.
   remote_timers || true
@@ -4044,18 +4074,26 @@ update_log() { # résultat, détail
   fi
   # Un champ vide se lirait mal : read fond deux tabulations qui se suivent.
   printf '%s\t%s\t%s\t%s\t%s\t%s\n' "${update_started:-$(date +%s)}" "${updating[1]}" "${updating[2]}" "$1" \
-    "${updating[3]:--}" "$2" >>"$log"
+    "${updating[3]:--}" "$(log_field "$2")" >>"$log"
+}
+
+# Un champ de updates.log, sur une ligne : ni tabulation, ni saut de ligne, ni
+# caractère de contrôle, qui forgeraient un champ ou une ligne. Ce que dit le
+# moteur, la fenêtre par exemple, y entre.
+log_field() { # texte
+  printf '%s' "$1" | LC_ALL=C tr '\t\n\r' '   ' | LC_ALL=C tr -d '\000-\037\177'
 }
 
 # La version de chaque service qui tourne, d'après Docker, dans versions.json,
 # dans RT_DATA : l'interface n'a pas accès à Docker, et GET
 # /system/version.json la lit là. Le fichier ne change qu'avec les versions :
 # son heure dit depuis quand elles tournent, et une relance d'install ne
-# change rien. Un échec ne fait qu'avertir.
+# change rien. RT_DATA est au moteur, qui pourrait y poser un lien : un
+# conteneur du moteur écrit le fichier (engine_run), jamais root sur l'hôte.
+# Un échec ne fait qu'avertir.
 record_versions() {
-  local data file ids=() service image label version items=() body
-  data=$(env_path RT_DATA ./data/radiotomate)
-  [[ -d $data ]] || return 0
+  local work ids=() service image label version items=() body
+  [[ -d $(env_path RT_DATA ./data/radiotomate) ]] || return 0
   mapfile -t ids < <(docker ps -q --filter "label=com.docker.compose.project=$PROJECT" \
     --filter label=com.docker.compose.oneoff=False 2>/dev/null)
   if ((${#ids[@]})); then
@@ -4073,15 +4111,41 @@ record_versions() {
     IFS=,
     printf '%s' "${items[*]}"
   )]"
-  file=$data/versions.json
-  if [[ -f $file ]] && grep -qF -- "$body" "$file"; then
-    return 0
+  work=$(mktemp -d)
+  if ! engine_run -e "BUTTON_VERSIONS=$body" --entrypoint python3 radiotomate-init - >/dev/null <<'PY'; then
+# relevé : versions.json, dans RT_DATA, quand les versions changent.
+import json
+import os
+import stat
+import tempfile
+from datetime import datetime, timezone
+
+data = os.environ.get("BUTTON_DATA", "/data")
+path = os.path.join(data, "versions.json")
+body = json.loads("{" + os.environ["BUTTON_VERSIONS"] + "}")
+old = None
+try:
+    # Sans suivre un lien, ni attendre un tube : RT_DATA est au moteur.
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        if stat.S_ISREG(os.fstat(fd).st_mode):
+            old = json.loads(os.read(fd, 1 << 16))
+    finally:
+        os.close(fd)
+except (OSError, ValueError):
+    old = None
+if isinstance(old, dict) and {key: old.get(key) for key in body} == body:
+    raise SystemExit(0)
+record = {"recorded_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), **body}
+fd, part = tempfile.mkstemp(dir=data, prefix=".versions-")
+with os.fdopen(fd, "w", encoding="utf-8") as out:
+    out.write(json.dumps(record, separators=(",", ":")) + "\n")
+    os.fchmod(out.fileno(), 0o644)
+os.replace(part, path)
+PY
+    warn "la version des services ne s'écrit pas dans versions.json : la console ne la dira pas."
   fi
-  if ! { printf '{"recorded_at":"%s",%s}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$body" >"$file.part" &&
-    chmod 644 "$file.part" && mv -f "$file.part" "$file"; } 2>/dev/null; then
-    rm -f "$file.part"
-    warn "la version des services ne s'écrit pas dans $file : la console ne la dira pas."
-  fi
+  rm -rf "${work:?}"
 }
 
 # --- rollback ---
@@ -5106,12 +5170,12 @@ requests_apply() { # yes ou no
     die "BUTTON_CONSOLE_REQUESTS est dans .env, mais le minuteur des demandes de la console ne se pose pas : voir plus haut." \
       "Une fois systemd réglé, relancer : station install le repose. D'ici là, les prendre à la main : station requests."
   if ! station_running radiotomate-interface || ! requests_sync force || [[ -z $pushed ]]; then
-    warn "le moteur ne le sait pas encore : il le saura au prochain passage du minuteur, ou de station requests."
+    warn "le moteur ne répond pas : la console le saura au premier passage du minuteur une fois le moteur revenu, dans la minute."
   fi
   if [[ $1 == yes ]]; then
     say "Demandes de la console : prises chaque minute. « Mettre à jour maintenant » marche, dans Réglages → Mises à jour."
   else
-    say "Demandes de la console : coupées. « Mettre à jour maintenant » ne demande plus rien ; une demande qui attendait est refusée."
+    say "Demandes de la console : coupées. « Mettre à jour maintenant » ne demande plus rien, et une demande qui attendait est refusée. Le minuteur ne fait plus que le dire à la console."
   fi
 }
 
@@ -5406,7 +5470,9 @@ cmd_unhold() {
 # elle lit la demande par docker compose exec, lance station update --yes,
 # comme une personne le ferait, puis écrit le résultat par le même chemin,
 # d'après updates.log. Elle ne lit ni n'écrit elle-même aucun fichier du
-# moteur : ce qu'il dit ne sort jamais de sa vérification.
+# moteur : ce qu'il dit ne sort jamais de sa vérification. Coupées
+# (BUTTON_CONSOLE_REQUESTS=no), les demandes ne partent plus : la commande ne
+# fait que le dire au moteur, et finir une mise à jour qu'elle avait lancée.
 cmd_requests() {
   local dir="" env_file="" from="" data pushed="" request_id="" request_state=""
   local -A opts=()
@@ -5431,38 +5497,32 @@ cmd_requests() {
     by_timer || say "Les demandes de la console sont déjà prises, par un autre passage."
     return 0
   fi
-  if ! requests_on; then
-    # Coupées dans .env sans station config, le minuteur tourne encore : le
-    # moteur l'apprend, une fois, et refuse une demande qui attendait.
-    requests_sync
-    by_timer ||
-      say "Les demandes de la console sont coupées : BUTTON_CONSOLE_REQUESTS=no, dans $env_file. Les rallumer : $(self_command) config --console-requests yes."
-    return 0
-  fi
   # Docker arrêté, ou le moteur : chaque docker compose exec échoue, et le
   # passage suivant reprend.
   data=$(env_path RT_DATA ./data/radiotomate)
   requests_sync
-  if [[ -z $pushed ]]; then
-    if [[ ! -e $data/updates/request.json && ! -f $dir/$REQUEST_MARK ]]; then
-      by_timer || say "Aucune demande de la console n'attend."
-      return 0
-    fi
-    requests_show || return 0
-  fi
-  if [[ -z $request_id ]]; then
-    # Une marque sans demande : le moteur a déjà le résultat.
-    rm -f "$dir/$REQUEST_MARK"
-    by_timer || say "Aucune demande de la console n'attend."
+  if [[ -z $pushed && ! -e $data/updates/request.json && ! -f $dir/$REQUEST_MARK ]]; then
+    requests_idle
     return 0
   fi
-  case $request_state in
-    running) requests_resume ;;
-    pending) requests_run ;;
-  esac
+  [[ -n $pushed ]] || requests_show || return 0
+  if [[ -z $request_id ]]; then
+    # Une marque sans demande : le moteur a déjà le résultat.
+    rm -f "${dir:?}/$REQUEST_MARK"
+    requests_idle
+    return 0
+  fi
+  if [[ $request_state == running ]]; then
+    # Lancée par un passage qui s'est arrêté en route, demandes coupées ou non :
+    # updates.log dit la suite.
+    requests_resume
+  elif requests_on; then
+    requests_run
+  fi
   # Le moteur sait tout de suite ce que la mise à jour a changé : updates.log,
   # HOLD, la version.
   requests_sync force
+  requests_on || requests_idle
 }
 
 # Lancée par son minuteur, sous systemd, qui pose INVOCATION_ID : rien au
@@ -5471,19 +5531,47 @@ by_timer() {
   [[ -n ${INVOCATION_ID:-} ]]
 }
 
+# Rien à faire : la commande le dit, sauf sous son minuteur.
+requests_idle() {
+  if by_timer; then
+    return 0
+  elif requests_on; then
+    say "Aucune demande de la console n'attend."
+  else
+    say "Les demandes de la console sont coupées : BUTTON_CONSOLE_REQUESTS=no, dans $env_file. Les rallumer : $(self_command) config --console-requests yes."
+  fi
+}
+
 # Les demandes de la console se prennent, sauf BUTTON_CONSOLE_REQUESTS=no.
 requests_on() {
   [[ $(env_value BUTTON_CONSOLE_REQUESTS yes) != no ]]
 }
 
-# Une commande du moteur pour les demandes, dans le conteneur de l'interface,
-# en son nom : radiotomate maintenance updates show, wait, start, finish ou
-# host. Le texte donné va sur son entrée standard. Rien de ce qu'elle dit ne
-# s'affiche : request_parse vérifie ce qui sert.
+# Une commande du moteur qui tourne, radiotomate, dans le conteneur de
+# l'interface, en son nom : avec un délai, REQUESTS_WAIT, et une réponse
+# bornée, REQUESTS_READ. Ce qu'il dit sur sa sortie d'erreur ne s'affiche pas,
+# et le reste se vérifie toujours ensuite. Elle ne garde aucun des deux verrous
+# (8, 9) : le timeout de busybox laisse un processus qui veille son délai.
+engine_exec() { # arguments de radiotomate…
+  (cd "$dir" && timeout "$REQUESTS_WAIT" docker compose exec -T radiotomate-interface radiotomate "$@") 2>/dev/null 8>&- 9>&- |
+    head -c "$REQUESTS_READ"
+}
+
+# Ce que dit le moteur, sur une ligne : la première, sans caractère de
+# contrôle, 300 caractères au plus. Il ne forge ainsi ni ligne de
+# updates.log, ni séquence d'échappement dans un terminal.
+one_line() { # texte
+  local text=${1%%$'\n'*}
+  text=$(LC_ALL=C tr -d '\000-\037\177' <<<"$text")
+  printf '%s' "${text:0:300}"
+}
+
+# Une commande de radiotomate maintenance updates : show, wait, start, finish
+# ou host. Le texte donné va sur son entrée standard.
 requests_engine() { # texte, arguments…
   local text=$1
   shift
-  printf '%s' "$text" | compose exec -T radiotomate-interface radiotomate maintenance updates "$@" 2>/dev/null
+  printf '%s' "$text" | engine_exec maintenance updates "$@"
 }
 
 # La demande ouverte, telle que le moteur la dit, sur une ligne : son
@@ -5521,8 +5609,7 @@ requests_sync() { # force, ou rien
       return 0
     fi
   fi
-  line=$(requests_host_json | compose exec -T radiotomate-interface radiotomate maintenance updates host 2>/dev/null) ||
-    return 0
+  line=$(requests_host_json | engine_exec maintenance updates host) || return 0
   pushed=1
   requests_parse "$line"
   # Le moteur vient de récrire host.json : l'empreinte se prend après.
@@ -5536,7 +5623,8 @@ requests_sync() { # force, ou rien
 
 # L'empreinte de ce que la machine dit au moteur : la taille, l'heure et
 # l'inode de chaque fichier, host.json du moteur compris, qu'une restauration
-# remplace. Un stat seulement, qui ne lit rien de ce que le moteur écrit.
+# remplace. Un stat seulement, qui ne suit pas un lien et ne lit rien de ce que
+# le moteur écrit.
 requests_stamp() {
   stat -c '%n %s %Y %i' -- "$dir/HOLD" "$dir/updates.log" "$env_file" "$dir/VERSION" \
     "$(env_path RT_DATA ./data/radiotomate)/updates/host.json" 2>/dev/null || true
@@ -5576,7 +5664,9 @@ updates_lines() {
   fi
 }
 
-# Les lignes de updates.log écrites après les n premières.
+# Les lignes de updates.log écrites après les n premières. Une mise à jour
+# n'en écrit qu'une : la première est la sienne, et celles d'un retour arrière
+# à la main, ou d'une autre mise à jour, viennent après.
 updates_since() { # n
   [[ -f $dir/updates.log ]] || return 0
   tail -n "+$(($1 + 1))" "$dir/updates.log" | { grep -v '^#' || true; }
@@ -5585,7 +5675,9 @@ updates_since() { # n
 # Ce qui fait attendre la demande, dit sur la sortie, ou faux : une autre
 # commande station, comme la sauvegarde de la nuit, puis la fenêtre du moteur,
 # comme pour station update. Une fenêtre qui ne se lit pas ne fait pas
-# attendre : station update la relit, et le dit.
+# attendre : station update la relit, et le dit. Le verrou des commandes ne
+# s'essaie qu'un instant : une commande lancée à ce moment-là attend une
+# seconde (lock_station).
 requests_waits() {
   local answer status=0
   mkdir -p "${LOCK%/*}"
@@ -5593,7 +5685,8 @@ requests_waits() {
     echo "Une autre commande station tourne sur la machine, comme la sauvegarde de la nuit : la mise à jour part quand elle a fini."
     return 0
   fi
-  answer=$(compose exec -T radiotomate-interface radiotomate maintenance window </dev/null 2>/dev/null) || status=$?
+  answer=$(engine_exec maintenance window </dev/null) || status=$?
+  answer=$(one_line "$answer")
   if [[ $status == 1 && $answer == "occupée : "* ]]; then
     printf '%s\n' "${answer#occupée : }"
     return 0
@@ -5601,9 +5694,40 @@ requests_waits() {
   return 1
 }
 
+# Une mise à jour arrêtée par l'antenne, sa sauvegarde faite, il y a moins de
+# REQUESTS_PAUSE : la demande attend, dit sur la sortie. Sinon, faux. Sans
+# cela, le moteur, qui dit la fenêtre, ferait refaire une sauvegarde chaque
+# minute. updates.log est à root, et ce qu'y écrit le moteur tient sur une
+# ligne (one_line, log_field).
+requests_paused() {
+  local made="" _from _to result=""
+  [[ -f $dir/updates.log ]] || return 1
+  IFS=$'\t' read -r made _from _to result _ < <({ grep -v '^#' "$dir/updates.log" || true; } | tail -n 1) || true
+  [[ $made =~ ^[0-9]+$ && $result == arrêtée ]] || return 1
+  (($(date +%s) - made < REQUESTS_PAUSE)) || return 1
+  echo "La dernière tentative s'est arrêtée devant l'antenne, sa sauvegarde faite : la suivante part au plus tôt le $(station_date $((made + REQUESTS_PAUSE))), quand l'antenne le permet."
+}
+
+# La plus haute version publiée passe une majeure, au-dessus de la version de
+# la station : elle ne part pas d'une demande, dit sur la sortie. Sinon, faux.
+# Sans GitHub, rien ne se dit : station update le revérifie.
+requests_major() {
+  local installed latest
+  [[ -z $from ]] || return 1
+  installed=$(env_value BUTTON_VERSION)
+  check_version "$installed" >/dev/null 2>&1 || return 1
+  latest=$(latest_version 10 2>/dev/null) || return 1
+  check_version "$latest" >/dev/null 2>&1 || return 1
+  ((${latest%%.*} > ${installed%%.*})) || return 1
+  echo "La mise à jour passe la $((${installed%%.*} + 1)).0.0, une version majeure : elle demande une action à la station avant de la prendre, et ne part pas d'une demande de la console. Une fois l'action faite, sur la machine : sudo station update --major."
+}
+
 # Une demande qui attend : la mise à jour, lancée comme par une personne. Ce
-# qui la refuse d'abord : HOLD, une restauration pas finie. Ce qui la fait
-# attendre : une autre commande, l'antenne. La marque dit qu'elle a commencé.
+# qui la refuse d'abord : HOLD, une restauration pas finie, une majeure. Ce
+# qui la fait attendre : une tentative arrêtée il y a peu, une autre commande,
+# l'antenne. La marque dit qu'elle a commencé. STATION_REQUEST dit à la mise à
+# jour qu'elle vient de la console : elle ne fait de place dans backups/
+# qu'une fois faite.
 requests_run() {
   local reason lines started before log options=(--yes --dir "$dir")
   if [[ -f $dir/HOLD ]]; then
@@ -5614,8 +5738,12 @@ requests_run() {
     requests_close refused "Une restauration ne s'est pas finie sur la machine : sudo station status dit quoi faire."
     return 0
   fi
-  if reason=$(requests_waits); then
+  if reason=$(requests_paused) || reason=$(requests_waits); then
     requests_engine "$reason" wait "$request_id" >/dev/null || true
+    return 0
+  fi
+  if reason=$(requests_major); then
+    requests_close refused "$reason"
     return 0
   fi
   # Retirée depuis la console entre-temps : rien à faire.
@@ -5630,35 +5758,55 @@ requests_run() {
   log=$(mktemp)
   # Ce qu'elle dit va aussi au journal, comme elle le dit. Le verrou des
   # demandes reste à ce passage : elle ne le garde pas.
-  { bash "$dir/station" update "${options[@]}" </dev/null 8>&- 2>&1 || echo "$?" >"$log.code"; } | tee "$log" || true
-  requests_outcome "$(cat "$log.code" 2>/dev/null || echo 0)" "$lines" "$log" "$before"
+  { STATION_REQUEST=1 bash "$dir/station" update "${options[@]}" </dev/null 8>&- 2>&1 ||
+    echo "$?" >"$log.code"; } | tee "$log" || true
+  requests_outcome "$(cat "$log.code" 2>/dev/null || echo 0)" "$log" "$before"
   rm -f "$log" "$log.code"
 }
 
 # Ce qu'a donné la mise à jour lancée, d'après la ligne que updates.log a
-# reçue. Sans ligne, elle s'est arrêtée avant de commencer : rien à faire, une
-# autre commande ou l'antenne, qui font attendre, ou un refus, que ses derniers
-# mots disent ; rien n'a changé.
-requests_outcome() { # code, lignes d'avant, sortie, version d'avant
+# reçue après celles que note la marque (lines). Sans ligne, elle s'est
+# arrêtée avant de commencer : rien à faire ; une autre commande, qui a le
+# verrou (LOCK_BUSY), ou l'antenne, qui font attendre ; ou un refus, que ses
+# derniers mots disent. Rien n'a changé.
+requests_outcome() { # code, sortie, version d'avant
   local line reason after
-  line=$(updates_since "$2" | tail -n 1)
+  line=$(updates_since "$lines" | sed -n 1p)
   if [[ -n $line ]]; then
     requests_result "$line"
     return 0
   fi
   if [[ $1 == 0 ]]; then
     after=$(env_value BUTTON_VERSION)
-    if [[ $after != "$4" ]]; then
-      requests_close "done" "updates.log ne s'écrit pas : voir la place sur le disque, sudo station status." "$4" "$after"
+    if [[ $after != "$3" ]]; then
+      requests_close "done" "updates.log ne s'écrit pas : voir la place sur le disque, sudo station status." "$3" "$after"
     else
-      requests_close up_to_date "$(requests_last_words "$3")"
+      requests_close up_to_date "$(requests_last_words "$2")"
     fi
-  elif reason=$(requests_waits); then
-    requests_engine "$reason" wait "$request_id" >/dev/null || true
-    rm -f "$dir/$REQUEST_MARK"
-  else
-    requests_close failed "Rien n'a changé. $(requests_last_words "$3")"
+    return 0
   fi
+  if [[ $1 == "$LOCK_BUSY" ]]; then
+    reason="Une autre commande station tourne sur la machine, comme la sauvegarde de la nuit : la mise à jour part quand elle a fini."
+  elif ! reason=$(requests_waits); then
+    requests_close failed "Rien n'a changé. $(requests_last_words "$2")"
+    return 0
+  fi
+  requests_wait_again "$reason"
+}
+
+# La demande lancée attend de nouveau, et pourquoi. La marque le note
+# d'abord : si le moteur ne le prend pas, le passage suivant le lui redit.
+# Coupées entre-temps, les demandes la refusent.
+requests_wait_again() { # raison
+  if ! requests_on; then
+    requests_close refused "Les demandes de la console sont coupées sur la machine."
+    return 0
+  fi
+  printf '%s\t%s\t%s\tattente\n' "$request_id" "$started" "$lines" >"$dir/$REQUEST_MARK"
+  if requests_engine "$1" wait "$request_id" >/dev/null; then
+    rm -f "${dir:?}/$REQUEST_MARK"
+  fi
+  return 0
 }
 
 # Le résultat d'une ligne de updates.log, au moteur. Arrêtée par l'antenne,
@@ -5670,9 +5818,7 @@ requests_result() { # ligne de updates.log
     faite) requests_close "done" "$detail" "$from" "$to" ;;
     annulée) requests_close rolled_back "$detail" "$from" "$to" ;;
     arrêtée)
-      requests_engine "Arrêtée par l'antenne, sa sauvegarde faite : $detail. Elle repart dès que l'antenne le permet." \
-        wait "$request_id" >/dev/null || true
-      rm -f "$dir/$REQUEST_MARK"
+      requests_wait_again "Arrêtée par l'antenne, sa sauvegarde faite : $detail. Elle repart dès que l'antenne le permet, une heure après au plus tôt."
       ;;
     échouée)
       if [[ $detail == *"le retour en "*" a échoué"* ]]; then
@@ -5686,21 +5832,23 @@ requests_result() { # ligne de updates.log
 }
 
 # Une demande que le moteur dit en cours, au début d'un passage : celui qui
-# l'avait lancée s'est arrêté, la machine qui redémarre, ou le service tué.
-# updates.log dit ce qu'est devenue la mise à jour, après les lignes que note
-# la marque.
+# l'avait lancée s'est arrêté, la machine qui redémarre, ou le service tué ;
+# ou le moteur n'a pas pris son attente. updates.log dit ce qu'est devenue la
+# mise à jour, d'après la marque.
 requests_resume() {
-  local mark="" started="" lines="" line
+  local mark="" started="" lines="" state="" line
   if [[ -f $dir/$REQUEST_MARK ]]; then
-    IFS=$'\t' read -r mark started lines <"$dir/$REQUEST_MARK" || true
+    IFS=$'\t' read -r mark started lines state <"$dir/$REQUEST_MARK" || true
   fi
   if [[ $mark != "$request_id" || ! $lines =~ ^[0-9]+$ ]]; then
     requests_close interrupted "La machine n'a pas trace de cette mise à jour : la station a peut-être été remise d'une sauvegarde. Voir sur la machine : sudo station status."
     return 0
   fi
-  line=$(updates_since "$lines" | tail -n 1)
+  line=$(updates_since "$lines" | sed -n 1p)
   if [[ -n $line ]]; then
     requests_result "$line"
+  elif [[ $state == attente ]]; then
+    requests_wait_again "La mise à jour n'a pas commencé : la machine réessaie chaque minute."
   else
     requests_close interrupted "La mise à jour s'est arrêtée sans rien noter, le $(station_date "$started") : la machine a redémarré, ou la commande a été arrêtée. Voir sur la machine : sudo station status."
   fi
@@ -5719,7 +5867,7 @@ requests_close() { # résultat, détail, version d'avant, nouvelle
   [[ -z ${3:-} ]] || options+=(--from "$3")
   [[ -z ${4:-} ]] || options+=(--to "$4")
   if requests_engine "$2" finish "$request_id" "$1" "${options[@]}" >/dev/null; then
-    rm -f "$dir/$REQUEST_MARK"
+    rm -f "${dir:?}/$REQUEST_MARK"
     case $1 in
       "done") say "Demande de la console : faite." ;;
       rolled_back) say "Demande de la console : annulée, la station est revenue à la version d'avant." ;;
@@ -5733,26 +5881,28 @@ requests_close() { # résultat, détail, version d'avant, nouvelle
   fi
 }
 
-# Une demande ouverte devant des données remises d'une sauvegarde : elle date
-# d'avant, et ne part pas.
-requests_forget() {
+# Une demande ouverte, refusée, avec sa raison : avant d'échanger les données
+# d'une restauration, ou de désinstaller, et après une installation. Sinon, la
+# station la prendrait, une fois revenue, sans que personne ne l'ait redemandée.
+# Sans moteur qui réponde, rien.
+requests_forget() { # raison
   local request_id="" request_state=""
   requests_show || return 0
   [[ -n $request_id ]] || return 0
-  rm -f "$dir/$REQUEST_MARK"
-  requests_engine "La station a été remise d'une sauvegarde : la demander de nouveau, si elle sert encore." \
-    finish "$request_id" refused >/dev/null || true
+  rm -f "${dir:?}/$REQUEST_MARK"
+  requests_engine "$1" finish "$request_id" refused >/dev/null || true
+  return 0
 }
 
 # Le minuteur des demandes de la console : chaque minute, station requests.
-# BUTTON_CONSOLE_REQUESTS=no l'arrête, sans le retirer. Comme ceux de la
-# sauvegarde hors de la machine, ses fichiers se réécrivent seulement s'ils
-# changent, et se gardent tels quels aux retours arrière (keep) : leur ligne
-# ExecStart ne change plus, pour que la commande d'une version d'avant la
-# lise. Ils s'en vont devant une commande station qui ne connaît pas les
-# demandes, comme celle d'une 0.2.0.
+# Comme ceux de la sauvegarde hors de la machine, ses fichiers se réécrivent
+# seulement s'ils changent, et se gardent tels quels aux retours arrière
+# (keep) : leur ligne ExecStart ne change plus, pour que la commande d'une
+# version d'avant la lise. Ils s'en vont devant une commande station qui ne
+# connaît pas les demandes, comme celle d'une 0.2.0. BUTTON_CONSOLE_REQUESTS=no
+# ne l'arrête pas : il ne fait plus que le dire au moteur.
 requests_timer() { # keep, ou rien
-  local command changed=""
+  local command changed="" repo=""
   if ! grep -q '^cmd_requests()' "$dir/station" 2>/dev/null; then
     requests_timer_off
     return 0
@@ -5763,6 +5913,9 @@ requests_timer() { # keep, ou rien
   fi
   if [[ ${1:-} != keep ]]; then
     command=$(systemd_quote "$dir/station")
+    # Le dépôt d'un fork, que la mise à jour demandée doit prendre aussi.
+    [[ $REPO == lazbutton/button ]] || repo="
+Environment=BUTTON_REPO=$REPO"
     unit_write button-demandes.service "# Les demandes de la console, comme « Mettre à jour maintenant », que lance
 # button-demandes.timer chaque minute. Écrit par la commande station de $dir :
 # station config --console-requests les coupe ou les rallume.
@@ -5776,16 +5929,19 @@ After=network-online.target docker.service
 Type=oneshot
 # systemd ne pose pas HOME pour un service de root : docker y lit le jeton
 # du registre, dans /root/.docker.
-Environment=HOME=/root
+Environment=HOME=/root$repo
 ExecStart=$command requests --dir $(systemd_quote "$dir")
-# Le temps d'une mise à jour, et de son retour arrière.
+# Le temps d'une mise à jour, et de son retour arrière. Arrêté en route, à
+# l'arrêt de la machine par exemple, le service laisse au retour arrière le
+# temps de finir.
 TimeoutStartSec=3h
+TimeoutStopSec=30min
 # Chaque minute, rien au journal quand rien n'attend : ni le départ ni la fin
 # du service, que systemd note en info. Ce que dit la commande passe.
 SyslogLevel=notice
 LogLevelMax=notice"
     unit_write button-demandes.timer "# Chaque minute, les demandes de la console. Écrit par la commande station :
-# station config --console-requests no l'arrête.
+# station config --console-requests les coupe ou les rallume.
 [Unit]
 Description=BUTTON : les demandes de la console, chaque minute
 
@@ -5799,10 +5955,6 @@ WantedBy=timers.target"
   if [[ -n $changed ]] && ! systemctl daemon-reload >/dev/null 2>&1; then
     warn "systemd ne relit pas le minuteur des demandes de la console : voir systemctl status button-demandes.timer."
     return 1
-  fi
-  if ! requests_on; then
-    systemctl disable --now button-demandes.timer >/dev/null 2>&1 || true
-    return 0
   fi
   if ! systemctl enable --now button-demandes.timer >/dev/null 2>&1; then
     warn "systemd ne prend pas le minuteur des demandes de la console : voir systemctl status button-demandes.timer."
@@ -5912,6 +6064,9 @@ cmd_uninstall() {
 
   if [[ -f $dir/compose.yml ]]; then
     local profiles=() images=() image down=(down --remove-orphans)
+    # Restée dans les données, une demande ouverte mettrait à jour la station
+    # réinstallée, sans que personne ne l'ait redemandée.
+    requests_forget "La station a été désinstallée : la redemander une fois réinstallée."
     all_profiles
     mapfile -t images < <(compose "${profiles[@]}" config --images 2>/dev/null | sort -u)
     [[ -z $purge ]] || down+=(--volumes)
