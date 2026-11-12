@@ -93,7 +93,8 @@ def app_factory(config: dict, beets: BeetsIntegration) -> CustomQuart:
             "METRICS_SNAPSHOT_INTERVAL": config.get("metrics", {}).get(
                 "snapshot_interval_seconds", 30
             ),
-            "ALERTS": config.get("alerts", {}) or {},
+            # As written: ``alerts: false`` in place of the block says off.
+            "ALERTS": config.get("alerts"),
         },
     )
     app.register_error_handler(Exception, errors_as_text)

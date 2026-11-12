@@ -175,8 +175,12 @@ def test_the_alerts_of_the_env_go_to_the_yaml_and_leave_the_rest(tmp_path: Path)
 
     first = _init(tmp_path, "admin", "un mot de passe")
     assert first.returncode == 0, first.stderr
-    # No ntfy, no e-mail: no alerts block, the loop stays off.
+    # No ntfy, no e-mail: no alerts block. The scheduler watches the antenna
+    # all the same, for the Antenne page, and tells no one (SUR-04).
     assert _alerts(tmp_path) is None
+    watch = AlertSettings.from_config(_alerts(tmp_path))
+    assert watch.enabled
+    assert watch.targets == []
 
     on = _init(tmp_path, "admin", "", **ALERTS_ENV)
     assert on.returncode == 0, on.stderr

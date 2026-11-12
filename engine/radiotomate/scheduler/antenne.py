@@ -78,7 +78,8 @@ def incidents_state(app) -> list[dict]:
                 "kind": kind,
                 "detail": incident.detail,
                 "since_s": max(0, int(now - incident.opened_at)),
-                "notified": incident.notified_at is not None,
+                # Sent to a target, not only to the log.
+                "notified": incident.told,
             }
         )
     rows.sort(key=lambda row: -row["since_s"])

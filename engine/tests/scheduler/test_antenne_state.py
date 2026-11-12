@@ -1,16 +1,23 @@
+import asyncio
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
+from time import monotonic
 from unittest.mock import AsyncMock, patch
 from zoneinfo import ZoneInfo
 
 import httpx
 from quart.testing import QuartClient
+from ruamel.yaml import YAML
 from sqlalchemy.orm import Session as ormSession
 
+from radiotomate.commands.update import do_update
 from radiotomate.domain.agenda import utc_naive
 from radiotomate.domain.emission import now_paris
 from radiotomate.models import AgendaDiffusion, Emission
 from radiotomate.scheduler import alerts, antenne
+from radiotomate.scheduler.metrics import runtime_metrics
 from radiotomate.scheduler.playout import PlayoutGateway, PlayoutResult
+from radiotomate.scheduler_app import app_factory
 from radiotomate.services import agenda
 
 PARIS = ZoneInfo("Europe/Paris")
@@ -157,6 +164,55 @@ async def test_state_json_aggregates(client: QuartClient, auth: dict, app):
     assert public["connected"] is False
     assert isinstance(body["asrun"], list)
     assert body["next_live_slot"] is None
+
+
+async def test_a_station_without_alerts_shows_a_silence_on_the_antenne_page(
+    app_configration: dict, beets_integration, auth: dict, monkeypatch
+):
+    """SUR-04: no alerts: block, as radiotomate install leaves it without ntfy
+    nor e-mail. The scheduler watches the antenna all the same, and the
+    Antenne page shows the silence, counted from its start, told to no one."""
+    monkeypatch.setattr(alerts, "MIN_INTERVAL", 0.05)
+    monkeypatch.setattr(alerts, "DEFAULT_INTERVAL", 0.05)
+    # Not the disks of this machine: one could be almost full.
+    monkeypatch.setattr(alerts, "disk_paths", lambda data_root: [])
+    monkeypatch.delenv("RTCONFIG", raising=False)
+    # tests.yaml keeps the watch off for the other tests: this station's
+    # radiotomate.yaml, the one the loop reads again, has no block.
+    config = dict(app_configration)
+    config.pop("alerts")
+    path = Path(config["data"]["root"]) / "radiotomate.yaml"
+    yaml = YAML()
+    data = yaml.load(path)
+    del data["alerts"]
+    yaml.dump(data, path)
+    app = app_factory(config, beets_integration)
+    await do_update(app.extensions["sqlalchemy"].engine)
+
+    async def silent(gateway) -> PlayoutResult:
+        runtime_metrics.heartbeat()  # Liquidsoap beats on
+        payload = {"source": "autodj", "silence_s": "30.0", "rms_db": "-90"}
+        return PlayoutResult(ok=True, status_code=200, payload=payload)
+
+    with patch.object(PlayoutGateway, "health", new=silent):
+        async with app.test_app() as test_app:
+            client = test_app.test_client()
+            deadline = monotonic() + 10
+            while True:
+                response = await client.get("/antenne/state.json", headers=auth)
+                assert response.status_code == 200
+                body = await response.get_json()
+                if body["incidents"] or monotonic() > deadline:
+                    break
+                await asyncio.sleep(0.05)
+    assert body["incidents"], "aucun incident en 10 s : la surveillance ne tourne pas"
+    [incident] = body["incidents"]
+    assert incident["kind"] == "silence"
+    assert incident["detail"] == "30 s de silence (source autodj)"
+    # Since the first silent second, not since the turn that saw it.
+    assert incident["since_s"] >= 30
+    # No target: to the log only.
+    assert incident["notified"] is False
 
 
 async def _next_live_slot(client: QuartClient, auth: dict) -> dict | None:
