@@ -20,7 +20,9 @@ The monitor runs without a target, and without the block: its incidents go to
 the Antenne page and to the log, nowhere else. A target set later hears of an
 incident still open on its next turn, then of its end; never of the end alone.
 ``enabled: false``, or ``alerts: false`` in place of the block, switches the
-monitor off, the page's incidents with it.
+monitor off, the page's incidents with it. An incident counts from its start,
+when something measures it: a silence from its first silent second, a
+heartbeat from the last beat, not from the turn that sees them.
 
 Configuration (``radiotomate.yaml``)::
 
@@ -71,6 +73,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import shutil
 import smtplib
@@ -203,7 +206,8 @@ def _float(raw, default: float) -> float:
         value = float(raw)
     except (TypeError, ValueError):
         return default
-    return value if value > 0 else default
+    # Never infinite: an incident would start before any date.
+    return value if value > 0 and math.isfinite(value) else default
 
 
 # A switch of the YAML, as the settings' switches read it, and in words: YAML
@@ -328,14 +332,25 @@ class AlertSettings:
 
 @dataclass
 class Incident:
-    """An open incident. ``told``: it went to a target, not only to the log;
-    a target set later hears of it, and only then of its end."""
+    """An open incident. ``opened_at``: when it began, as far as the monitor
+    knows, like the first second of a silence. ``told``: it went to a target,
+    not only to the log; a target set later hears of it, and only then of its
+    end."""
 
     kind: str
     detail: str
     opened_at: float
     notified_at: float | None = None
     told: bool = False
+
+
+@dataclass(frozen=True)
+class Condition:
+    """An incident as a turn sees it: its detail, and how long it has lasted
+    already, when something measures it (0: from this turn)."""
+
+    detail: str
+    lasted: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -397,8 +412,9 @@ class DatedLiveSlot:
 
 def live_slot_without_encoder(
     slots: list[LiveSlot], health: dict | None, now: datetime, grace: float
-) -> str | None:
-    """EF-01: return the incident detail when a live slot runs without harbor."""
+) -> tuple[str, float] | None:
+    """EF-01: when a live slot runs without harbor, the incident detail, and
+    the seconds since the slot started."""
     if health is None:
         return None  # playout_down covers this
     source = str(health.get("source") or "")
@@ -407,11 +423,13 @@ def live_slot_without_encoder(
     for slot in slots:
         if not slot.active(now):
             continue
-        if slot.elapsed_seconds(now) < grace:
+        elapsed = slot.elapsed_seconds(now)
+        if elapsed < grace:
             continue
         net = source or "?"
         return (
-            f"EF-01 {slot.label} : encodeur absent, filet horloge à l'antenne ({net})"
+            f"EF-01 {slot.label} : encodeur absent, filet horloge à l'antenne ({net})",
+            elapsed,
         )
     return None
 
@@ -468,8 +486,13 @@ class AlertMonitor:
         self.notifier = notifier
         self.open: dict[str, Incident] = {}
         self.playout_failures = 0
+        # When the first of these failures was seen.
+        self.playout_failed_at = 0.0
         self.host = socket.gethostname()
         self.live_slots: list[LiveSlot | DatedLiveSlot] = []
+        # When a turn last saw the encoder on air: a slot that loses it lacks
+        # it since then, not since its start.
+        self.harbor_seen: datetime | None = None
         # Agenda: sets due soon that cannot play, recent misses.
         self.agenda_issues: list[str] = []
         # The disks to watch, with their label: none, unless the loop sets them.
@@ -541,38 +564,51 @@ class AlertMonitor:
         health: dict | None,
         heartbeat_age: float | None,
         now: datetime | None = None,
-    ) -> dict[str, str]:
+    ) -> dict[str, Condition]:
         """Return the conditions currently true, keyed by kind."""
-        active: dict[str, str] = {}
+        active: dict[str, Condition] = {}
         # The instant, whatever the container's TZ, as the harbor's gate reads
         # the lives: the alert follows what the encoder may do.
+        now = now or now_paris()
+        if health is not None and is_harbor_source(str(health.get("source") or "")):
+            self.harbor_seen = now
         live_absent = live_slot_without_encoder(
-            self.live_slots, health, now or now_paris(), self.settings.live_grace
+            self.live_slots, health, now, self.settings.live_grace
         )
         if live_absent:
-            active["live_absent"] = live_absent
+            detail, lasted = live_absent
+            if self.harbor_seen is not None:
+                lasted = min(lasted, (now - self.harbor_seen).total_seconds())
+            active["live_absent"] = Condition(detail, lasted)
         if self.agenda_issues:
-            active["agenda"] = " · ".join(self.agenda_issues[:3])
+            active["agenda"] = Condition(" · ".join(self.agenda_issues[:3]))
         if health is None:
             self.playout_failures += 1
+            if self.playout_failures == 1:
+                self.playout_failed_at = time()
             if self.playout_failures >= PLAYOUT_DOWN_AFTER:
-                active["playout_down"] = (
-                    f"Liquidsoap /health injoignable ({self.playout_failures} essais)"
+                active["playout_down"] = Condition(
+                    f"Liquidsoap /health injoignable ({self.playout_failures} essais)",
+                    time() - self.playout_failed_at,
                 )
         else:
             self.playout_failures = 0
             silence = _float(health.get("silence_s"), 0.0)
             source = str(health.get("source") or "?")
             if silence >= self.settings.silence_seconds:
-                active["silence"] = f"{silence:.0f} s de silence (source {source})"
+                active["silence"] = Condition(
+                    f"{silence:.0f} s de silence (source {source})", silence
+                )
             down = [t for t in str(health.get("icecast_down") or "").split(",") if t]
             if down:
-                active["icecast_down"] = "Sortie Icecast déconnectée : " + ", ".join(
-                    sorted(down)
+                active["icecast_down"] = Condition(
+                    "Sortie Icecast déconnectée : " + ", ".join(sorted(down))
                 )
         if heartbeat_age is None or heartbeat_age > self.settings.heartbeat_max_age:
             age = "jamais" if heartbeat_age is None else f"{heartbeat_age:.0f} s"
-            active["heartbeat"] = f"Dernier battement Liquidsoap : {age}"
+            active["heartbeat"] = Condition(
+                f"Dernier battement Liquidsoap : {age}", heartbeat_age or 0.0
+            )
         disk = disk_almost_full(
             self.disk_paths,
             self.settings.disk_free_percent,
@@ -580,7 +616,7 @@ class AlertMonitor:
             already_open="disk" in self.open,
         )
         if disk:
-            active["disk"] = disk
+            active["disk"] = Condition(disk)
         return active
 
     async def step(
@@ -596,12 +632,17 @@ class AlertMonitor:
         # Without a target, an incident goes to the log only.
         tells = self.notifier is not None and self.settings.has_target
         emitted: list[str] = []
-        for kind, detail in active.items():
+        for kind, condition in active.items():
             incident = self.open.get(kind)
             if incident is None:
-                incident = Incident(kind=kind, detail=detail, opened_at=now)
+                lasted = condition.lasted if math.isfinite(condition.lasted) else 0
+                incident = Incident(
+                    kind=kind,
+                    detail=condition.detail,
+                    opened_at=now - max(0.0, lasted),
+                )
                 self.open[kind] = incident
-            incident.detail = detail
+            incident.detail = condition.detail
             cooldown = (
                 self.settings.disk_cooldown
                 if kind == "disk"
@@ -634,11 +675,16 @@ class AlertMonitor:
     async def _notify(self, incident: Incident, *, resolved: bool, send: bool) -> None:
         state = "RÉTABLI" if resolved else "ALERTE"
         title = f"[{state}] antenne {incident.kind} — {self.host}"
+        # The end says how long, from the start; the detail, only how it
+        # stood when last seen.
         lasted = time() - incident.opened_at
         body = (
             incident.detail
             if not resolved
-            else (f"{incident.detail}\nDurée : {duration_label(lasted)}")
+            else (
+                f"Durée : {duration_label(lasted)}\n"
+                f"Dernier relevé : {incident.detail}"
+            )
         )
         _log.warning("%s: %s", title, body.replace("\n", " | "))
         if self.notifier is None or not send:

@@ -171,7 +171,7 @@ async def test_a_station_without_alerts_shows_a_silence_on_the_antenne_page(
 ):
     """SUR-04: no alerts: block, as radiotomate install leaves it without ntfy
     nor e-mail. The scheduler watches the antenna all the same, and the
-    Antenne page shows the silence, told to no one."""
+    Antenne page shows the silence, counted from its start, told to no one."""
     monkeypatch.setattr(alerts, "MIN_INTERVAL", 0.05)
     monkeypatch.setattr(alerts, "DEFAULT_INTERVAL", 0.05)
     # Not the disks of this machine: one could be almost full.
@@ -209,6 +209,8 @@ async def test_a_station_without_alerts_shows_a_silence_on_the_antenne_page(
     [incident] = body["incidents"]
     assert incident["kind"] == "silence"
     assert incident["detail"] == "30 s de silence (source autodj)"
+    # Since the first silent second, not since the turn that saw it.
+    assert incident["since_s"] >= 30
     # No target: to the log only.
     assert incident["notified"] is False
 

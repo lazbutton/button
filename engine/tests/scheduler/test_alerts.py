@@ -1,5 +1,6 @@
 import json
 import logging
+import math
 from datetime import datetime, time, timedelta
 from pathlib import Path
 from time import time as time_now
@@ -167,6 +168,72 @@ async def test_a_target_hears_of_an_incident_once_and_of_its_end_only_after(
     assert await old.step(silent, 1.0) == []
     assert await old.step(sound, 1.0) == ["resolved:silence"]
     assert [(post["kind"], post["resolved"]) for post in posts] == [("silence", True)]
+
+
+async def test_a_measure_out_of_range_never_dates_an_incident():
+    assert alerts._float("inf", 20.0) == 20.0
+    assert alerts._float("1e400", 20.0) == 20.0
+    monitor = alerts.AlertMonitor(_settings(), _Spy())
+    assert await monitor.step({"silence_s": "inf", "source": "autodj"}, 1.0) == []
+    assert await monitor.step({"silence_s": "0", "source": "autodj"}, math.inf) == [
+        "open:heartbeat"
+    ]
+    assert math.isfinite(monitor.open["heartbeat"].opened_at)
+
+
+async def test_an_incident_counts_from_its_start_not_from_its_detection(
+    monkeypatch,
+):
+    """SUR-04: a silence from its first silent second, a heartbeat from the
+    last beat, the playout from the first turn it failed, a live without
+    encoder from the start of its slot, or from when the encoder left. The
+    end says how long, then how it stood when last seen."""
+    clock = [1_000_000.0]
+    monkeypatch.setattr(alerts, "time", lambda: clock[0])
+    spy = _Spy()
+    monitor = alerts.AlertMonitor(_settings(interval_seconds=15), spy)
+    silent = {"silence_s": "25.0", "source": "autodj"}
+    assert await monitor.step(silent, heartbeat_age=40.0) == [
+        "open:silence",
+        "open:heartbeat",
+    ]
+    assert monitor.open["silence"].opened_at == clock[0] - 25
+    assert monitor.open["heartbeat"].opened_at == clock[0] - 40
+    # Still silent: the start stays.
+    clock[0] += 15
+    assert await monitor.step(dict(silent, silence_s="40.0"), 55.0) == []
+    assert monitor.open["silence"].opened_at == 1_000_000.0 - 25
+    clock[0] += 15
+    back = await monitor.step({"silence_s": "0.0", "source": "autodj"}, 0.5)
+    assert sorted(back) == ["resolved:heartbeat", "resolved:silence"]
+    ends = {sent["kind"]: sent["body"] for sent in spy.sent if sent["resolved"]}
+    assert ends["silence"] == (
+        "Durée : 55 s\nDernier relevé : 40 s de silence (source autodj)"
+    )
+    assert ends["heartbeat"].startswith("Durée : 1 min 10 s\n")
+
+    # The playout: from the first turn without an answer, even when a frozen
+    # Liquidsoap makes each turn wait for it, longer than the interval.
+    monitor = alerts.AlertMonitor(_settings(interval_seconds=15), _Spy())
+    first = clock[0]
+    for _ in range(alerts.PLAYOUT_DOWN_AFTER):
+        await monitor.step(None, heartbeat_age=0.5)
+        clock[0] += 40
+    assert monitor.open["playout_down"].opened_at == first
+
+    # A live without encoder: from the start of its slot.
+    monitor = alerts.AlertMonitor(_settings(live_grace_seconds=90), _Spy())
+    monitor.live_slots = [alerts.LiveSlot("QG", 2, 20 * 60, 22 * 60)]
+    clock_on_air = {"silence_s": "0.0", "source": "carts"}
+    await monitor.step(clock_on_air, 0.5, now=_paris(2, 20, 2))
+    assert monitor.open["live_absent"].opened_at == clock[0] - 120
+    # The encoder comes, then goes in the middle of the slot: from then.
+    on_air = {"silence_s": "0.0", "source": "stream"}
+    await monitor.step(on_air, 0.5, now=_paris(2, 21, 0))
+    assert "live_absent" not in monitor.open
+    clock[0] += 15
+    await monitor.step(clock_on_air, 0.5, now=_paris(2, 21, 0, 15))
+    assert monitor.open["live_absent"].opened_at == clock[0] - 15
 
 
 async def test_notifier_posts_webhook_and_vikunja_task():
