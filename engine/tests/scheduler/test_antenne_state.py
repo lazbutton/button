@@ -1,4 +1,4 @@
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 from zoneinfo import ZoneInfo
 
@@ -7,9 +7,11 @@ from quart.testing import QuartClient
 from sqlalchemy.orm import Session as ormSession
 
 from radiotomate.domain.agenda import utc_naive
-from radiotomate.models import AgendaDiffusion
+from radiotomate.domain.emission import now_paris
+from radiotomate.models import AgendaDiffusion, Emission
 from radiotomate.scheduler import alerts, antenne
 from radiotomate.scheduler.playout import PlayoutGateway, PlayoutResult
+from radiotomate.services import agenda
 
 PARIS = ZoneInfo("Europe/Paris")
 
@@ -59,6 +61,50 @@ def test_next_live_slot_picks_the_closest_window():
     active = antenne.next_live_slot(slots, datetime(2026, 9, 23, 20, 30, tzinfo=PARIS))
     assert active["active"] is True
     assert antenne.next_live_slot([], monday_noon) is None
+
+
+def test_next_live_slot_skips_a_show_cancelled_tonight():
+    # QG, on Mondays from 20:00 to 22:00, cancelled in the Agenda on Monday 21.
+    slot = alerts.LiveSlot(
+        "QG",
+        day_of_week=0,
+        start_minute=20 * 60,
+        end_minute=22 * 60,
+        skip_dates=frozenset({date(2026, 9, 21)}),
+    )
+    monday_noon = datetime(2026, 9, 21, 12, 0, tzinfo=PARIS)
+    # Not tonight's: next Monday's.
+    nxt = antenne.next_live_slot([slot], monday_noon)
+    assert nxt["title"] == "QG"
+    assert nxt["active"] is False
+    assert nxt["starts_in_s"] == (7 * 24 + 8) * 3600
+    # Nor on air when its hour comes.
+    during = antenne.next_live_slot([slot], datetime(2026, 9, 21, 20, 30, tzinfo=PARIS))
+    assert during["active"] is False
+    assert during["starts_in_s"] == 7 * 24 * 3600 - 30 * 60
+
+
+def test_next_live_slot_skips_a_day_cancelled_later_in_the_week():
+    slots = [
+        # Cancelled on Wednesday 23: the one after is beyond the week.
+        alerts.LiveSlot(
+            "QG",
+            day_of_week=2,
+            start_minute=20 * 60,
+            end_minute=22 * 60,
+            skip_dates=frozenset({date(2026, 9, 23)}),
+        ),
+        alerts.LiveSlot(
+            "Matinale", day_of_week=4, start_minute=8 * 60, end_minute=9 * 60
+        ),
+    ]
+    monday_noon = datetime(2026, 9, 21, 12, 0, tzinfo=PARIS)
+    nxt = antenne.next_live_slot(slots, monday_noon)
+    # Friday's Matinale, not Wednesday's QG.
+    assert nxt["title"] == "Matinale"
+    assert nxt["starts_in_s"] == (3 * 24 + 20) * 3600
+    # Without Friday's Matinale, no live within the week.
+    assert antenne.next_live_slot(slots[:1], monday_noon) is None
 
 
 async def test_state_json_aggregates(client: QuartClient, auth: dict, app):
@@ -113,6 +159,22 @@ async def test_state_json_aggregates(client: QuartClient, auth: dict, app):
     assert body["next_live_slot"] is None
 
 
+async def _next_live_slot(client: QuartClient, auth: dict) -> dict | None:
+    """The next live of the Antenne page, the playout up, the harbor off."""
+    with patch.object(
+        PlayoutGateway,
+        "health",
+        new=AsyncMock(
+            return_value=PlayoutResult(
+                ok=True, status_code=200, payload={"source": "autodj"}
+            )
+        ),
+    ):
+        response = await client.get("/antenne/state.json", headers=auth)
+    assert response.status_code == 200, await response.get_data(as_text=True)
+    return (await response.get_json())["next_live_slot"]
+
+
 async def test_state_json_tells_the_next_live_from_the_instant(
     container_tz: str, client: QuartClient, auth: dict, dbsession: ormSession
 ):
@@ -127,18 +189,40 @@ async def test_state_json_tells_the_next_live_from_the_instant(
         )
     )
     await dbsession.commit()
-    with patch.object(
-        PlayoutGateway,
-        "health",
-        new=AsyncMock(
-            return_value=PlayoutResult(
-                ok=True, status_code=200, payload={"source": "autodj"}
-            )
-        ),
-    ):
-        response = await client.get("/antenne/state.json", headers=auth)
-    assert response.status_code == 200, await response.get_data(as_text=True)
-    slot = (await response.get_json())["next_live_slot"]
+    slot = await _next_live_slot(client, auth)
     assert slot["title"] == "Direct de test"
     assert slot["active"] is False
     assert 9 * 60 <= slot["starts_in_s"] <= 10 * 60
+
+
+async def test_state_json_skips_a_show_cancelled_in_the_agenda(
+    container_tz: str, client: QuartClient, auth: dict, dbsession: ormSession
+):
+    # Tonight's show, in the last minute of the day: tonight's whatever the
+    # hour, wherever the station is.
+    today = now_paris().date()
+    show = Emission(
+        scope="weekly",
+        title="Ce soir",
+        artist="avec l'équipe",
+        day_of_week=today.weekday(),
+        start_minute=24 * 60 - 1,
+        end_minute=24 * 60,
+    )
+    dbsession.add(show)
+    await dbsession.commit()
+    assert (await _next_live_slot(client, auth))["title"] == "Ce soir"
+    # Cancelled in the Agenda, as the console does it: next week's is the next.
+    cancel = {"emission_id": show.id, "date": today.isoformat()}
+    await agenda.add_exception(dbsession, cancel)
+    await dbsession.commit()
+    slot = await _next_live_slot(client, auth)
+    assert slot["title"] == "Ce soir"
+    assert slot["active"] is False
+    # Next week's: days away, not hours.
+    assert slot["starts_in_s"] > 6 * 24 * 3600
+    # Next week's cancelled as well: no live within the week.
+    next_week = (today + timedelta(days=7)).isoformat()
+    await agenda.add_exception(dbsession, {**cancel, "date": next_week})
+    await dbsession.commit()
+    assert await _next_live_slot(client, auth) is None

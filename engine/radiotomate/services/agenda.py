@@ -755,6 +755,21 @@ async def blocked_weekly_ids(session: ormSession, now: datetime) -> set[int]:
     return blocked
 
 
+async def blocked_weekly_days(
+    session: ormSession, first: date, last: date
+) -> set[tuple[int, date]]:
+    """The weekly occurrences from ``first`` to ``last`` that do not happen, as
+    ``(emission_id, day)``: cancelled, or replaced by a dated broadcast, as the
+    Agenda shows them."""
+    start, end = _day_bounds(first, last)
+    diffusions = await AgendaDiffusion.between(session, start, end)
+    return {
+        (item["emission_id"], date.fromisoformat(item["date"]))
+        for item in await weekly_occurrences(session, first, last, diffusions)
+        if item["cancelled"] or item["replaced_by"] is not None
+    }
+
+
 # -- guests --------------------------------------------------------------------
 
 

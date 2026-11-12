@@ -202,7 +202,9 @@ async def asrun_rows(session, limit: int = ASRUN_LIMIT) -> list[dict]:
 
 
 def next_live_slot(slots: list[LiveSlot], now: datetime) -> dict | None:
-    """Closest weekly live window starting after ``now`` (or active right now)."""
+    """Closest live window starting after ``now`` (or active right now): a dated
+    live of the Agenda, or a weekly show, but not on its ``skip_dates``, the days
+    the Agenda cancels it or replaces it with a dated broadcast."""
     local = now_paris(now)
     best: tuple[float, LiveSlot] | None = None
     for slot in slots:
@@ -221,6 +223,10 @@ def next_live_slot(slots: list[LiveSlot], now: datetime) -> dict | None:
         for days in range(8):
             day = local + timedelta(days=days)
             if day.weekday() != slot.day_of_week:
+                continue
+            if day.date() in slot.skip_dates:
+                # Cancelled in the Agenda, or replaced by a dated broadcast:
+                # the next one is a week later, if it is still in reach.
                 continue
             start = day.replace(
                 hour=slot.start_minute // 60,

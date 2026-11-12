@@ -235,7 +235,7 @@ export function derivePillars(state: AntenneState | null, harborOnAir: boolean):
       };
     }
   } else {
-    direct = { key: "direct", label: "Direct", value: "aucun prévu", tone: "off", detail: ["Aucun créneau live hebdo déclaré."] };
+    direct = { key: "direct", label: "Direct", value: "aucun prévu", tone: "off", detail: ["Aucun direct prévu d’ici 7 jours."] };
   }
 
   // Moteur

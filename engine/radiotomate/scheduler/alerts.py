@@ -40,7 +40,7 @@ import json
 import logging
 import socket
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from time import time
 
@@ -505,11 +505,17 @@ async def load_live_slots(app) -> list[LiveSlot | DatedLiveSlot]:
     today = now.date()
     async with db.session() as session:
         rows = await Emission.all_weekly(session)
-        blocked: set[int] = set()
+        blocked: set[tuple[int, date]] = set()
         dated = []
         if await agenda.agenda_enabled(session):
-            blocked = await agenda.blocked_weekly_ids(session, now)
-            dated = await agenda.dated_live_windows(session, now, days=7)
+            # The days next_live_slot reads, today and the seven after, and one
+            # more on each side: its caller reads the clock a moment before or
+            # after this. The dated lives as far: a weekly show that one of them
+            # replaces is skipped, and that live is the one to tell.
+            blocked = await agenda.blocked_weekly_days(
+                session, today - timedelta(days=1), today + timedelta(days=8)
+            )
+            dated = await agenda.dated_live_windows(session, now, days=8)
     slots: list[LiveSlot | DatedLiveSlot] = []
     for row in rows:
         if (
@@ -524,7 +530,9 @@ async def load_live_slots(app) -> list[LiveSlot | DatedLiveSlot]:
                 day_of_week=int(row.day_of_week),
                 start_minute=int(row.start_minute),
                 end_minute=int(row.end_minute),
-                skip_dates=frozenset({today}) if row.id in blocked else frozenset(),
+                skip_dates=frozenset(
+                    day for emission_id, day in blocked if emission_id == row.id
+                ),
             )
         )
     for row in dated:
