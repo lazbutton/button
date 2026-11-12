@@ -1,10 +1,14 @@
-"""Les propositions d'un titre trouvé à la lettre près.
+"""Les propositions d'un titre, trouvé à la lettre près ou rapproché.
 
 Le cas « assemble MusicBrainz et Wikidata » de `tests/radio-catalogue.test.ts`, dans
-Hopper. Hopper ne teste `buildRow` que pour un titre rapproché : les rangées trouvées
-à la lettre près sont écrites ici, d'après ses exemples (War, Andy Bey, Galaxy, les
-Pixies…). Durées, identifiants et liens y sont des valeurs de test.
+Hopper, et pour un titre rapproché, celui de son bloc « troisième passe » qui corrige
+à la manière de Rivendell. Hopper ne teste `buildRow` que pour un titre rapproché :
+les rangées trouvées à la lettre près sont écrites ici, d'après ses exemples (War,
+Andy Bey, Galaxy, les Pixies…). Durées, identifiants et liens y sont des valeurs de
+test.
 """
+
+from dataclasses import replace
 
 import pytest
 
@@ -23,6 +27,7 @@ from radiotomate.fiches.proposals import (
     WikidataArtist,
     artist_facts,
     build_row,
+    fixed_title,
     proposals,
 )
 from radiotomate.fiches.rules import (
@@ -144,17 +149,6 @@ def test_nothing_found_proposes_nothing(result, level, reasons):
     row = build_row(track, result, {})
     assert (row.level, row.reasons) == (level, reasons)
     assert proposals(row) == []
-
-
-def test_a_close_match_comes_with_the_second_pass():
-    """Un titre rapproché viendra avec FON-23 : rien ne le propose à moitié."""
-    match = Match(
-        "deezer", "deezer", "9", "https://www.deezer.com/track/9", "Oumako", ("X",)
-    )
-    with pytest.raises(NotImplementedError):
-        build_row(
-            Track(title="Oumako", artist="X"), SearchResult("rapproché", match), {}
-        )
 
 
 # ===== Un titre trouvé à la lettre près =====
@@ -450,6 +444,36 @@ def test_the_title_the_variant_cleaned(artist, title, artists, found_title, prop
     assert values == proposed
 
 
+def test_a_nan_duration_is_unknown():
+    """NaN, comme pour JavaScript : une durée inconnue, pas une erreur."""
+    match = replace(WAR_MATCH, duration_s=float("nan"))
+    row = build_row(WAR, SearchResult("trouvé", match), {})
+    assert (row.level, row.reasons, row.found_duration) == (
+        "à revoir",
+        ["durée du morceau trouvé inconnue"],
+        None,
+    )
+
+
+@pytest.mark.parametrize(
+    ("label", "proposed"),
+    [
+        # U+FEFF est une espace pour JavaScript : le label est vide.
+        ("\ufeff", "Avenue Records"),
+        (" ", "Avenue Records"),
+        # 0x1F n'en est pas une : le label du fichier reste.
+        ("\x1f", None),
+    ],
+)
+def test_an_empty_label_is_read_like_javascript(label, proposed):
+    """Les réponses de Hopper, relevées par Node."""
+    track = Track(
+        title="The Cisco Kid", artist="War", year=1972, label=label, length=267
+    )
+    values = {p.key: p.value for p in proposals(build_row(track, WAR_FOUND, {}))}
+    assert values.get("label") == proposed
+
+
 def test_tidal_then_deezer_by_isrc():
     match = Match(
         "tidal",
@@ -618,3 +642,261 @@ def test_the_deezer_page_of_a_namesake_is_refused():
     )
     assert (row.verdict, row.verdict_source) == ("à vérifier", "")
     assert not any(p.key == "fmg" for p in proposals(row))
+
+
+# ===== Un titre rapproché =====
+# Le cas « corrige à la manière de Rivendell ce que la troisième passe a relu », dans
+# Hopper : un morceau de Jerzy Milian, rapproché dans l'album du fichier, puis ses
+# variantes.
+
+MILIAN = Track(
+    title="W[rsd Pampassw",
+    artist="Jerzy Milian",
+    album="Orkiestra Rozrywkowa PRiTV",
+    length=214,
+)
+MILIAN_MATCH = Match(
+    source="rapprochement",
+    platform="deezer",
+    id="3",
+    url="u",
+    title="Wśród pampasów",
+    artists=("Jerzy Milian",),
+    duration_s=213,
+    why=(
+        "même artiste",
+        "titre aux accents perdus",
+        "durée à 1 s",
+        "dans l'album de la radio",
+    ),
+)
+
+
+def close(track: Track, details: Details | None = None, **match):
+    """La rangée d'un titre rapproché : le morceau de Jerzy Milian, changé par
+    `match`."""
+    result = SearchResult("rapproché", replace(MILIAN_MATCH, **match), details)
+    return build_row(track, result, {})
+
+
+def test_a_close_match_repairs_lost_accents():
+    row = close(MILIAN)
+    assert (row.level, row.title, row.artist) == (
+        "rapproché",
+        "Wśród pampasów",
+        "Jerzy Milian",
+    )
+    assert row.reasons == [
+        "rapproché : même artiste, titre aux accents perdus, durée à 1 s,"
+        " dans l'album de la radio"
+    ]
+    assert proposals(row) == [
+        Proposal(
+            "title", "W[rsd Pampassw", "Wśród pampasów", "rapproché", source="Deezer"
+        )
+    ]
+
+
+def test_a_close_match_keeps_its_own_duration():
+    """La durée du morceau rapproché, qui l'a confirmé : Deezer, rejoint par l'ISRC,
+    a parfois une autre édition."""
+    deezer = DeezerDetails(track_id="3", title="Wśród pampasów", duration_s=300)
+    row = close(MILIAN, Details(deezer=deezer))
+    assert (row.level, row.found_duration) == ("rapproché", 213)
+
+
+@pytest.mark.parametrize(
+    ("track", "match", "expected"),
+    [
+        # Une faute corrigée, la mention du fichier gardée.
+        (
+            replace(MILIAN, artist="Mos Def", title="Auditiorium Ft. Slick Rick"),
+            {
+                "title": "Auditorium",
+                "artists": ("Mos Def feat. Slick Rick",),
+                "why": (
+                    "artiste crédité autrement",
+                    "titre à une faute près",
+                    "durée à 0 s",
+                    "recherche floue",
+                ),
+            },
+            {"title": "Auditorium Ft. Slick Rick"},
+        ),
+        # Des accents réparés avec une lettre improbable : le titre reste.
+        (
+            replace(MILIAN, artist="Neoton Fammlia", title="Nehiz Fizk"),
+            {
+                "title": "Nehḗz fiúk",
+                "artists": ("Neoton Familia",),
+                "why": (
+                    "artiste à une faute près",
+                    "titre aux accents perdus",
+                    "durée à 0 s",
+                ),
+            },
+            {"title": "Nehiz Fizk"},
+        ),
+        # L'artiste et le titre inversés dans le fichier : chacun reprend sa place.
+        (
+            replace(MILIAN, artist="TI_FI_LA_OU_TE_MADAM", title="ANZALA_DOLOR_VELO"),
+            {
+                "title": "Ti Fi La Ou Te Madam'",
+                "artists": ("Anzala", "Dolor", "velo"),
+                "why": ("artiste crédité autrement", "même titre", "durée à 4 s"),
+            },
+            {"title": "Ti Fi La Ou Te Madam'", "artist": "Anzala, Dolor, velo"},
+        ),
+        # Une annotation du fichier mise de côté pour chercher : son titre reste.
+        (
+            replace(MILIAN, title="My Melodi ['We Can Get Down']"),
+            {
+                "title": "My Melody",
+                "why": (
+                    "même artiste",
+                    "titre à une faute près",
+                    "durée à 3 s",
+                    "annotation entre crochets retirée",
+                ),
+            },
+            {"title": "My Melodi ['We Can Get Down']"},
+        ),
+        # Rien d'après SoundCloud, où chaque compte écrit ce qu'il veut.
+        (
+            MILIAN,
+            {"platform": "soundcloud"},
+            {"title": "W[rsd Pampassw", "artist": "Jerzy Milian"},
+        ),
+    ],
+)
+def test_a_close_match_is_fixed_the_file_s_way(track, match, expected):
+    """Corrigé à la manière du fichier, ce que la troisième passe a relu."""
+    row = close(track, **match)
+    assert {key: getattr(row, key) for key in expected} == expected
+
+
+# « ğ », abîmé à l'import, devient 0x1F, une espace pour Python, pas pour JavaScript :
+# la casse du fichier se lit comme chez Hopper. Ses réponses, relevées par Node. Le
+# « i » sans point du turc est à sa place : ruff le signale, à tort ici.
+@pytest.mark.parametrize(
+    ("radio", "found", "fixed"),
+    [
+        ("De\x1fmesin Ya\x1fl1 Boya", "Değmesin yağlı boya", "Değmesin Yağlı Boya"),  # noqa: RUF001
+        ("Ne O\x1flan Ne K1z", "ne oğlan ne kız", "Ne Oğlan Ne Kız"),  # noqa: RUF001
+        ("Da\x1flar Da\x1flar", "Dağlar Dağlar", "Dağlar Dağlar"),
+    ],
+)
+def test_a_title_damaged_by_the_import_keeps_the_file_s_case(radio, found, fixed):
+    why = ("même artiste", "titre aux accents perdus", "durée à 1 s")
+    row = close(
+        replace(MILIAN, title=radio, artist="X"), title=found, artists=("X",), why=why
+    )
+    assert row.title == fixed
+
+
+def test_an_artist_damaged_by_the_import_keeps_the_file_s_case():
+    why = ("artiste aux accents perdus", "même titre", "durée à 1 s")
+    track = replace(MILIAN, title="Song", artist="Selda Ba\x1fcan")
+    row = close(track, title="Song", artists=("selda bağcan",), why=why)
+    assert row.artist == "Selda Bağcan"
+
+
+@pytest.mark.parametrize(
+    ("radio", "found", "artists", "fixed"),
+    [
+        # Les notes techniques du fichier partent, ses mentions restent.
+        (
+            "APKA! forcar o verao (RTM) Master Final (16bit44.1kHz)",
+            "Forçar o verão",
+            [],
+            "Forçar o verão",
+        ),
+        (
+            "Big Mouth AKA The Next Level [Phat Mastered]",
+            "03 Big Mouth AKA The Next Level",
+            [],
+            "Big Mouth AKA The Next Level",
+        ),
+        (
+            "Vancouver and Fairfield remix (2004)",
+            "Vancouver and Fairfield (remix)",
+            [],
+            "Vancouver and Fairfield (remix) (2004)",
+        ),
+        # Les mêmes mots ne changent rien.
+        (
+            "Shake Your Body (Down to the Ground)",
+            "Shake Your Body Down to the Ground",
+            [],
+            "Shake Your Body (Down to the Ground)",
+        ),
+        (
+            "Honest Joe's Indian (Early Version)21",
+            "Honest Joe's Indian (early version)",
+            [],
+            "Honest Joe's Indian (Early Version)",
+        ),
+        (
+            "Sleepin Giant ft. Romaine Smith - Hey Girl (Sauce 81 remix)",
+            "Hey Girl",
+            [],
+            "Hey Girl (Sauce 81 remix)",
+        ),
+        (
+            "WORLD IS MINE FEAT PRINCE RAPID",
+            "World's Mine",
+            [],
+            "World's Mine Feat Prince Rapid",
+        ),
+        # Un numéro de piste et l'artiste dans le titre trouvé, que le fichier n'a pas.
+        (
+            "Patrona De Los Reclusos (The Latin Brothers)",
+            "05 Dj Veekash Patrona De Los Reclusos (The Latin Brothers)",
+            ["Dj Veekash"],
+            "Patrona De Los Reclusos (The Latin Brothers)",
+        ),
+    ],
+)
+def test_fixed_title(radio, found, artists, fixed):
+    assert fixed_title(radio, found, artists) == fixed
+
+
+def test_a_recording_only_on_compilations_has_a_year_to_review():
+    """Roy Budd, « Get Carter », 1971 : MusicBrainz ne connaît l'enregistrement que
+    par « The Sound Spectrum », une compilation de 1995. Le cas de la recherche dans
+    MusicBrainz, dans Hopper, jusqu'à ce qu'il propose."""
+    track = Track(title="Get carter", artist="Roy budd", length=198)
+    match = Match(
+        source="rapprochement",
+        platform="musicbrainz",
+        id="r2",
+        url="https://musicbrainz.org/recording/r2",
+        title="Get Carter",
+        artists=("Roy Budd",),
+        album="The Sound Spectrum",
+        duration_s=200.626,
+        artist_id="a2",
+        why=("même artiste", "même titre", "durée à 3 s"),
+        date="1995",
+        compilation=True,
+    )
+    row = build_row(track, SearchResult("rapproché", match), {})
+    assert (row.found_at, row.platform) == ("MusicBrainz", "MusicBrainz")
+    review = "année d'une compilation ou d'une réédition"
+    assert proposals(row) == [
+        Proposal("artist", "Roy budd", "Roy Budd", "rapproché", source="MusicBrainz"),
+        Proposal("album", "", "The Sound Spectrum", "rapproché", source="MusicBrainz"),
+        Proposal(
+            "year",
+            0,
+            1995,
+            "à revoir",
+            review,
+            "MusicBrainz (date de l'édition trouvée)",
+        ),
+    ]
+    # Sans compilation, la date d'un enregistrement rapproché ne propose rien seule.
+    alone = build_row(
+        track, SearchResult("rapproché", replace(match, compilation=False)), {}
+    )
+    assert all(proposal.key != "year" for proposal in proposals(alone))
