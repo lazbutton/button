@@ -49,11 +49,11 @@ async function voisines(page: Page): Promise<{ rang: number; haut: string; bas: 
  * une ligne déjà partie vers l'antenne, n'a pas de bouton « Retirer ».
  *
  * L'heure de passage exacte de la ligne, l'attribut `datetime` de son heure, la
- * désigne : aucune autre ligne du moteur ne l'a. Le masque d'un retrait vaut
- * pour une heure exacte, et ne cache donc qu'elle. L'heure affichée, à la
- * seconde, peut être celle de deux lignes.
+ * désigne : aucune autre ligne du moteur ne l'a. L'heure affichée, à la
+ * seconde, peut être celle de deux lignes. Le parcours rend aussi cette heure
+ * et l'identifiant de la ligne au moteur : le retrait les envoie.
  */
-async function derniereLigneDeLHorloge(page: Page): Promise<Locator> {
+async function derniereLigneDeLHorloge(page: Page): Promise<{ ligne: Locator; at: string; id: string }> {
   const reponse = await page.request.get(CONDUCTEUR_JSON);
   expect(reponse.ok(), "file lue au moteur").toBe(true);
   const { items } = (await reponse.json()) as Rundown;
@@ -69,7 +69,9 @@ async function derniereLigneDeLHorloge(page: Page): Promise<Locator> {
     })
     .at(-1);
   if (!heure) throw new Error(`Aucune ligne de l'horloge à retirer parmi : ${heures.join(", ")}.`);
-  return lignes(page).filter({ has: page.locator(`time[datetime="${heure}"]`) });
+  const id = items.find((item) => item.at === heure)?.id;
+  if (!id) throw new Error(`La ligne de ${heure} n'a pas d'identifiant au moteur.`);
+  return { ligne: lignes(page).filter({ has: page.locator(`time[datetime="${heure}"]`) }), at: heure, id };
 }
 
 test("Espace passe au titre suivant, une seule fois, et s’écrit dans un champ", async ({ page }) => {
@@ -232,12 +234,19 @@ test("une ligne retirée de la file revient avec « Annuler »", async ({ page }
   // La file tenue, aucune ligne du haut n'en sort pendant le geste : elle ne
   // glisse pas. Le message du retrait reste aussi : ses 8 s ne passent pas.
   await tenirLaFile(page, async () => {
-    const ligne = await derniereLigneDeLHorloge(page);
+    const { ligne, at, id } = await derniereLigneDeLHorloge(page);
     await expect(ligne).toHaveCount(1);
     const retirer = ligne.getByRole("button", { name: /^Retirer / });
     const nom = (await retirer.getAttribute("aria-label")) ?? "";
 
+    // Le retrait nomme la ligne, avec son heure : une autre ligne de l'horloge à
+    // la même heure exacte resterait dans la file.
+    const envoi = page.waitForRequest(
+      (request) => request.method() === "POST" && new URL(request.url()).pathname === "/autodj/conducteur/items.json",
+      { timeout: 5_000 },
+    );
     await retirer.click();
+    expect((await envoi).postDataJSON()).toEqual({ suppress_at: at, suppress_id: id });
     const retrait = avis(page, "Retiré de la file.");
     await expect(retrait).toBeVisible();
     await expect(ligne).toHaveCount(0);
