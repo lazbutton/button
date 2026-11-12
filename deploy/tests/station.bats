@@ -379,6 +379,8 @@ Radio.Example
 America/Montreal
 
 n
+n
+
 EOF
   assert_success
   assert_output --partial "Quelques questions. Entrée garde la valeur entre crochets."
@@ -387,8 +389,12 @@ EOF
   assert_output --partial "Fuseau de la station [Europe/Paris] :"
   assert_output --partial "Identifiant du compte admin [admin] :"
   assert_output --partial "Mises à jour automatiques, dès que station update saura se lancer seule ? (o/n) [o] :"
+  assert_output --partial "Alertes sur un téléphone, par ntfy.sh, un service gratuit : un silence à l'antenne, un disque presque plein, une mise à jour annulée ? (o/n) [o] :"
+  assert_output --partial "E-mails qui reçoivent aussi les alertes, séparés par des virgules, facultatif :"
   [ "$(env_of DOMAIN)" = radio.example ]
   [ -z "$(env_of ACME_EMAIL)" ]
+  [ -z "$(env_of BUTTON_ALERT_NTFY)" ]
+  [ -z "$(env_of BUTTON_ALERT_EMAIL)" ]
   [ "$(env_of TZ)" = America/Montreal ]
   [ "$(env_of RT_ADMIN_USER)" = admin ]
   [ "$(env_of BUTTON_UPDATES)" = manual ]
@@ -408,6 +414,8 @@ un admin
 studio
 peut-être
 o
+n
+
 EOF
   assert_success
   assert_output --partial "« https://radio.example » n'est pas un nom de domaine."
@@ -423,12 +431,14 @@ EOF
 }
 
 @test "les options répondent : aucune question ne se pose" {
-  install_at_keyboard --name "Radio Test" --domain radio.example --email "" --timezone UTC --admin studio --updates manual <<<""
+  install_at_keyboard --name "Radio Test" --domain radio.example --email "" --timezone UTC --admin studio --updates manual \
+    --alert-ntfy "" <<<""
   assert_failure
   assert_output --partial "« UTC » n'est pas un fuseau connu de cette machine"
 
   touch "$ROOT/usr/share/zoneinfo/UTC"
-  install_at_keyboard --name "Radio Test" --domain radio.example --email "" --timezone UTC --admin studio --updates manual <<<""
+  install_at_keyboard --name "Radio Test" --domain radio.example --email "" --timezone UTC --admin studio --updates manual \
+    --alert-ntfy "" <<<""
   assert_success
   refute_output --partial "Quelques questions"
   refute_output --partial "Nom de la station"

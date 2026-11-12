@@ -14,6 +14,9 @@ Alone, they serve a bench, until Ctrl-C, and write what they receive, one JSON
 line each, to the file given::
 
     python fake_targets.py --smtp 2525 --ntfy 8080 --certs DIR --out FILE
+
+``--smtp-mode``, ``--smtp-user``, ``--smtp-password`` and ``--ntfy-token``
+change what the fakes expect.
 """
 
 from __future__ import annotations
@@ -337,6 +340,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--smtp", type=int, default=2525)
     parser.add_argument("--smtp-mode", default="starttls")
+    parser.add_argument("--smtp-user", default="alertes@radio.example")
+    parser.add_argument("--smtp-password", default="mot-de-passe-de-test")
     parser.add_argument("--ntfy", type=int, default=8080)
     parser.add_argument("--ntfy-token", default="")
     parser.add_argument("--certs", type=Path, required=True)
@@ -352,7 +357,14 @@ def main() -> None:
 
     certificate = make_certificate(options.certs)
     with (
-        FakeSMTP(options.smtp_mode, certificate, port=options.smtp, on_receive=write),
+        FakeSMTP(
+            options.smtp_mode,
+            certificate,
+            options.smtp_user,
+            options.smtp_password,
+            options.smtp,
+            write,
+        ),
         FakeNtfy(options.ntfy_token, port=options.ntfy, on_receive=write),
     ):
         sys.stdout.write(

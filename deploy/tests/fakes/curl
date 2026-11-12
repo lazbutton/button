@@ -2,18 +2,39 @@
 # Un faux curl : GitHub et ses versions publiées ($FAKE_STATE/latest, puis
 # $FAKE_STATE/releases/vX.Y.Z/), le dépôt de Docker, et la station vue de la
 # machine. Une adresse de $FAKE_STATE/here mène à cette machine.
+#
+# Il joue aussi les alertes : un faux ntfy, qui note chaque message dans
+# $FAKE_STATE/ntfy, une ligne de JSON chacun, et le fichier de configuration
+# de curl (-K), qui porte le jeton, dans $FAKE_STATE/ntfy-config ; un faux
+# serveur SMTP, qui note chaque e-mail dans $FAKE_STATE/mails/N.eml, et son
+# envoi (adresse, expéditeur, destinataires, options, configuration) dans
+# N.envoi. Un ntfy injoignable : $FAKE_STATE/ntfy-down ; qui refuse le
+# jeton : ntfy-refuses. Un serveur SMTP injoignable : smtp-down ; qui refuse
+# le compte : smtp-refuses.
 set -euo pipefail
 echo "curl $*" >>"$FAKE_STATE/log"
-out="" resolve="" url=""
+out="" resolve="" url="" config="" data="" upload="" from="" rcpts=() flags=" "
 while (($#)); do
   case $1 in
     -o) out=$2 && shift 2 ;;
     --resolve) resolve=$2 && shift 2 ;;
-    -w | --max-time | --retry | --retry-delay | --cacert) shift 2 ;;
-    -*) shift ;;
+    -K) config=$2 && shift 2 ;;
+    --data-binary) data=$2 && shift 2 ;;
+    -T) upload=$2 && shift 2 ;;
+    --url) url=$2 && shift 2 ;;
+    --mail-from) from=$2 && shift 2 ;;
+    --mail-rcpt) rcpts+=("$2") && shift 2 ;;
+    -w | -H | --max-time | --retry | --retry-delay | --connect-timeout | --cacert) shift 2 ;;
+    -*) flags+="$1 " && shift ;;
     *) url=$1 && shift ;;
   esac
 done
+
+# Le contenu d'un -K, d'un --data-binary @… ou d'un -T : un fichier, ou
+# l'entrée standard.
+content() {
+  if [[ $1 == - ]]; then cat; else cat "$1"; fi
+}
 
 case $url in
   https://github.com/*/releases/latest)
@@ -39,7 +60,49 @@ case $url in
     grep -qxF "$address" "$FAKE_STATE/here" && [[ -f $FAKE_STATE/probe-token ]] || exit 7
     cat "$FAKE_STATE/probe-token"
     ;;
-  https://*) [[ ! -e $FAKE_STATE/https-down ]] || exit 7 ;;
+  smtp://* | smtps://*)
+    if [[ -e $FAKE_STATE/smtp-down ]]; then
+      host=${url#*://}
+      echo "curl: (7) Failed to connect to ${host%%[:/]*} port ${host##*:} after 15 ms: Could not connect to server" >&2
+      exit 7
+    fi
+    if [[ -e $FAKE_STATE/smtp-refuses ]]; then
+      echo "curl: (67) Login denied" >&2
+      exit 67
+    fi
+    mkdir -p "$FAKE_STATE/mails"
+    n=$(($(find "$FAKE_STATE/mails" -name '*.eml' | wc -l) + 1))
+    content "$upload" >"$FAKE_STATE/mails/$n.eml"
+    {
+      echo "adresse $url"
+      echo "expéditeur $from"
+      echo "destinataires ${rcpts[*]}"
+      echo "options$flags"
+      [[ -z $config ]] || content "$config"
+    } >"$FAKE_STATE/mails/$n.envoi"
+    ;;
+  https://* | http://*)
+    if [[ -n $data ]]; then
+      # Un message de ntfy, posté à la racine du serveur.
+      if [[ -e $FAKE_STATE/ntfy-down ]]; then
+        host=${url#*://}
+        echo "curl: (7) Failed to connect to ${host%%/*} port 443 after 12 ms: Could not connect to server" >&2
+        exit 7
+      fi
+      if [[ -e $FAKE_STATE/ntfy-refuses ]]; then
+        echo "curl: (22) The requested URL returned error: 403" >&2
+        exit 22
+      fi
+      [[ -z $config ]] || content "$config" >>"$FAKE_STATE/ntfy-config"
+      { printf '%s ' "$url"; content "${data#@}"; echo; } >>"$FAKE_STATE/ntfy"
+      echo '{"id":"faux","event":"message"}'
+    elif [[ $url == https://* ]]; then
+      [[ ! -e $FAKE_STATE/https-down ]] || exit 7
+    else
+      echo "curl : adresse inattendue, $url" >&2
+      exit 2
+    fi
+    ;;
   *)
     echo "curl : adresse inattendue, $url" >&2
     exit 2

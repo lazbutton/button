@@ -35,7 +35,7 @@ last_update() {
 # journaux : ceux de sa version, .env compris.
 station_files() {
   snapshot | grep -v -e ' \./data/' -e ' \./backups/' -e ' \./backups\.log$' -e ' \./updates\.log$' \
-    -e ' \./updates-failed\.log$' -e ' \./HOLD$'
+    -e ' \./updates-failed\.log$' -e ' \./HOLD$' -e ' \./alerts\.log$'
 }
 
 # Combien de fois le journal des faux outils a cette ligne.
