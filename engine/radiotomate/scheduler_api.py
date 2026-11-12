@@ -345,6 +345,11 @@ class SchedulerDemo(Scheduler):
         self._forecast: list[dict] = []
         self._forecast_horizon = 0
         self._played: list[dict] = []
+        # Every line the demo has left, aired, cut or passed, by id. The base keeps
+        # them planned: nothing reconciles it with what aired, as reconcile_as_run
+        # does on a station. One id per line left, never dropped: _played only
+        # keeps the last twelve.
+        self._passed: set[str] = set()
         self._rundown_meta: dict = {"horizon_min": 30, "clock": None, "daypart": None}
         self._override: dict | None = None
         self._track_length = float(self.TRACK_LENGTH)
@@ -544,9 +549,16 @@ class SchedulerDemo(Scheduler):
     async def _load_items(self, session, horizon_min: int = 30) -> None:
         beets = BeetsIntegration.get()
         data = await ensure_forecast(session, beets, horizon_min=horizon_min)
-        incoming = list(data.get("items") or [])
-        played_ids = {row.get("id") for row in self._played if row.get("id")}
-        incoming = [item for item in incoming if item.get("id") not in played_ids]
+        # Only lines still to air. Not one the demo has left: with the last twelve
+        # only, an older one came back at the end of its queue. Nor one played,
+        # sent or failed, which the base gives back when it draws more lines, as
+        # the line of a title fired from the desk.
+        to_air = (RundownStatus.PLANNED.value, RundownStatus.RESCUE.value)
+        incoming = [
+            item
+            for item in data.get("items") or []
+            if item.get("status_code") in to_air and item.get("id") not in self._passed
+        ]
         if self._items:
             have = {item.get("id") for item in self._items if item.get("id")}
             self._items.extend(
@@ -578,6 +590,10 @@ class SchedulerDemo(Scheduler):
         if not self._items:
             return
         item = dict(self._items[0])
+        # Before the check below, which logs no title started in the same second
+        # as the one logged before it: that line has aired all the same.
+        if item.get("id"):
+            self._passed.add(item["id"])
         started = self._on_air.isoformat()
         if self._played and self._played[-1].get("at") == started:
             return
@@ -692,20 +708,28 @@ class SchedulerDemo(Scheduler):
         *,
         force: bool = False,
     ) -> dict:
+        """
+        The lines of the base, but those the demo has left: _played gives back
+        the last twelve, played at the time they aired. Left planned at their own
+        time, a line aired ahead of it, after « Suivant », was taken by the
+        console for the title on air when it bore its name: the line the demo
+        plays fell to the head of the antenna file, locked.
+        """
         _ = force
         async with self._lock:
             await self._bootstrap()
             data = await ensure_forecast(session, beets, horizon_min=horizon_min)
-            upcoming = [dict(row) for row in data.get("items") or []]
+            upcoming = [
+                dict(row)
+                for row in data.get("items") or []
+                if row.get("id") not in self._passed
+            ]
             current = self._items[0] if self._items else None
             current_id = current.get("id") if current else None
             current_resource = current.get("resource") if current else None
-            played_ids = {row.get("id") for row in self._played if row.get("id")}
             marked = False
             for item in upcoming:
                 item_id = item.get("id")
-                if item_id and item_id in played_ids:
-                    continue
                 if current_id and item_id == current_id:
                     item["status"] = "à l'antenne"
                     item["status_code"] = "on_air"
@@ -720,7 +744,10 @@ class SchedulerDemo(Scheduler):
                     item["status_code"] = "on_air"
                     marked = True
                     break
-            if not marked and upcoming:
+            # The line the demo plays not found, after a reset of the rundown for
+            # one, the first line airs. Not during a title fired from the desk:
+            # the line it cut is left, and the next one waits for its end.
+            if not marked and upcoming and self._override is None:
                 upcoming[0]["status"] = "à l'antenne"
                 upcoming[0]["status_code"] = "on_air"
             clock = data.get("clock") or self._rundown_meta.get("clock")

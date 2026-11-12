@@ -82,12 +82,12 @@ test("les gestes du pupitre se font au doigt", async ({ page }) => {
 });
 
 /**
- * Le premier bouton de ce nom dans la file. La tête de la file n'en a pas
- * toujours : une ligne verrouillée n'a ni « Retirer » ni « Déplacer », comme une
- * ligne déjà partie vers l'antenne, ou, sur le banc, le titre que joue le moteur
- * de démo quand la file le compte encore à venir.
+ * Un bouton de la première ligne de la file, celle que le doigt trouve d'abord.
+ * Sur le banc, elle a « Retirer » et « Déplacer » : le moteur de démo ferme la
+ * ligne d'un « Diffuser maintenant » dès qu'il passe à un autre titre, et ne
+ * rend jamais « prévu » une ligne qu'il a jouée.
  */
-const dansLaFile = (page: Page, nom: RegExp) => file(page).getByRole("button", { name: nom }).first();
+const enTeteDeLaFile = (page: Page, nom: RegExp) => file(page).getByRole("listitem").first().getByRole("button", { name: nom });
 
 test("les cibles du pupitre et de la barre font 40 px au moins", async ({ page }) => {
   const barre = page.getByRole("banner");
@@ -99,7 +99,7 @@ test("les cibles du pupitre et de la barre font 40 px au moins", async ({ page }
     barre.getByRole("button", { name: /, compte .+ : menu$/ }),
     antenne(page).getByRole("button", { name: /^Suivant/ }),
     antenne(page).getByRole("button", { name: "Passer en direct" }),
-    dansLaFile(page, /^Retirer /),
+    enTeteDeLaFile(page, /^Retirer /),
     bibliotheque(page).getByRole("searchbox"),
     ...(await bibliotheque(page).getByRole("tab").all()),
     resultat.getByRole("button", { name: /^Mettre / }),
@@ -110,6 +110,6 @@ test("les cibles du pupitre et de la barre font 40 px au moins", async ({ page }
 });
 
 test("la poignée pour déplacer une ligne de la file fait 40 px au moins", async ({ page }) => {
-  const petites = await cibles([dansLaFile(page, /^Déplacer /)]);
+  const petites = await cibles([enTeteDeLaFile(page, /^Déplacer /)]);
   expect(petites).toEqual([]);
 });
