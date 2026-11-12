@@ -6,6 +6,10 @@ Le détail des changements du moteur par rapport à l'amont : [docs/moteur/chang
 
 ## Non publié
 
+## 1.0.0
+
+Le schéma de la base reste en v18 : aucune migration.
+
 **Mise en service.** Avant de passer à cette version, une station règle dans la console, **Réglages → Station**, son flux public, son `now.json`, son statut d'Icecast et l'hôte du direct, si ce n'est pas déjà fait : la console ne prend plus d'adresse en repli. Une station installée par `station install` les a déjà. Elle pose aussi le nom de son mount public dans `.env`, sinon l'adresse de son flux change : il passe de `/button.mp3` à `/radio.mp3`. Pour garder l'ancienne : `ICECAST_MOUNT=button.mp3`. Voir [docs/deploiement.md](docs/deploiement.md#les-mounts). Une station installée par `station install` passe ensuite à cette version par `station update --major`, que la 0.2.0 n'a pas : prendre la commande `station` de cette version, comme pour une installation, puis `sudo bash station update --major`. Voir [docs/deploiement.md](docs/deploiement.md#avec-la-commande-station).
 
 - Un bac en **Aléatoire** tire maintenant sans redite : chaque son prêt passe une fois par tour, dans un ordre tiré au sort, puis un nouveau tour commence. D'un tour à l'autre, la moitié des sons passée en dernier attend : un jingle ne passe plus deux fois de suite, et un bac de lives joué une fois par semaine ne repasse pas le même live avant les autres. Le conducteur prévoit ses sons de la même façon. Quand il les prévoit déjà tous, « Diffuser maintenant » ouvre le tour suivant avec le son le plus loin de son dernier passage et du prochain prévu. Un son que le playout ne dit jamais à l'antenne, comme un fichier devenu illisible, ne bloque pas le bac : il n'est retenté qu'une fois la moitié des autres passée. Rien à faire sur une station : pas de migration. Le réglage `features.random_no_repeat` à faux, dans la table `settings`, rend l'ancien tirage sans redéployer.
