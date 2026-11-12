@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 from datetime import datetime, timedelta
+from time import monotonic
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -54,6 +55,9 @@ SETTING_MISSING_FORECAST = "clock_missing_forecast"
 # first. Drawn anew at each call, it cost a station with nothing to play a draw
 # at every tick, a second apart, and six hours of it at each call of the console.
 MISSING_FORECAST_HOLD = timedelta(minutes=1)
+# The last reading of the forecast in this process: when (monotonic), and whether
+# it was made only of missing lines. The scheduler's tick gate asks (live.py).
+_last_reading: dict = {"at": 0.0, "nothing_to_play": False}
 DESK_ORIGIN = "desk"
 DESK_KINDS = {
     PositionKind.MUSIQUE.value,
@@ -541,15 +545,29 @@ async def _mark_missing_forecast(
     *,
     now: datetime,
     inputs: str,
-) -> None:
+) -> bool:
     """Mark the forecast just drawn when it is made only of missing lines, so
-    that it holds; clear the mark otherwise."""
+    that it holds; clear the mark otherwise. Says whether it is."""
     missing = bool(items) and all(
         _status_from_forecast(item) == RundownStatus.FAILED.value for item in items
     )
     value = json.dumps({"at": now.isoformat(), "inputs": inputs}) if missing else ""
     if value != ((mark.value if mark is not None else "") or ""):
         await Setting.upsert(session, SETTING_MISSING_FORECAST, value)
+    return missing
+
+
+def _note_reading(*, nothing_to_play: bool) -> None:
+    _last_reading["at"] = monotonic()
+    _last_reading["nothing_to_play"] = nothing_to_play
+
+
+def nothing_to_play(*, since: float) -> bool:
+    """
+    Whether this process read the forecast since ``since`` (monotonic), and found
+    it made only of missing lines: the clock has nothing to push.
+    """
+    return _last_reading["at"] >= since and _last_reading["nothing_to_play"]
 
 
 async def ensure_forecast(  # noqa: PLR0913
@@ -569,6 +587,7 @@ async def ensure_forecast(  # noqa: PLR0913
     visible = await _visible_items(session, now, horizon_min=horizon_min)
     rows = _coverage_rows(visible)
     target_ahead = max(15, int(horizon_min))
+    _note_reading(nothing_to_play=False)
     if rows and forecast_still_covers(
         {"items": [item_to_payload(row) for row in rows]},
         now,
@@ -594,6 +613,7 @@ async def ensure_forecast(  # noqa: PLR0913
             inputs=inputs,
             min_ahead_min=target_ahead,
         ):
+            _note_reading(nothing_to_play=True)
             return await _payload_from_visible(
                 session,
                 visible,
@@ -628,7 +648,10 @@ async def ensure_forecast(  # noqa: PLR0913
             return payload
         items = list(forecast.get("items") or [])
         await replace_forecast_items(session, version, items, now=now)
-        await _mark_missing_forecast(session, mark, items, now=now, inputs=inputs)
+        missing = await _mark_missing_forecast(
+            session, mark, items, now=now, inputs=inputs
+        )
+        _note_reading(nothing_to_play=missing)
     else:
         last_end = _horizon_end(rows, now)
         start_from = last_end if last_end > now else now

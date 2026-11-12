@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+from time import monotonic
 from unittest.mock import AsyncMock
 
 import httpx
@@ -20,6 +21,7 @@ from radiotomate.models import (
     Setting,
     Sound,
 )
+from radiotomate.scheduler import live as sched_live
 from radiotomate.scheduler.clock import PARIS, reset_state, tick
 from radiotomate.scheduler.execution import (
     MISSING_FORECAST_HOLD,
@@ -1193,3 +1195,66 @@ async def test_a_reset_draws_a_held_forecast_again(dbsession, empty_beets):
     )
     assert drawn
     assert drawn.isdisjoint(first)
+
+
+# What Liquidsoap posts when nothing plays: the blank of `programs`, which it says
+# « autodj », no end to wait for, nothing in the queues.
+IDLE_LIVE = _live(
+    EMPTY_START.replace(tzinfo=None).isoformat(),
+    source="autodj",
+    autodj_queued=0,
+    jingles_queued=0,
+    carts_queued=0,
+)
+
+
+async def _gate_after_a_tick(session, beets) -> list[bool]:
+    """The tick gate for the heartbeats after a tick that read the forecast: the
+    next second, four seconds on, then once the idle interval is past."""
+    sched_live.reset_tick_gate()
+    since = monotonic()
+    await ensure_forecast(session, beets, now=EMPTY_START)
+    await sched_live.note_nothing_to_play(session, since=since)
+    return [
+        sched_live.should_run_tick(IDLE_LIVE, now=now)
+        for now in (100.0, 101.0, 104.0, 100.0 + sched_live.TICK_MAX_IDLE_SECONDS)
+    ]
+
+
+async def test_the_tick_of_a_station_with_nothing_to_play_waits(dbsession, empty_beets):
+    """Nothing plays, and the clock has nothing to push (FON-32): the tick no longer
+    runs every second for an end that will not come. A change of the antenna, or
+    the idle interval, runs it, as in the middle of a title."""
+    assert await _gate_after_a_tick(dbsession, empty_beets) == [
+        True,
+        False,
+        False,
+        True,
+    ]
+    assert sched_live.should_run_tick({**IDLE_LIVE, "autodj_queued": 1}, now=106.0)
+
+
+async def test_the_tick_keeps_its_pace_with_the_switch_off(dbsession, empty_beets):
+    await Setting.upsert(dbsession, sched_live.SETTING_QUIET_TICK, "false")
+    await dbsession.commit()
+    assert await _gate_after_a_tick(dbsession, empty_beets) == [True] * 4
+
+
+async def test_the_tick_keeps_its_pace_when_there_is_something_to_play(
+    dbsession,
+    jingles_cart,
+    pubs_cart,
+    beets_integration: BeetsIntegration,
+):
+    """Titles to play: nothing playing is a queue to fill, every second."""
+    assert await _gate_after_a_tick(dbsession, beets_integration) == [True] * 4
+
+
+async def test_the_tick_waits_only_on_the_forecast_it_read(dbsession, empty_beets):
+    """A tick that did not read the forecast, held by a live for instance, keeps
+    its pace: an earlier reading says nothing of now."""
+    await ensure_forecast(dbsession, empty_beets, now=EMPTY_START)
+    sched_live.reset_tick_gate()
+    await sched_live.note_nothing_to_play(dbsession, since=monotonic())
+    assert sched_live.should_run_tick(IDLE_LIVE, now=100.0)
+    assert sched_live.should_run_tick(IDLE_LIVE, now=101.0)
