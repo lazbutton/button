@@ -141,16 +141,17 @@ harbor.http.middleware.register(check_token)
 
 autodj_queue = request.queue(id="autodj_queue")
 
-# Recouvrement ~3 s entre titres. Les fallback restent en coupe (#4179) :
-# crossfade_3s ne fond pas, et on n'y remet pas de fade.
-autodj_faded = crossfade(duration=3., fade_in=3., fade_out=3., autodj_queue)
-
+# Titles follow each other in a straight cut, as in the other queues. No
+# `crossfade` (nor `cross`) around this queue: in Liquidsoap 2.4.5 and 2.4.6 it
+# stops pulling the queue a few seconds into a title. The same 20 ms frame then
+# airs in a loop, a loud buzz, while `remaining` stays put and nothing is
+# logged. playout/tests/antenna.py plays this script and listens for it.
 autodj = blank.eat(id="autodj",
   start_blank=false,
   max_blank=AUTODJ_BLANK_MAX,
   threshold=AUTODJ_BLANK_THRESHOLD,
   stereo( # If there's a mono file
-    autodj_faded
+    autodj_queue
   )
 )
 

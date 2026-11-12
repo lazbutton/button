@@ -33,7 +33,7 @@ Dimanche, 23 h, après une garde. Fatou écoute l'émission de nuit quand le son
 
 - Une grille qui tient 24 h sur 24, la nuit aussi, sans personne au studio.
 - Une alerte quand l'antenne se tait, pour que quelqu'un réagisse.
-- Un volume égalisé (ReplayGain), et des fondus de 3 s entre les titres de l'auto-DJ.
+- Un volume égalisé d'un titre à l'autre (ReplayGain).
 - Le titre en cours, publié dans `now.json` pour le site et les lecteurs. Pendant un direct, le nom de l'émission.
 
 ## Ce qui coince encore
@@ -42,6 +42,7 @@ Dimanche, 23 h, après une garde. Fatou écoute l'émission de nuit quand le son
 - **Un flux en MP3.** Un flux AAC, puis HLS, demanderait moins de débit et tiendrait mieux sur les réseaux mobiles : FON-04, en [P3](../feuille-de-route/P3.md).
 - **Pas de podcasts des directs** : FON-06. **Pas de lecteur à poser sur le site de la radio** : FON-02. Les deux en P3.
 - **Une panne vue de l'extérieur** : une sonde du flux, lancée d'une autre machine, préviendrait même si toute la machine tombe : SUR-02, en P2.
+- **Pas de fondu entre deux titres** : ils s'enchaînent en coupe franche. Le fondu de 3 s de l'auto-DJ figeait l'antenne sur un bourdonnement, avec Liquidsoap 2.4 : il est retiré, en attendant un fondu qui tienne.
 
 ## Concevoir pour elle
 

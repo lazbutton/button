@@ -1,0 +1,51 @@
+# The antenna bench: the playout script in the Liquidsoap of its image, an
+# Icecast and a fake scheduler. antenna.py brings it up, listens, and takes it
+# down. Test passwords: this bench never serves a station.
+services:
+  # Writes the sounds and the RTCONFIG of the bench, then stops.
+  sounds:
+    build:
+      context: .
+      dockerfile: sounds.Dockerfile
+    command: ["python", "/bench/sounds.py", "/sounds"]
+    volumes:
+      - .:/bench:ro
+      - sounds:/sounds
+
+  icecast:
+    build:
+      context: ../../../services/icecast
+    environment:
+      ICECAST_SOURCE_PASSWORD: antenne-source
+      ICECAST_ADMIN_PASSWORD: antenne-admin
+    ports:
+      - "127.0.0.1::8000"
+
+  playout:
+    image: ${LIQUIDSOAP_IMAGE:?antenna.py reads this image in engine/playout/Containerfile}
+    entrypoint: ["/usr/bin/liquidsoap", "/app/radiotomate.liq"]
+    environment:
+      RTCONFIG: /sounds/radiotomate.yaml
+    volumes:
+      - ../radiotomate.liq:/app/radiotomate.liq:ro
+      - sounds:/sounds:ro
+    # 6833: the orders of the scheduler. 6822: the fake scheduler, which shares
+    # this network as the real one does, and gives its journal to antenna.py.
+    ports:
+      - "127.0.0.1::6833"
+      - "127.0.0.1::6822"
+    depends_on:
+      sounds:
+        condition: service_completed_successfully
+      icecast:
+        condition: service_started
+
+  scheduler:
+    image: python:3.13-slim-bookworm
+    network_mode: service:playout
+    command: ["python", "-u", "/bench/fake_scheduler.py"]
+    volumes:
+      - .:/bench:ro
+
+volumes:
+  sounds:

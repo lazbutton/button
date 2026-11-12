@@ -51,6 +51,7 @@ Le script lance les mêmes commandes que la CI ([`.github/workflows/`](../.githu
 | `licences` | les tests de `scripts/licences.py`, puis les licences des paquets npm, du moteur et du catalogue ([plus bas](#les-licences)) | Python 3.11 ou plus et Poetry, `poetry install` fait, `services/catalog/.venv` |
 | `moteur` | `ruff check`, `ruff format --check`, puis `pytest` avec `TZ=Europe/Paris`, sans `tests/interface` ni `tests/e2e` | Poetry |
 | `liquidsoap` | `liquidsoap --check engine/playout/radiotomate.liq`, avec un `RTCONFIG` minimal | Docker |
+| `antenne` | le script du playout joué pour de bon, par `engine/playout/tests/antenna.py` ([plus bas](#lantenne)) | Docker, Python 3 |
 | `console` | `npm test`, puis `tsc` et `vite build` | Node 22, `npm install` fait |
 | `services` | les quatorze tests du catalogue listés dans `services.yml`, puis `test_compose.py` avec le Compose v2 de la CI, si Docker tourne | `services/catalog/.venv`, voir plus bas |
 | `nginx` | `nginx -t` sur `console/docker/nginx.conf.template` et ses en-têtes de sécurité, rendus par le script de démarrage de l'image | Docker |
@@ -104,6 +105,21 @@ services/catalog/.venv/bin/pip install -r services/catalog/requirements.txt
 ```
 
 Les tests Playwright des pages HTMX de l'amont ne tournent pas en CI : `cd engine && poetry run playwright install chromium`, une fois, puis `poetry run pytest tests/interface`.
+
+## L'antenne
+
+`liquidsoap --check` lit le script du playout sans le jouer. La partie `antenne` le joue, et écoute ce qui sort :
+
+```bash
+./scripts/verifier.sh antenne
+python3 engine/playout/tests/antenna.py    # le même banc, sans le résumé
+```
+
+Il faut Docker, rien d'autre. Le banc monte le script dans le Liquidsoap de l'image du playout, lu dans `engine/playout/Containerfile`, avec l'Icecast de `services/icecast` et un faux scheduler, qui répond au playout et garde ses battements. Il pousse des titres comme le scheduler, deux d'avance dans la file, puis un jingle qui coupe le second, et enregistre le mount WAV du casque : le son du flux public, avant son encodeur MP3. Il échoue si un titre ne passe pas, si les titres passent dans le désordre, si la même trame de 20 ms passe en boucle, si le temps restant d'un titre ne bouge plus, ou si l'antenne reste muette.
+
+Les sons du banc sont des balayages, fabriqués par `sounds.py` : aucune trame n'y ressemble à la suivante. Une trame répétée ne peut donc venir que d'une file figée, comme celle que laissait le fondu de l'auto-DJ : l'antenne bourdonnait, sans rien au journal de Liquidsoap ([les changements du moteur](moteur/changements-radiotomate.md#conducteur-et-vérité-dantenne)).
+
+Le banc prend des ports libres, et se défait à la fin, volumes compris. La CI le lance avant de construire les images du moteur ([`engine.yml`](../.github/workflows/engine.yml)) : un script qui ne joue pas n'atteint pas le registre.
 
 ## Aucune donnée de station
 
