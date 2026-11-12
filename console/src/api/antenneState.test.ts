@@ -158,6 +158,19 @@ test("air banner is the same story for every role", () => {
   );
 });
 
+test("a disk almost full is named in the alerts", () => {
+  const pillars = derivePillars(
+    state({
+      incidents: [
+        { kind: "disk", detail: "1,8 Go libres sur 40 Go", since_s: 120, notified: true },
+      ],
+    }),
+  );
+  const alertes = pillars.find((pillar) => pillar.key === "alertes");
+  assert.equal(alertes?.tone, "alert");
+  assert.deepEqual(alertes?.detail, ["Disque presque plein — 1,8 Go libres sur 40 Go (depuis 2 min)"]);
+});
+
 test("formatDuration", () => {
   assert.equal(formatDuration(42), "42 s");
   assert.equal(formatDuration(600), "10 min");
