@@ -334,7 +334,7 @@ L · dépend de MAJ-01, MAJ-02, MAJ-03, INS-03 · conflits : le script d'exploit
   - Chaque version joint `CHANGELOG.md` à `station.tar.gz` : `update` y lit la « Mise en service » d'une majeure.
   - L'« Accepté quand » est porté par la CI. Le job `update` de `station.yml` installe la plus haute version publiée, la met à jour vers les fichiers de la branche et les images `main`, lit le flux chaque seconde, et échoue à 30 secondes de coupure. Il est passé sur la PR, par la fenêtre « inconnue » : les images `main` n'avaient pas encore la commande `window`.
   - Une station en 0.2.0 n'a pas `update` : elle prend d'abord la commande de la version publiée. `docs/deploiement.md` le dit, dans « Avec la commande station ».
-  - Laissé à d'autres fiches : le retour arrière, qui se fait à la main avec la sauvegarde d'avant (MAJ-05) ; la mise à jour automatique la nuit (MAJ-06) ; la console, qui ne montre pas `/system/version.json` (MAJ-07) ; la fenêtre, qui tient pour vrai un direct annulé (FON-34). `next-live` lisait encore l'horloge du conteneur comme l'heure de Paris : corrigé depuis, par la PR 144.
+  - Laissé à d'autres fiches : le retour arrière, qui se fait à la main avec la sauvegarde d'avant (MAJ-05) ; la mise à jour automatique la nuit (MAJ-06) ; la console, qui ne montre pas `/system/version.json` (MAJ-07) ; la fenêtre, qui tient pour vrai un direct annulé (FON-34). `next-live` lisait encore l'horloge du conteneur comme l'heure de Paris : corrigé depuis, par la PR 144. Depuis, MAJ-05 fait le retour arrière (PR 149), et la fenêtre saute un direct annulé (FON-34, PR 153).
   - Laissé sans fiche : une coupure de la connexion SSH en plein redémarrage arrête la mise à jour. La doc conseille `tmux` ou `screen`.
 
 #### MAJ-05 · Retour arrière automatique
