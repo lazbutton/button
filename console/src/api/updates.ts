@@ -272,6 +272,19 @@ export function unreachableLine(state: UpdatesState | null): Line {
   };
 }
 
+/**
+ * Une lecture refusée autrement que par la session, le droit ou un moteur trop
+ * ancien : ce que la page en dit. Une erreur du moteur n'est pas un moteur qui
+ * ne répond pas, et son « server_error » ne s'affiche pas tel quel.
+ */
+export function readFailureMessage(status: number, message: string): string {
+  if (status >= 500) {
+    return `Le moteur n’a pas pu lire les mises à jour (erreur ${status}). Si ça dure, voir ses journaux sur la machine : sudo station logs radiotomate-interface.`;
+  }
+  const said = message.trim();
+  return said && status > 0 ? said : "La page des mises à jour ne se lit pas. Réessaie dans un instant.";
+}
+
 // --- Les notes de version : un peu de Markdown, rendu sans HTML ---
 
 export type Inline =

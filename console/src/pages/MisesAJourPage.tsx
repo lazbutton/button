@@ -20,6 +20,7 @@ import {
   nightlyLine,
   parseNotes,
   pollDelay,
+  readFailureMessage,
   requestLine,
   unreachableLine,
   versionLine,
@@ -41,15 +42,29 @@ const ICON: Record<Tone, LucideIcon> = {
   off: CircleHelp,
 };
 
-/** Ce qui empêche de lire la page : la session, le droit, un moteur trop ancien, ou muet. */
-type Problem = "auth" | "forbidden" | "outdated" | "down" | null;
+/**
+ * Ce qui empêche de lire la page : la session, le droit, un moteur trop ancien,
+ * un moteur muet, ou une erreur du moteur, avec ce qu'il faut en dire.
+ */
+type Problem = { kind: "auth" | "forbidden" | "outdated" | "down" | "error"; message: string };
+
+const SAID: Record<Exclude<Problem["kind"], "error">, string> = {
+  auth: "Session expirée. Reconnecte-toi.",
+  forbidden: "Réservé à un admin. Reconnecte-toi avec ce compte.",
+  outdated: "Mets à jour le moteur pour avoir cette page.",
+  down: "Le moteur ne répond pas. Réessaie dans un instant.",
+};
 
 function problemOf(caught: unknown): Problem {
-  if (caught instanceof ApiAuthError) return "auth";
-  if (caught instanceof ApiForbiddenError) return "forbidden";
+  if (caught instanceof ApiAuthError) return { kind: "auth", message: SAID.auth };
+  if (caught instanceof ApiForbiddenError) return { kind: "forbidden", message: SAID.forbidden };
   // Un moteur d'avant cette page n'a pas la route : il répond 404.
-  if (caught instanceof ApiRequestError && caught.status === 404) return "outdated";
-  return "down";
+  if (caught instanceof ApiRequestError && caught.status === 404) return { kind: "outdated", message: SAID.outdated };
+  if (caught instanceof ApiRequestError) {
+    return { kind: "error", message: readFailureMessage(caught.status, caught.message) };
+  }
+  if (caught instanceof ApiUnavailableError) return { kind: "down", message: SAID.down };
+  return { kind: "error", message: readFailureMessage(0, "") };
 }
 
 /**
@@ -60,7 +75,7 @@ function problemOf(caught: unknown): Problem {
  */
 export function MisesAJourPage() {
   const [state, setState] = useState<UpdatesState | null>(null);
-  const [problem, setProblem] = useState<Problem>(null);
+  const [problem, setProblem] = useState<Problem | null>(null);
   const [busy, setBusy] = useState<"ask" | "withdraw" | "check" | null>(null);
   const [confirming, setConfirming] = useState(false);
   const { message, show } = useProtoToast();
@@ -68,7 +83,7 @@ export function MisesAJourPage() {
   // console en service a peut-être changé aussi.
   const opened = useRef<string | null | undefined>(undefined);
 
-  const load = useCallback(async (refresh = false) => {
+  const load = useCallback(async (refresh = false): Promise<UpdatesState | Problem> => {
     try {
       const next = await apiGet<UpdatesState>(refresh ? `${UPDATES_JSON}?refresh=1` : UPDATES_JSON);
       if (opened.current === undefined) opened.current = next.installed;
@@ -76,8 +91,9 @@ export function MisesAJourPage() {
       setProblem(null);
       return next;
     } catch (caught) {
-      setProblem(problemOf(caught));
-      return null;
+      const found = problemOf(caught);
+      setProblem(found);
+      return found;
     }
   }, []);
 
@@ -85,7 +101,8 @@ export function MisesAJourPage() {
     void load();
   }, [load]);
 
-  const delay = pollDelay(state, problem === "down");
+  const unreachable = problem?.kind === "down";
+  const delay = pollDelay(state, unreachable);
   useEffect(() => {
     const id = window.setInterval(() => void load(), delay);
     const onVisible = () => {
@@ -141,15 +158,15 @@ export function MisesAJourPage() {
     setBusy("check");
     const next = await load(true);
     setBusy(null);
-    if (next == null) show("Le moteur ne répond pas. Réessaie dans un instant.", "error");
+    if ("kind" in next) show(next.message, "error");
     else if (next.check.error) show(`Les versions ne se lisent pas : ${next.check.error}.`, "error");
     else if (next.check.pending) show("GitHub répond lentement : la page se met à jour seule.");
     else show("Versions relues sur GitHub.");
   };
 
-  if (problem === "auth" || (problem === "down" && state == null)) {
+  if (problem?.kind === "auth" || (unreachable && state == null)) {
     return (
-      <SessionGate loading={false} error={problem === "auth" ? "auth" : "down"} onRetry={() => void load()}>
+      <SessionGate loading={false} error={problem?.kind === "auth" ? "auth" : "down"} onRetry={() => void load()}>
         {null}
       </SessionGate>
     );
@@ -168,19 +185,29 @@ export function MisesAJourPage() {
         }
       />
       <div className="reglages-stack reglages-stack--narrow">
-        {problem === "forbidden" ? (
+        {problem?.kind === "error" ? (
+          <section className="reglages-card reglages-notice" role="alert">
+            <p>{problem.message}</p>
+            <div>
+              <Button variant="soft" color="gray" disabled={busy != null} onClick={() => void load()}>
+                Réessayer
+              </Button>
+            </div>
+          </section>
+        ) : null}
+        {problem?.kind === "forbidden" ? (
           <Notice>Réservé à un admin : ce compte ne voit pas les mises à jour.</Notice>
-        ) : problem === "outdated" ? (
+        ) : problem?.kind === "outdated" ? (
           <Notice>
             Mets à jour le moteur pour avoir cette page : le sien ne connaît pas encore les mises à jour depuis la
             console. Sur la machine : sudo station update.
           </Notice>
         ) : state == null ? (
-          <LoadingState label="Lecture des mises à jour…" />
+          problem?.kind === "error" ? null : <LoadingState label="Lecture des mises à jour…" />
         ) : (
           <UpdatesView
             state={state}
-            unreachable={problem === "down"}
+            unreachable={unreachable}
             changed={opened.current !== undefined && opened.current !== state.installed}
             busy={busy}
             confirming={confirming}

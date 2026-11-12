@@ -219,3 +219,12 @@ test("un moteur d’avant la page : « Mets à jour le moteur », pas une page b
   await ouvrirLesMisesAJour(page);
   await expect(page.getByText(/^Mets à jour le moteur pour avoir cette page/)).toBeVisible();
 });
+
+test("une erreur du moteur se dit comme telle, pas comme un moteur qui ne répond pas", async ({ page }) => {
+  await page.route("**/system/updates.json*", (route) => route.fulfill({ status: 500, json: { error: "server_error" } }));
+  await ouvrirLesMisesAJour(page);
+  await expect(page.getByRole("alert").filter({ hasText: "Le moteur n’a pas pu lire les mises à jour (erreur 500)" })).toBeVisible();
+  await expect(page.getByText("server_error")).toHaveCount(0);
+  await expect(page.getByText("Le moteur ne répond pas")).toHaveCount(0);
+});
+

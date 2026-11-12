@@ -9,6 +9,7 @@ import {
   parseInline,
   parseNotes,
   pollDelay,
+  readFailureMessage,
   requestLine,
   unreachableLine,
   versionLine,
@@ -198,4 +199,10 @@ test("les notes : paragraphes, listes, gras, code et liens, sans HTML", () => {
     { kind: "text", text: "x" },
     { kind: "text", text: ")" },
   ]);
+});
+
+test("une erreur du moteur se dit comme telle, jamais comme un moteur muet", () => {
+  assert.match(readFailureMessage(500, "server_error"), /^Le moteur n’a pas pu lire les mises à jour \(erreur 500\)/);
+  assert.equal(readFailureMessage(409, "Une mise à jour est déjà demandée."), "Une mise à jour est déjà demandée.");
+  assert.equal(readFailureMessage(0, ""), "La page des mises à jour ne se lit pas. Réessaie dans un instant.");
 });
