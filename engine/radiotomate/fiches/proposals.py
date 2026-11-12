@@ -24,7 +24,7 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from radiotomate.fiches.loose import CLEANED
+from radiotomate.fiches.loose import CLEANED, meaningless_title
 from radiotomate.fiches.normalize import (
     js_regex,
     js_trim,
@@ -207,12 +207,29 @@ class WikidataArtist:
 @dataclass(frozen=True)
 class SearchResult:
     """Où en est la recherche d'un titre : « trouvé », « rapproché », « rien »,
-    « écarté » ou « erreur »."""
+    « écarté » ou « erreur ».
+
+    `doubt` : ce que l'empreinte du fichier dit contre son texte, un tout autre
+    morceau ou une autre version (`OTHER_PIECE`, `OTHER_VERSION`) ; le titre ne sera
+    jamais plus que « à revoir ». `reason` : pourquoi le titre est écarté.
+    """
 
     status: str
     match: Match | None = None
     details: Details | None = None
     error: str | None = None
+    doubt: str = ""
+    reason: str = ""
+
+
+# Où un morceau a été trouvé (`Match.source`) : par l'empreinte, dans MusicBrainz.
+FINGERPRINT = "empreinte"
+# Un fichier sans artiste, ou au titre vide de sens : son texte vient de l'empreinte.
+FROM_FINGERPRINT = "titre et artiste de l'empreinte"
+# L'empreinte désigne un tout autre morceau que le texte du fichier, ou le même
+# morceau dans une autre version, à la durée du fichier.
+OTHER_PIECE = "l'empreinte désigne un autre morceau"
+OTHER_VERSION = "l'empreinte désigne une autre version"
 
 
 # ===== Le verdict, d'après MusicBrainz et Wikidata =====
@@ -279,6 +296,7 @@ def artist_facts(
 # ===== La rangée d'un titre =====
 
 SOURCES = {
+    FINGERPRINT: "MusicBrainz, par l'empreinte",
     "deezer": "Deezer",
     "tidal": "Tidal",
     "apple": "Apple Music",
@@ -502,31 +520,51 @@ def build_row(  # noqa: PLR0912, PLR0915
     if result is None:
         return _row(track, "pas encore cherché", [])
     if result.status == "écarté":
-        return _row(track, "écarté", ["sans artiste ou annonce"])
+        return _row(track, "écarté", [result.reason or "sans artiste ou annonce"])
     if result.status == "rien":
-        return _row(track, "introuvable", [])
+        return _row(track, "introuvable", [result.doubt] if result.doubt else [])
     if result.status == "erreur" or result.match is None:
         return _row(track, "erreur", [result.error or "erreur"])
 
     match = result.match
     close = result.status == "rapproché"
+    # Trouvé par l'empreinte : l'enregistrement, dont elle a vérifié la durée.
+    fingerprinted = match.source == FINGERPRINT
     details = result.details or Details()
     deezer, apple, musicbrainz = details.deezer, details.apple, details.musicbrainz
     deezer_album = deezer.album if deezer else None
     deezer_seconds = deezer.duration_s if deezer else None
-    if close:
+    if close and fingerprinted:
+        # Un texte proche, que l'empreinte confirme : à revoir.
+        found_seconds = _first(match.duration_s, deezer_seconds)
+        why = f"rapproché, confirmé par l'empreinte : {', '.join(match.why)}"
+        row = _row(track, "à revoir", [why])
+    elif close:
         # La durée du morceau rapproché, qui l'a confirmé : Deezer, rejoint par l'ISRC,
         # a parfois une autre édition.
         found_seconds = _first(match.duration_s, deezer_seconds)
         row = _row(track, "rapproché", [f"rapproché : {', '.join(match.why)}"])
         row.found_at = PLATFORMS.get(match.platform, match.platform)
     else:
-        found_seconds = _first(deezer_seconds, match.duration_s)
+        if fingerprinted:
+            found_seconds = _first(match.duration_s, deezer_seconds)
+        else:
+            found_seconds = _first(deezer_seconds, match.duration_s)
         checked = duration_level(track.length, found_seconds)
         row = _row(track, checked.level, [checked.why] if checked.why else [])
         row.found_at = SOURCES.get(match.source, match.source)
+        if FROM_FINGERPRINT in match.why:
+            # Le fichier n'a pas de texte à comparer : seule l'empreinte le trouve.
+            row.level = "à revoir"
+            row.reasons.insert(0, FROM_FINGERPRINT)
+    if fingerprinted:
+        row.found_at = SOURCES[FINGERPRINT]
     if match.source == "tidal" and match.platform == "deezer":
         row.found_at = "Tidal, puis Deezer par l'ISRC"
+    if result.doubt:
+        row.reasons.append(result.doubt)
+        if row.level == "sûr":
+            row.level = "à revoir"
     row.platform = PLATFORMS.get(match.platform, match.platform)
     row.url = match.url
     row.found_title = match.title
@@ -552,6 +590,11 @@ def build_row(  # noqa: PLR0912, PLR0915
             why in ("artiste lu dans le titre", "artiste et titre inversés")
             for why in match.why
         )
+        if FROM_FINGERPRINT in match.why:
+            # L'empreinte ne remplace qu'un texte vide ou vide de sens : le reste,
+            # elle l'a retrouvé, et n'en propose que la graphie.
+            cleaned_title = meaningless_title(track.title)
+            artist_in_title = not js_trim(track.artist)
         title = without_edition_mentions(match.title)
         row.title = _first(
             respelling(track.title, title, sentence=True),
@@ -580,7 +623,11 @@ def build_row(  # noqa: PLR0912, PLR0915
     # Un enregistrement rapproché dans MusicBrainz que seules des compilations
     # contiennent : sa date est celle d'une compilation (« Get Carter » de Roy Budd,
     # 1971, daté 1995 par « The Sound Spectrum »), à relire.
-    compiled = close and match.platform == "musicbrainz" and match.compilation
+    compiled = (
+        (close or fingerprinted)
+        and match.platform == "musicbrainz"
+        and match.compilation
+    )
     year = propose_year(
         YearInput(
             radio=str(track.year) if track.year else "",

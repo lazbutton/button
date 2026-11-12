@@ -10,7 +10,7 @@ près, dans la même version : le titre est « rapproché », à relire.
 Hopper l'a mesurée sur 100 introuvables tirés au hasard : 26 trouvés, tous justes.
 
 La recherche, chez Deezer, dans l'album du fichier et dans MusicBrainz en recherche
-floue, viendra avec FON-24.
+floue, est dans `search.py`.
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from radiotomate.fiches.loose import (
+    CLEANED,
     LOOSE_TOLERANCE_S,
     ONE_SIDED,
     SAME_FILE_S,
@@ -50,6 +51,7 @@ from radiotomate.fiches.rules import js_falsy, js_round
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from radiotomate.fiches.loose import ArtistAndTitle
     from radiotomate.fiches.variants import RadioTrack
 
 
@@ -388,3 +390,56 @@ def third_match(
     one_sided = agreement != "mêmes"
     why = (artist, title, f"durée à {js_round(gap)} s")
     return Found((*why, *((ONE_SIDED,) if one_sided else ()), *fix), gap, one_sided)
+
+
+def third_judge(
+    item: ArtistAndTitle,
+    reading: Reading,
+    candidate: ThirdCandidate,
+    radio_seconds: float | None,
+    album_ok: bool = False,
+) -> Found | None:
+    """Le candidat d'une lecture du fichier, jugé par la troisième passe, et ce que la
+    lecture a fait du texte du fichier.
+
+    Le titre cherché n'est plus celui du fichier (« A3 The Broken Shoe ») : le titre
+    trouvé le remplacera (`CLEANED`) ; l'artiste et le titre cherchés à l'envers :
+    chacun reprendra sa place (`SWAPPED`).
+    """
+    verdict = third_match(reading, candidate, radio_seconds, album_ok)
+    if not verdict:
+        return None
+    radio_title = squash(item.title.replace("_", " "))
+    cleaned = (
+        not reading.fix and not reading.swapped and squash(reading.title) != radio_title
+    )
+    notes = (CLEANED,) if cleaned else (SWAPPED,) if reading.swapped else ()
+    return Found((*verdict.why, *notes), verdict.gap, verdict.one_sided)
+
+
+# ===== Ce que la recherche en tire =====
+
+# Un album bidon : « title », « no title », ou un marqueur de langue (« |Anglais »).
+PLACEHOLDER = js_regex(r"(?:title|no title|\|.*)", re.IGNORECASE)
+
+
+def album_ok(album: str, artist: str) -> bool:
+    """L'album du fichier en est-il un vrai, qui peut se passer de l'artiste ?
+
+    Pas un nom bidon, pas le nom de l'artiste (« THE WORLD », album « THE WORLD ») :
+    un album au nom de l'artiste n'est pas une compilation. Et assez long pour ne pas
+    en rencontrer un autre.
+    """
+    album = js_trim(album)
+    return (
+        len(squash(album)) >= 8
+        and not PLACEHOLDER.fullmatch(album)
+        and squash(album) != squash(artist)
+    )
+
+
+def fuzzy(text: str) -> str:
+    """Les mots d'une requête floue de MusicBrainz : une faute permise dès quatre
+    lettres."""
+    words = [word for word in normalize_text(text).split(" ") if len(word) > 1]
+    return " ".join(f"{word}~" if len(word) >= 4 else word for word in words)

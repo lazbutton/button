@@ -7,4 +7,10 @@ le nom de celle de Hopper, en snake_case : une règle corrigée là-bas se retro
 Les modules des règles ne parlent à aucun service et n'écrivent rien : ni Quart, ni
 Beets, ni réseau. Les propositions se refont ainsi sans réseau, d'après ce que les
 sources ont déjà dit.
+
+La recherche en ligne a ses propres modules, sans Quart ni Beets : `http`, le client
+httpx, avec un seau et un disjoncteur par service ; `sources`, ce que Deezer,
+MusicBrainz, Wikidata et AcoustID disent d'un morceau ; `search`, la recherche d'un
+titre, de l'empreinte aux détails, et les preuves à garder ; `fingerprint`, l'empreinte
+d'un fichier par `fpcalc`.
 """
