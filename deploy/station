@@ -109,6 +109,10 @@ REMOTE_PENDING=en-attente
 # commande, dans le dossier de la station, que status lit.
 NTFY_SERVER=https://ntfy.sh
 ALERTS_LOG=alerts.log
+# Un envoi à ntfy : chaque essai dure au plus ALERT_NTFY_WAIT secondes, et
+# ALERT_NTFY_PAUSE les sépare. Trois essais tiennent en moins d'une minute.
+ALERT_NTFY_WAIT=15
+ALERT_NTFY_PAUSE=2
 # Le message d'un essai des alertes.
 ALERT_TEST_TEXT="les alertes de la station arriveront ici : un silence à l'antenne, un disque presque plein, une mise à jour annulée, une sauvegarde ratée."
 # Les demandes de la console (MAJ-07), comme « Mettre à jour maintenant » : la
@@ -4529,8 +4533,8 @@ alert_on() { # ntfy ou e-mail
 }
 
 # Une alerte, une note ou un essai, par un canal, comme le règlent les
-# variables alert_*. Le titre dit la station. Rend le code de curl, dont le
-# message va sur la sortie d'erreur.
+# variables alert_*. Le titre dit la station. Rend 0 si elle part ; sinon,
+# ce que dit curl va sur la sortie d'erreur.
 alert_deliver() { # ntfy ou e-mail, sujet, message, note, essai ou rien
   local title="$2${alert_station:+ · $alert_station}" text
   text="${3^}"$'\n\n'"La station${alert_station:+ $alert_station}, dans ${dir:-?} sur ${HOSTNAME:-la machine}."
@@ -4546,15 +4550,58 @@ alert_deliver() { # ntfy ou e-mail, sujet, message, note, essai ou rien
 # sur le téléphone, basse pour une note, qui ne sonne pas. Le jeton d'un sujet
 # protégé passe par un fichier de configuration de curl, lu sur un tube :
 # jamais sur sa ligne de commande, que ps montre.
+#
+# Les essais se comptent ici, pas par --retry : curl attendrait le Retry-After
+# d'un 429, et ntfy.sh en donne d'un jour entier. Trois au plus, comme les
+# règles de --retry : après une panne de nom ou un délai dépassé, ou un 408 ou
+# un 5xx, et ALERT_NTFY_PAUSE entre eux ; l'envoi s'arrête donc en moins
+# d'une minute. Un 429 ne se réessaie pas après une pause. ntfy.sh limite les
+# envois par adresse, et en IPv6 par bloc /64, que des hébergeurs partagent
+# entre plusieurs machines : reçu en IPv6, il se réessaie une fois en IPv4,
+# où la machine a son adresse à elle. Le message d'un échec va sur la sortie
+# d'erreur, et la fonction rend 1.
 alert_ntfy_send() { # titre, message, note, essai ou rien
-  local priority=4 tag=warning
+  local priority=4 tag=warning body try answer code ip family=() failure=""
   case $3 in
     note) priority=2 tag=information_source ;;
     essai) tag=bell ;;
   esac
-  printf '{"topic":%s,"title":%s,"message":%s,"priority":%s,"tags":[%s]}' "$(json_string "${alert_ntfy##*/}")" \
-    "$(json_string "$1")" "$(json_string "$2")" "$priority" "$(json_string "$tag")" |
-    curl --disable -fsS --max-time 20 --retry 2 --retry-delay 2 -H 'Content-Type: application/json' \
+  body=$(printf '{"topic":%s,"title":%s,"message":%s,"priority":%s,"tags":[%s]}' \
+    "$(json_string "${alert_ntfy##*/}")" "$(json_string "$1")" "$(json_string "$2")" "$priority" "$(json_string "$tag")")
+  for ((try = 1; try <= 3; try++)); do
+    answer=$(alert_ntfy_post "$body" "${family[@]}") || true
+    code=${answer%%$'\n'*}
+    ip=${code#* }
+    code=${code%% *}
+    [[ $code != 2?? ]] || return 0
+    # L'essai en IPv4 qui suit un 429 est le dernier : son échec garde le 429.
+    if ((${#family[@]})) || [[ $code == 429 ]]; then
+      failure="le serveur ntfy refuse pour l'instant les messages de cette machine (429, trop de messages)"
+      [[ $code == 429 && ${#family[@]} -eq 0 && $ip == *:* ]] || break
+      family=(-4)
+      continue
+    fi
+    if [[ $code == 000 ]]; then
+      failure=${answer#*$'\n'}
+    else
+      failure="le serveur ntfy répond $code"
+    fi
+    case $code:$failure in
+      "000:curl: (6) "* | "000:curl: (28) "* | 408:* | 50[0234]:*) ;;
+      *) break ;;
+    esac
+    ((try == 3)) || sleep "$ALERT_NTFY_PAUSE"
+  done
+  printf '%s\n' "${failure:-curl a échoué, sans rien dire}" >&2
+  return 1
+}
+
+# Un envoi à ntfy, borné par ALERT_NTFY_WAIT. Sans -f : sur la sortie, le code
+# HTTP et l'adresse jointe, puis l'erreur de curl, comme il la dirait.
+alert_ntfy_post() { # JSON, options de curl
+  printf '%s' "$1" |
+    curl --disable -s --max-time "$ALERT_NTFY_WAIT" "${@:2}" -o /dev/null \
+      -w '%{http_code} %{remote_ip}\ncurl: (%{exitcode}) %{errormsg}' -H 'Content-Type: application/json' \
       -K <(alert_ntfy_config) --data-binary @- "${alert_ntfy%/*}/"
 }
 
@@ -4962,6 +5009,10 @@ alert_try() { # ntfy ou e-mail
     without=" Ou installer sans ntfy : répondre n à sa question, ou --alert-ntfy \"\" ; station config le règle ensuite."
   elif [[ ! -f ${env_file:-} ]]; then
     without=" Ou installer sans e-mail : ne donner aucune adresse, ou --alert-email \"\" ; station config le règle ensuite."
+  fi
+  if [[ $1 == ntfy && $alert_failure == *"(429, "* ]]; then
+    die "L'essai par ntfy ne part pas : $alert_failure. Rien n'est changé." \
+      "Le serveur ntfy limite les messages par adresse, et ntfy.sh peut la bloquer un jour entier, en IPv6 avec d'autres machines du même hébergeur. Relancer plus tard, ou donner un autre serveur ntfy.$without"
   fi
   if [[ $1 == ntfy ]]; then
     die "L'essai par ntfy ne part pas : $alert_failure. Rien n'est changé." \

@@ -9,11 +9,16 @@
 # serveur SMTP, qui note chaque e-mail dans $FAKE_STATE/mails/N.eml, et son
 # envoi (adresse, expéditeur, destinataires, options, configuration) dans
 # N.envoi. Un ntfy injoignable : $FAKE_STATE/ntfy-down ; qui refuse le
-# jeton : ntfy-refuses. Un serveur SMTP injoignable : smtp-down ; qui refuse
-# le compte : smtp-refuses.
+# jeton : ntfy-refuses. Le faux ntfy se joint en IPv6, ou en IPv4 avec -4 ou
+# ntfy-ipv4, et répond comme le vrai à -w. Il limite les messages de la
+# machine, avec un 429 et un Retry-After d'un jour, en IPv6 si ntfy-429 dit
+# ipv6, sinon en IPv4 aussi ; curl lancé avec --retry attendrait ce jour : le
+# faux échoue alors, en le disant. Il répond 503 autant de fois que le dit
+# ntfy-503. Un serveur SMTP injoignable : smtp-down ; qui refuse le compte :
+# smtp-refuses.
 set -euo pipefail
 echo "curl $*" >>"$FAKE_STATE/log"
-out="" resolve="" url="" config="" data="" upload="" from="" rcpts=() flags=" "
+out="" resolve="" url="" config="" data="" upload="" from="" rcpts=() flags=" " write="" retry=0
 while (($#)); do
   case $1 in
     -o) out=$2 && shift 2 ;;
@@ -24,11 +29,27 @@ while (($#)); do
     --url) url=$2 && shift 2 ;;
     --mail-from) from=$2 && shift 2 ;;
     --mail-rcpt) rcpts+=("$2") && shift 2 ;;
-    -w | -H | --max-time | --retry | --retry-delay | --connect-timeout | --cacert) shift 2 ;;
+    -w) write=$2 && shift 2 ;;
+    --retry) retry=$2 && shift 2 ;;
+    -H | --max-time | --retry-delay | --retry-max-time | --connect-timeout | --cacert) shift 2 ;;
     -*) flags+="$1 " && shift ;;
     *) url=$1 && shift ;;
   esac
 done
+
+# La réponse du faux ntfy à -w : le code HTTP, l'adresse jointe, le code de
+# sortie et le message d'erreur, comme les donne curl.
+ntfy_answer() { # code HTTP, code de sortie, message
+  local text=$write ip=2001:db8::1
+  [[ $flags != *" -4 "* && ! -e $FAKE_STATE/ntfy-ipv4 ]] || ip=192.0.2.1
+  [[ $1 != 000 ]] || ip=""
+  text=${text//'%{http_code}'/$1}
+  text=${text//'%{remote_ip}'/$ip}
+  text=${text//'%{exitcode}'/$2}
+  text=${text//'%{errormsg}'/$3}
+  printf '%s' "${text//\\n/$'\n'}"
+  return "$2"
+}
 
 # Le contenu d'un -K, d'un --data-binary @… ou d'un -T : un fichier, ou
 # l'entrée standard.
@@ -86,16 +107,32 @@ case $url in
       # Un message de ntfy, posté à la racine du serveur.
       if [[ -e $FAKE_STATE/ntfy-down ]]; then
         host=${url#*://}
-        echo "curl: (7) Failed to connect to ${host%%/*} port 443 after 12 ms: Could not connect to server" >&2
-        exit 7
+        ntfy_answer 000 7 "Failed to connect to ${host%%/*} port 443 after 12 ms: Could not connect to server"
       fi
       if [[ -e $FAKE_STATE/ntfy-refuses ]]; then
-        echo "curl: (22) The requested URL returned error: 403" >&2
-        exit 22
+        ntfy_answer 403 0 ""
+        exit 0
+      fi
+      if [[ -s $FAKE_STATE/ntfy-429 && ($flags != *" -4 "* || $(cat "$FAKE_STATE/ntfy-429") != ipv6) ]]; then
+        if ((retry > 0)); then
+          echo "faux curl : il attendrait le Retry-After de ntfy, 84064 s, avant de réessayer" >&2
+          exit 99
+        fi
+        ntfy_answer 429 0 ""
+        exit 0
+      fi
+      if [[ -s $FAKE_STATE/ntfy-503 ]]; then
+        left=$(cat "$FAKE_STATE/ntfy-503")
+        if ((left > 0)); then
+          echo $((left - 1)) >"$FAKE_STATE/ntfy-503"
+          ntfy_answer 503 0 ""
+          exit 0
+        fi
       fi
       [[ -z $config ]] || content "$config" >>"$FAKE_STATE/ntfy-config"
       { printf '%s ' "$url"; content "${data#@}"; echo; } >>"$FAKE_STATE/ntfy"
-      echo '{"id":"faux","event":"message"}'
+      echo '{"id":"faux","event":"message"}' >"${out:-/dev/stdout}"
+      [[ -z $write ]] || ntfy_answer 200 0 ""
     elif [[ $url == https://* ]]; then
       [[ ! -e $FAKE_STATE/https-down ]] || exit 7
     else
