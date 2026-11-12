@@ -26,6 +26,34 @@ running_services() {
   done
 }
 
+# radiotomate-init, à chaque démarrage du moteur : il migre la base au schéma
+# de la version de .env, que dit $state/schema-<version>, après en avoir fait
+# une copie dans backups/, comme le vrai. Sans ce fichier, rien ne migre. La
+# migration vers le schéma que dit $state/migration-fails échoue, et celles
+# d'avant restent. Une version plus ancienne que la base ne démarre pas.
+migrate() {
+  local version target current step db=data/radiotomate/radiotomate.db
+  version=$(sed -n 's/^BUTTON_VERSION=//p' .env | tail -n 1)
+  [[ -f $state/schema-$version && -f $db ]] || return 0
+  target=$(<"$state/schema-$version")
+  current=$(sed -n 's/^schema=//p' "$db")
+  if ((current > target)); then
+    echo "ModuleNotFoundError: No module named 'radiotomate.commands.update.v$current'" >&2
+    return 1
+  fi
+  ((current < target)) || return 0
+  mkdir -p data/radiotomate/backups
+  cp "$db" "data/radiotomate/backups/avant-v$((current + 1))-$(date -u +%Y%m%dT%H%M%SZ).db"
+  for ((step = current + 1; step <= target; step++)); do
+    if [[ $(cat "$state/migration-fails" 2>/dev/null) == "$step" ]]; then
+      echo "Applying schema change #$step... rolled back" >&2
+      return 1
+    fi
+    sed -i "s/^schema=.*/schema=$step/" "$db"
+  done
+  echo "migration : v$current → v$target" >>"$state/log"
+}
+
 # docker compose run, sur les données de la station : -v, et /data, le RT_DATA
 # par défaut. Il joue backup-radiotomate.sh et restore-radiotomate.sh comme
 # les vrais, sur une base faite d'une ligne « schema=N », puis d'autres ; et
@@ -54,15 +82,17 @@ compose_run() {
         ;;
     esac
   done
-  host() { # chemin dans le conteneur
+  host() { # chemin dans le conteneur, ou dans un dossier monté
+    local target
     for spec in "${volumes[@]}"; do
       spec=${spec%:ro}
-      if [[ ${spec#*:} == "$1" ]]; then
-        echo "${spec%%:*}"
+      target=${spec#*:}
+      if [[ $1 == "$target" || $1 == "$target"/* ]]; then
+        echo "${spec%%:*}${1#"$target"}"
         return
       fi
     done
-    [[ $1 != /data ]] || echo "$PWD/data/radiotomate"
+    [[ $1 != /data && $1 != /data/* ]] || echo "$PWD/data/radiotomate${1#/data}"
   }
   local tmp script
   case "$entrypoint ${1:-}" in
@@ -87,6 +117,30 @@ compose_run() {
         echo "sqlite3 is required" >&2
         exit 1
       fi
+      # Une copie de la base seule, à la place de la base en place, qui reste
+      # à côté : la station arrêtée. Une fois, elle échoue : $state/restore-fails.
+      if [[ $2 == *.db ]]; then
+        if [[ -e $state/restore-fails ]]; then
+          rm "$state/restore-fails"
+          echo "No space left on device" >&2
+          exit 1
+        fi
+        if [[ -e $state/caddy-running || -e $state/engine-running ]]; then
+          echo "database in use or unreadable: /data/radiotomate.db" >&2
+          exit 1
+        fi
+        tmp=$(host "$3")
+        [[ -f $(host "$2") ]] || {
+          echo "missing archive, or not readable: $2" >&2
+          exit 1
+        }
+        mkdir -p "$tmp/backups"
+        cp "$tmp/radiotomate.db" "$tmp/backups/avant-restauration-$(date -u +%Y%m%dT%H%M%SZ).db"
+        cp "$(host "$2")" "$tmp/radiotomate.db"
+        echo "restaurée : $2" >>"$state/log"
+        echo "/data/radiotomate.db"
+        exit 0
+      fi
       if [[ -n $(ls -A "$(host /cible)") ]]; then
         echo "refusing to restore into a non-empty directory: /cible" >&2
         exit 1
@@ -102,6 +156,28 @@ compose_run() {
       case $script in
         "# schémas"*)
           sed -n 's/^schema=//p' "$(host /data)/radiotomate.db" "$(host /cible)/radiotomate.db"
+          ;;
+        "# copie"*)
+          # Le schéma de la base en place, puis l'état de la copie : ok, sauf
+          # $state/copy-corrupt, comme SQLite devant une copie abîmée.
+          local copy
+          for spec in "${envs[@]}"; do
+            [[ $spec != BUTTON_COPY=* ]] || copy=${spec#*=}
+          done
+          sed -n 's/^schema=//p' "$(host /data)/radiotomate.db"
+          if [[ -e $state/copy-corrupt ]]; then
+            echo "database disk image is malformed"
+          elif [[ -f $(host /data/backups)/$copy ]]; then
+            echo ok
+          else
+            echo "unable to open database file"
+          fi
+          ;;
+        "# version"*)
+          # L'image de la version de BUTTON_VERSION : le schéma qu'elle lit
+          # au plus, $state/schema-<version>, sinon 18.
+          sed -n 's/^schema=//p' "$(host /data)/radiotomate.db"
+          cat "$state/schema-${BUTTON_VERSION:-}" 2>/dev/null || echo 18
           ;;
         "# domaine"*)
           echo "réglages du domaine : ${envs[*]}" >>"$state/log"
@@ -127,17 +203,22 @@ case $1 in
     [[ ! -e $state/docker-down ]] || exit 1
     [[ ${2:-} != --format ]] || echo /var/lib/docker
     ;;
-  pull | rm | image) ;;
+  pull | rm) ;;
+  # Une image qui manque sur la machine : $state/image-missing.
+  image) [[ ${2:-} != inspect || ! -e $state/image-missing ]] || exit 1 ;;
   # Ce que le projet garde après une désinstallation, ou ce qui tourne quand
   # station relève les versions : $state/containers et $state/volumes, un par
   # ligne.
   ps) cat "$state/containers" 2>/dev/null || true ;;
   # Leur service, leur image et leur version : $state/inspect ; ou leur
   # identifiant, leur service et les chemins qu'ils montent :
-  # $state/inspect-mounts.
+  # $state/inspect-mounts ; ou leur identifiant et leur service :
+  # $state/inspect-services.
   inspect)
     if [[ " $* " == *".Mounts"* ]]; then
       cat "$state/inspect-mounts" 2>/dev/null || true
+    elif [[ " $* " == *" {{.Id}}|"* ]]; then
+      cat "$state/inspect-services" 2>/dev/null || true
     else
       cat "$state/inspect" 2>/dev/null || true
     fi
@@ -204,6 +285,8 @@ case $1 in
         fi
         ;;
       config)
+        # Un avertissement de Compose, sur la sortie d'erreur : $state/compose-warning.
+        [[ ! -f $state/compose-warning ]] || cat "$state/compose-warning" >&2
         case " $* " in
           *" --services "*) printf '%s\n' "${SERVICES[@]}" ;;
           *" --profiles "*) printf 'cloud\nshare\nvps\n' ;;
@@ -216,9 +299,14 @@ case $1 in
         [[ ! -e $state/pull-fails ]] || exit 1
         ;;
       up)
-        # Une fois : $state/up-fails.
+        # Une fois, ou le nombre de fois qu'il dit : $state/up-fails.
         if [[ -e $state/up-fails ]]; then
-          rm "$state/up-fails"
+          fails=$(cat "$state/up-fails")
+          if ((${fails:-1} > 1)); then
+            echo $((fails - 1)) >"$state/up-fails"
+          else
+            rm "$state/up-fails"
+          fi
           exit 1
         fi
         # Ce que docker compose recevrait du shell, à la place de .env.
@@ -231,6 +319,10 @@ case $1 in
           printf 'schema=18\nid=%s\n' "$RANDOM$RANDOM" >data/radiotomate/radiotomate.db
         [[ -f data/radiotomate/radiotomate.yaml ]] || echo "db: {}" >data/radiotomate/radiotomate.yaml
         [[ -f data/caddy/certificates/site.crt ]] || echo "certificat $RANDOM$RANDOM" >data/caddy/certificates/site.crt
+        # radiotomate-init ne repasse pas pour Caddy seul, ni sans dépendances.
+        if [[ " $* " != *" --no-deps "* && ${*: -1} != caddy ]]; then
+          migrate || exit 1
+        fi
         touch "$state/caddy-running"
         ;;
       stop)

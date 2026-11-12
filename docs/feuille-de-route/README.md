@@ -10,7 +10,7 @@ Ce qui reste à faire, rangé par priorité. Chaque tâche est une **fiche** : a
 
 ## Où on en est
 
-Relevé le 12 novembre 2026, sur `main` après la PR 144. La dernière version publiée est la 0.2.0, du 10 novembre. P1 a 23 fiches faites sur 29, P2 cinq sur 49. La personne qui fusionne tient cette partie à jour, comme les tableaux.
+Relevé le 12 novembre 2026, sur `main` après la PR 146. La dernière version publiée est la 0.2.0, du 10 novembre. P1 a 24 fiches faites sur 29, P2 cinq sur 53. La personne qui fusionne tient cette partie à jour, comme les tableaux.
 
 **D'abord** :
 
@@ -18,14 +18,14 @@ Relevé le 12 novembre 2026, sur `main` après la PR 144. La dernière version p
 2. **PUB-03, les réglages du dépôt public.** Ils se posent en quelques minutes, par la personne qui tient le dépôt.
 3. **MAJ-05**, le retour arrière automatique : MAJ-04 est fusionnée, et elle passe en tête de la file de la commande `station`. Tant qu'elle manque, une mise à jour qui échoue se défait à la main.
 
-**Ensuite, ce qui reste de P1**, par files : voir [l'ordre](P1-mise-en-prod.md#lordre). SAV-01 et SUR-01 suivent MAJ-05 dans la file de la commande `station`. LEG-02 n'attend rien, INS-04 se mesure sur la version suivante, et DOC-01 vient en dernier.
+**Ensuite, ce qui reste de P1**, par files : voir [l'ordre](P1-mise-en-prod.md#lordre). SAV-01 et SUR-01 suivent MAJ-05 dans la file de la commande `station`. INS-04 se mesure sur la version suivante, et DOC-01 vient en dernier.
 
 **À côté, dans P2**, ce qui n'attend rien de P1 :
 
 - l'antenne, une fiche à la fois sur un même fichier : FON-17 puis FON-18 sur le pupitre (`desk.py`) ; FON-33 et FON-35 à FON-38 sur `clock.py` ; FON-19 et FON-32 sur `execution.py`. FON-14 et FON-39 viennent de changer ces trois fichiers : rejouer chaque défaut avant de coder ;
 - les bacs et la banque : FON-21, FON-31, et FON-20 et FON-40, ces deux-là l'une après l'autre, sur le script du pont Dropbox ;
 - les fiches de la bibliothèque : FON-23 puis FON-24, et ARC-06 à côté. FON-25 à FON-30 les suivent ;
-- sans ordre, chacune avec ses conflits : FON-34, qui partage `alerts.py` avec SUR-01, TST-04, TST-05, TST-07, TST-08, DEV-01 à DEV-04, PUB-02, GEN-04, SEC-08, SEC-10, ARC-01, et MAJ-08, que MAJ-04 ne retient plus.
+- sans ordre, chacune avec ses conflits : FON-34, qui partage `alerts.py` avec SUR-01, TST-04, TST-05, TST-07 et FON-41, qui touchent le même parcours, TST-08 puis TST-09, TST-10 après MAJ-05, DEV-01 à DEV-04, PUB-02, LEG-03, GEN-04, SEC-08, SEC-10, ARC-01, et MAJ-08, que MAJ-04 ne retient plus.
 
 Le reste de P2 attend P1 : MAJ-06 et SUR-03 écrivent dans la commande `station`, MAJ-07 suit MAJ-06, SUR-02 suit SUR-01, et SEC-09 relit le tout.
 
@@ -33,6 +33,7 @@ Le reste de P2 attend P1 : MAJ-06 et SUR-03 écrivent dans la commande `station`
 
 - publier la 1.0.0, et faire dans chaque station l'action qu'elle demande ;
 - essayer FON-14 et FON-39 sur une station de test, fondu allumé : leur banc tournait sans. Pour FON-39, une heure d'antenne ;
+- essayer LEG-02 sur une station d'essai en `main` : un animateur y télécharge le code de la version, et sans session la même adresse répond 401 ;
 - les réglages du dépôt, et le sort des cinq images encore privées (PUB-03) ;
 - une clé d'application AcoustID pour BUTTON, avant FON-25 ;
 - le nom des fichiers de l'export audio de Rivendell, avant FON-29 ;

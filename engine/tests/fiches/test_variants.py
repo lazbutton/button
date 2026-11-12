@@ -148,6 +148,24 @@ def test_an_ad_or_a_jingle_is_not_searched(artist, title):
     assert radio_variants(RadioTrack(artist, title)) == []
 
 
+@pytest.mark.parametrize(
+    ("title", "first"),
+    [
+        # 0x1C et 0x1D, des espaces pour Python, sont pour JavaScript des guillemets
+        # perdus en route.
+        ("\x1cSong\x1d", "\u201cSong\u201d"),
+        # Hopper met une version entre parenthèses avec le drapeau `u` : le « s » long
+        # y est un « s », mais le « i » turc, avec ou sans point, n'y est pas un « i ».
+        ("Song VER\u017fION", "Song (VER\u017fION)"),
+        ("Song Rem\u0131x", "Song Rem\u0131x"),
+        ("Song ED\u0130T", "Song ED\u0130T"),
+    ],
+)
+def test_the_first_variant_reads_like_javascript(title, first):
+    """Les réponses de Hopper, relevées par Node."""
+    assert radio_variants(RadioTrack("Artiste", title))[0].title == first
+
+
 def meta(**fields) -> Meta:
     defaults = {
         "title": "Get Lucky",

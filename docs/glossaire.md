@@ -27,7 +27,7 @@ Les mots de la radio et ceux du code. Quand la console et le code n'emploient pa
 | Encodeur | Le logiciel qui envoie le son du direct : BUTT, Mixxx… | — |
 | Habillage | Les jingles, virgules et idents qui ponctuent l'antenne | `30-habillage` |
 | Harbor | L'entrée du direct dans Liquidsoap, port 6800 | `scheduler/harbor.py` |
-| `HOLD` | Le fichier qui bloque les mises à jour d'une station, avec sa date et sa raison, jusqu'à ce qu'une personne le retire : `station hold`, `station unhold` | `/opt/button/HOLD` |
+| `HOLD` | Le fichier qui bloque les mises à jour d'une station, avec sa date et sa raison, jusqu'à ce qu'une personne le retire : `station hold`, `station unhold`. Un retour arrière le pose aussi | `/opt/button/HOLD` |
 | Horloge | Un motif de positions qui se répète, avec ses ancres | `Clock`, `scheduler/clock.py` |
 | Inbox | Le dossier où arrivent les fichiers envoyés, avant d'être rangés | `00-inbox` |
 | Interface | Le processus web du moteur, port 6811 : pages HTMX de l'amont et API JSON de la console | `interface_app.py` |
@@ -45,6 +45,7 @@ Les mots de la radio et ceux du code. Quand la console et le code n'emploient pa
 | Programmateur | Le rôle qui règle la grille, les horloges et les bacs | droits `carts` et `autodj` |
 | Pupitre | La partie de la page Antenne où l'animateur prépare et lance ce qui passe | `scheduler/desk.py`, `AntenneDesk` |
 | Relais | Le flux d'une autre radio, repris à l'antenne | cart en mode `relay` |
+| Retour arrière | Revenir à la version d'avant une mise à jour : ses fichiers, ses images, et la base d'avant la mise à jour si le schéma a migré. `station update` le fait seule quand la mise à jour échoue, `station rollback` à la main | `update_undo`, `cmd_rollback`, `updates.log` |
 | Rotation | La musique de tous les jours | `10-rotation` |
 | Scheduler | Le processus du moteur qui décide quoi jouer, port 6822 | `scheduler_app.py`, `scheduler/` |
 | Set | Une émission enregistrée de l'Agenda, souvent déposée par un invité | `kind:"set"` |
