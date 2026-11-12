@@ -474,9 +474,13 @@ async def _forecast_inputs(
     positions = await session.execute(
         select(ClockPosition.__table__).order_by(ClockPosition.id)
     )
-    carts = await session.execute(select(Cart.id, Cart.version).order_by(Cart.id))
+    # Not its version: loading a cart with its sounds bumps it, at every draw.
+    carts = await session.execute(
+        select(Cart.id, Cart.title, Cart.mode).order_by(Cart.id)
+    )
+    # The sum too: a sound ready as another drops keeps the count, often the max.
     playable = await session.execute(
-        select(func.count(Sound.id), func.max(Sound.id)).where(
+        select(func.count(Sound.id), func.max(Sound.id), func.sum(Sound.id)).where(
             Sound.active.is_(True),
             Sound.gain.is_not(None),
         )
@@ -492,19 +496,21 @@ async def _forecast_inputs(
     )
 
 
-def _read_missing_mark(mark: Setting | None) -> tuple[datetime, str] | None:
-    """When a forecast of missing lines was drawn, and from what."""
+def _read_missing_mark(mark: Setting | None) -> tuple[datetime, int, str] | None:
+    """When a forecast of missing lines was drawn, for how many minutes, and
+    from what."""
     if mark is None or not mark.value:
         return None
     try:
         raw = json.loads(mark.value)
         at = datetime.fromisoformat(str(raw["at"]))
+        horizon = int(raw["horizon"])
         inputs = str(raw["inputs"])
     except (json.JSONDecodeError, KeyError, TypeError, ValueError):
         return None
     if at.tzinfo is None:
         return None
-    return at, inputs
+    return at, horizon, inputs
 
 
 def _missing_forecast_holds(
@@ -513,37 +519,36 @@ def _missing_forecast_holds(
     *,
     now: datetime,
     inputs: str,
-    min_ahead_min: int,
+    horizon_min: int,
 ) -> bool:
     """
     Whether the forecast in place, made only of missing lines, still holds: drawn
-    less than ``MISSING_FORECAST_HOLD`` ago, from what is there now, and reaching
-    ``min_ahead_min`` past its draw. A reset, or a shorter draw by the other
-    process, leaves it short: it is drawn again.
+    less than ``MISSING_FORECAST_HOLD`` ago, from what is there now, for
+    ``horizon_min`` at least, and its lines still there. A reset takes them away,
+    and the other process may have drawn shorter: it is drawn again. Where the
+    lines end is not asked: hours without a slot, or carts of 8 s that fill the
+    800 lines of a draw, end them short of the horizon for good.
     """
     drawn = _read_missing_mark(mark)
     if drawn is None:
         return False
-    at, drawn_from = drawn
+    at, horizon, drawn_from = drawn
     # Either way round: the scheduler dates a draw by the clock of Liquidsoap,
     # the interface by its own, a second or so apart.
-    if abs(now - at) >= MISSING_FORECAST_HOLD or drawn_from != inputs:
+    if abs(now - at) >= MISSING_FORECAST_HOLD:
         return False
-    missing = [row for row in rows if _is_missing_line(row)]
-    if not missing:
+    if drawn_from != inputs or horizon < horizon_min:
         return False
-    # Read on the Paris wall clock, as the lines are dated (forecast_still_covers).
-    drawn_at = now_paris(at)
-    reach = timedelta(minutes=max(1, min_ahead_min))
-    return _horizon_end(missing, drawn_at) >= drawn_at + reach
+    return any(_is_missing_line(row) for row in rows)
 
 
-async def _mark_missing_forecast(
+async def _mark_missing_forecast(  # noqa: PLR0913
     session: ormSession,
     mark: Setting | None,
     items: list[dict],
     *,
     now: datetime,
+    horizon_min: int,
     inputs: str,
 ) -> bool:
     """Mark the forecast just drawn when it is made only of missing lines, so
@@ -551,7 +556,11 @@ async def _mark_missing_forecast(
     missing = bool(items) and all(
         _status_from_forecast(item) == RundownStatus.FAILED.value for item in items
     )
-    value = json.dumps({"at": now.isoformat(), "inputs": inputs}) if missing else ""
+    value = ""
+    if missing:
+        value = json.dumps(
+            {"at": now.isoformat(), "horizon": horizon_min, "inputs": inputs}
+        )
     if value != ((mark.value if mark is not None else "") or ""):
         await Setting.upsert(session, SETTING_MISSING_FORECAST, value)
     return missing
@@ -611,7 +620,7 @@ async def ensure_forecast(  # noqa: PLR0913
             visible,
             now=now,
             inputs=inputs,
-            min_ahead_min=target_ahead,
+            horizon_min=horizon_min,
         ):
             _note_reading(nothing_to_play=True)
             return await _payload_from_visible(
@@ -649,7 +658,7 @@ async def ensure_forecast(  # noqa: PLR0913
         items = list(forecast.get("items") or [])
         await replace_forecast_items(session, version, items, now=now)
         missing = await _mark_missing_forecast(
-            session, mark, items, now=now, inputs=inputs
+            session, mark, items, now=now, horizon_min=horizon_min, inputs=inputs
         )
         _note_reading(nothing_to_play=missing)
     else:

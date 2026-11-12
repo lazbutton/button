@@ -992,14 +992,13 @@ async def test_a_station_with_nothing_to_play_keeps_one_forecast(
     Such a line ("manquant") never counts as runway: such a forecast is drawn
     again once a minute (FON-32), at every tick before. Kept, they piled up: 17
     lines a second on a new station, the scheduler and the interface reading
-    more of them at every tick.
+    more of them at every tick. Here, three minutes of ticks: three draws more.
     """
-    from sqlalchemy import func
-
     start = datetime(2026, 11, 10, 9, 0, 0)
     client = _client()
     counts = []
-    for second in range(30):
+    first = ids = set()
+    for second in range(0, 200, 10):
         live = _live(
             (start + timedelta(seconds=second)).isoformat(),
             source="safe",
@@ -1008,13 +1007,13 @@ async def test_a_station_with_nothing_to_play_keeps_one_forecast(
             carts_queued=0,
         )
         await tick(dbsession, live, client, empty_beets)
-        counts.append(
-            await dbsession.scalar(select(func.count()).select_from(RundownItem))
-        )
+        ids = set(await dbsession.scalars(select(RundownItem.id)))
+        first = first or ids
+        counts.append(len(ids))
     statuses = set(await dbsession.scalars(select(RundownItem.status)))
     assert statuses == {"failed"}
-    assert counts[0] > 0
-    assert max(counts) == counts[0], counts
+    assert ids.isdisjoint(first)
+    assert max(counts) < 2 * min(counts), counts
     client.post.assert_not_called()
 
 
@@ -1113,8 +1112,10 @@ async def test_a_title_added_to_beets_is_planned_at_the_next_tick(
 
 
 async def test_a_sound_ready_in_a_cart_ends_the_wait(raw_app, dbsession, empty_beets):
-    """A jingle the cart can play, its gain known, is planned at the next tick."""
-    await ensure_forecast(dbsession, empty_beets, now=EMPTY_START)
+    """The cart of the clock is there, its sound not analysed yet: the forecast
+    holds, a session a call as on a station, though each draw loads the cart
+    and bumps its version. The analyser gives the sound its gain: the jingle is
+    planned at the next call."""
     cartpath = raw_app.config["DATA_ROOT"] / "jingles"
     cart = Cart(
         title="Jingles",
@@ -1124,21 +1125,32 @@ async def test_a_sound_ready_in_a_cart_ends_the_wait(raw_app, dbsession, empty_b
     )
     dbsession.add(cart)
     await dbsession.flush()
-    dbsession.add(
-        Sound(
-            cart_id=cart.id,
-            path=cartpath / "id-button.mp3",
-            duration=8,
-            title="ID BUTTON",
-            gain=-1.0,
-            peak=-0.5,
-        )
+    sound = Sound(
+        cart_id=cart.id,
+        path=cartpath / "id-button.mp3",
+        duration=8,
+        title="ID BUTTON",
+        gain=None,
+        peak=None,
     )
+    dbsession.add(sound)
     await dbsession.commit()
-    payload = await ensure_forecast(
-        dbsession, empty_beets, now=EMPTY_START + timedelta(seconds=1)
-    )
-    planned = [item for item in payload["items"] if item["status_code"] == "planned"]
+    sessions = raw_app.extensions["sqlalchemy"].session
+
+    async def call(second: int) -> list[dict]:
+        async with sessions() as session:
+            payload = await ensure_forecast(
+                session, empty_beets, now=EMPTY_START + timedelta(seconds=second)
+            )
+        return payload["items"]
+
+    first = await call(0)
+    assert {item["status_code"] for item in first} == {"failed"}
+    assert [item["id"] for item in await call(1)] == [item["id"] for item in first]
+    sound.gain = -1.0
+    sound.peak = -0.5
+    await dbsession.commit()
+    planned = [item for item in await call(2) if item["status_code"] == "planned"]
     assert planned
     assert {item["kind"] for item in planned} == {"jingle"}
 
@@ -1184,6 +1196,23 @@ async def test_the_six_hours_of_the_console_hold_for_the_tick(dbsession, empty_b
     )
 
 
+async def test_a_grid_with_hours_off_air_keeps_its_forecast(dbsession, empty_beets):
+    """Six hours asked on an evening before a night without a slot: the lines end
+    at midnight, short of the horizon for good, and the forecast holds all the
+    same."""
+    from sqlalchemy import delete
+
+    await dbsession.execute(delete(AutoDJSlot).where(AutoDJSlot.day_of_week == 2))
+    await dbsession.commit()
+    evening = datetime(2026, 11, 10, 21, 0, tzinfo=PARIS)
+    first = await _forecast_ids(dbsession, empty_beets, evening, horizon_min=360)
+    again = await _forecast_ids(
+        dbsession, empty_beets, evening + timedelta(seconds=3), horizon_min=360
+    )
+    assert first
+    assert again == first
+
+
 async def test_a_reset_draws_a_held_forecast_again(dbsession, empty_beets):
     """« Reconstruire le conducteur » clears the lines: the forecast is drawn again
     at once, not left empty for the rest of the minute."""
@@ -1208,10 +1237,17 @@ IDLE_LIVE = _live(
 )
 
 
+@pytest.fixture
+def tick_gate():
+    """The scheduler's tick gate, fresh, and left fresh for the tests after."""
+    sched_live.reset_tick_gate()
+    yield
+    sched_live.reset_tick_gate()
+
+
 async def _gate_after_a_tick(session, beets) -> list[bool]:
     """The tick gate for the heartbeats after a tick that read the forecast: the
     next second, four seconds on, then once the idle interval is past."""
-    sched_live.reset_tick_gate()
     since = monotonic()
     await ensure_forecast(session, beets, now=EMPTY_START)
     await sched_live.note_nothing_to_play(session, since=since)
@@ -1221,7 +1257,9 @@ async def _gate_after_a_tick(session, beets) -> list[bool]:
     ]
 
 
-async def test_the_tick_of_a_station_with_nothing_to_play_waits(dbsession, empty_beets):
+async def test_the_tick_of_a_station_with_nothing_to_play_waits(
+    dbsession, empty_beets, tick_gate
+):
     """Nothing plays, and the clock has nothing to push (FON-32): the tick no longer
     runs every second for an end that will not come. A change of the antenna, or
     the idle interval, runs it, as in the middle of a title."""
@@ -1234,7 +1272,9 @@ async def test_the_tick_of_a_station_with_nothing_to_play_waits(dbsession, empty
     assert sched_live.should_run_tick({**IDLE_LIVE, "autodj_queued": 1}, now=106.0)
 
 
-async def test_the_tick_keeps_its_pace_with_the_switch_off(dbsession, empty_beets):
+async def test_the_tick_keeps_its_pace_with_the_switch_off(
+    dbsession, empty_beets, tick_gate
+):
     await Setting.upsert(dbsession, sched_live.SETTING_QUIET_TICK, "false")
     await dbsession.commit()
     assert await _gate_after_a_tick(dbsession, empty_beets) == [True] * 4
@@ -1245,16 +1285,34 @@ async def test_the_tick_keeps_its_pace_when_there_is_something_to_play(
     jingles_cart,
     pubs_cart,
     beets_integration: BeetsIntegration,
+    tick_gate,
 ):
     """Titles to play: nothing playing is a queue to fill, every second."""
     assert await _gate_after_a_tick(dbsession, beets_integration) == [True] * 4
 
 
-async def test_the_tick_waits_only_on_the_forecast_it_read(dbsession, empty_beets):
+async def test_the_tick_waits_only_on_the_forecast_it_read(
+    dbsession, empty_beets, tick_gate
+):
     """A tick that did not read the forecast, held by a live for instance, keeps
     its pace: an earlier reading says nothing of now."""
     await ensure_forecast(dbsession, empty_beets, now=EMPTY_START)
-    sched_live.reset_tick_gate()
     await sched_live.note_nothing_to_play(dbsession, since=monotonic())
     assert sched_live.should_run_tick(IDLE_LIVE, now=100.0)
     assert sched_live.should_run_tick(IDLE_LIVE, now=101.0)
+
+
+async def test_the_scheduler_quiets_its_gate_after_a_tick_with_nothing_to_play(
+    raw_app, empty_beets, tick_gate
+):
+    """The tick runner reads what its own tick found (live._run_sequencer): the
+    gate stops watching for an end, but a title that plays keeps its end watched,
+    a cart sent by hand for instance."""
+    raw_app.extensions[BeetsIntegration.EXTENSION_NAME] = empty_beets
+    async with raw_app.app_context():
+        await sched_live._run_sequencer(IDLE_LIVE)
+    assert sched_live.should_run_tick(IDLE_LIVE, now=100.0)
+    assert not sched_live.should_run_tick(IDLE_LIVE, now=101.0)
+    playing = {**IDLE_LIVE, "source": "carts", "title": "ID BUTTON", "remaining": "7"}
+    assert sched_live.should_run_tick(playing, now=102.0)
+    assert sched_live.should_run_tick(playing, now=103.0)
