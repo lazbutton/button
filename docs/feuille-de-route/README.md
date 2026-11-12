@@ -10,28 +10,27 @@ Ce qui reste à faire, rangé par priorité. Chaque tâche est une **fiche** : a
 
 ## Où on en est
 
-Relevé le 12 novembre 2026, sur `main` après la PR 172. La dernière version publiée est la 0.2.0, du 10 novembre. P1 a 27 fiches faites sur 30, P2 dix-neuf sur 66. En cours : MAJ-07, en P1, et FON-48 et SUR-04, en P2. La personne qui fusionne tient cette partie à jour, comme les tableaux.
+Relevé le 12 novembre 2026, sur `main` après la PR 175. La dernière version publiée est la 0.2.0, du 10 novembre. P1 a 28 fiches faites sur 30, P2 dix-neuf sur 67. En cours : FON-48 et SUR-04, en P2. La personne qui fusionne tient cette partie à jour, comme les tableaux.
 
 **D'abord** :
 
-1. **MAJ-07, le bouton de mise à jour**, en cours : demandé en priorité par l'utilisateur le 12 novembre 2026. Une page « Mises à jour » de la console, et un bouton qui fait passer la station à la version suivante, sans terminal. Elle passe en P1.
-2. **La version qui suit la 0.2.0 : la 1.0.0.** Plus rien ne la retient : le correctif du tirage des bacs est fusionné (`550e7f1`). Elle porte ce qu'il faut à une station neuve : la banque de sons rendue au moteur, et un conducteur qui ne s'empile plus. Elle rend à l'antenne les lignes mises à la suite au pupitre et les jingles du motif (FON-14, FON-39), qu'il reste à écouter sur une station de test. Elle apporte aussi `station update` (MAJ-04), son retour arrière (MAJ-05), la sauvegarde hors de la machine (SAV-01) et les alertes sur un téléphone (SUR-01), que la 0.2.0 n'a pas : une station d'aujourd'hui prend d'abord la commande de cette version, comme le dit [deploiement.md](../deploiement.md#avec-la-commande-station). Elle demande une action à chaque station, dite dans la « Mise en service » du [CHANGELOG](../../CHANGELOG.md) : régler ses adresses dans Réglages → Station, et poser `ICECAST_MOUNT=button.mp3` dans `.env` pour garder l'adresse de son flux. Une version qui demande une action est une majeure ([developpement.md](../developpement.md#publier-une-version)) : décidé le 11 novembre, elle se publie en 1.0.0.
-3. **PUB-03, les réglages du dépôt public.** Ils se posent en quelques minutes, par la personne qui tient le dépôt.
+1. **La version qui suit la 0.2.0 : la 1.0.0.** Elle porte maintenant le bouton de mise à jour de la console (MAJ-07) : une station qui la prend, en terminal, se met ensuite à jour d'un bouton. Plus rien ne la retient : le correctif du tirage des bacs est fusionné (`550e7f1`). Elle porte ce qu'il faut à une station neuve : la banque de sons rendue au moteur, et un conducteur qui ne s'empile plus. Elle rend à l'antenne les lignes mises à la suite au pupitre et les jingles du motif (FON-14, FON-39), qu'il reste à écouter sur une station de test. Elle apporte aussi `station update` (MAJ-04), son retour arrière (MAJ-05), la sauvegarde hors de la machine (SAV-01) et les alertes sur un téléphone (SUR-01), que la 0.2.0 n'a pas : une station d'aujourd'hui prend d'abord la commande de cette version, comme le dit [deploiement.md](../deploiement.md#avec-la-commande-station). Elle demande une action à chaque station, dite dans la « Mise en service » du [CHANGELOG](../../CHANGELOG.md) : régler ses adresses dans Réglages → Station, et poser `ICECAST_MOUNT=button.mp3` dans `.env` pour garder l'adresse de son flux. Une version qui demande une action est une majeure ([developpement.md](../developpement.md#publier-une-version)) : décidé le 11 novembre, elle se publie en 1.0.0.
+2. **PUB-03, les réglages du dépôt public.** Ils se posent en quelques minutes, par la personne qui tient le dépôt.
 
-**Ensuite, ce qui reste de P1**, par files : voir [l'ordre](P1-mise-en-prod.md#lordre). MAJ-07 finit la file de la commande `station`. INS-04 se mesure sur la version suivante, et DOC-01 vient en dernier.
+**Ensuite, ce qui reste de P1**, par files : voir [l'ordre](P1-mise-en-prod.md#lordre). La file de la commande `station` n'a plus de fiche de P1. INS-04 se mesure sur la version suivante, et DOC-01 vient en dernier.
 
 **À côté, dans P2**, ce qui n'attend rien de P1 :
 
 - l'antenne, une fiche à la fois sur un même fichier : FON-50 sur le pupitre (`desk.py`) ; FON-36, en cours, puis FON-35, FON-37, FON-38 et FON-49 sur `clock.py` ; FON-19 sur `execution.py`. FON-14, FON-39, FON-33 et FON-32 viennent de changer ces fichiers : rejouer chaque défaut avant de coder ;
 - les bacs et la banque : FON-21, FON-31, et FON-20 et FON-40, ces deux-là l'une après l'autre, sur le script du pont Dropbox ;
 - les fiches de la bibliothèque : ARC-06, puis FON-25, qui attend aussi une clé AcoustID pour BUTTON. FON-26 à FON-30 les suivent ;
-- sans ordre, chacune avec ses conflits : FON-47 sur la page Semaine, SUR-04, en cours, puis FON-44, sur `alerts.py`, TST-04, TST-13, TST-07 et FON-41, qui touchent le même parcours, DEV-05 et TST-12, l'une après l'autre sur `scheduler_api.py`, TST-10 après MAJ-07, qui écrit aussi dans `deploy/`, INS-05, FON-48, en cours, FON-46, DEV-01 à DEV-04, PUB-02, LEG-03, GEN-04, SEC-08, SEC-10, ARC-01, et MAJ-08, que MAJ-04 ne retient plus.
+- sans ordre, chacune avec ses conflits : FON-47 sur la page Semaine, SUR-04, en cours, puis FON-44, sur `alerts.py`, TST-04, TST-13, TST-07 et FON-41, qui touchent le même parcours, DEV-05 et TST-12, l'une après l'autre sur `scheduler_api.py`, INS-05, FON-48, en cours, FON-46, DEV-01 à DEV-04, PUB-02, LEG-03, GEN-04, SEC-08, SEC-10, ARC-01, et MAJ-08, que MAJ-04 ne retient plus.
 
-Le reste de P2 attend P1 : MAJ-06 et SUR-03 écrivent dans la commande `station`, MAJ-06 suit MAJ-07, SUR-02, qui suivait SUR-01, peut passer, et SEC-09 relit le tout.
+Dans la commande `station`, une fiche à la fois, maintenant que MAJ-07 est faite : MAJ-06, les mises à jour de la nuit, MAJ-09, TST-10, SUR-03, et ARC-06, dont la bibliothèque de Beets migrée ne redescend pas avec le retour arrière de MAJ-05. SUR-02 peut passer. SEC-09 relit le tout à la fin.
 
 **Ce qui n'est pas du code**, et qu'une personne doit faire ou trancher :
 
-- décider si la 1.0.0 attend MAJ-07 : une station la prend encore par `station update`, en terminal, et n'a le bouton qu'à partir de la version qui le porte ;
+- après la fusion de MAJ-07 et la publication des images `:main`, regarder le premier passage de `station.yml` : il passe par trois demandes de la console ;
 - publier la 1.0.0, et faire dans chaque station l'action qu'elle demande ;
 - sur chaque station, régler la sauvegarde hors de la machine (`station config --backup-remote`), chez un autre fournisseur que celui du VPS, et noter le mot de passe du dépôt hors de la machine ;
 - essayer FON-14 et FON-39 sur une station de test, fondu allumé : leur banc tournait sans. Pour FON-39, une heure d'antenne ;
