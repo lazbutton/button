@@ -323,6 +323,23 @@ LOSSY_DOWNGRADES = {
     ),
 }
 
+# The published downgrades that leave behind what their upgrade made, by case, and
+# why: their upgrade can't run again. As with LOSSY_DOWNGRADES, the test lets these
+# through, and only these, and one that no longer happens fails it.
+INCOMPLETE_DOWNGRADES = {
+    "v1": (
+        {"settings", "metadata_log"},
+        "the downgrade keeps settings on purpose, to write SCHEMA_VERSION 0 in it, but "
+        "forgets metadata_log: the upgrade, run again, stops on "
+        '"table metadata_log already exists"',
+    ),
+    "v12": (
+        {"carts.bank_folder"},
+        "the downgrade does nothing: the upgrade, run again, stops on "
+        '"duplicate column name: bank_folder"',
+    ),
+}
+
 
 class _Table(NamedTuple):
     columns: dict[str, tuple]  # by name: type, NOT NULL, default, rank in the key
@@ -480,24 +497,58 @@ def _losses(before: dict[str, _Table], after: dict[str, _Table]) -> dict[str, li
     return dict(losses)
 
 
+def _left(before: dict[str, _Table], after: dict[str, _Table]) -> dict[str, list]:
+    """
+    What `after` has more than `before`, by table or by column: a table, a column, an
+    index, a foreign key or a row. A value or a declaration that changed is a loss, not
+    something left.
+    """
+    left = defaultdict(list)
+    for name, table in after.items():
+        if name not in before:
+            left[name].append("table left")
+            continue
+        then = before[name]
+        for column in sorted(table.columns.keys() - then.columns.keys()):
+            left[f"{name}.{column}"].append("column left")
+        for index in sorted(table.indexes - then.indexes, key=repr):
+            left[name].append(f"index {index} left")
+        for key in sorted(table.foreign_keys - then.foreign_keys, key=repr):
+            left[name].append(f"foreign key {key} left")
+        for key in sorted(table.rows.keys() - then.rows.keys(), key=repr):
+            left[name].append(f"row {key} left")
+    return dict(left)
+
+
+def _schema(snapshot: dict[str, _Table]) -> dict[str, _Table]:
+    """
+    Its tables without their rows: columns as declared, indexes, foreign keys. Like
+    `_snapshot`, it sees neither the CHECK constraints nor the views and triggers.
+    """
+    return {name: table._replace(rows={}) for name, table in snapshot.items()}
+
+
 async def test_station_data_fills_the_latest_schema(engine):
     """At the latest version too: the next migration finds a value in every column."""
     await _station_at(engine, _latest_schema_version())
     assert await _columns_without_data(engine) == [], "to fill in STATION_DATA"
 
 
-def test_lossy_downgrades_are_cases():
+def test_downgrade_exceptions_are_cases():
     """An exception that names no case would let nothing through, and fail nothing."""
     assert LOSSY_DOWNGRADES.keys() - CASES.keys() == set()
+    assert INCOMPLETE_DOWNGRADES.keys() - CASES.keys() == set()
 
 
 @pytest.mark.parametrize("case", list(CASES))
 async def test_downgrade_gives_back_what_was_there(engine, case: str):
     """
     A full database at the version before goes up to the case's version, then down:
-    all that was there before the upgrade is back, but what LOSSY_DOWNGRADES lists.
-    What the upgrade added is not looked at: the migration's own test checks that the
-    downgrade takes it away, so that the upgrade can run again.
+    all that was there before the upgrade is back, but what LOSSY_DOWNGRADES lists,
+    and nothing the upgrade added is left, but what INCOMPLETE_DOWNGRADES lists.
+    Then up again, as a station does once what made it go down is fixed: the upgrade
+    runs, and gives the schema of its first run. Only the schema: the rows it writes
+    can differ the second time, by their time or after a lossy downgrade.
     """
     version, variant = CASES[case]
     await _station_at(engine, version - 1)
@@ -506,11 +557,29 @@ async def test_downgrade_gives_back_what_was_there(engine, case: str):
     before = await _snapshot(engine)
 
     await do_update(engine, target_version=version)
+    upgraded = await _snapshot(engine)
     await do_update(engine, target_version=version - 1)
 
     assert await _schema_version(engine) == version - 1
-    losses = _losses(before, await _snapshot(engine))
+    after = await _snapshot(engine)
+    losses = _losses(before, after)
     known, _ = LOSSY_DOWNGRADES.get(case, (set(), ""))
     unlisted = {what: losses[what] for what in losses.keys() - known}
     assert unlisted == {}, "lost by the downgrade"
     assert known - losses.keys() == set(), "no longer lost: out of LOSSY_DOWNGRADES"
+
+    left = _left(before, after)
+    known, _ = INCOMPLETE_DOWNGRADES.get(case, (set(), ""))
+    unlisted = {what: left[what] for what in left.keys() - known}
+    assert unlisted == {}, "left by the downgrade"
+    assert known - left.keys() == set(), "no longer left: out of INCOMPLETE_DOWNGRADES"
+    if case in INCOMPLETE_DOWNGRADES:
+        return  # the upgrade stops on what is left, as the reason says
+
+    # up again: the same upgrade, on what the downgrade gave back
+    await do_update(engine, target_version=version)
+
+    assert await _schema_version(engine) == version
+    first, again = _schema(upgraded), _schema(await _snapshot(engine))
+    assert _losses(first, again) == {}, "lost by the upgrade run again"
+    assert _left(first, again) == {}, "left by the upgrade run again"
