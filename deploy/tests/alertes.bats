@@ -214,6 +214,76 @@ alert() { # sujet, message, note ou rien
   run ! logged "radiotomate-init"
 }
 
+# Les envois à ntfy que curl a reçus, une ligne chacun.
+ntfy_posts() {
+  grep '^curl .* https://ntfy\.sh/$' "$FAKE_STATE/log" || true
+}
+
+@test "un 429 reçu en IPv6 se réessaie une fois en IPv4, sans attendre son Retry-After" {
+  installed
+  echo ipv6 >"$FAKE_STATE/ntfy-429"
+  : >"$FAKE_STATE/log"
+  station config --alert-ntfy https://ntfy.sh
+  assert_success
+  assert_output --partial "Alertes : un essai par ntfy."
+  [ "$(ntfy_count)" -eq 1 ]
+  [ "$(ntfy_posts | wc -l)" -eq 2 ]
+  [[ $(ntfy_posts | sed -n 1p) != *" -4 "* ]]
+  [[ $(ntfy_posts | sed -n 2p) == *" -4 "* ]]
+  # curl ne réessaie jamais seul : il attendrait le Retry-After.
+  [ "$(ntfy_posts | grep -c -- --retry)" -eq 0 ]
+  [[ $(env_of BUTTON_ALERT_NTFY) == https://ntfy.sh/button-* ]]
+}
+
+@test "un 429 en IPv4 aussi arrête l'essai aussitôt, et dit pourquoi" {
+  installed
+  cp "$DIR/.env" "$BATS_TEST_TMPDIR/env-avant"
+  echo tout >"$FAKE_STATE/ntfy-429"
+  : >"$FAKE_STATE/log"
+  SECONDS=0
+  station config --alert-ntfy https://ntfy.sh
+  ((SECONDS < 10))
+  assert_failure
+  assert_output --partial "L'essai par ntfy ne part pas : le serveur ntfy refuse pour l'instant les messages de cette machine (429, trop de messages). Rien n'est changé."
+  assert_output --partial "Relancer plus tard, ou donner un autre serveur ntfy."
+  [ "$(ntfy_posts | wc -l)" -eq 2 ]
+  [ "$(ntfy_count)" -eq 0 ]
+  diff "$BATS_TEST_TMPDIR/env-avant" "$DIR/.env"
+  # Un 429 d'un serveur joint d'emblée en IPv4 ne se réessaie pas.
+  : >"$FAKE_STATE/log"
+  touch "$FAKE_STATE/ntfy-ipv4"
+  station config --alert-ntfy https://ntfy.sh
+  assert_failure
+  assert_output --partial "(429, trop de messages). Rien n'est changé."
+  [ "$(ntfy_posts | wc -l)" -eq 1 ]
+}
+
+@test "à l'installation, un 429 ne bloque pas : l'essai échoue vite, et dit comment s'en passer" {
+  echo tout >"$FAKE_STATE/ntfy-429"
+  SECONDS=0
+  install_station --domain radio.example --alert-ntfy https://ntfy.sh
+  ((SECONDS < 30))
+  assert_failure
+  assert_output --partial "L'essai par ntfy ne part pas : le serveur ntfy refuse pour l'instant les messages de cette machine (429, trop de messages)."
+  assert_output --partial "Ou installer sans ntfy : répondre n à sa question, ou --alert-ntfy \"\" ; station config le règle ensuite."
+  [ ! -e "$DIR/.env" ]
+}
+
+@test "ntfy en panne passagère se réessaie, un refus non" {
+  alerts_installed
+  echo 2 >"$FAKE_STATE/ntfy-503"
+  alert "Une mise à jour est annulée" "le contrôle a échoué."
+  assert_success
+  [ "$(ntfy_count)" -eq 1 ]
+  [ "$(ntfy_posts | wc -l)" -eq 3 ]
+  : >"$FAKE_STATE/log"
+  touch "$FAKE_STATE/ntfy-refuses"
+  alert "Une mise à jour est annulée" "le contrôle a échoué."
+  assert_success
+  assert_output --partial "n'est pas partie par ntfy : le serveur ntfy répond 403."
+  [ "$(ntfy_posts | wc -l)" -eq 1 ]
+}
+
 @test "un e-mail sans serveur SMTP, ou un compte sans mot de passe, ne se règle pas" {
   installed
   station config --alert-email technique@radio.example
