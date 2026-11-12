@@ -1,18 +1,26 @@
-from datetime import datetime
-from unittest.mock import patch
+from datetime import UTC, date, datetime, timedelta
+from unittest.mock import AsyncMock, patch
 from zoneinfo import ZoneInfo
 
 import httpx
+from quart.testing import QuartClient
 from sqlalchemy.orm import Session as ormSession
 
 from radiotomate.beets import BeetsIntegration
-from radiotomate.domain.emission import ranges_overlap, weekly_contains
+from radiotomate.domain.agenda import utc_naive
+from radiotomate.domain.emission import now_paris, ranges_overlap, weekly_contains
 from radiotomate.interface import live as live_mod
-from radiotomate.models import User
+from radiotomate.models import AgendaDiffusion, Emission, User
+from radiotomate.scheduler import alerts, antenne
+from radiotomate.services import agenda, emissions
 from tests.scheduler.test_admin_json import _admin_client
+from tests.scheduler.test_antenne_state import _next_live_slot
 from tests.scheduler.test_studio_json import _interface_client, _login
 
 PARIS = ZoneInfo("Europe/Paris")
+# Monday 21 September 2026, noon in Paris: no change of time in the weeks after.
+MONDAY_NOON = datetime(2026, 9, 21, 12, 0, tzinfo=PARIS)
+MONDAY = MONDAY_NOON.date()
 
 
 def _today() -> int:
@@ -323,3 +331,334 @@ async def test_emissions_do_not_change_slots_or_clocks(
     after_clocks = await (await client.get("/autodj/clocks.json")).get_json()
     assert after_slots == before_slots
     assert after_clocks == before_clocks
+
+
+def _weekly(title: str, day: int, start: int, end: int) -> Emission:
+    return Emission(
+        scope="weekly",
+        title=title,
+        artist="avec l'équipe",
+        day_of_week=day,
+        start_minute=start,
+        end_minute=end,
+    )
+
+
+def _dated(kind: str, title: str, start: datetime) -> AgendaDiffusion:
+    return AgendaDiffusion(
+        kind=kind,
+        title=title,
+        starts_at=utc_naive(start),
+        ends_at=utc_naive(start + timedelta(hours=2)),
+    )
+
+
+async def _cancel(session: ormSession, show: Emission, day: date) -> None:
+    """Cancel ``show`` on ``day``, as the Agenda's route does."""
+    await agenda.add_exception(
+        session, {"emission_id": show.id, "date": day.isoformat()}
+    )
+    await session.commit()
+
+
+async def test_next_skips_a_show_cancelled_tonight(dbsession: ormSession):
+    qg = _weekly("QG", 0, 20 * 60, 22 * 60)
+    dbsession.add(qg)
+    await dbsession.commit()
+    nxt = await emissions.next_live(dbsession, MONDAY_NOON)
+    assert (nxt["title"], nxt["at"]) == ("QG", "2026-09-21T20:00:00+02:00")
+    # Cancelled tonight in the Agenda: next week's, as on the Antenne page.
+    await _cancel(dbsession, qg, MONDAY)
+    nxt = await emissions.next_live(dbsession, MONDAY_NOON)
+    assert nxt == {
+        "id": qg.id,
+        "title": "QG",
+        "artist": "avec l'équipe",
+        "scope": "weekly",
+        "at": "2026-09-28T20:00:00+02:00",
+        "until": "2026-09-28T22:00:00+02:00",
+        "day_of_week": 0,
+        "start_minute": 20 * 60,
+        "end_minute": 22 * 60,
+    }
+    # Next week's cancelled as well: no live within the week.
+    await _cancel(dbsession, qg, MONDAY + timedelta(days=7))
+    assert await emissions.next_live(dbsession, MONDAY_NOON) is None
+
+
+async def test_next_is_the_other_show_when_tonight_s_is_cancelled(
+    dbsession: ormSession,
+):
+    qg = _weekly("QG", 0, 20 * 60, 22 * 60)
+    dbsession.add_all([qg, _weekly("Matinale", 2, 8 * 60, 9 * 60)])
+    await dbsession.commit()
+    await _cancel(dbsession, qg, MONDAY)
+    nxt = await emissions.next_live(dbsession, MONDAY_NOON)
+    # Wednesday's Matinale, not QG next Monday.
+    assert (nxt["title"], nxt["at"]) == ("Matinale", "2026-09-23T08:00:00+02:00")
+
+
+async def test_next_tells_a_dated_live(dbsession: ormSession):
+    qg = _weekly("QG", 0, 20 * 60, 22 * 60)
+    concert = _dated("live", "Concert", datetime(2026, 9, 24, 21, 0, tzinfo=PARIS))
+    concert.host_username = "lea"
+    dbsession.add_all([qg, concert])
+    await dbsession.commit()
+    assert (await emissions.next_live(dbsession, MONDAY_NOON))["title"] == "QG"
+    # Tonight's cancelled: Thursday's dated live comes before next week's show.
+    await _cancel(dbsession, qg, MONDAY)
+    assert await emissions.next_live(dbsession, MONDAY_NOON) == {
+        "id": concert.id,
+        "title": "Concert",
+        "artist": "lea",
+        "scope": "dated",
+        "kind": "live",
+        "at": "2026-09-24T21:00:00+02:00",
+        "until": "2026-09-24T23:00:00+02:00",
+        "day_of_week": 3,
+        "start_minute": 21 * 60,
+    }
+
+
+async def test_next_skips_a_show_replaced_by_a_dated_broadcast(
+    dbsession: ormSession,
+):
+    qg = _weekly("QG", 0, 20 * 60, 22 * 60)
+    # Tonight, a recorded set takes QG's slot: no live tonight.
+    archives = _dated("set", "Archives", datetime(2026, 9, 21, 20, 0, tzinfo=PARIS))
+    dbsession.add_all([qg, archives])
+    await dbsession.commit()
+    nxt = await emissions.next_live(dbsession, MONDAY_NOON)
+    assert (nxt["title"], nxt["at"]) == ("QG", "2026-09-28T20:00:00+02:00")
+    # Next Monday, a dated live takes it: that live is the next.
+    special = _dated("live", "Spécial", datetime(2026, 9, 28, 20, 0, tzinfo=PARIS))
+    dbsession.add(special)
+    await dbsession.commit()
+    nxt = await emissions.next_live(dbsession, MONDAY_NOON)
+    assert (nxt["id"], nxt["scope"], nxt["at"]) == (
+        special.id,
+        "dated",
+        "2026-09-28T20:00:00+02:00",
+    )
+
+
+async def test_next_is_not_the_show_on_air(dbsession: ormSession):
+    dbsession.add(_weekly("QG", 0, 20 * 60, 22 * 60))
+    await dbsession.commit()
+    # On air at 20:30: that one is ``current``. The next is next week's.
+    during = datetime(2026, 9, 21, 20, 30, tzinfo=PARIS)
+    nxt = await emissions.next_live(dbsession, during)
+    assert nxt["at"] == "2026-09-28T20:00:00+02:00"
+
+
+async def test_next_without_the_agenda_keeps_every_show(dbsession: ormSession):
+    qg = _weekly("QG", 0, 20 * 60, 22 * 60)
+    concert = _dated("live", "Concert", datetime(2026, 9, 21, 18, 0, tzinfo=PARIS))
+    dbsession.add_all([qg, concert])
+    await dbsession.commit()
+    await _cancel(dbsession, qg, MONDAY)
+    # The Agenda switched off, as on the Antenne page: neither its lives nor
+    # its cancellations count.
+    await agenda.set_agenda_enabled(dbsession, False)
+    await dbsession.commit()
+    nxt = await emissions.next_live(dbsession, MONDAY_NOON)
+    assert (nxt["title"], nxt["at"]) == ("QG", "2026-09-21T20:00:00+02:00")
+
+
+async def test_emissions_json_next_follows_the_agenda_as_the_antenne_page(  # noqa: PLR0913
+    container_tz: str,
+    client: QuartClient,
+    auth: dict,
+    app_configration: dict,
+    beets_integration: BeetsIntegration,
+    dbsession: ormSession,
+    users_password: str,
+):
+    console = await _admin_client(
+        app_configration,
+        beets_integration,
+        dbsession,
+        users_password,
+        "emission-next",
+    )
+    # Two shows at noon, tomorrow and the day after: ahead at any hour of today.
+    tomorrow = now_paris().date() + timedelta(days=1)
+    days = {"Demain": tomorrow, "Après-demain": tomorrow + timedelta(days=1)}
+    ids = {}
+    for title, day in days.items():
+        created = await console.post(
+            "/antenne/emissions.json",
+            json={
+                "scope": "weekly",
+                "title": title,
+                "artist": "avec l'équipe",
+                "day_of_week": day.weekday(),
+                "start_minute": 12 * 60,
+                "end_minute": 13 * 60,
+            },
+        )
+        assert created.status_code == 201, await created.get_data(as_text=True)
+        ids[title] = (await created.get_json())["emission"]["id"]
+
+    async def next_live() -> dict:
+        response = await console.get("/antenne/emissions.json")
+        assert response.status_code == 200, await response.get_data(as_text=True)
+        return (await response.get_json())["next"]
+
+    nxt = await next_live()
+    assert nxt["title"] == "Demain"
+    assert nxt["at"].startswith(f"{tomorrow.isoformat()}T12:00")
+    assert (await _next_live_slot(client, auth))["title"] == "Demain"
+    # Tomorrow's cancelled in the Agenda, as the console does it.
+    cancelled = await console.post(
+        "/agenda/exceptions.json",
+        json={"emission_id": ids["Demain"], "date": tomorrow.isoformat()},
+    )
+    assert cancelled.status_code == 201, await cancelled.get_data(as_text=True)
+    nxt = await next_live()
+    assert nxt["title"] == "Après-demain"
+    assert nxt["at"].startswith(f"{days['Après-demain'].isoformat()}T12:00")
+    # The next live of the Antenne page.
+    assert (await _next_live_slot(client, auth))["title"] == "Après-demain"
+
+
+async def test_emissions_json_names_the_live_on_air_in_current_not_next(  # noqa: PLR0913
+    container_tz: str,
+    client: QuartClient,
+    auth: dict,
+    app_configration: dict,
+    beets_integration: BeetsIntegration,
+    dbsession: ormSession,
+    users_password: str,
+):
+    console = await _admin_client(
+        app_configration,
+        beets_integration,
+        dbsession,
+        users_password,
+        "emission-on-air",
+    )
+    # A dated live on air at this instant, wherever the station is, and a show
+    # tomorrow at noon.
+    moment = datetime.now(UTC)
+    dbsession.add(
+        AgendaDiffusion(
+            kind="live",
+            title="En cours",
+            starts_at=utc_naive(moment - timedelta(minutes=30)),
+            ends_at=utc_naive(moment + timedelta(minutes=30)),
+        )
+    )
+    tomorrow = now_paris().date() + timedelta(days=1)
+    dbsession.add(_weekly("Demain", tomorrow.weekday(), 12 * 60, 13 * 60))
+    await dbsession.commit()
+    response = await console.get("/antenne/emissions.json")
+    assert response.status_code == 200, await response.get_data(as_text=True)
+    listed = await response.get_json()
+    # On air, it is current, as the Antenne page tells it active: the next is
+    # tomorrow's show.
+    assert listed["current"]["title"] == "En cours"
+    assert listed["next"]["title"] == "Demain"
+    slot = await _next_live_slot(client, auth)
+    assert (slot["title"], slot["active"]) == ("En cours", True)
+
+
+async def _antenne_next(app, now: datetime) -> dict | None:
+    """The next live of the Antenne page at ``now``."""
+    with patch.object(alerts, "now_paris", return_value=now):
+        slots = await alerts.load_live_slots(app)
+    return antenne.next_live_slot(slots, now)
+
+
+async def test_next_is_the_next_live_of_the_antenne_page(
+    raw_app, dbsession: ormSession
+):
+    # The Antenne page counts its own (next_live_slot): both tell the same live,
+    # at the same instant, through each branch of the rule.
+    async def same_next() -> str | None:
+        page = await _antenne_next(raw_app, MONDAY_NOON)
+        nxt = await emissions.next_live(dbsession, MONDAY_NOON)
+        if page is None:
+            assert nxt is None
+            return None
+        assert page["active"] is False
+        assert nxt["title"] == page["title"]
+        start = MONDAY_NOON + timedelta(seconds=page["starts_in_s"])
+        assert datetime.fromisoformat(nxt["at"]) == start
+        return nxt["title"]
+
+    qg = _weekly("QG", 0, 20 * 60, 22 * 60)
+    dbsession.add_all([qg, _weekly("Matinale", 2, 8 * 60, 9 * 60)])
+    await dbsession.commit()
+    assert await same_next() == "QG"
+    # Cancelled tonight: Wednesday's Matinale.
+    await _cancel(dbsession, qg, MONDAY)
+    assert await same_next() == "Matinale"
+    # Wednesday's replaced by a set: QG next Monday; the next Matinale is beyond.
+    dbsession.add(_dated("set", "Archives", datetime(2026, 9, 23, 8, 0, tzinfo=PARIS)))
+    await dbsession.commit()
+    assert await same_next() == "QG"
+    # Next Monday's replaced by a dated live: that live.
+    special = _dated("live", "Spécial", datetime(2026, 9, 28, 20, 0, tzinfo=PARIS))
+    dbsession.add(special)
+    await dbsession.commit()
+    assert await same_next() == "Spécial"
+    # A dated live on Tuesday comes first.
+    concert = _dated("live", "Concert", datetime(2026, 9, 22, 21, 0, tzinfo=PARIS))
+    dbsession.add(concert)
+    await dbsession.commit()
+    assert await same_next() == "Concert"
+    # The Agenda switched off: tonight's QG, for both.
+    await agenda.set_agenda_enabled(dbsession, False)
+    await dbsession.commit()
+    assert await same_next() == "QG"
+    # Back on, without the lives, next Monday's cancelled: none within the week.
+    await agenda.set_agenda_enabled(dbsession, True)
+    await dbsession.delete(special)
+    await dbsession.delete(concert)
+    await dbsession.commit()
+    await _cancel(dbsession, qg, MONDAY + timedelta(days=7))
+    assert await same_next() is None
+
+
+async def test_emissions_json_still_answers_when_the_next_live_fails(
+    container_tz: str, dbsession: ormSession
+):
+    dbsession.add(_weekly("QG", 0, 20 * 60, 22 * 60))
+    await dbsession.commit()
+    unreadable = AsyncMock(side_effect=RuntimeError("Agenda illisible"))
+    with (
+        patch.object(agenda, "blocked_weekly_days", new=unreadable),
+        patch.object(emissions, "_log") as log,
+    ):
+        listed = await emissions.list_emissions_payload(dbsession, "autodj")
+    # The list of the shows still answers, without a next live; the engine's
+    # log says why.
+    assert [row["title"] for row in listed["emissions"]] == ["QG"]
+    assert listed["next"] is None
+    log.exception.assert_called_once()
+
+
+async def test_a_title_does_not_read_the_agenda_over_the_week(
+    container_tz: str, dbsession: ormSession
+):
+    # The next live reads the Agenda over the week: the console's list does,
+    # not each title that names the antenna.
+    dbsession.add(_weekly("QG", 0, 20 * 60, 22 * 60))
+    await dbsession.commit()
+    days = AsyncMock(wraps=agenda.blocked_weekly_days)
+    lives = AsyncMock(wraps=agenda.dated_live_windows)
+    with (
+        patch.object(agenda, "blocked_weekly_days", new=days),
+        patch.object(agenda, "dated_live_windows", new=lives),
+    ):
+        await emissions.overlay_metadata_if_on_air(
+            dbsession, {"source": "autodj", "title": "Titre", "artist": "Artiste"}
+        )
+        await emissions.attach_live_emission(dbsession, {"source": "autodj"})
+        days.assert_not_awaited()
+        lives.assert_not_awaited()
+        listed = await emissions.list_emissions_payload(dbsession, "autodj")
+    assert listed["next"]["title"] == "QG"
+    days.assert_awaited_once()
+    lives.assert_awaited_once()
