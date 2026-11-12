@@ -2,7 +2,8 @@
 `tests/radio-catalogue.test.ts`, dans Hopper.
 
 Ses cas viennent de 80 introuvables tirés au hasard et vérifiés à la main. La
-recherche chez Deezer, MusicBrainz et Bandcamp, son dernier cas, viendra avec FON-24.
+recherche chez Deezer, MusicBrainz et Bandcamp, son dernier cas, est dans
+`test_search.py`, sans Bandcamp, qui viendra avec FON-30.
 """
 
 import pytest

@@ -11,7 +11,7 @@ quelque part, chez Deezer sous une autre graphie (« Gonnas Pedro » pour Gnonna
 dans MusicBrainz seulement, sur Bandcamp ou sur SoundCloud. Seul faux de la mesure, un
 autre remix à 5 s près, d'où la règle des versions.
 
-La recherche elle-même, chez Deezer puis dans MusicBrainz, viendra avec FON-24.
+La recherche elle-même, chez Deezer puis dans MusicBrainz, est dans `search.py`.
 """
 
 from __future__ import annotations
@@ -316,6 +316,21 @@ def generic_title(title: str) -> bool:
     )
 
 
+def meaningless_title(title: str) -> bool:
+    """Un titre vide de sens, que l'empreinte peut remplacer : vide, « Piste 04 »,
+    « Untitled », un nombre.
+
+    Plus étroit que `generic_title` : un titre court (« Go ») a un sens, que
+    l'empreinte doit retrouver, et ne remplace pas.
+    """
+    base = parse_title(title).base
+    return (
+        not base.replace(" ", "")
+        or bool(_GENERIC.fullmatch(base))
+        or bool(js_regex(r"[0-9\s]+").fullmatch(base))
+    )
+
+
 ONE_SIDED = "version ou mention d'un seul côté"
 
 
@@ -376,6 +391,38 @@ def loose_variants(item: ArtistAndTitle) -> list[RadioTrack]:
 # Le titre cherché n'est plus celui du fichier (« 01 Perambulator », « Henri Mancini -
 # Birdie Num-num ») : le titre trouvé le remplace.
 CLEANED = "titre de la radio nettoyé"
+# L'artiste du fichier lu comme titre, et l'inverse : le `SWAPPED` de `third.py`.
+_SWAPPED = "artiste et titre inversés"
+
+
+def quoteless(text: str) -> str:
+    """Le texte d'une requête entre guillemets, sans guillemet ni barre oblique
+    inverse."""
+    return js_trim(js_regex(r"\s+").sub(" ", js_regex(r"[\"\\]").sub(" ", text)))
+
+
+def loose_judge(
+    item: ArtistAndTitle,
+    variant: ArtistAndTitle,
+    candidate: LooseCandidate,
+    radio_seconds: float | None,
+) -> Found | None:
+    """Le candidat d'une variante du fichier, jugé par la seconde passe, et ce que la
+    variante a fait du texte du fichier.
+
+    Le titre cherché n'est plus celui du fichier (« 01 Perambulator ») : le titre
+    trouvé le remplacera (`CLEANED`). L'artiste du fichier lu comme titre, et
+    l'inverse : chacun reprendra sa place.
+    """
+    verdict = loose_match(variant, candidate, radio_seconds)
+    if not verdict:
+        return None
+    radio_title = squash(item.title.replace("_", " "))
+    title = squash(variant.title)
+    swapped = title in squash(item.artist) and title not in radio_title
+    cleaned = not swapped and title != radio_title
+    notes = (CLEANED,) if cleaned else (_SWAPPED,) if swapped else ()
+    return Found((*verdict.why, *notes), verdict.gap, verdict.one_sided)
 
 
 @dataclass(frozen=True)

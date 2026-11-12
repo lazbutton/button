@@ -3,8 +3,8 @@ dans Hopper.
 
 Hopper a mesuré la passe sur 100 introuvables tirés au hasard : 26 trouvés, tous
 justes. La recherche avec le texte relu, l'album du fichier, Tidal et MusicBrainz
-viendra avec FON-24 ; les corrections que la passe propose sont dans
-`test_proposals.py`.
+est dans `test_search.py`, sans Tidal, qui viendra avec FON-30 ; les corrections que
+la passe propose sont dans `test_proposals.py`.
 """
 
 import pytest
