@@ -402,10 +402,12 @@ def _poke_schedule(cart: Cart) -> None:
 
 
 async def _clear_other_ident_pads(cart_id: int) -> None:
+    # The flag leaves the other carts: their version moves too, so an edit sent
+    # with a version read before is refused instead of setting the flag back.
     await g.dbsession.execute(
         update(Cart)
         .where(Cart.id != cart_id, Cart.ident_pads.is_(True))
-        .values(ident_pads=False)
+        .values(ident_pads=False, version=Cart.version + 1)
     )
 
 

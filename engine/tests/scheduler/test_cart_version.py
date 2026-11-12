@@ -216,3 +216,54 @@ async def test_a_push_written_across_an_edit(
     )
     assert played is not None
     assert (await _stamp(dbsession, fake_cart.id))[0] == 2
+
+
+async def test_the_bac_that_loses_the_ident_pads_changes_version(
+    raw_app: CustomQuart,
+    app_configration: dict,
+    beets_integration: BeetsIntegration,
+    dbsession: ormSession,
+    users_password: str,
+):
+    """One bac at a time carries the ident pads: marking another takes the flag
+    off the first, and its version moves too (FON-48). A console that read the
+    first before, and saves its notes with the flag it read, is refused: it
+    would set the flag back, and take it off the bac just marked."""
+    console = await _admin_client(
+        app_configration, beets_integration, dbsession, users_password, "pads"
+    )
+    created = await console.post(
+        "/carts.json",
+        json={
+            "title": "Idents",
+            "mode": "playlist_loop",
+            "schedule_mode": "clock",
+            "ident_pads": True,
+        },
+    )
+    assert created.status_code == 201, await created.get_data(as_text=True)
+    idents = (await created.get_json())["cart"]
+    other = await console.post(
+        "/carts.json",
+        json={"title": "Jingles 2", "mode": "playlist_loop", "schedule_mode": "clock"},
+    )
+    jingles = (await other.get_json())["cart"]
+    marked = await console.put(
+        f"/carts/{jingles['id']}.json",
+        json={"version": jingles["version"], "ident_pads": True},
+    )
+    assert marked.status_code == 200, await marked.get_data(as_text=True)
+    listed = (await (await console.get("/carts.json")).get_json())["carts"]
+    now = next(row for row in listed if row["id"] == idents["id"])
+    assert now["ident_pads"] is False
+    assert now["version"] == idents["version"] + 1
+
+    stale = await console.put(
+        f"/carts/{idents['id']}.json",
+        json={"version": idents["version"], "notes": "Les idents", "ident_pads": True},
+    )
+    assert stale.status_code == 409
+    assert (await stale.get_json())["field"] == "version"
+    listed = (await (await console.get("/carts.json")).get_json())["carts"]
+    flags = {row["title"]: row["ident_pads"] for row in listed}
+    assert (flags["Idents"], flags["Jingles 2"]) == (False, True)
