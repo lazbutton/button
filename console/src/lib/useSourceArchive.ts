@@ -1,34 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { readSourceArchive, type SourceArchive } from "../api/sourceCode";
+import { sourceStore, type SourceArchive } from "../api/sourceCode";
 
-// L'archive ne change qu'avec l'image de la console : une réponse sûre vaut jusqu'au
-// rechargement de la page. undefined : pas encore de réponse sûre.
-let known: SourceArchive | null | undefined;
-let reading: Promise<SourceArchive | null> | null = null;
-
-function read(): Promise<SourceArchive | null> {
-  reading ??= readSourceArchive().then((result) => {
-    reading = null;
-    if (!result.retry) known = result.archive;
-    return result.archive;
-  });
-  return reading;
-}
+// Une seule pour la page : le menu du compte et l'onglet Station lisent la même.
+const store = sourceStore();
 
 /**
  * L'archive du code que sert la station (api/sourceCode.ts), ou null : absente, ou pas
- * encore lue. `refresh` relit, tant que la console n'a pas eu de réponse sûre.
+ * encore lue. Lue au montage ; `refresh` la relit, à chaque ouverture du menu du compte.
  */
 export function useSourceArchive(): { archive: SourceArchive | null; refresh: () => void } {
-  const [archive, setArchive] = useState<SourceArchive | null>(known ?? null);
+  const [archive, setArchive] = useState<SourceArchive | null>(store.known() ?? null);
   const mounted = useRef(true);
   const refresh = useCallback(() => {
-    if (known !== undefined) {
-      setArchive(known);
-      return;
-    }
-    void read().then((value) => {
-      if (mounted.current) setArchive(value);
+    void store.read().then((value) => {
+      if (mounted.current && value !== undefined) setArchive(value);
     });
   }, []);
   useEffect(() => {

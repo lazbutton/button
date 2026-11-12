@@ -342,12 +342,13 @@ class SourceTest(unittest.TestCase):
         commit = subprocess.run(
             ["git", "-C", str(version.ROOT), "rev-parse", "HEAD"], check=True, capture_output=True, text=True
         ).stdout.strip()
+        # -z : un nom avec un accent sortirait sinon entre guillemets, échappé.
         tracked = subprocess.run(
-            ["git", "-C", str(version.ROOT), "ls-tree", "-r", "--name-only", "HEAD"],
+            ["git", "-C", str(version.ROOT), "ls-tree", "-r", "-z", "--name-only", "HEAD"],
             check=True,
             capture_output=True,
             text=True,
-        ).stdout.splitlines()
+        ).stdout.split("\0")[:-1]
         with tempfile.TemporaryDirectory() as tmp:
             first, second = Path(tmp, "a"), Path(tmp, "b")
             version.write_source("0.1.0", first)

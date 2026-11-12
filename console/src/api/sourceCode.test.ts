@@ -3,9 +3,12 @@ import test from "node:test";
 import {
   DEFAULT_SOURCE_URL,
   readSourceArchive,
+  SOURCE_ARCHIVE,
   SOURCE_DESCRIPTOR,
   sourceArchive,
   sourceLink,
+  sourceStore,
+  type SourceRead,
 } from "./sourceCode.ts";
 
 // source.json, tel que l'écrit scripts/version.py source.
@@ -68,7 +71,7 @@ test("la console lit source.json avec sa session, et ne relit que sans réponse 
   assert.deepEqual(await readSourceArchive(unreachable), { archive: null, retry: true });
 });
 
-test("sans réponse dans le délai, le lien garde le dépôt, et on relira", async () => {
+test("sans réponse dans le délai, pas de réponse sûre : on relira", async () => {
   const silent = ((_url: string, init?: RequestInit) =>
     new Promise((_resolve, reject) => {
       init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
@@ -88,11 +91,61 @@ test("le lien prend le réglage de la station, puis l'archive qu'elle sert, puis
   assert.deepEqual(sourceLink("https://code.radio.example/button", archive), {
     href: "https://code.radio.example/button",
   });
+  // Le nom fixe, qu'une mise à jour ne change pas ; le fichier garde celui de sa version.
   assert.deepEqual(sourceLink(undefined, archive), {
-    href: "/code-source/button-1.0.0-source.tar.gz",
+    href: "/code-source/source.tar.gz",
     download: "button-1.0.0-source.tar.gz",
   });
+  assert.equal(SOURCE_ARCHIVE, "/code-source/source.tar.gz");
   assert.deepEqual(sourceLink("  ", archive), sourceLink(undefined, archive));
+  // brand.json n'est pas vérifié : ce qui n'est pas du texte ne compte pas.
+  for (const odd of [12, null, { href: "x" }, ["https://code.radio.example/"]]) {
+    assert.deepEqual(sourceLink(odd, archive), sourceLink(undefined, archive), JSON.stringify(odd));
+  }
   assert.deepEqual(sourceLink(undefined, null), { href: DEFAULT_SOURCE_URL });
   assert.equal(DEFAULT_SOURCE_URL, "https://github.com/lazbutton/button");
+});
+
+/** Des lectures de source.json jouées dans l'ordre ; `calls` les compte. */
+function reads(...answers: SourceRead[]): { reader: () => Promise<SourceRead>; calls: () => number } {
+  let count = 0;
+  return {
+    reader: async () => answers[Math.min(count++, answers.length - 1)],
+    calls: () => count,
+  };
+}
+
+const V1 = { file: "button-1.0.0-source.tar.gz" };
+const V2 = { file: "button-1.1.0-source.tar.gz" };
+
+test("chaque lecture relit source.json : après une mise à jour, la console suit la version en service", async () => {
+  const { reader, calls } = reads(
+    { archive: V1, retry: false },
+    // Le moteur ne répond pas à la demande de session de nginx : on garde ce qu'on savait.
+    { archive: null, retry: true },
+    // La station est passée en 1.1.0, sous une page restée ouverte.
+    { archive: V2, retry: false },
+    // Puis une image construite sans archive : plus d'archive, le lien mène au dépôt.
+    { archive: null, retry: false },
+  );
+  const store = sourceStore(reader);
+  assert.equal(store.known(), undefined);
+  assert.deepEqual(await store.read(), V1);
+  assert.deepEqual(await store.read(), V1);
+  assert.deepEqual(store.known(), V1);
+  assert.deepEqual(await store.read(), V2);
+  assert.equal(await store.read(), null);
+  assert.equal(store.known(), null);
+  assert.equal(calls(), 4);
+});
+
+test("sans réponse sûre, rien n'est su ; deux lectures en même temps n'en font qu'une", async () => {
+  const { reader, calls } = reads({ archive: null, retry: true }, { archive: V1, retry: false });
+  const store = sourceStore(reader);
+  assert.equal(await store.read(), undefined);
+  assert.equal(store.known(), undefined);
+  const [first, second] = await Promise.all([store.read(), store.read()]);
+  assert.deepEqual(first, V1);
+  assert.deepEqual(second, V1);
+  assert.equal(calls(), 2);
 });

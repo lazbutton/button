@@ -55,7 +55,7 @@ En dev, Vite relaie `/api` vers le moteur, `/library` vers le catalogue et `/tus
 ## Pièges
 
 - **Une nouvelle page de premier niveau**, comme `/antenne`, s'ajoute aussi dans `engine/radiotomate/interface/spa.py`. Le moteur y sert la console quand son build est posé à côté de lui.
-- **Le Dockerfile commence par une étape vide, `source`**, que `console.yml` remplace par le code de la version (`build-contexts`). La garder : sans elle, un build sans ce contexte, comme `docker compose build`, chercherait une image nommée `source`.
+- **Le Dockerfile commence par une étape vide, `source`**, que `console.yml` remplace par le code de la version (`build-contexts`). La garder : sans elle, un build sans ce contexte, comme `docker compose build`, chercherait une image nommée `source`. Le Dockerfile donne aussi à l'archive le nom fixe que vise la console, `source.tar.gz` : `src/api/nginxRoutes.test.ts` le vérifie. En local, un build sans ce contexte peut reprendre du cache l'archive d'un build qui l'avait, constaté avec Docker 29 : ajouter `--no-cache-filter serve`. La CI ne prend jamais cette étape de son cache.
 - **Un nouveau bloc `location` de nginx** inclut `/etc/nginx/security-headers.conf`, sinon ses réponses perdent les en-têtes de sécurité. `src/api/nginxRoutes.test.ts` le vérifie.
 - **La CSP** suit ce que la console charge. Une police, une image ou un script d'une autre origine, `eval` ou un worker demandent de la changer, dans `docker/security-headers.conf.template`. Elle est en `Report-Only` : le navigateur signale l'écart dans sa console, sans rien bloquer.
 - En dev, le mode strict de React lance les effets deux fois. Un objet comme une instance Uppy se garde au niveau du module, sans destruction au nettoyage.

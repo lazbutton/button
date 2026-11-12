@@ -100,8 +100,17 @@ function fallbacks(brand: Brand, archive: SourceArchive | null): Partial<Station
     status_url: listen?.statusUrl,
     harbor_port: HARBOR_DEFAULTS.port,
     harbor_mount: HARBOR_DEFAULTS.mount,
-    source_url: new URL(sourceLink(brand.suite.sourceUrl, archive).href, window.location.href).href,
+    source_url: absolute(sourceLink(brand.suite.sourceUrl, archive).href),
   };
+}
+
+/** L'adresse complète, comme dans le champ ; telle quelle si elle ne se lit pas comme une adresse. */
+function absolute(href: string): string {
+  try {
+    return new URL(href, window.location.href).href;
+  } catch {
+    return href;
+  }
 }
 
 function failure(caught: unknown, fallback: string): string {

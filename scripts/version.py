@@ -52,8 +52,8 @@ version, le commit et le nom de l'archive. version.yml joint l'archive à la
 version ; console.yml met les deux dans l'image de la console, dont nginx les
 sert à chaque compte, pour le lien « Code source » que l'AGPL demande. Les
 changements pas encore commités n'y sont pas. Les mêmes octets d'une fois à
-l'autre, pour un même commit. La version s'écrit X.Y.Z, ou main. Échoue hors
-d'un clone du dépôt.
+l'autre, pour un même commit, avec les mêmes git et zlib. La version s'écrit
+X.Y.Z, ou main. Échoue hors d'un clone du dépôt.
 
 Stdlib seule.
 """

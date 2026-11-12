@@ -376,16 +376,17 @@ test("le menu du compte : qui est connecté, « Mon compte », puis la déconnex
 });
 
 // L'image de la console sert le code de sa version sous /code-source/, à une
-// session (Dockerfile, docker/nginx.conf.template). vite preview n'en sert pas :
-// le parcours joue l'image.
-const ARCHIVE = "button-1.0.0-source.tar.gz";
-
-async function servirLeCode(page: Page): Promise<void> {
+// session : source.json, qui nomme l'archive, et l'archive, sous un nom fixe
+// (Dockerfile, docker/nginx.conf.template). vite preview n'en sert pas : le
+// parcours joue l'image, en version 1.0.0, ou celle que donne `version`.
+async function servirLeCode(page: Page, version = () => "1.0.0"): Promise<void> {
   await page.route("**/code-source/source.json", (route) =>
-    route.fulfill({ json: { version: "1.0.0", commit: "da35feba8b2719e51c974ac444a7e336b8db3b98", file: ARCHIVE } }),
+    route.fulfill({
+      json: { version: version(), commit: "da35feba8b2719e51c974ac444a7e336b8db3b98", file: `button-${version()}-source.tar.gz` },
+    }),
   );
-  await page.route(`**/code-source/${ARCHIVE}`, (route) =>
-    route.fulfill({ contentType: "application/octet-stream", body: Buffer.from("le code de la version") }),
+  await page.route("**/code-source/source.tar.gz", (route) =>
+    route.fulfill({ contentType: "application/octet-stream", body: Buffer.from(`le code de la version ${version()}`) }),
   );
 }
 
@@ -394,18 +395,39 @@ test("le lien « Code source » télécharge le code de la version en service, p
   await seConnecter(page, "animateur");
   await barre(page).getByRole("button", { name: "AN, compte animateur : menu" }).click();
   const lien = page.getByRole("menuitem", { name: "Code source AGPL" });
-  await expect(lien).toHaveAttribute("href", `/code-source/${ARCHIVE}`);
-  await expect(lien).toHaveAttribute("download", ARCHIVE);
+  await expect(lien).toHaveAttribute("href", "/code-source/source.tar.gz");
+  await expect(lien).toHaveAttribute("download", "button-1.0.0-source.tar.gz");
 
   // Au clavier : Entrée sur le lien du menu.
   const telechargement = page.waitForEvent("download", { timeout: 5_000 });
   await lien.focus();
   await page.keyboard.press("Enter");
   const archive = await telechargement;
-  expect(archive.suggestedFilename()).toBe(ARCHIVE);
-  expect(new URL(archive.url()).pathname).toBe(`/code-source/${ARCHIVE}`);
+  expect(archive.suggestedFilename()).toBe("button-1.0.0-source.tar.gz");
+  expect(new URL(archive.url()).pathname).toBe("/code-source/source.tar.gz");
   // La console reste là.
   await expect(antenne(page)).toBeVisible();
+});
+
+test("après une mise à jour de la station, le lien d'une page restée ouverte suit la version en service", async ({
+  page,
+}) => {
+  let version = "1.0.0";
+  await servirLeCode(page, () => version);
+  await seConnecter(page, "animateur");
+  const compte = barre(page).getByRole("button", { name: "AN, compte animateur : menu" });
+  const lien = page.getByRole("menuitem", { name: "Code source AGPL" });
+  await compte.click();
+  await expect(lien).toHaveAttribute("download", "button-1.0.0-source.tar.gz");
+  await page.keyboard.press("Escape");
+  // Le menu se ferme. Rouvert avant la fin de sa fermeture, il se refermerait aussitôt.
+  await expect(page.getByRole("menu")).toBeHidden();
+
+  // La station passe en 1.1.0, sans que la page se recharge.
+  version = "1.1.0";
+  await compte.click();
+  await expect(lien).toHaveAttribute("download", "button-1.1.0-source.tar.gz");
+  await expect(lien).toHaveAttribute("href", "/code-source/source.tar.gz");
 });
 
 test("une version modifiée mène à son propre code, réglé dans Réglages → Station", async ({ page, context }) => {

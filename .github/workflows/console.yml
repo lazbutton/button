@@ -104,8 +104,8 @@ jobs:
       - name: Source code
         # The archive of this commit's code and its source.json, for the
         # "Code source" link (AGPL): the image serves them to any team account.
-        # For a version, the same bytes as the archive version.yml joins to its
-        # page.
+        # For a version, the same commit and the same command as the archive
+        # version.yml joins to its page.
         if: steps.tags.outputs.published != 'true'
         env:
           VERSION: ${{ inputs.version || 'main' }}
