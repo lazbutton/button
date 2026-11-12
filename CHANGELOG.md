@@ -6,6 +6,8 @@ Le détail des changements du moteur par rapport à l'amont : [docs/moteur/chang
 
 ## Non publié
 
+- Corrigé : nowplaying relayait au playout, sans demander de jeton, les routes d'un micro par-dessus l'antenne, que rien dans BUTTON n'appelait. `POST /voiceover` baissait le niveau de l'antenne, et le WebSocket `/voiceover/pcm` y faisait entendre ce qu'il recevait : nowplaying y ajoutait lui-même le jeton du playout. Son port se joint sans session : sur une station qui laisse `BIND_ADDRESS` vide, toute machine du réseau local pouvait s'en servir. Une station installée par `station install` ferme ce port (`BIND_ADDRESS=127.0.0.1`). nowplaying n'a plus ces routes, ni `GET /voiceover`, et ne prête plus le jeton du playout : il ne lui demande que `GET /health`, pour `/machine.json`. Rien à faire sur une station : le correctif vient avec l'image de nowplaying.
+
 ## 1.0.1
 
 Un correctif : rien d'autre que la mise à jour habituelle, voir [docs/deploiement.md](docs/deploiement.md#mettre-à-jour). Le schéma de la base reste en v18 : aucune migration.
