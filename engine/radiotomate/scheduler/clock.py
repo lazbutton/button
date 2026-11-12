@@ -73,7 +73,7 @@ from radiotomate.scheduler.timing import (  # noqa: F401 — re-exported
     source_id,
     track_would_overflow_anchor,
 )
-from radiotomate.services.cart_draw import next_cart_sound
+from radiotomate.services.cart_draw import next_cart_sound, planned_in_order
 
 if TYPE_CHECKING:
     from httpx import AsyncClient
@@ -99,6 +99,10 @@ SETTING_SKIP_OVERTAKEN = "features.skip_overtaken_soft_anchors"
 # before. The clock keeps two titles there: after the start, the jingle stays
 # planned, and the music after it airs in its place.
 SETTING_MOTIF_JINGLES_AIR = "features.motif_jingles_air"
+# ADR 0009: turned off, the lines planned of a cart in order keep their sound
+# when the clock draws an anchor of that cart itself, as before: the next one
+# may replay the sound drawn.
+SETTING_ORDERED_FOLLOW = "features.ordered_lines_follow_clock"
 _SETTING_OFF = {"0", "false", "off", ""}
 # Why an anchor line closes without going, as the conducteur shows it.
 HELD_BY_LIVE = "retenue pendant le direct"
@@ -1275,6 +1279,13 @@ async def motif_jingles_air(session: ormSession) -> bool:
     return row is None or str(row.value).strip().lower() not in _SETTING_OFF
 
 
+async def ordered_lines_follow_clock(session: ormSession) -> bool:
+    """Whether the lines planned of a cart in order follow the sound the clock
+    draws itself for an anchor of that cart. A missing key says they do."""
+    row = await Setting.from_key(session, SETTING_ORDERED_FOLLOW)
+    return row is None or str(row.value).strip().lower() not in _SETTING_OFF
+
+
 async def _hold_due_anchors(  # noqa: PLR0913
     session: ormSession,
     clock: Clock,
@@ -1547,6 +1558,9 @@ async def _push_cart_to_queue(  # noqa: PLR0913
     payload["radiotomate_command_id"] = command.id
     command.payload = payload
     result = await dispatch_command(session, command, gateway)
+    # Sent, or waiting to be, the sound has taken its turn: the conducteur plans
+    # what comes after it. Refused for good, it has not.
+    await _follow_the_turn(session, cart, item)
     if result.ok:
         _log.info(
             "Clock pushed %s %s:%s to %s",
@@ -1559,6 +1573,36 @@ async def _push_cart_to_queue(  # noqa: PLR0913
         return True
     _log.error("Clock push to %s failed: %s", queue, result.error)
     return False
+
+
+async def _follow_the_turn(session: ormSession, cart: Cart, drawn: RundownItem) -> None:
+    """
+    The clock has drawn an anchor itself, the conducteur holding no line for it:
+    a cart in order gave the sound ``Cart.next_sound`` gives, the one the
+    conducteur may already have planned for the next anchor of the cart. The
+    lines it plans of the cart take the sounds that follow, named as the
+    forecast names them (``rundown._prepare_cart``). ``drawn`` is the line of
+    that sound.
+    """
+    from radiotomate.scheduler.rundown import (
+        DEFAULT_CART_SEC,
+        _duration_seconds,
+        _media_path,
+    )
+
+    moved = await planned_in_order(session, cart, since=drawn.planned_at)
+    if not moved or not await ordered_lines_follow_clock(session):
+        return
+    for line, sound in moved:
+        title = (sound.title or "").strip() or cart.title
+        line.sound_id = sound.id
+        line.path = _media_path(sound.path)
+        line.resource = title
+        line.duration = _duration_seconds(sound.duration, DEFAULT_CART_SEC)
+        line.details = {**(line.details or {}), "artist": cart.title, "title": title}
+        _log.info(
+            "Rundown %s now plans sound %s of cart %s", line.id, sound.id, cart.id
+        )
 
 
 async def _say_relay_passed(

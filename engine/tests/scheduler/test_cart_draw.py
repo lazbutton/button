@@ -15,11 +15,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session as ormSession
 
 from radiotomate.beets import BeetsIntegration
-from radiotomate.enums import RundownStatus
+from radiotomate.enums import CartMode, RundownStatus
 from radiotomate.models import Cart, MetadataLog, RundownItem, Setting, Sound
 from radiotomate.quart import CustomQuart
 from radiotomate.scheduler import timing
-from radiotomate.scheduler.clock import PARIS, tick
+from radiotomate.scheduler.clock import PARIS, SETTING_ORDERED_FOLLOW, tick
 from radiotomate.scheduler.execution import (
     ensure_forecast,
     reconcile_as_run,
@@ -34,6 +34,7 @@ from radiotomate.services.cart_draw import (
     drawn_after,
     next_cart_sound,
     note_on_air,
+    planned_in_order,
 )
 
 # -- the rule, without a base ---------------------------------------------------
@@ -351,19 +352,22 @@ async def _conducteur_line(
     sound: Sound,
     minute: int,
     status: RundownStatus,
+    desk: bool = False,
 ) -> None:
-    """A pub break of the conducteur at 10:``minute``, in the given state."""
+    """A pub break of the conducteur at 10:``minute``, in the given state, or a
+    spot put there at the desk."""
     await record_live_item(
         dbsession,
         payload={
             "at": datetime(2026, 9, 14, 10, minute, tzinfo=PARIS).isoformat(),
             "kind": "pub",
-            "when": "anchored",
+            "when": "sequential" if desk else "anchored",
             "queue": "carts",
             "resource": sound.title,
             "path": str(sound.path),
             "cart_id": sound.cart_id,
             "sound_id": sound.id,
+            "origin": "desk" if desk else "clock",
         },
         status=status.value,
     )
@@ -413,6 +417,31 @@ async def test_a_line_lost_on_its_way_is_forgotten(
     cart = await _loaded(dbsession, pubs_cart)
     draw = await cart_draw(dbsession, cart)
     assert (draw.engaged, draw.planned) == ([], [spots[2].id])
+
+
+async def test_the_lines_planned_in_order_follow_the_sounds_sent(
+    dbsession: ormSession,
+    pubs_cart: Cart,
+):
+    """A loop: the second spot has just been sent at 10:20. A desk line plays the
+    first at 10:30, chosen by hand: it keeps it, and the breaks of 10:40 and
+    10:50 follow it, with the second and the third. The break of 10:10 never
+    went: it neither moves nor counts."""
+    spots = await _spots(dbsession, pubs_cart, 3)
+    pubs_cart.mode = CartMode.PLAYLIST_LOOP
+    await _conducteur_line(dbsession, spots[0], 10, RundownStatus.PLANNED)
+    await _conducteur_line(dbsession, spots[1], 20, RundownStatus.SENT)
+    await _conducteur_line(dbsession, spots[0], 30, RundownStatus.PLANNED, desk=True)
+    await _conducteur_line(dbsession, spots[0], 40, RundownStatus.PLANNED)
+    await _conducteur_line(dbsession, spots[0], 50, RundownStatus.PLANNED)
+    cart = await _loaded(dbsession, pubs_cart)
+    moved = await planned_in_order(dbsession, cart, since=datetime(2026, 9, 14, 10, 20))
+    assert [(line.planned_at.minute, sound.id) for line, sound in moved] == [
+        (40, spots[1].id),
+        (50, spots[2].id),
+    ]
+    cart.mode = CartMode.RANDOM
+    assert await planned_in_order(dbsession, cart) == []
 
 
 async def test_on_air_notes_the_draw(
@@ -614,6 +643,153 @@ async def test_a_break_planned_ahead_gets_another_spot(
         for minute in (20, 40)
     ]
     assert all(aired[n] != aired[n - 1] for n in range(1, len(aired)))
+
+
+@pytest.mark.parametrize("mode", [CartMode.PLAYLIST, CartMode.PLAYLIST_LOOP])
+async def test_a_cart_in_order_plays_its_turn_when_the_clock_draws(
+    dbsession: ormSession,
+    jingles_cart: Cart,
+    pubs_cart: Cart,
+    beets_integration: BeetsIntegration,
+    mode: CartMode,
+):
+    """The conducteur is built in the minute of the break of :20, too late for
+    it: the clock draws that break itself, while the conducteur already holds
+    the break of :40 with the cart's next spot. Three spots, six breaks: each
+    spot in its turn, none twice."""
+    spots = await _spots(dbsession, pubs_cart, 3)
+    pubs_cart.mode = mode
+    await dbsession.commit()
+    aired = [
+        await _pub_break(
+            dbsession, beets_integration, f"{MONDAY}T{hour}:{minute}:05+02:00"
+        )
+        for hour in range(10, 13)
+        for minute in (20, 40)
+    ]
+    assert aired == [sound.title for sound in spots] * 2
+
+
+async def _line_at(dbsession: ormSession, cart: Cart, minute: int) -> RundownItem:
+    """The line of the conducteur for the break of 10:``minute``."""
+    return await dbsession.scalar(
+        select(RundownItem)
+        .where(
+            RundownItem.cart_id == cart.id,
+            RundownItem.planned_at == datetime(2026, 9, 14, 10, minute),
+        )
+        .execution_options(populate_existing=True)
+    )
+
+
+async def test_the_conducteur_names_the_next_spot_once_the_clock_has_drawn(
+    dbsession: ormSession,
+    jingles_cart: Cart,
+    pubs_cart: Cart,
+    beets_integration: BeetsIntegration,
+):
+    """The clock draws the break of 10:20 itself, with the first spot: the line
+    of 10:40, planned a moment before with that spot, names the second, as the
+    forecast would have."""
+    spots = await _spots(dbsession, pubs_cart, 3)
+    pubs_cart.mode = CartMode.PLAYLIST_LOOP
+    spots[1].duration = 31
+    await dbsession.commit()
+    time = f"{MONDAY}T10:20:05+02:00"
+    assert await _pub_break(dbsession, beets_integration, time) == spots[0].title
+    line = await _line_at(dbsession, pubs_cart, 40)
+    assert (line.status, line.sound_id, line.path) == (
+        RundownStatus.PLANNED.value,
+        spots[1].id,
+        str(spots[1].path),
+    )
+    assert (line.resource, line.duration) == (spots[1].title, 31.0)
+    assert (line.details["artist"], line.details["title"]) == ("Pubs", "Spot 2")
+
+
+async def test_a_spot_refused_for_good_has_not_had_its_turn(
+    dbsession: ormSession,
+    jingles_cart: Cart,
+    pubs_cart: Cart,
+    beets_integration: BeetsIntegration,
+):
+    """The playout refuses the spot of 10:20 for good: the line of 10:40 keeps
+    the first spot. Sent at the next tick, it has had its turn."""
+    spots = await _spots(dbsession, pubs_cart, 3)
+    pubs_cart.mode = CartMode.PLAYLIST_LOOP
+    await dbsession.commit()
+    refused = _client()
+    refused.post = AsyncMock(return_value=httpx.Response(400, json={"error": "non"}))
+    time = f"{MONDAY}T10:20:05+02:00"
+    with _clock_at(time):
+        actions = await tick(dbsession, _music_on_air(time), refused, beets_integration)
+    assert not any(action.startswith("anchor:") for action in actions)
+    assert (await _line_at(dbsession, pubs_cart, 40)).sound_id == spots[0].id
+    time = f"{MONDAY}T10:20:15+02:00"
+    assert await _pub_break(dbsession, beets_integration, time) == spots[0].title
+    assert (await _line_at(dbsession, pubs_cart, 40)).sound_id == spots[1].id
+
+
+async def test_a_spot_waiting_to_be_sent_has_had_its_turn(
+    dbsession: ormSession,
+    jingles_cart: Cart,
+    pubs_cart: Cart,
+    beets_integration: BeetsIntegration,
+):
+    """The playout does not answer at 10:20: the spot drawn waits to be sent
+    again, and has its turn already. The line of 10:40 names the second."""
+    spots = await _spots(dbsession, pubs_cart, 3)
+    pubs_cart.mode = CartMode.PLAYLIST_LOOP
+    await dbsession.commit()
+    busy = _client()
+    busy.post = AsyncMock(return_value=httpx.Response(503))
+    time = f"{MONDAY}T10:20:05+02:00"
+    with _clock_at(time):
+        await tick(dbsession, _music_on_air(time), busy, beets_integration)
+    waiting = await dbsession.scalar(
+        select(RundownItem.sound_id).where(
+            RundownItem.cart_id == pubs_cart.id,
+            RundownItem.status == RundownStatus.PENDING_PUSH.value,
+        )
+    )
+    assert waiting == spots[0].id
+    assert (await _line_at(dbsession, pubs_cart, 40)).sound_id == spots[1].id
+
+
+async def test_a_break_missed_while_the_scheduler_was_stopped_takes_no_turn(
+    dbsession: ormSession,
+    jingles_cart: Cart,
+    pubs_cart: Cart,
+    beets_integration: BeetsIntegration,
+):
+    """The scheduler stops after the break of 10:20 and is back at 11:20: the
+    break of 10:40 never went, and its line stays planned for an hour. The clock
+    draws 11:20 itself, and the break of 11:40 follows it, not that line."""
+    spots = await _spots(dbsession, pubs_cart, 3)
+    pubs_cart.mode = CartMode.PLAYLIST_LOOP
+    await dbsession.commit()
+    aired = [
+        await _pub_break(dbsession, beets_integration, f"{MONDAY}T{time}:05+02:00")
+        for time in ("10:20", "11:20", "11:40")
+    ]
+    assert aired == [sound.title for sound in spots]
+
+
+async def test_switched_off_the_lines_planned_keep_their_spot(
+    dbsession: ormSession,
+    jingles_cart: Cart,
+    pubs_cart: Cart,
+    beets_integration: BeetsIntegration,
+):
+    """``features.ordered_lines_follow_clock`` turned off: the line of 10:40 keeps
+    the spot the clock has just drawn for 10:20, as before."""
+    spots = await _spots(dbsession, pubs_cart, 3)
+    pubs_cart.mode = CartMode.PLAYLIST_LOOP
+    await Setting.upsert(dbsession, SETTING_ORDERED_FOLLOW, "0")
+    await dbsession.commit()
+    time = f"{MONDAY}T10:20:05+02:00"
+    assert await _pub_break(dbsession, beets_integration, time) == spots[0].title
+    assert (await _line_at(dbsession, pubs_cart, 40)).sound_id == spots[0].id
 
 
 async def test_the_conducteur_plans_rounds(
