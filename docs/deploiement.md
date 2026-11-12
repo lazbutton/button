@@ -311,7 +311,7 @@ Une installation sur une machine exposée reste un essai tant que les fiches [P1
 
 ## Régler le moteur
 
-`RT_DATA/radiotomate.yaml` porte les réglages fins : sorties audio, alertes (`alerts:`, leurs seuils, un webhook ou Vikunja), rétention (`retention:`), métriques (`metrics:`), relais des métadonnées (`metadata_log:`). ntfy et l'e-mail des alertes viennent de `.env`, que `station config` règle : `radiotomate-init` les y écrit. Le scheduler relit seul le bloc `alerts:`, en moins d'une minute. Après un autre changement, recréer les trois services du moteur ensemble :
+`RT_DATA/radiotomate.yaml` porte les réglages fins : sorties audio, alertes (`alerts:`, leurs seuils, un webhook ou Vikunja, ou `enabled: false`, qui coupe la surveillance de l'antenne), rétention (`retention:`), métriques (`metrics:`), relais des métadonnées (`metadata_log:`). ntfy et l'e-mail des alertes viennent de `.env`, que `station config` règle : `radiotomate-init` les y écrit. Le scheduler relit seul le bloc `alerts:`, en moins d'une minute. Après un autre changement, recréer les trois services du moteur ensemble :
 
 ```bash
 docker compose up -d --force-recreate radiotomate-playout radiotomate-interface radiotomate-scheduler
