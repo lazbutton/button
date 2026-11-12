@@ -34,11 +34,11 @@ Le format des fiches, les tailles et la façon de prendre une fiche sont dans le
 | [SUR-01](#sur-01--alertes-sur-le-téléphone-et-par-e-mail) | Alertes sur le téléphone et par e-mail | M | — | à faire |
 | [DOC-01](#doc-01--guide-dinstallation-sur-vps) | Guide d'installation sur VPS | M | INS-04, MAJ-05, SAV-01 | à faire |
 | [LEG-01](#leg-01--dépendances-images-et-licences) | Dépendances, images et licences | S | — | fait, `512be6f` |
-| [LEG-02](#leg-02--le-code-source-pour-chaque-utilisateur) | Le code source pour chaque utilisateur | S | MAJ-01 | à faire |
+| [LEG-02](#leg-02--le-code-source-pour-chaque-utilisateur) | Le code source pour chaque utilisateur | S | MAJ-01 | fait, `ebc0ceb` |
 | [FON-14](#fon-14--les-lignes-mises-à-la-suite-passent-à-lantenne) | Les lignes mises à la suite passent à l'antenne | M | — | fait, `d4a2dd9` |
 | [FON-39](#fon-39--les-jingles-du-motif-passent-à-leur-tour) | Les jingles du motif passent à leur tour | M | FON-14 | fait, `7a497fd` |
 
-En tout : 29 fiches, 12 de taille S, 14 de taille M et 3 de taille L. Au 12 novembre 2026, 23 sont faites. Il en reste 6 : 2 de taille S et 4 de taille M.
+En tout : 29 fiches, 12 de taille S, 14 de taille M et 3 de taille L. Au 12 novembre 2026, 24 sont faites. Il en reste 5 : 1 de taille S et 4 de taille M.
 
 ## L'ordre
 
@@ -47,13 +47,12 @@ Ce qui reste, relevé le 12 novembre 2026. Les fiches de deux files différentes
 | File | Fiches, dans l'ordre | Fichier partagé |
 |---|---|---|
 | commande `station` | MAJ-05, SAV-01, SUR-01 | `deploy/station` |
-| marque | LEG-02 | `console/src/lib/brand.ts` |
 | mesure | INS-04 | aucun |
 | guide | DOC-01, en dernier | `docs/` |
 
 - **MAJ-04 est fusionnée**, par la PR 141 : MAJ-05 passe en tête de sa file, puis SAV-01. Leurs « Accepté quand » demandent une machine jetable en x86-64 : la vraie installation de la CI (`.github/workflows/station.yml`) en est une, et son job `update` y fait maintenant une vraie mise à jour.
 - **SUR-01** pose ses réglages à l'installation, qui est maintenant `station install` : elle est donc dans la file de la commande `station`. Elle peut y passer plus tôt : MAJ-05 se sert de ses alertes.
-- **LEG-02 n'attend rien.** MAJ-04, fusionnée, a changé `scripts/version.py`, qui fait les fichiers joints à une version : LEG-02 part du `main` d'après.
+- **LEG-02 est fusionnée**, par la PR 146. Il reste à l'essayer sur une station d'essai : un animateur y télécharge le code de la version, et sans session la même adresse répond 401.
 - **FON-14 et FON-39 sont fusionnées**, par les PR 139 et 142 : la file du scheduler n'a plus de fiche en P1. Leurs « Accepté quand » restent à vérifier sur une station de test, fondu allumé : leur banc tournait sans. Pour FON-39, c'est une heure d'antenne. FON-33 et FON-35 à FON-38, en P2, touchent les fichiers qu'elles viennent de changer : rejouer chaque défaut avant de le prendre.
 - **INS-04 n'a aucun conflit.** Elle se mesure sur la version qui suit la 0.2.0 : celle-ci a encore le défaut d'une station vide, dont le conducteur s'empilait.
 - **DOC-01 vient en dernier** : elle attend INS-04, MAJ-05 et SAV-01.
@@ -480,6 +479,14 @@ S · dépend de MAJ-01 · conflits : `console/src/lib/brand.ts`, `.github/workfl
   2. Le lien mène au code de la version en service, joignable par toute personne qui a un compte, même si le dépôt n'est pas public.
   3. Le réglage `source_url` de GEN-01 le change par station, pour une version modifiée.
 - **Accepté quand** : depuis un compte d'animateur, le lien « Code source » ouvre ou télécharge le code de la version en service.
+- **Résultat**, le 12 novembre 2026, par la PR 146 :
+  - Tranché avec l'utilisateur : la station sert elle-même l'archive du code de sa version ([décision 0018](../decisions/0018-la-station-sert-son-code-source.md)). Un lien vers le tag, ou vers une archive de GitHub, ne tiendrait plus si le dépôt cessait d'être public.
+  - Chaque version joint `button-X.Y.Z-source.tar.gz` (`scripts/version.py source`, `.github/workflows/version.yml`). L'image de la console l'embarque, et nginx la sert sous `/code-source/`, à une session seulement.
+  - Le lien « Code source » du menu du compte télécharge cette archive, pour chaque compte, animateurs compris. Sans archive, il mène au dépôt, comme avant. Le réglage `source_url` de Réglages → Station passe devant, pour une version modifiée.
+  - Vérifié après la fusion : sur `main`, le job qui construit l'image de la console avec son archive passe.
+  - Pas vérifié : la page d'une version, qui ne joindra l'archive qu'au prochain tag ; et une vraie station. Sur une station d'essai en `main`, un animateur doit télécharger l'archive, et sans session la même adresse doit répondre 401.
+  - Limites connues : une station qui suit `main` a l'archive du commit de son image de la console, qui ne se refait que quand `console/` change ; une version publiée a l'archive exacte de son tag.
+  - Laissé à une autre fiche : un invité de l'Agenda n'a ni lien ni session. C'est LEG-03, en P2.
 
 ### FON · Fonctions
 
