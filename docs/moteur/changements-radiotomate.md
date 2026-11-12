@@ -154,6 +154,8 @@ L’amont s’arrête à v6. Les versions suivantes :
 | v17 | Agenda : diffusions datées, invités, fichiers des sets, jours annulés des émissions hebdo |
 | v18 | `users.stream_token_hash` et `users.stream_token_created_at` : le jeton d’encodeur |
 
+`radiotomate update --target-version` redescend le schéma. `engine/tests/test_migrations.py` monte puis redescend chaque version sur une base remplie : la descente rend tout ce qui existait avant la montée, sauf pour quatre versions. v7 remet aux créneaux de minuit le titre et la couleur par défaut, pas les leurs. v9 remet `grouping:rotation` à une Rotation qui cherchait déjà `path:/media/10-rotation` avant elle. v13 rend aux carts sortis du cron leur mode `TIMED`, mais pas leur `schedule_correct` ni leur tâche APScheduler. v14 ne défait rien : ses carts restent en `CLOCK`, et les tables APScheduler ne reviennent pas. La 0.1.0, première version publiée, est déjà en v18 : revenir à une version publiée ne passe jamais par ces descentes.
+
 ## Modules ajoutés
 
 Horloges et antenne : `scheduler/clock.py`, `timing.py`, `music_rules.py`, `desk.py`, `execution.py`, `rundown.py`, `playout.py`, `antenne.py`, `timers.py`, `queue_cleaner.py`, `bank_sync.py`, `outbox.py`.
