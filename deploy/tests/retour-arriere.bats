@@ -288,7 +288,7 @@ EOF
   touch "$FAKE_STATE/smoke-fails" "$FAKE_STATE/copy-corrupt"
   station update
   assert_failure
-  assert_output --regexp "Attention : le retour en 0\.1\.0 a échoué : La copie de la base d'avant la mise à jour, avant-v19-[0-9]{8}T[0-9]{6}Z\.db, est abîmée : \*\*\* in database main \*\*\* .*\. La base ne peut pas revenir\."
+  assert_output --regexp "Attention : le retour en 0\.1\.0 a échoué : La copie de la base d'avant la mise à jour, avant-v19-[0-9]{8}T[0-9]{6}Z\.db, est abîmée : database disk image is malformed\. La base ne peut pas revenir\."
   assert_output --partial "  La station reste en 0.2.0, comme la mise à jour l'a laissée : elle tourne peut-être encore."
   [ "$(cat "$DIR/VERSION")" = 0.2.0 ]
   [ "$(env_of BUTTON_VERSION)" = 0.2.0 ]

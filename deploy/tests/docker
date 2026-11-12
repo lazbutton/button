@@ -158,16 +158,19 @@ compose_run() {
           sed -n 's/^schema=//p' "$(host /data)/radiotomate.db" "$(host /cible)/radiotomate.db"
           ;;
         "# copie"*)
-          # Puis l'état de la copie : ok, sauf $state/copy-corrupt.
+          # Le schéma de la base en place, puis l'état de la copie : ok, sauf
+          # $state/copy-corrupt, comme SQLite devant une copie abîmée.
           local copy
           for spec in "${envs[@]}"; do
             [[ $spec != BUTTON_COPY=* ]] || copy=${spec#*=}
           done
-          sed -n 's/^schema=//p' "$(host /data)/radiotomate.db" "$(host /data/backups)/$copy"
+          sed -n 's/^schema=//p' "$(host /data)/radiotomate.db"
           if [[ -e $state/copy-corrupt ]]; then
-            echo "*** in database main *** Page 2: btreeInitPage() returns error code 11"
-          else
+            echo "database disk image is malformed"
+          elif [[ -f $(host /data/backups)/$copy ]]; then
             echo ok
+          else
+            echo "unable to open database file"
           fi
           ;;
         "# version"*)

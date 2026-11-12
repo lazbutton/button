@@ -1628,23 +1628,31 @@ for path in ("/data/radiotomate.db", "/cible/radiotomate.db"):
 PY
 }
 
-# La version du schéma de la base en place, puis celle d'une copie de
-# RT_DATA/backups, comme celles qu'une migration fait d'abord, puis l'état de
-# la copie : ok, ou ce que dit integrity_check.
+# La version du schéma de la base en place, ou rien si elle ne se lit pas,
+# puis l'état d'une copie de RT_DATA/backups, comme celles qu'une migration
+# fait d'abord : ok, ou ce que disent integrity_check ou SQLite. Le schéma de
+# la copie se lit dans son nom (copy_schema) : une copie abîmée le garde.
 engine_copy_check() { # nom de la copie
   engine_run -e "BUTTON_COPY=$1" --entrypoint python3 radiotomate-init - <<'PY'
-# copie : la version du schéma de la base en place, puis celle de la copie, puis son état.
+# copie : la version du schéma de la base en place, puis l'état de la copie.
 import os
 import sqlite3
 from contextlib import closing
 
-copy = "/data/backups/" + os.environ["BUTTON_COPY"]
-for path in ("/data/radiotomate.db", copy):
-    with closing(sqlite3.connect(path)) as con:
+try:
+    with closing(sqlite3.connect("/data/radiotomate.db")) as con:
         row = con.execute("select value from settings where key = 'SCHEMA_VERSION'").fetchone()
     print(row[0] if row else "")
-with closing(sqlite3.connect(copy)) as con:
-    print(" ".join(str(row[0]) for row in con.execute("pragma integrity_check"))[:200])
+except sqlite3.Error:
+    print("")
+try:
+    # En lecture seule : une copie qui manque ne se crée pas, vide.
+    copy = "file:/data/backups/" + os.environ["BUTTON_COPY"] + "?mode=ro"
+    with closing(sqlite3.connect(copy, uri=True)) as con:
+        state = " ".join(str(row[0]) for row in con.execute("pragma integrity_check"))
+except sqlite3.Error as error:
+    state = str(error) or "illisible"
+print(state.replace("\n", " ")[:200])
 PY
 }
 
@@ -2852,12 +2860,12 @@ undo_database_check() {
   local found checks current saved integrity data need
   found=$(db_copy_since "$update_started")
   [[ -n $found ]] || return 0
+  saved=$(copy_schema "$found")
   checks=$(engine_copy_check "$found") || checks=""
   current=$(sed -n 1p <<<"$checks")
-  saved=$(sed -n 2p <<<"$checks")
-  integrity=$(sed -n 3p <<<"$checks")
+  integrity=$(sed -n 2p <<<"$checks")
   # La première migration a échoué, sans rien laisser : la base n'a pas bougé.
-  if [[ $current =~ ^[0-9]+$ && $saved =~ ^[0-9]+$ ]] && ((current <= saved)); then
+  if [[ $current =~ ^[0-9]+$ ]] && ((current <= saved)); then
     say "Retour arrière : la base est restée au schéma v$current, que la version $installed lit."
     return 0
   fi
@@ -2925,6 +2933,14 @@ db_copy_since() { # secondes depuis 1970
     [[ -n $best && ! $stamp < ${best%% *} ]] || best="$stamp $name"
   done
   printf '%s\n' "${best#* }"
+}
+
+# Le schéma d'une copie de la base, d'après son nom : avant-v19-… est la base
+# d'avant la migration v19, au schéma v18. db_copy_since a vérifié le nom.
+copy_schema() { # avant-vNN-AAAAMMJJTHHMMSSZ.db
+  local number=${1#avant-v}
+  number=${number%%-*}
+  printf '%s\n' "$((10#$number - 1))"
 }
 
 # L'heure d'une copie de la base, en secondes depuis 1970, d'après son nom.
@@ -3283,13 +3299,13 @@ rollback_station() {
   # La base : la copie qu'en a faite la mise à jour, si son schéma a migré.
   copy=$(db_copy_since "$undone")
   if [[ -n $copy ]]; then
+    saved=$(copy_schema "$copy")
     schemas=$(engine_copy_check "$copy") ||
       die "La version du schéma de la base ne se lit pas : voir le message plus haut. Rien n'est changé." "Voir l'état de la station : station status."
     current=$(sed -n 1p <<<"$schemas")
-    saved=$(sed -n 2p <<<"$schemas")
-    integrity=$(sed -n 3p <<<"$schemas")
-    [[ $current =~ ^[0-9]+$ && $saved =~ ^[0-9]+$ ]] ||
-      die "La version du schéma de la base ne se lit pas : « $current », « $saved ». Rien n'est changé." "Voir l'état de la station : station status."
+    integrity=$(sed -n 2p <<<"$schemas")
+    [[ $current =~ ^[0-9]+$ ]] ||
+      die "La version du schéma de la base en place ne se lit pas. Rien n'est changé." "Voir l'état de la station : station status."
     if ((current > saved)); then
       [[ $integrity == ok ]] ||
         die "La copie de la base d'avant la mise à jour, $copy, est abîmée : $integrity. Rien n'est changé." \
