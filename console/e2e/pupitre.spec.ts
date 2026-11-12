@@ -216,8 +216,10 @@ test("une ligne montée devant une ligne déjà commencée prend la tête de la 
     }
 
     // Ménage : rangées derrière elle, les lignes du pupitre posées ici
-    // resteraient des minutes dans la file des parcours suivants.
-    for (const titre of ["Jingle station", "Annonce locale", "Grande distance"]) {
+    // resteraient des minutes dans la file des parcours suivants. Celle de
+    // « Grande distance », déjà partie, n'a pas de « Retirer » : le moteur de
+    // démo la ferme dès qu'il passe à un autre titre.
+    for (const titre of ["Jingle station", "Annonce locale"]) {
       const retirer = file(page).getByRole("button", { name: `Retirer ${titre} de la file` });
       for (let reste = await retirer.count(); reste > 0; reste -= 1) {
         await retirer.first().click();

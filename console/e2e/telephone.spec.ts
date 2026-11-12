@@ -83,10 +83,9 @@ test("les gestes du pupitre se font au doigt", async ({ page }) => {
 
 /**
  * Le premier bouton de ce nom dans la file. La tête de la file n'en a pas
- * toujours : une ligne déjà partie vers l'antenne est verrouillée, sans
- * « Retirer » ni « Déplacer ». Le « Diffuser Grande distance maintenant » d'un
- * parcours du pupitre en laisse une, que le moteur de démo garde en tête de la
- * file jusqu'à sa fin, trois minutes plus tard, et aucun parcours ne la retire.
+ * toujours : une ligne verrouillée n'a ni « Retirer » ni « Déplacer », comme une
+ * ligne déjà partie vers l'antenne, ou, sur le banc, le titre que joue le moteur
+ * de démo quand la file le compte encore à venir.
  */
 const dansLaFile = (page: Page, nom: RegExp) => file(page).getByRole("button", { name: nom }).first();
 
