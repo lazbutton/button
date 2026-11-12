@@ -36,27 +36,25 @@ Le format des fiches, les tailles et la façon de prendre une fiche sont dans le
 | [LEG-01](#leg-01--dépendances-images-et-licences) | Dépendances, images et licences | S | — | fait, `512be6f` |
 | [LEG-02](#leg-02--le-code-source-pour-chaque-utilisateur) | Le code source pour chaque utilisateur | S | MAJ-01 | à faire |
 | [FON-14](#fon-14--les-lignes-mises-à-la-suite-passent-à-lantenne) | Les lignes mises à la suite passent à l'antenne | M | — | fait, `d4a2dd9` |
-| [FON-39](#fon-39--les-jingles-du-motif-passent-à-leur-tour) | Les jingles du motif passent à leur tour | M | FON-14 | à faire |
+| [FON-39](#fon-39--les-jingles-du-motif-passent-à-leur-tour) | Les jingles du motif passent à leur tour | M | FON-14 | fait, `7a497fd` |
 
-En tout : 29 fiches, 12 de taille S, 14 de taille M et 3 de taille L. Au 11 novembre 2026, 22 sont faites. Il en reste 7 : 2 de taille S et 5 de taille M.
+En tout : 29 fiches, 12 de taille S, 14 de taille M et 3 de taille L. Au 12 novembre 2026, 23 sont faites. Il en reste 6 : 2 de taille S et 4 de taille M.
 
 ## L'ordre
 
-Ce qui reste, relevé le 11 novembre 2026. Les fiches de deux files différentes peuvent avancer en même temps, une par agent. Dans une file, elles passent l'une après l'autre, parce qu'elles touchent les mêmes fichiers.
+Ce qui reste, relevé le 12 novembre 2026. Les fiches de deux files différentes peuvent avancer en même temps, une par agent. Dans une file, elles passent l'une après l'autre, parce qu'elles touchent les mêmes fichiers.
 
 | File | Fiches, dans l'ordre | Fichier partagé |
 |---|---|---|
 | commande `station` | MAJ-05, SAV-01, SUR-01 | `deploy/station` |
 | marque | LEG-02 | `console/src/lib/brand.ts` |
-| scheduler | FON-39 | `engine/radiotomate/scheduler/clock.py` |
 | mesure | INS-04 | aucun |
 | guide | DOC-01, en dernier | `docs/` |
 
 - **MAJ-04 est fusionnée**, par la PR 141 : MAJ-05 passe en tête de sa file, puis SAV-01. Leurs « Accepté quand » demandent une machine jetable en x86-64 : la vraie installation de la CI (`.github/workflows/station.yml`) en est une, et son job `update` y fait maintenant une vraie mise à jour.
 - **SUR-01** pose ses réglages à l'installation, qui est maintenant `station install` : elle est donc dans la file de la commande `station`. Elle peut y passer plus tôt : MAJ-05 se sert de ses alertes.
 - **LEG-02 n'attend rien.** MAJ-04, fusionnée, a changé `scripts/version.py`, qui fait les fichiers joints à une version : LEG-02 part du `main` d'après.
-- **FON-14 est fusionnée**, par la PR 139. Son « Accepté quand » reste à vérifier sur une station de test : le banc de la PR tournait sans fondu.
-- **FON-39 n'attend plus rien.** Elle touche `clock.py`, et reprend peut-être la règle de FON-14 pour faire partir une ligne à la fin du titre qui la précède. Le défaut qu'elle corrige est déjà dans la 0.2.0, et a été vu sur un banc, pas sur une station : son premier pas est de le montrer par un test. FON-33 et FON-35 à FON-38, en P2, touchent le même fichier : une à la fois.
+- **FON-14 et FON-39 sont fusionnées**, par les PR 139 et 142 : la file du scheduler n'a plus de fiche en P1. Leurs « Accepté quand » restent à vérifier sur une station de test, fondu allumé : leur banc tournait sans. Pour FON-39, c'est une heure d'antenne. FON-33 et FON-35 à FON-38, en P2, touchent les fichiers qu'elles viennent de changer : rejouer chaque défaut avant de le prendre.
 - **INS-04 n'a aucun conflit.** Elle se mesure sur la version qui suit la 0.2.0 : celle-ci a encore le défaut d'une station vide, dont le conducteur s'empilait.
 - **DOC-01 vient en dernier** : elle attend INS-04, MAJ-05 et SAV-01.
 
@@ -337,7 +335,7 @@ L · dépend de MAJ-01, MAJ-02, MAJ-03, INS-03 · conflits : le script d'exploit
   - Chaque version joint `CHANGELOG.md` à `station.tar.gz` : `update` y lit la « Mise en service » d'une majeure.
   - L'« Accepté quand » est porté par la CI. Le job `update` de `station.yml` installe la plus haute version publiée, la met à jour vers les fichiers de la branche et les images `main`, lit le flux chaque seconde, et échoue à 30 secondes de coupure. Il est passé sur la PR, par la fenêtre « inconnue » : les images `main` n'avaient pas encore la commande `window`.
   - Une station en 0.2.0 n'a pas `update` : elle prend d'abord la commande de la version publiée. `docs/deploiement.md` le dit, dans « Avec la commande station ».
-  - Laissé à d'autres fiches : le retour arrière, qui se fait à la main avec la sauvegarde d'avant (MAJ-05) ; la mise à jour automatique la nuit (MAJ-06) ; la console, qui ne montre pas `/system/version.json` (MAJ-07) ; la fenêtre, qui tient pour vrai un direct annulé (FON-34) ; `next-live`, qui lit encore l'horloge du conteneur comme l'heure de Paris (GEN-05).
+  - Laissé à d'autres fiches : le retour arrière, qui se fait à la main avec la sauvegarde d'avant (MAJ-05) ; la mise à jour automatique la nuit (MAJ-06) ; la console, qui ne montre pas `/system/version.json` (MAJ-07) ; la fenêtre, qui tient pour vrai un direct annulé (FON-34). `next-live` lisait encore l'horloge du conteneur comme l'heure de Paris : corrigé depuis, par la PR 144.
   - Laissé sans fiche : une coupure de la connexion SSH en plein redémarrage arrête la mise à jour. La doc conseille `tmux` ou `screen`.
 
 #### MAJ-05 · Retour arrière automatique
@@ -539,3 +537,12 @@ M · dépend de FON-14 · conflits : `engine/radiotomate/scheduler/clock.py`, `e
 - **Mise en service** : à la mise à jour, les jingles du motif passent de nouveau. Pour revenir en arrière sans redéployer : couper l'interrupteur.
 - **Tests** : dans `engine/tests/scheduler/`, sur trois tours du motif, chaque jingle part une fois, à sa place ; un jingle dont l'heure est passée ne part pas en retard ; l'interrupteur coupé garde le comportement d'avant. Puis le banc de la PR 139, avec le scheduler et Liquidsoap réels.
 - **Accepté quand** : sur une station de test, une horloge au motif « jingle, musique, musique, musique » passe un jingle tous les trois titres, pendant une heure.
+- **Résultat**, le 12 novembre 2026, par la PR 142 :
+  - Un test montre le défaut sur le conducteur de nuit du banc (`engine/tests/scheduler/test_motif_jingles.py`). Avant : après le premier jingle, plus aucun ne part, et le suivant part neuf minutes en retard après « Vider les files ». Après : chaque jingle à sa place, sur trois tours du motif.
+  - Tranché par l'utilisateur. Le jingle ne retient pas la musique qui le suit : il part à la fin du titre qui le précède, par la règle des lignes du pupitre (`_line_turn`, l'ancien `_desk_turn`, `clock.py`). L'interrupteur est `features.motif_jingles_air` : absent, les jingles passent.
+  - Un écart avec la fiche. Un jingle n'est pas sauté quand son heure est passée, mais quand la musique prévue après lui est passée à l'antenne : il est fermé, raison « tour passé », et ne part jamais en retard (`reconcile_as_run` et `close_passed_jingles`, `execution.py`). C'est l'ordre du motif qui compte : après un direct imprévu, l'horloge rejoue la suite en retard, et l'heure y fermerait des jingles encore à leur place.
+  - À la mise à jour d'une station, les jingles restés « prévu » depuis son démarrage sont fermés au premier tick.
+  - Sur le banc de FON-14, avec Liquidsoap 2.4.5 et sans fondu, les trois jingles du relevé passent, chacun à sa place, sans blanc.
+  - L'« Accepté quand » reste à vérifier : une heure sur une station de test, avec le fondu.
+  - Limites connues, laissées : le jingle coupe les deux dernières secondes du titre qui le précède, qui reprennent après lui, comme pour une ligne du pupitre, mais maintenant à chaque jingle ; derrière un son de bac à l'antenne, il attend la fin de ce son ; il ne vérifie pas qu'il finirait avant une coupure dure.
+  - La PR corrige aussi deux parcours de `telephone.spec.ts`, qui visaient la première ligne de la file. Ce qui les faisait rougir reste : TST-08, en P2.
