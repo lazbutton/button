@@ -87,6 +87,8 @@ Une ligne de coupure qui ne passera pas est `skipped`, avec sa raison dans `reas
 - `retenue pendant le direct`, `retenue pendant un set de l'Agenda` : une coupure due pendant un direct ou un set daté, que l’horloge laisse tomber ;
 - `heure passée` : une coupure encore prévue une heure après son heure, qui ne partira plus.
 
+Une ligne que la prévision ne peut pas jouer est `failed`, sans `sound_id` : raison `aucun titre Beets` pour une sélection vide, `cart introuvable` pour un cart absent ou sans son prêt, `bac en relais` quand le cart que nomme la ligne, le premier de la position, est un relais. Une horloge ne lance pas de relais : elle passe le cart, puis essaie le secours de la position, puis celui de l'horloge. Une ligne prévue avec un secours est `rescue`, et une coupure que l'antenne tire elle-même, faute de ligne prévue, porte `fallback_used`. Quand l'antenne tire elle-même une coupure dont le cart est un relais, sans secours qui ait un son, elle écrit une ligne `skipped`, raison `bac en relais`, une fois pour l'occurrence, si la prévision n'en a pas. Une ligne de l'horloge prévue avant que son cart ne passe en relais ne part pas : à son tour, elle devient `skipped`, raison `bac en relais`, et la position essaie ses secours.
+
 Un jingle du motif dont le tour est passé est aussi `skipped`, raison `tour passé` : une ligne du motif prévue après lui est passée à l’antenne sans lui. Il ne part plus, même en retard. Le réglage `features.motif_jingles_air` de la table `settings`, à faux (`0`, `false`, `off` ou une valeur vide), rend l’ancien comportement : un jingle du motif attend que la file de l’auto-DJ soit vide, et reste `planned` tant qu’il n’est pas parti. Une clé absente compte comme vraie.
 
 `POST` sur la même URL, `{reset:true}`, exige `autodj`. L’horizon vient de la query (`horizon=30` dans Automate).
@@ -98,7 +100,7 @@ Un jingle du motif dont le tour est passé est aussi `skipped`, raison `tour pas
 Lecture avec une session, écriture avec le droit `autodj`. Une création répond 201.
 
 - `GET /autodj/clocks.json` → `{clocks}`. Une horloge : `{id, version, name, fallback_cart, fallback_cart_id, motif, anchors}` : `motif` est la suite enchaînée des positions, `anchors` les positions calées sur une minute.
-- `POST /autodj/clocks.json` → `{clock}`, `PUT` et `DELETE /autodj/clocks/{id}.json`.
+- `POST /autodj/clocks.json` → `{clock}`, `PUT` et `DELETE /autodj/clocks/{id}.json`. Une horloge ne lance pas de relais : `POST` et `PUT` refusent un cart en mode `relay` pour une position, son secours ou celui de l'horloge, en 400 `validation_error`, avec `field` à `cart` ou `fallback_cart` et `error` en français, et rien n'est écrit. Une horloge enregistrée avant ce refus, ou dont un cart est passé en relais depuis, se lit telle quelle.
 - `GET /autodj/slots.json` → `{slots}`. Un créneau : `{id, version, day_of_week, minute, title, color, clock_id, clock}`.
 - `POST /autodj/slots.json` → `{slot}`, `PUT` et `DELETE /autodj/slots/{id}.json`.
 - `GET /autodj/categories.json` → `{categories}`. Une catégorie : `{id, name, query, empty_query, count}`, où `query` est une requête Beets.

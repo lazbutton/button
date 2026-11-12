@@ -293,7 +293,12 @@ class Cart(Base):
         ``for_display`` tells if the method is called to display the next sound
         or (by default) if it's called to actually play the sound. This avoids
         displaying a false information for carts playing randomly.
+
+        A relay plays a stream, not the sounds it may still hold: it has none to
+        give.
         """
+        if self.mode is CartMode.RELAY:
+            return None
         if for_display and self.mode is CartMode.RANDOM:
             return None
         implem = getattr(self, "next_sound_" + self.mode.value)
