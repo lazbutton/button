@@ -298,18 +298,25 @@ async def restore_sequencer_state(
 
 
 async def reset_sequencer(session: ormSession, *, commit: bool = True) -> None:
-    """Start the motif at position 0 and bump epoch so the scheduler process follows."""
-    from radiotomate.scheduler.execution import persist_fired_anchors
+    """
+    Start the motif at position 0 and bump epoch so the scheduler process follows.
+    The anchors fired stay fired, as after a restart: one that has gone, that a
+    live held or that a hard one overtook does not go again once the conducteur
+    is rebuilt. They are read from the base, where the scheduler saves them: this
+    process may be the interface's, whose memory does not know them.
+    """
+    from radiotomate.scheduler.execution import load_fired_anchors
 
     epoch = await load_sequencer_epoch(session) + 1
+    fired = await load_fired_anchors(session)
     reset_state()
+    _state.fired_anchors = fired
     _state.epoch = epoch
     _state.restored = True
-    _state.persisted_snapshot = (0, None, frozenset())
+    _state.persisted_snapshot = (0, None, frozenset(fired))
     await Setting.upsert(session, SETTING_CLOCK_SEQ_EPOCH, str(epoch))
     await Setting.upsert(session, SETTING_CLOCK_SEQ_CURSOR, "0")
     await Setting.upsert(session, SETTING_CLOCK_SEQ_CLOCK_ID, "")
-    await persist_fired_anchors(session, set())
     if commit:
         await session.commit()
 
@@ -801,8 +808,9 @@ async def _soft_lines_astride_the_hour(
     daypart or on the next day: the occurrence is then the one of the hour
     before, and its line, which carries its minute, says which. It is owed until
     the title ends, and an hour after its minute at most, as the line of an hour
-    is (``_planned_anchor_item``). Never without its line: a reset of the
-    conducteur forgets the anchors fired, and drops their lines with them.
+    is (``_planned_anchor_item``). Never without its line. A reset of the
+    conducteur drops it, as it drops every line planned, and keeps the anchors
+    fired (``reset_sequencer``).
     """
     local = now.replace(tzinfo=None)
     hour_before = local.replace(minute=0, second=0, microsecond=0) - timedelta(hours=1)
