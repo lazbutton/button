@@ -474,7 +474,8 @@ async def _forecast_inputs(
     positions = await session.execute(
         select(ClockPosition.__table__).order_by(ClockPosition.id)
     )
-    # Not its version: loading a cart with its sounds bumps it, at every draw.
+    # What a draw reads of a cart: its title and its mode, its sounds below. Not
+    # its version: an edit with no effect on the draw, like its notes, bumps it.
     carts = await session.execute(
         select(Cart.id, Cart.title, Cart.mode).order_by(Cart.id)
     )
