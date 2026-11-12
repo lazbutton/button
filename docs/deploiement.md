@@ -194,6 +194,8 @@ Sur Internet, Caddy se place devant la station. Il obtient un certificat Let's E
 | `https://radio.example/radio.mp3` | le flux : chaque mount d'Icecast à la racine, en MP3, AAC ou Ogg. Son nom se règle : voir [les mounts](#les-mounts) |
 | `https://radio.example/status-json.xsl` | le statut d'Icecast |
 | `https://radio.example/now.json` | le titre en cours |
+| `https://radio.example/public/programme.json` | la semaine à venir, pour le site de la station, par la console : voir [l'API](api.md#site-de-la-station) |
+| `https://radio.example/public/historique.json` | les titres de musique des sept derniers jours, pour le site de la station, par la console |
 
 L'administration d'Icecast et le mount WAV du moniteur n'y passent pas. Le direct non plus : il a son propre port. Pourquoi le flux passe par Caddy : voir la décision [0015](decisions/0015-le-flux-passe-par-caddy.md).
 

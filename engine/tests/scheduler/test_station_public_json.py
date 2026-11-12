@@ -12,7 +12,9 @@ from radiotomate.models import (
     MetadataLog,
     ProgrammingVersion,
     RundownItem,
+    Setting,
 )
+from radiotomate.services.station_public import SETTING_SITE_ROUTES
 from tests.scheduler.test_admin_json import _admin_client
 from tests.scheduler.test_agenda_json import _create, _day, _wall
 from tests.scheduler.test_studio_json import _interface_client
@@ -43,7 +45,8 @@ async def _weekly(client, title: str, day: date, hours: tuple[int, int], **field
     return body["emission"]["id"]
 
 
-async def test_the_programme_gives_titles_times_and_kinds_only(
+async def test_the_programme_gives_titles_times_and_kinds_only(  # noqa: PLR0913
+    container_tz: str,
     raw_app,
     app_configration: dict,
     beets_integration: BeetsIntegration,
@@ -107,6 +110,7 @@ async def test_the_programme_gives_titles_times_and_kinds_only(
     assert response.status_code == 200, payload
     assert response.headers["Access-Control-Allow-Origin"] == "*"
     assert response.headers["Cache-Control"] == "public, max-age=60"
+    assert response.headers["X-Robots-Tag"] == "noindex"
     assert "Set-Cookie" not in response.headers
     assert payload == {
         "timezone": "Europe/Paris",
@@ -153,7 +157,8 @@ async def test_the_programme_gives_titles_times_and_kinds_only(
     assert "Access-Control-Allow-Origin" not in guest.headers
 
 
-async def test_a_weekly_show_cancelled_or_replaced_leaves_the_programme(
+async def test_a_weekly_show_cancelled_or_replaced_leaves_the_programme(  # noqa: PLR0913
+    container_tz: str,
     raw_app,
     app_configration: dict,
     beets_integration: BeetsIntegration,
@@ -199,7 +204,8 @@ async def test_a_weekly_show_cancelled_or_replaced_leaves_the_programme(
     ]
 
 
-async def test_the_programme_is_empty_when_the_agenda_is_off(
+async def test_the_programme_keeps_the_weekly_grid_when_the_agenda_is_off(  # noqa: PLR0913
+    container_tz: str,
     raw_app,
     app_configration: dict,
     beets_integration: BeetsIntegration,
@@ -210,25 +216,41 @@ async def test_the_programme_is_empty_when_the_agenda_is_off(
         app_configration, beets_integration, dbsession, users_password, "site-c"
     )
     await _weekly(admin, "Matinale", _day(1), (8, 10))
+    cancelled = await _weekly(admin, "Annulée", _day(2), (9, 10))
+    response = await admin.post(
+        "/agenda/exceptions.json",
+        json={"emission_id": cancelled, "date": _day(2).isoformat()},
+    )
+    assert response.status_code == 201
+    await _weekly(admin, "Remplacée", _day(3), (20, 21))
     await _create(
         admin,
         kind="set",
         title="Carte blanche",
-        start=_wall(_day(2), 22),
-        end=_wall(_day(2), 23),
+        start=_wall(_day(3), 20, 30),
+        end=_wall(_day(3), 21, 30),
     )
     site = _interface_client(app_configration, beets_integration)
-    before = await (await site.get("/public/programme.json")).get_json()
-    assert len(before["items"]) == 2
+
+    async def programme() -> list[tuple[str, str]]:
+        response = await site.get("/public/programme.json")
+        payload = await response.get_json()
+        assert response.status_code == 200, payload
+        assert payload["from"] == _day(0).isoformat()
+        assert payload["to"] == _day(6).isoformat()
+        return [(item["title"], item["kind"]) for item in payload["items"]]
+
+    assert await programme() == [("Matinale", "emission"), ("Carte blanche", "set")]
 
     off = await admin.put("/agenda/settings.json", json={"enabled": False})
     assert off.status_code == 200
-    response = await site.get("/public/programme.json")
-    payload = await response.get_json()
-    assert response.status_code == 200, payload
-    assert payload["items"] == []
-    assert payload["from"] == _day(0).isoformat()
-    assert payload["to"] == _day(6).isoformat()
+    # The weekly grid still airs, as the rest of the engine has it: without the
+    # Agenda's cancellations, replacements or dated broadcasts.
+    assert await programme() == [
+        ("Matinale", "emission"),
+        ("Annulée", "emission"),
+        ("Remplacée", "emission"),
+    ]
 
 
 def _item(item_id: str, kind: str, queue: str = "autodj") -> RundownItem:
@@ -279,11 +301,13 @@ async def _seed(
 
 
 def _played(at: datetime) -> str:
-    """A local time of metadata_log as the history gives it: offset, seconds."""
-    return at.replace(tzinfo=PARIS).isoformat()
+    """A local time of metadata_log, the container's wall clock, as the history
+    gives it: at Paris time, offset, seconds."""
+    return at.astimezone(PARIS).isoformat()
 
 
 async def test_the_history_gives_music_only_newest_first(
+    container_tz: str,
     raw_app,
     app_configration: dict,
     beets_integration: BeetsIntegration,
@@ -301,6 +325,7 @@ async def test_the_history_gives_music_only_newest_first(
             _item("ri-anchored", "musique", "carts"),
             _item("ri-last", "musique"),
             _item("ri-cut", "musique"),
+            _item("ri-cut-aired", "musique"),
             _item("ri-empty", "musique"),
             _item("ri-live", "musique"),
             _item("ri-jingle", "jingle", "jingles"),
@@ -341,9 +366,21 @@ async def test_the_history_gives_music_only_newest_first(
             _log(ago(22), "Radio amie", artist="Relais", source="relay"),
             _log(ago(20), "Sans conducteur", artist="Groupe C"),
             _log(ago(18), "   ", artist="Groupe D", item="ri-empty"),
+            # Logged at its start, then cut by a hard sync: it did air.
             _log(
-                ago(16), "En attente de métadonnées", artist="BUTTON", item="ri-empty"
+                ago(15),
+                "Titre coupé à l'antenne",
+                artist="Groupe G",
+                item="ri-cut-aired",
             ),
+            _log(
+                ago(13),
+                "Titre coupé à l'antenne",
+                artist="Groupe G",
+                item="ri-cut-aired",
+                extra={"skipped": True, "skip_reason": "hard_sync"},
+            ),
+            # Cut by a hard sync, without a line of its own: only the cut's.
             _log(
                 ago(12),
                 "Titre coupé",
@@ -369,6 +406,7 @@ async def test_the_history_gives_music_only_newest_first(
     assert response.status_code == 200, payload
     assert response.headers["Access-Control-Allow-Origin"] == "*"
     assert response.headers["Cache-Control"] == "public, max-age=15"
+    assert response.headers["X-Robots-Tag"] == "noindex"
     assert "Set-Cookie" not in response.headers
     assert payload == {
         "items": [
@@ -376,6 +414,12 @@ async def test_the_history_gives_music_only_newest_first(
                 "played_at": _played(ago(5)),
                 "title": "Dernier titre",
                 "artist": "Groupe F",
+                "album": "",
+            },
+            {
+                "played_at": _played(ago(15)),
+                "title": "Titre coupé à l'antenne",
+                "artist": "Groupe G",
                 "album": "",
             },
             {
@@ -395,6 +439,7 @@ async def test_the_history_gives_music_only_newest_first(
 
 
 async def test_the_history_takes_a_limit(
+    container_tz: str,
     raw_app,
     app_configration: dict,
     beets_integration: BeetsIntegration,
@@ -433,3 +478,74 @@ async def test_the_history_takes_a_limit(
         assert body["message"] == "Entre 1 et 50 titres."
         assert response.headers["Access-Control-Allow-Origin"] == "*"
         assert response.headers["Cache-Control"] == "no-store"
+
+
+async def test_the_history_keeps_the_last_seven_days(
+    container_tz: str,
+    raw_app,
+    app_configration: dict,
+    beets_integration: BeetsIntegration,
+    dbsession: ormSession,
+):
+    # metadata_log keeps the container's wall clock, and so does the bound.
+    now = datetime.now().replace(microsecond=0)
+    await _seed(
+        dbsession,
+        [_item("ri-old", "musique"), _item("ri-week", "musique")],
+        [
+            _log(now - timedelta(days=7, hours=1), "Trop ancien", item="ri-old"),
+            _log(now - timedelta(days=6, hours=23), "De la semaine", item="ri-week"),
+        ],
+    )
+    site = _interface_client(app_configration, beets_integration)
+    response = await site.get("/public/historique.json")
+    payload = await response.get_json()
+    assert response.status_code == 200, payload
+    assert [item["title"] for item in payload["items"]] == ["De la semaine"]
+
+
+SITE_ROUTES = ("/public/programme.json", "/public/historique.json")
+CLOSED = "Cette station ne publie ni son programme ni ses derniers titres."
+
+
+async def test_the_site_routes_answer_while_the_switch_is_absent_or_on(
+    container_tz: str,
+    raw_app,
+    app_configration: dict,
+    beets_integration: BeetsIntegration,
+    dbsession: ormSession,
+):
+    site = _interface_client(app_configration, beets_integration)
+    for value in (None, "1", "true"):
+        if value is not None:
+            await Setting.upsert(dbsession, SETTING_SITE_ROUTES, value)
+            await dbsession.commit()
+        for path in SITE_ROUTES:
+            response = await site.get(path)
+            payload = await response.get_json()
+            assert response.status_code == 200, (value, path, payload)
+            assert "items" in payload
+
+
+async def test_the_site_routes_answer_404_when_the_switch_is_off(
+    container_tz: str,
+    raw_app,
+    app_configration: dict,
+    beets_integration: BeetsIntegration,
+    dbsession: ormSession,
+):
+    site = _interface_client(app_configration, beets_integration)
+    for value in ("0", "false", "off", ""):
+        await Setting.upsert(dbsession, SETTING_SITE_ROUTES, value)
+        await dbsession.commit()
+        # The switch comes first: a wrong limit does not make it a 400.
+        for path in (*SITE_ROUTES, "/public/historique.json?limit=abc"):
+            response = await site.get(path)
+            body = await response.get_json()
+            assert response.status_code == 404, (value, path, body)
+            assert body == {"error": CLOSED, "code": "not_found", "message": CLOSED}
+            assert response.headers["Cache-Control"] == "no-store"
+            assert response.headers["Access-Control-Allow-Origin"] == "*"
+    # The switch closes the website's routes only.
+    station = await site.get("/public/station.json")
+    assert station.status_code == 200
