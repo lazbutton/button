@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from unittest.mock import AsyncMock
 
 import httpx
@@ -8,9 +8,10 @@ from sqlalchemy.orm import Session as ormSession
 
 from radiotomate.beets import BeetsIntegration
 from radiotomate.domain.execution import item_status_code, rundown_summary
-from radiotomate.enums import CommandStatus
+from radiotomate.enums import CartMode, CommandStatus, ScheduleMode
 from radiotomate.models import (
     AutoDJSlot,
+    Cart,
     Clock,
     ClockPosition,
     MetadataLog,
@@ -21,7 +22,9 @@ from radiotomate.models import (
 )
 from radiotomate.scheduler.clock import PARIS, reset_state, tick
 from radiotomate.scheduler.execution import (
+    MISSING_FORECAST_HOLD,
     SETTING_FIRED_ANCHORS,
+    clear_live_forecast,
     ensure_forecast,
     materialize_rundown,
     published_rundown,
@@ -966,40 +969,46 @@ async def test_realign_skips_implausible_shift(
     assert (await RundownItem.from_id(dbsession, ids[1])).planned_at == planned_second
 
 
-async def test_a_station_with_nothing_to_play_keeps_one_forecast(dbsession):
-    """Nothing to play: each tick draws anew, and replaces the lines it knew missing.
-
-    Such a line ("manquant") never counts as runway, so every tick of an empty
-    station redraws. Kept, they piled up: 17 lines a second on a new station,
-    the scheduler and the interface reading more of them at every tick.
-    """
-    from datetime import timedelta
-
-    from sqlalchemy import func
-
+@pytest.fixture
+def empty_beets():
+    """A Beets library without a title: with no sound in its carts, the station
+    has nothing to play."""
     from radiotomate.beets.demo import BeetsMockIntegration
 
     empty = BeetsMockIntegration()
-    try:
-        for item in list(empty.lib.items()):
-            item.remove()
-        start = datetime(2026, 11, 10, 9, 0, 0)
-        client = _client()
-        counts = []
-        for second in range(30):
-            live = _live(
-                (start + timedelta(seconds=second)).isoformat(),
-                source="safe",
-                autodj_queued=0,
-                jingles_queued=0,
-                carts_queued=0,
-            )
-            await tick(dbsession, live, client, empty)
-            counts.append(
-                await dbsession.scalar(select(func.count()).select_from(RundownItem))
-            )
-    finally:
-        empty.teardown()
+    for item in list(empty.lib.items()):
+        item.remove()
+    yield empty
+    empty.teardown()
+
+
+async def test_a_station_with_nothing_to_play_keeps_one_forecast(
+    dbsession, empty_beets
+):
+    """Nothing to play: a draw replaces the lines it knew missing.
+
+    Such a line ("manquant") never counts as runway: such a forecast is drawn
+    again once a minute (FON-32), at every tick before. Kept, they piled up: 17
+    lines a second on a new station, the scheduler and the interface reading
+    more of them at every tick.
+    """
+    from sqlalchemy import func
+
+    start = datetime(2026, 11, 10, 9, 0, 0)
+    client = _client()
+    counts = []
+    for second in range(30):
+        live = _live(
+            (start + timedelta(seconds=second)).isoformat(),
+            source="safe",
+            autodj_queued=0,
+            jingles_queued=0,
+            carts_queued=0,
+        )
+        await tick(dbsession, live, client, empty_beets)
+        counts.append(
+            await dbsession.scalar(select(func.count()).select_from(RundownItem))
+        )
     statuses = set(await dbsession.scalars(select(RundownItem.status)))
     assert statuses == {"failed"}
     assert counts[0] > 0
@@ -1028,3 +1037,159 @@ async def test_a_refused_push_stays_in_the_history(
     kept = set(await dbsession.scalars(select(RundownItem.id)))
     assert refused <= kept
     assert kept - refused
+
+
+# A Tuesday at 9: the station's clock is « 24/24 Rotation habillée », a jingle of
+# the cart « Jingles », then three titles.
+EMPTY_START = datetime(2026, 11, 10, 9, 0, tzinfo=PARIS)
+
+
+async def _forecast_ids(session, beets, now, **kwargs) -> set[str]:
+    payload = await ensure_forecast(session, beets, now=now, **kwargs)
+    return {item["id"] for item in payload["items"]}
+
+
+async def test_two_ticks_a_second_apart_keep_a_forecast_of_missing_lines(
+    dbsession, empty_beets
+):
+    """The second tick keeps the forecast the first one drew (FON-32).
+
+    Nothing to play: the forecast is only lines it knows missing. Drawn again at
+    every tick, a second apart, it cost the scheduler of a new station a draw a
+    second, for nothing.
+    """
+    client = _client()
+    ids = []
+    for second in (0, 1):
+        moment = EMPTY_START + timedelta(seconds=second)
+        live = _live(
+            moment.replace(tzinfo=None).isoformat(),
+            source="safe",
+            autodj_queued=0,
+            jingles_queued=0,
+            carts_queued=0,
+        )
+        await tick(dbsession, live, client, empty_beets)
+        ids.append(set(await dbsession.scalars(select(RundownItem.id))))
+    assert ids[0]
+    assert ids[1] == ids[0]
+    assert set(await dbsession.scalars(select(RundownItem.status))) == {"failed"}
+
+
+async def test_a_forecast_of_missing_lines_is_drawn_again_after_a_minute(
+    dbsession, empty_beets
+):
+    """Whatever the mark misses, a forecast of missing lines lasts a minute."""
+    first = await _forecast_ids(dbsession, empty_beets, EMPTY_START)
+    later = EMPTY_START + MISSING_FORECAST_HOLD
+    held = await _forecast_ids(dbsession, empty_beets, later - timedelta(seconds=1))
+    drawn = await _forecast_ids(dbsession, empty_beets, later)
+    assert first
+    assert held == first
+    assert drawn
+    assert drawn.isdisjoint(first)
+
+
+async def test_a_title_added_to_beets_is_planned_at_the_next_tick(
+    dbsession, empty_beets
+):
+    """A first title ends the wait at once: no later than the delay, as the fiche
+    asks (FON-32). It waits only for Beets to take it."""
+    await ensure_forecast(dbsession, empty_beets, now=EMPTY_START)
+    title = empty_beets.helper.add_item(
+        artist="Première Venue",
+        title="Premier titre",
+        grouping="rotation",
+        path="/media/10-rotation/premier-titre.mp3",
+    )
+    payload = await ensure_forecast(
+        dbsession, empty_beets, now=EMPTY_START + timedelta(seconds=1)
+    )
+    planned = [item for item in payload["items"] if item["status_code"] == "planned"]
+    assert planned
+    assert {item["beets_id"] for item in planned} == {title.id}
+
+
+async def test_a_sound_ready_in_a_cart_ends_the_wait(raw_app, dbsession, empty_beets):
+    """A jingle the cart can play, its gain known, is planned at the next tick."""
+    await ensure_forecast(dbsession, empty_beets, now=EMPTY_START)
+    cartpath = raw_app.config["DATA_ROOT"] / "jingles"
+    cart = Cart(
+        title="Jingles",
+        path=cartpath,
+        mode=CartMode.RANDOM,
+        schedule_mode=ScheduleMode.JINGLES,
+    )
+    dbsession.add(cart)
+    await dbsession.flush()
+    dbsession.add(
+        Sound(
+            cart_id=cart.id,
+            path=cartpath / "id-button.mp3",
+            duration=8,
+            title="ID BUTTON",
+            gain=-1.0,
+            peak=-0.5,
+        )
+    )
+    await dbsession.commit()
+    payload = await ensure_forecast(
+        dbsession, empty_beets, now=EMPTY_START + timedelta(seconds=1)
+    )
+    planned = [item for item in payload["items"] if item["status_code"] == "planned"]
+    assert planned
+    assert {item["kind"] for item in planned} == {"jingle"}
+
+
+async def test_a_clock_edit_ends_the_wait(dbsession, empty_beets):
+    """An edit of the motif is drawn at the next tick, without waiting a minute."""
+    first = await _forecast_ids(dbsession, empty_beets, EMPTY_START)
+    position = await dbsession.scalar(
+        select(ClockPosition).where(ClockPosition.kind == "musique").limit(1)
+    )
+    position.kind = "jingle"
+    position.cart_title = "Jingles"
+    await dbsession.commit()
+    drawn = await _forecast_ids(
+        dbsession, empty_beets, EMPTY_START + timedelta(seconds=1)
+    )
+    assert drawn
+    assert drawn.isdisjoint(first)
+
+
+async def test_the_six_hours_of_the_console_hold_for_the_tick(dbsession, empty_beets):
+    """The tick asks for 30 minutes, the console for six hours, every 3 s: the
+    console draws again what reaches too short, then both keep it."""
+    tick_ids = await _forecast_ids(dbsession, empty_beets, EMPTY_START)
+    console_at = EMPTY_START + timedelta(seconds=1)
+    console = await ensure_forecast(
+        dbsession, empty_beets, now=console_at, horizon_min=360
+    )
+    console_ids = {item["id"] for item in console["items"]}
+    assert console_ids.isdisjoint(tick_ids)
+    last = max(datetime.fromisoformat(item["at"]) for item in console["items"])
+    assert last.replace(tzinfo=PARIS) >= console_at + timedelta(hours=6)
+    again = EMPTY_START + timedelta(seconds=2)
+    assert await _forecast_ids(dbsession, empty_beets, again) == console_ids
+    assert (
+        await _forecast_ids(
+            dbsession,
+            empty_beets,
+            again + timedelta(seconds=2),
+            horizon_min=360,
+        )
+        == console_ids
+    )
+
+
+async def test_a_reset_draws_a_held_forecast_again(dbsession, empty_beets):
+    """« Reconstruire le conducteur » clears the lines: the forecast is drawn again
+    at once, not left empty for the rest of the minute."""
+    first = await _forecast_ids(dbsession, empty_beets, EMPTY_START)
+    await clear_live_forecast(dbsession)
+    await dbsession.commit()
+    drawn = await _forecast_ids(
+        dbsession, empty_beets, EMPTY_START + timedelta(seconds=1)
+    )
+    assert drawn
+    assert drawn.isdisjoint(first)
