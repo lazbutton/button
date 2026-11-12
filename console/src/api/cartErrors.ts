@@ -1,3 +1,4 @@
+import { isGoneRefusal, isVersionRefusal } from "./cartSave";
 import { ApiForbiddenError, ApiRequestError, ApiUnavailableError } from "./client";
 
 const BUSY = "Un ajout de sons est en cours : attends qu'il se termine.";
@@ -23,6 +24,16 @@ export function bacErrorText(caught: unknown, fallback: string): string {
     return caught.message;
   }
   return fallback;
+}
+
+/** The engine refused the version sent: the bac changed since the page read it. */
+export function versionRefused(caught: unknown): boolean {
+  return caught instanceof ApiRequestError && isVersionRefusal(caught.status, caught.field, caught.message);
+}
+
+/** The bac was deleted elsewhere: the engine no longer knows it. */
+export function bacGone(caught: unknown): boolean {
+  return caught instanceof ApiRequestError && isGoneRefusal(caught.status, caught.message);
 }
 
 /** Clocks find a bac by its title, without case: two bacs cannot share one. */

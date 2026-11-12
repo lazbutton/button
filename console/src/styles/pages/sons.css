@@ -1504,6 +1504,32 @@
   background: var(--bacs-side);
 }
 
+/* A save refused because the bac changed elsewhere, above the buttons, until the next save:
+   a toast would cover them while the person checks what is kept. */
+.bacs-conflict {
+  flex: none;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  margin: 0;
+  padding: 0.6rem 1rem;
+  border-top: 1px solid var(--app-border);
+  background: color-mix(in srgb, var(--app-vu-hot) 8%, var(--app-surface-1));
+  color: var(--app-text);
+  font-size: 0.8125rem;
+}
+
+.bacs-conflict > svg {
+  flex: none;
+  margin-top: 0.15rem;
+  color: var(--app-warn-ink);
+}
+
+/* Above a relay's footer, aligned with it. */
+.bacs-relay .bacs-conflict {
+  padding-inline: var(--bacs-pad);
+}
+
 .bacs-scrim {
   position: absolute;
   inset: 0;

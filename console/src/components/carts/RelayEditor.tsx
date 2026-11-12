@@ -1,16 +1,23 @@
 import { Button, SegmentedControl, TextField } from "@radix-ui/themes";
-import { Headphones, RotateCcw, Save, Square } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { Headphones, RotateCcw, Save, Square, TriangleAlert } from "lucide-react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { relayUrlOk } from "../../api/cartMeta";
+import { keepEdits, unsavedEdits, type CartAnswer } from "../../api/cartSave";
 import { MAX_DURATION_PRESETS } from "../../api/soundsView";
 import type { Cart } from "../../api/types";
 import { FormField } from "../../ui/FormField";
 
 type Listen = "idle" | "loading" | "playing" | "error";
 
+type RelayDraft = { url: string; minutes: string };
+
 function minutesOf(seconds: number | null | undefined): string {
   if (!seconds) return "";
   return String(Number((seconds / 60).toFixed(2)));
+}
+
+function draftOf(cart: Cart): RelayDraft {
+  return { url: cart.url || "", minutes: minutesOf(cart.max_duration) };
 }
 
 const PRIORITY = ["Direct", "Relais", "Bacs", "Jingles", "Auto-DJ"];
@@ -22,17 +29,46 @@ export function RelayEditor({
 }: {
   cart: Cart;
   busy: boolean;
-  onSave: (payload: Record<string, unknown>) => Promise<void>;
+  /** `base`: the bac the typing started from. Resolves with the bac written, or the refusal to show. */
+  onSave: (payload: Record<string, unknown>, base: Cart, stillHere: () => boolean) => Promise<CartAnswer | null>;
 }) {
-  const [url, setUrl] = useState(cart.url || "");
-  const [minutes, setMinutes] = useState(minutesOf(cart.max_duration));
+  const [draft, setDraft] = useState(() => draftOf(cart));
+  const draftNow = useRef(draft);
+  draftNow.current = draft;
+  const read = useRef({ id: cart.id, draft: draftOf(cart) });
+  // The bac the typing started from, as in the bac's settings: its version goes with the save.
+  const base = useRef(cart);
+  // Mounted, and on the same bac since a save started: only then is its answer this form's to show.
+  const alive = useRef(false);
+  const session = useRef(0);
+  const [refusal, setRefusal] = useState("");
   const [listen, setListen] = useState<Listen>("idle");
   const audioRef = useRef<HTMLAudioElement>(null);
+  const { url, minutes } = draft;
+  const setUrl = (value: string) => setDraft((current) => ({ ...current, url: value }));
+  const setMinutes = (value: string) => setDraft((current) => ({ ...current, minutes: value }));
 
   useEffect(() => {
-    setUrl(cart.url || "");
-    setMinutes(minutesOf(cart.max_duration));
-  }, [cart.id, cart.url, cart.max_duration]);
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
+
+  // A new bac resets the form. The same bac read again, after a refusal for instance, keeps what is
+  // being typed, and takes the rest from the engine. Before the paint, as in the bac's settings.
+  useLayoutEffect(() => {
+    const fresh = draftOf(cart);
+    const before = read.current;
+    const sameBac = cart.id === before.id;
+    setDraft((current) => (sameBac ? keepEdits(current, before.draft, fresh) : fresh));
+    if (!sameBac || !unsavedEdits(draftNow.current, before.draft, fresh)) base.current = cart;
+    if (!sameBac) {
+      session.current += 1;
+      setRefusal("");
+    }
+    read.current = { id: cart.id, draft: fresh };
+  }, [cart]);
 
   useEffect(() => {
     audioRef.current?.pause();
@@ -44,6 +80,26 @@ export function RelayEditor({
   const ready = urlOk && Number.isFinite(seconds) && seconds > 0;
   const dirty = url !== (cart.url || "") || minutes !== minutesOf(cart.max_duration);
   const preset = MAX_DURATION_PRESETS.some((item) => item.seconds === seconds) ? String(seconds) : "autre";
+
+  // Nothing left to save: the refusal no longer says anything true, even once the form changes again.
+  useEffect(() => {
+    if (!dirty) setRefusal("");
+  }, [dirty]);
+
+  const save = async () => {
+    const sent = draft;
+    const started = session.current;
+    const stillHere = () => alive.current && session.current === started;
+    setRefusal("");
+    const from = base.current.id === cart.id ? base.current : cart;
+    const answer = await onSave({ url: url.trim(), max_duration: seconds }, from, stillHere);
+    // Gone, or on another bac by now: the answer is not for this form, and the page said it.
+    if (!answer || !stillHere()) return;
+    base.current = answer.cart;
+    // Saved: the address without its spaces, the duration in whole seconds. A field typed again stays.
+    if (answer.status === "saved") setDraft((current) => keepEdits(current, sent, draftOf(answer.cart)));
+    else setRefusal(answer.text);
+  };
 
   const toggleListen = () => {
     const audio = audioRef.current;
@@ -66,7 +122,7 @@ export function RelayEditor({
       onSubmit={(event) => {
         event.preventDefault();
         if (!ready || busy || !dirty) return;
-        void onSave({ url: url.trim(), max_duration: seconds });
+        void save();
       }}
     >
       <div className="bacs-relay-body">
@@ -177,6 +233,13 @@ export function RelayEditor({
         </section>
       </div>
 
+      {refusal && dirty ? (
+        <p className="bacs-conflict" role="alert">
+          <TriangleAlert size={15} aria-hidden="true" />
+          <span>{refusal}</span>
+        </p>
+      ) : null}
+
       <footer className="bacs-foot">
         <span className={`bacs-dirty${dirty ? " is-dirty" : ""}`}>
           <i aria-hidden="true" />
@@ -191,8 +254,9 @@ export function RelayEditor({
             color="gray"
             disabled={busy}
             onClick={() => {
-              setUrl(cart.url || "");
-              setMinutes(minutesOf(cart.max_duration));
+              setDraft(draftOf(cart));
+              setRefusal("");
+              base.current = cart;
             }}
           >
             <RotateCcw className="ui-button-icon" />

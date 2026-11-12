@@ -17,11 +17,20 @@ import {
   mergeImportedCart,
   type CartImportProgress,
 } from "../api/cartSounds";
-import { apiDelete, apiPost, apiPostJson, apiPut, ApiForbiddenError, ApiRequestError } from "../api/client";
-import { BacBusyError, bacErrorText } from "../api/cartErrors";
+import { apiDelete, apiGet, apiPost, apiPostJson, apiPut, ApiForbiddenError, ApiRequestError } from "../api/client";
+import { BacBusyError, bacErrorText, bacGone, versionRefused } from "../api/cartErrors";
 import { finderRel } from "../api/cartFolder";
 import { bacFilterFor, cartMatchesBacFilter, type BacFilter } from "../api/cartFlags";
 import { skippedFiles } from "../api/cartRefusals";
+import {
+  changedText,
+  formStillShown,
+  goneText,
+  lostText,
+  saveCartSettings,
+  type CartAnswer,
+  type CartForm,
+} from "../api/cartSave";
 import { clockCartUsages, hourUsages, kindLabel } from "../api/clockMeta";
 import { SessionGate } from "../api/SessionGate";
 import { cartTotalSeconds, formatClock, formatSpan, relayHost } from "../api/soundsView";
@@ -115,6 +124,9 @@ export function CartsPage() {
     requested && !cartMatchesBacFilter(requested, askedFilter) ? bacFilterFor(requested) : askedFilter;
   const carts = useMemo(() => all.filter((item) => cartMatchesBacFilter(item, filter)), [all, filter]);
   const cart = requested ?? carts[0] ?? null;
+  // What is on screen now, for a save that comes back after the person moved on.
+  const shown = useRef({ id: null as number | null, settings: false });
+  shown.current = { id: cart?.id ?? null, settings: inspectorOpen };
 
   const usage = useMemo(() => {
     const map: Record<number, BacUsage> = {};
@@ -274,19 +286,54 @@ export function CartsPage() {
     show(`« ${created.cart.title} » créé`, "success");
   };
 
-  const saveCart = async (payload: Record<string, unknown>) => {
-    if (!cart) return;
+  // The settings go with the version of the bac the form's typing started from. Changed
+  // elsewhere, the bac is read again, and the form that saved says what changed: it keeps
+  // what is being typed. Gone from the screen meanwhile, a toast says it instead.
+  const saveCart = async (
+    form: CartForm,
+    payload: Record<string, unknown>,
+    base: Cart,
+    stillHere: () => boolean,
+  ): Promise<CartAnswer | null> => {
     setBusy(true);
     try {
-      const saved = await apiPut<{ cart: Cart }>(`/carts/${cart.id}.json`, payload);
-      putCart(saved.cart);
-      await reload();
-      show("Bac enregistré", "success");
+      const result = await saveCartSettings(base, payload, {
+        put: async (body) => (await apiPut<{ cart: Cart }>(`/carts/${base.id}.json`, body)).cart,
+        read: async () => {
+          const fresh = await apiGet<CartsResponse>("/carts.json");
+          setData(fresh);
+          return fresh.carts.find((item) => item.id === base.id) ?? null;
+        },
+        refused: versionRefused,
+        gone: bacGone,
+      });
+      if (result.status === "saved") {
+        putCart(result.cart);
+        await reload();
+        show("Bac enregistré", "success");
+        return formStillShown(form, base.id, result.cart, shown.current) && stillHere() ? result : null;
+      }
+      if (result.status === "gone") {
+        const here = shown.current.id === base.id;
+        if (here) {
+          writeParams((next) => next.delete("id"));
+          setView("list");
+        }
+        await reload();
+        if (here) show(goneText(null), "error");
+        else show(goneText(base.title), "error", { duration: 9000 });
+        return null;
+      }
+      if (formStillShown(form, base.id, result.cart, shown.current) && stillHere()) {
+        return { status: "changed", cart: result.cart, text: changedText(result.settings) };
+      }
+      show(lostText(base.title, result.settings), "error", { duration: 9000 });
     } catch (caught) {
       fail(caught, "Enregistrement impossible.");
     } finally {
       setBusy(false);
     }
+    return null;
   };
 
   const deleteCart = async () => {
@@ -358,7 +405,11 @@ export function CartsPage() {
                 />
                 <SkippedFiles files={skippedFiles(cart)} folder={finderRel(cart.id, cart.title)} />
                 {cart.mode === "relay" ? (
-                  <RelayEditor cart={cart} busy={busy} onSave={saveCart} />
+                  <RelayEditor
+                    cart={cart}
+                    busy={busy}
+                    onSave={(payload, base, stillHere) => saveCart("relay", payload, base, stillHere)}
+                  />
                 ) : (
                   <SoundTable
                     cart={cart}
@@ -388,7 +439,7 @@ export function CartsPage() {
                   usage={usage[cart.id]}
                   taken={all.filter((item) => item.id !== cart.id).map((item) => item.title)}
                   onClose={toggleInspector}
-                  onSave={saveCart}
+                  onSave={(payload, base, stillHere) => saveCart("settings", payload, base, stillHere)}
                   onDelete={deleteCart}
                 />
               </>
