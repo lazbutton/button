@@ -17,7 +17,7 @@ La documentation est en français. Le [README](../README.en.md) existe aussi en 
 | Page | Contenu |
 |---|---|
 | [deploiement.md](deploiement.md) | Installer, régler, mettre à jour, revenir en arrière |
-| [exploitation/](exploitation/) | Fiches pratiques : banques et bacs, direct, dépôt de programmes, dossier Finder, bacs ouverts dans Dropbox, décrochage, invités, panne, sauvegarde |
+| [exploitation/](exploitation/) | Fiches pratiques : banques et bacs, direct, dépôt de programmes, dossier Finder, bacs ouverts dans Dropbox, décrochage, invités, panne, sauvegarde, alertes |
 
 ## Contribuer
 
