@@ -77,7 +77,7 @@ remote_installed() {
   grep -q "^# Ajouté par station config, le " "$DIR/.env"
   # Les secrets passent par l'environnement de docker, jamais par sa ligne de
   # commande, que ps montre.
-  logged "docker run --rm --network host --cpu-shares 256 -e NICE=10 -e RESTIC_REPOSITORY -e RESTIC_PASSWORD -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e TZ=Europe/Paris -e RESTIC_CACHE_DIR=/cache -v $DIR/data/restic/cache:/cache -v $DIR/data/restic/ssh:/root/.ssh docker.io/restic/restic:0.19.1 init"
+  logged "docker run --rm --network host --cpu-shares 256 --oom-score-adj 500 -e NICE=10 -e IONICE_CLASS=2 -e IONICE_PRIORITY=7 -e RESTIC_REPOSITORY -e RESTIC_PASSWORD -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e TZ=Europe/Paris -e RESTIC_CACHE_DIR=/cache -v $DIR/data/restic/cache:/cache -v $DIR/data/restic/ssh:/root/.ssh docker.io/restic/restic:0.19.1 init"
   run ! grep -qF -e "$password" -e cle-secrete-de-test "$FAKE_STATE/log"
   [ "$(cat "$(depot "$S3")/password")" = "$password" ]
   [ "$(stat -c %a "$DIR/data/restic")" = 700 ]
@@ -88,6 +88,7 @@ remote_installed() {
   grep -qxF "ExecStart=\"$DIR/station\" backup --remote --dir \"$DIR\"" "$UNITS/button-sauvegarde.service"
   grep -qxF "ExecStart=\"$DIR/station\" restore --remote --test --dir \"$DIR\"" "$UNITS/button-test-restauration.service"
   grep -qxF 'Environment=STATION_LOCK_WAIT=7200' "$UNITS/button-sauvegarde.service"
+  grep -qxF 'Environment=HOME=/root' "$UNITS/button-test-restauration.service"
   grep -qxF 'Persistent=true' "$UNITS/button-sauvegarde.timer"
   [ "$(stat -c %a "$UNITS/button-sauvegarde.timer")" = 644 ]
   logged "systemctl daemon-reload"
@@ -97,13 +98,17 @@ remote_installed() {
   assert_success
   assert_output --partial "Sauvegarde hors de la machine : chaque nuit à 03:00 (Europe/Paris), vers $S3, avec les sons"
 
-  # Relancée, la même commande revérifie le dépôt, sans rien changer.
+  # Relancée, la même commande revérifie le dépôt, sans rien changer : ses
+  # minuteurs ne se réécrivent pas, mais se réactivent.
   : >"$FAKE_STATE/log"
   station config --backup-remote "$S3"
   assert_success
   assert_output --partial "Dépôt : $S3, ouvert avec son mot de passe."
   assert_output --partial "Rien à changer"
-  run ! logged "systemctl"
+  refute_output --partial "La sauvegarde de la nuit attend"
+  run ! logged "systemctl daemon-reload"
+  logged "systemctl enable --now button-sauvegarde.timer button-test-restauration.timer"
+  [ "$(awk -F '\t' '$2 == "réglage"' "$DIR/backups-remote.log" | wc -l)" -eq 1 ]
 }
 
 @test "config : dans un terminal, le mot de passe d'un dépôt neuf s'affiche, une fois" {
@@ -140,6 +145,35 @@ remote_installed() {
   refute_output --partial "Mot de passe du dépôt"
   [ "$(env_of BUTTON_BACKUP_PASSWORD)" = le-bon-mot-de-passe ]
   [ -f "$UNITS/button-sauvegarde.timer" ]
+}
+
+@test "config : une station neuve devant un dépôt qui existe attend, jusqu'à sa première sauvegarde" {
+  installed
+  make_depot "$S3" le-bon-mot-de-passe
+  echo le-bon-mot-de-passe >"$BATS_TEST_TMPDIR/bon"
+  station config --backup-remote "$S3" --backup-s3-access-key CLEDACCES --backup-s3-secret-key-file "$SECRET" \
+    --backup-password-file "$BATS_TEST_TMPDIR/bon"
+  assert_success
+  assert_output --partial "La sauvegarde de la nuit attend : ce dépôt existait déjà"
+  [ -f "$DIR/data/restic/en-attente" ]
+  logged "systemctl disable --now button-sauvegarde.timer button-test-restauration.timer"
+  run ! logged "systemctl enable"
+  # Sauvegardée exprès, elle reprend la nuit.
+  : >"$FAKE_STATE/log"
+  station backup --remote
+  assert_success
+  [ ! -e "$DIR/data/restic/en-attente" ]
+  logged "systemctl enable --now button-sauvegarde.timer button-test-restauration.timer"
+  station status
+  refute_output --partial "en attente"
+  # Une station qui s'est déjà sauvegardée n'attend pas, même devant un autre
+  # dépôt qui existe.
+  local autre=s3:https://s3.stockage.example/autre/radio
+  make_depot "$autre" le-bon-mot-de-passe
+  station config --backup-remote "$autre"
+  assert_success
+  refute_output --partial "La sauvegarde de la nuit attend"
+  [ ! -e "$DIR/data/restic/en-attente" ]
 }
 
 @test "config : un mot de passe avec \$, # ou un espace se garde entre apostrophes, et sert tel quel" {
@@ -359,6 +393,23 @@ radiotomate.tar.gz"
   assert_output --partial "la rotation du dépôt a échoué : la sauvegarde"
   remote_lines sauvegarde faite | grep -F "sans des fichiers qui ne se lisaient pas" | grep -qF "la rotation a échoué"
   grep -qF "Rotation de la sauvegarde hors de la machine ratée" "$FAKE_STATE/alerts"
+  # Une rotation qui échoue sans un mot : la sauvegarde reste faite.
+  rm "$FAKE_STATE/restic-backup-partial"
+  echo silencieux >"$FAKE_STATE/restic-forget-fails"
+  station backup --remote
+  assert_success
+  [ "$(remote_lines sauvegarde faite | wc -l)" -eq 2 ]
+  [ -z "$(remote_lines sauvegarde échouée)" ]
+}
+
+@test "backup --remote ne part pas tant qu'une restauration n'est pas finie" {
+  remote_installed
+  printf '%s\n' "# station restore, le 10/11/2026 à 13:00 : pas finie, tant que ce fichier est là." >"$DIR/restauration-en-cours"
+  station backup --remote
+  assert_failure
+  assert_output --partial "Une restauration ne s'est pas finie : $DIR/restauration-en-cours est encore là. La sauvegarde hors de la machine ne part pas."
+  run ! logged "restic/restic:0.19.1 backup"
+  grep -qF "La sauvegarde hors de la machine a échoué : Une restauration ne s'est pas finie" "$FAKE_STATE/alerts"
 }
 
 @test "backup --remote : sans dépôt, ou avec une archive ou --with-media, dit quoi faire" {
@@ -376,13 +427,24 @@ radiotomate.tar.gz"
 
 @test "la sauvegarde de la nuit attend une autre commande, STATION_LOCK_WAIT secondes au plus" {
   remote_installed
-  run env STATION_LOCK_WAIT=1 flock "$ROOT/run/button-station.lock" bash "$STATION" backup --remote
+  local lock=$ROOT/run/button-station.lock
+  # Une commande qui finit pendant l'attente : la sauvegarde part ensuite.
+  flock "$lock" sleep 2 &
+  sleep 0.5
+  run env STATION_LOCK_WAIT=10 bash "$STATION" backup --remote
+  assert_success
+  assert_output --partial "Une autre commande station tourne : station backup attend qu'elle finisse, 10 s au plus."
+  assert_output --partial "Sauvegarde hors de la machine : faite,"
+  refute_output --partial "unrecognized option"
+  wait
+  # Une commande qui dure plus que l'attente : l'échec et l'alerte.
+  run env STATION_LOCK_WAIT=1 flock "$lock" bash "$STATION" backup --remote
   assert_failure
-  assert_output --partial "Une autre commande station tourne : station backup attend qu'elle finisse, 1 s au plus."
+  assert_output --partial "attend qu'elle finisse, 1 s au plus."
   assert_output --partial "Une autre commande station tourne déjà sur cette machine."
   grep -qF "La sauvegarde hors de la machine a échoué : Une autre commande station tourne déjà" "$FAKE_STATE/alerts"
   # Sans attente, comme avant.
-  run flock "$ROOT/run/button-station.lock" bash "$STATION" backup --remote
+  run flock "$lock" bash "$STATION" backup --remote
   assert_failure
   refute_output --partial "attend qu'elle finisse"
 }
@@ -393,6 +455,7 @@ radiotomate.tar.gz"
   remote_installed
   mkdir -p "$DIR/media/10-rotation"
   echo "le son sauvegardé" >"$DIR/media/10-rotation/titre.mp3"
+  printf 'ICECAST_MOUNT=antenne.mp3\nSUR_TOKEN=jeton-de-la-sauvegarde\n' >>"$DIR/.env"
   station backup --remote
   assert_success
   cp "$DIR/data/radiotomate/radiotomate.db" "$BATS_TEST_TMPDIR/base"
@@ -404,16 +467,30 @@ radiotomate.tar.gz"
   new_machine
   cp -R "$BATS_TEST_TMPDIR/stockage" "$FAKE_STATE/depots"
   installed
+  echo "SUR_TOKEN=jeton-d-ici" >>"$DIR/.env"
   local secret
   secret=$(env_of MEILI_MASTER_KEY)
   run ! cmp -s "$BATS_TEST_TMPDIR/base" "$DIR/data/radiotomate/radiotomate.db"
+  : >"$FAKE_STATE/log"
   station config --backup-remote "$S3" --backup-s3-access-key CLEDACCES --backup-s3-secret-key-file "$SECRET" \
     --backup-password-file "$BATS_TEST_TMPDIR/mot-de-passe"
   assert_success
+  # Neuve, devant un dépôt qui a des sauvegardes : la nuit attend, sinon la
+  # station vide deviendrait la dernière.
+  assert_output --partial "La sauvegarde de la nuit attend : ce dépôt existait déjà, et cette station ne s'est jamais sauvegardée."
+  refute_output --partial "La première sauvegarde part cette nuit"
+  [ -f "$DIR/data/restic/en-attente" ]
+  [ -f "$UNITS/button-sauvegarde.timer" ]
+  logged "systemctl disable --now button-sauvegarde.timer button-test-restauration.timer"
+  run ! logged "systemctl enable"
+  station status
+  assert_output --partial "Sauvegarde hors de la machine : en attente, vers $S3, un dépôt qui existait déjà."
   : >"$FAKE_STATE/log"
   station restore --remote
   assert_failure
   assert_output --partial "Sans terminal, station restore attend --yes pour se faire."
+  # Avant de rien lire du dépôt.
+  run ! logged "restic/restic:0.19.1 restore"
   station restore --remote --yes
   assert_success
   assert_output --partial "Restauration : lecture de la dernière sauvegarde du dépôt, $S3."
@@ -435,7 +512,13 @@ radiotomate.tar.gz"
   [ -n "$(leftovers 'media.avant-restauration-*')" ]
   [ -z "$(find "$DIR" -name '*.restauration-*' ! -name '*.avant-restauration-*')" ]
   [ ! -e "$DIR/restauration-en-cours" ]
-  # Les minuteurs restent, à l'heure de la station.
+  # De .env, les valeurs qui diffèrent, sans les secrets.
+  assert_output --partial "Leurs valeurs dans la sauvegarde : ICECAST_MOUNT=antenne.mp3."
+  refute_output --partial "jeton-de-la-sauvegarde"
+  refute_output --partial "SUR_TOKEN"
+  # Remise, la station reprend la nuit.
+  [ ! -e "$DIR/data/restic/en-attente" ]
+  logged "systemctl enable --now button-sauvegarde.timer button-test-restauration.timer"
   [ -f "$UNITS/button-sauvegarde.timer" ]
 }
 
@@ -468,6 +551,11 @@ radiotomate.tar.gz"
   logged "docker.io/restic/restic:0.19.1 snapshots --host button"
   run ! logged " stop (dans $DIR)"
 
+  station restore --remote --test "$first"
+  assert_success
+  assert_output --partial "Test de restauration : la sauvegarde $first, sans ses sons, dans un dossier temporaire."
+  assert_output --partial "Test de restauration : réussi. La sauvegarde $first,"
+
   station restore --remote "$first" --yes
   assert_success
   cmp "$BATS_TEST_TMPDIR/base" "$DIR/data/radiotomate/radiotomate.db"
@@ -482,6 +570,68 @@ radiotomate.tar.gz"
   [ "$status" -eq 2 ]
   station restore --list
   [ "$status" -eq 2 ]
+}
+
+@test "restore --remote : une station qui ne repart pas laisse revenir celle d'avant, sons compris" {
+  remote_installed
+  mkdir -p "$DIR/media/10-rotation"
+  echo "le son sauvegardé" >"$DIR/media/10-rotation/titre.mp3"
+  station backup --remote
+  assert_success
+  echo "un son d'après" >"$DIR/media/10-rotation/titre.mp3"
+  echo "écrit depuis la sauvegarde" >>"$DIR/data/radiotomate/radiotomate.db"
+  local base
+  base=$(cat "$DIR/data/radiotomate/radiotomate.db")
+  touch "$FAKE_STATE/up-fails"
+  station restore --remote --yes
+  assert_failure
+  assert_output --partial "La station ne démarre pas sur la sauvegarde"
+  assert_output --partial "la restauration s'annule : la station d'avant reprend sa place, et repart."
+  [ "$(cat "$DIR/data/radiotomate/radiotomate.db")" = "$base" ]
+  [ "$(cat "$DIR/media/10-rotation/titre.mp3")" = "un son d'après" ]
+  [ -z "$(leftovers '*restauration-*')" ]
+  [ ! -e "$DIR/restauration-en-cours" ]
+  # Une restauration ratée n'est pas une sauvegarde ratée : pas d'alerte.
+  [ ! -e "$FAKE_STATE/alerts" ]
+}
+
+@test "restore --remote ne remplace pas une banque qui est un point de montage, et dit quoi faire" {
+  remote_installed
+  station backup --remote
+  assert_success
+  local id
+  id=$(last_snapshot)
+  id=${id##*-}
+  echo "$DIR/media" >"$FAKE_STATE/mounts"
+  : >"$FAKE_STATE/log"
+  station restore --remote --yes
+  assert_failure
+  assert_output --partial "La banque de sons, $DIR/media, est un point de montage : restore ne sait pas la remplacer. Rien n'a changé."
+  assert_output --partial "station restore --remote $id --without-media, puis y remettre ceux de la sauvegarde : voir docs/exploitation/sauvegarde.md, « Une banque sur son propre disque »."
+  refute_output --partial "tar -xf"
+  run ! logged " stop (dans $DIR)"
+  station restore --remote "$id" --yes --without-media
+  assert_success
+}
+
+@test "restore --remote d'une sauvegarde qui n'est pas d'une station le dit, sans rien changer" {
+  remote_installed
+  station backup --remote
+  assert_success
+  local snapshot
+  snapshot=$(depot "$S3")/snapshots/999-0badcafe
+  mkdir -p "$snapshot/tree/autre"
+  echo button >"$snapshot/tags"
+  echo button >"$snapshot/host"
+  : >"$FAKE_STATE/log"
+  station restore --remote 0badcafe --yes
+  assert_failure
+  assert_output --partial "La sauvegarde 0badcafe du dépôt n'est pas une sauvegarde de station : elle n'a pas de MANIFEST."
+  refute_output --partial "sed:"
+  run ! logged " stop (dans $DIR)"
+  station restore --remote --test 0badcafe
+  assert_failure
+  remote_lines test échoué | grep -qF "n'est pas une sauvegarde de station"
 }
 
 @test "restore --remote d'une sauvegarde sans les sons, ou --without-media, garde la banque" {
@@ -553,7 +703,7 @@ radiotomate.tar.gz"
   remote_installed
   rm "$UNITS/button-sauvegarde.timer"
   station status
-  assert_output --partial "le minuteur de la sauvegarde hors de la machine manque"
+  assert_output --partial "le minuteur de la sauvegarde hors de la machine ne tourne pas"
   install_station
   assert_success
   [ -f "$UNITS/button-sauvegarde.timer" ]
@@ -574,6 +724,62 @@ radiotomate.tar.gz"
   assert_success
   [ -f "$UNITS/button-sauvegarde.timer" ]
   [ -f "$UNITS/button-test-restauration.service" ]
+}
+
+@test "les minuteurs : status dit qu'ils ne tournent pas, et install les réactive sans les réécrire" {
+  remote_installed
+  touch "$FAKE_STATE/timers-stopped"
+  station status
+  assert_output --partial "le minuteur de la sauvegarde hors de la machine ne tourne pas : elle ne part pas seule chaque nuit. station install le remet."
+  : >"$FAKE_STATE/log"
+  install_station
+  assert_success
+  logged "systemctl enable --now button-sauvegarde.timer button-test-restauration.timer"
+  run ! logged "systemctl daemon-reload"
+}
+
+@test "status avertit : aucune sauvegarde depuis le réglage, aucun test, un test raté ou trop vieux" {
+  remote_installed
+  # Les lignes d'une sorte de backups-remote.log, vieillies de tant de jours.
+  age() { # sorte, jours
+    awk -F '\t' -v OFS='\t' -v kind="$1" -v time=$(($(date +%s) - $2 * 86400)) \
+      '$2 == kind { $1 = time } { print }' "$DIR/backups-remote.log" >"$BATS_TEST_TMPDIR/journal"
+    cat "$BATS_TEST_TMPDIR/journal" >"$DIR/backups-remote.log"
+  }
+  station status
+  refute_output --partial "Attention"
+  age réglage 3
+  station status
+  assert_output --partial "aucune sauvegarde hors de la machine n'a réussi depuis son réglage, le "
+  refute_output --partial "aucun test de restauration"
+  age réglage 40
+  station status
+  assert_output --partial "aucun test de restauration depuis le réglage de la sauvegarde hors de la machine"
+
+  station backup --remote
+  assert_success
+  station restore --remote --test
+  assert_success
+  station status
+  refute_output --partial "Attention"
+  age sauvegarde 3
+  age test 40
+  station status
+  assert_output --partial "la dernière sauvegarde hors de la machine réussie date du "
+  assert_output --partial "le dernier test de restauration date du "
+  touch "$FAKE_STATE/restic-check-fails"
+  station restore --remote --test
+  assert_failure
+  station status
+  assert_output --partial "le dernier test de restauration a échoué. Voir pourquoi : journalctl -u button-test-restauration"
+}
+
+@test "systemd_quote garde un chemin tel quel dans une ligne de commande de systemd" {
+  # shellcheck disable=SC2016
+  run bash -c 'source "$1"; systemd_quote "$2"' _ "$STATION" '/opt/radio 100%/$HOME/"x"\y'
+  assert_success
+  # shellcheck disable=SC2016
+  assert_output '"/opt/radio 100%%/$$HOME/\"x\"\\y"'
 }
 
 @test "les minuteurs suivent le fuseau d'une restauration, et s'en vont devant une commande qui ne les connaît pas" {

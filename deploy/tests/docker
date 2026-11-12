@@ -207,7 +207,8 @@ compose_run() {
 # les clés S3 : $state/restic-refuses. Une sauvegarde qui échoue :
 # $state/restic-backup-fails ; faite sans des fichiers illisibles, code 3 :
 # $state/restic-backup-partial. Une rotation qui échoue :
-# $state/restic-forget-fails ; un dépôt que check refuse :
+# $state/restic-forget-fails, sans un mot s'il n'est pas vide ; un dépôt que
+# check refuse :
 # $state/restic-check-fails. ssh-keygen, par --entrypoint, pose une fausse clé.
 restic_run() {
   local volumes=() entrypoint="" spec repo command
@@ -215,7 +216,7 @@ restic_run() {
   while (($#)); do
     case $1 in
       --rm) shift ;;
-      --network | --cpu-shares) shift 2 ;;
+      --network | --cpu-shares | --oom-score-adj) shift 2 ;;
       -e)
         [[ $2 != *=* ]] || export "${2?}"
         shift 2
@@ -341,7 +342,10 @@ restic_run() {
       fi
       ;;
     forget)
-      if [[ -e $state/restic-forget-fails ]]; then
+      # Sans un mot, si le fichier n'est pas vide.
+      if [[ -s $state/restic-forget-fails ]]; then
+        exit 1
+      elif [[ -e $state/restic-forget-fails ]]; then
         echo "Fatal: unable to remove snapshots: connection reset by peer" >&2
         exit 3
       fi

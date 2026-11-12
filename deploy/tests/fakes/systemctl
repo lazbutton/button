@@ -1,3 +1,5 @@
 #!/usr/bin/env bash
-# Un faux systemctl, qui note seulement.
+# Un faux systemctl, qui note seulement. is-active dit les minuteurs arrêtés
+# quand $FAKE_STATE/timers-stopped est là.
 echo "systemctl $*" >>"$FAKE_STATE/log"
+[[ ${1:-} != is-active || ! -e $FAKE_STATE/timers-stopped ]] || exit 3
