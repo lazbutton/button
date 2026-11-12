@@ -76,6 +76,29 @@ JOURNAL=restauration-en-cours
 # L'heure des mises à jour automatiques, à celle de la station (TZ), quand
 # BUTTON_UPDATE_TIME manque à .env. Elles viendront avec MAJ-06, qui la lira.
 UPDATE_TIME=04:00
+# La sauvegarde hors de la machine (SAV-01) : restic, dans son image
+# officielle, épinglée, tirée de Docker Hub. L'hôte n'a besoin que de Docker,
+# et chaque station a la même version. Dependabot ne la suit pas : la monter
+# à la main, avec ses notes de version.
+RESTIC_IMAGE=docker.io/restic/restic:0.19.1
+# Ce que le dépôt garde : 7 sauvegardes quotidiennes, 4 hebdomadaires et 6
+# mensuelles.
+REMOTE_KEEP=(--keep-daily 7 --keep-weekly 4 --keep-monthly 6)
+# Le nom d'hôte des sauvegardes dans le dépôt : le même d'une machine à
+# l'autre, pour que la rotation compte ensemble celles d'avant et d'après un
+# changement de machine.
+REMOTE_HOST=button
+# L'heure de la sauvegarde de la nuit, à celle de la station, quand
+# BUTTON_BACKUP_TIME manque à .env : avant celle des mises à jour. Puis
+# l'heure du test de restauration, le 1er de chaque mois.
+BACKUP_TIME=03:00
+REMOTE_TEST_TIME=05:00
+# Les minuteurs systemd de la nuit et du mois, et leurs services.
+UNITS=$ROOT/etc/systemd/system
+REMOTE_UNITS=(button-sauvegarde.timer button-test-restauration.timer button-sauvegarde.service
+  button-test-restauration.service)
+# Le journal des sauvegardes hors de la machine et des tests, que status lit.
+REMOTE_LOG=backups-remote.log
 # Ce que cleanup défait en sortant : le dossier de travail ; celui des
 # fichiers d'une version, que station update garde à part ; le conteneur de
 # la vérification du domaine s'il tourne encore ; Caddy, arrêté pour elle ;
@@ -111,6 +134,12 @@ others=()
 # Un retour arrière de station rollback, en cours : cleanup note son échec,
 # sans revenir sur ses pas.
 rolling_back=""
+# Une sauvegarde hors de la machine, ou un test de restauration, en cours :
+# le dossier de la station, sauvegarde ou test, et son nom. S'il s'arrête en
+# erreur, cleanup le note dans backups-remote.log et donne l'alerte
+# (remote_failed), avec le message du dernier die.
+remote_job=()
+died=""
 # Sans --yes, une question se pose au clavier. Une interruption au clavier
 # dit ce message.
 assume_yes=""
@@ -118,8 +147,10 @@ aborted="Installation interrompue : rien n'est écrit. Relancer station install.
 
 say() { printf '%s\n' "$@"; }
 warn() { printf 'Attention : %s\n' "$@" >&2; }
-# Un échec : ce qui ne va pas, puis quoi faire.
+# Un échec : ce qui ne va pas, puis quoi faire. died le garde, pour l'alerte
+# d'une sauvegarde hors de la machine.
 die() {
+  died="$*"
   printf '%s\n' "$@" >&2
   exit 1
 }
@@ -141,9 +172,10 @@ La commande d'une station BUTTON sur un VPS, en root.
   rollback       défaire la dernière mise à jour
   status         son état : version, services, disque, prochain direct
   logs           ses journaux
-  backup         la sauvegarder, sans couper l'antenne
+  backup         la sauvegarder, sans couper l'antenne, ici ou hors de la machine
   restore        remettre une sauvegarde, ici ou sur une autre machine
-  config         voir ou changer le domaine, l'e-mail, les mises à jour
+  config         voir ou changer le domaine, l'e-mail, les mises à jour, la
+                 sauvegarde hors de la machine
   hold, unhold   bloquer, débloquer les mises à jour
   cli            une commande du moteur, radiotomate
   uninstall      la désinstaller
@@ -233,6 +265,7 @@ EOF
     backup)
       cat <<'EOF'
 Usage : station backup [ARCHIVE] [--with-media] [--dir DOSSIER]
+        station backup --remote [--dir DOSSIER]
 
 Sauvegarde la station sans couper l'antenne : la base, avec les comptes, les
 horloges, l'Agenda et les réglages, radiotomate.yaml, .env et les certificats
@@ -242,11 +275,20 @@ ARCHIVE : le fichier à écrire, ou un dossier où l'écrire. Sinon, backups/,
 dans le dossier de la station, sous le nom button-AAAAMMJJTHHMMSSZ.tar.
 L'archive est en droits 600, à root : elle porte les secrets de .env, hors du
 mot de passe admin. Elle se remet par station restore.
+
+--remote : la même sauvegarde, hors de la machine, dans le dépôt de restic
+que règle station config --backup-remote, chiffrée avant l'envoi. Avec les
+sons, sauf station config --backup-media no. Le dépôt en garde 7
+quotidiennes, 4 hebdomadaires et 6 mensuelles. Un minuteur la fait chaque
+nuit ; elle se remet par station restore --remote.
 EOF
       ;;
     restore)
       cat <<'EOF'
 Usage : station restore ARCHIVE [--without-media] [--yes] [--dir DOSSIER]
+        station restore --remote [ID] [--without-media] [--yes] [--dir DOSSIER]
+        station restore --remote --list [--dir DOSSIER]
+        station restore --remote --test [ID] [--dir DOSSIER]
 
 Remet une sauvegarde de station backup, sur cette station ou sur une autre
 machine, après station install. La base, les certificats de Caddy et, s'ils y
@@ -256,7 +298,12 @@ la sauvegarde : le reste est celui de cette machine, domaine compris. L'antenne
 se coupe le temps de redémarrer. Si la station ne repart pas, celle d'avant
 revient.
 
---without-media : garder la banque de sons en place, même si l'archive en a.
+--remote : depuis le dépôt de la sauvegarde hors de la machine, que règle
+station config --backup-remote : la dernière sauvegarde, ou celle dont l'ID
+est donné. --list les montre, avec leur ID. --test en restaure une dans un
+dossier temporaire, sans les sons, et vérifie sa base, sans rien changer :
+le minuteur le fait le 1er de chaque mois.
+--without-media : garder la banque de sons en place, même si la sauvegarde en a.
 --yes : sans confirmation, pour un script.
 EOF
       ;;
@@ -270,6 +317,22 @@ Sans option : les réglages de la station. Avec, les change dans .env :
   --updates auto|manual   les mises à jour automatiques
   --update-time HH:MM     leur heure, à celle de la station (04:00)
   --no-domain-check       ne pas vérifier que le domaine mène ici
+
+La sauvegarde hors de la machine, chaque nuit, par restic :
+  --backup-remote DÉPÔT   son dépôt, chez un autre fournisseur que celui de
+                          cette machine : s3:https://HÔTE/BUCKET/CHEMIN, ou
+                          sftp:COMPTE@HÔTE:/CHEMIN ; "" l'arrête
+  --backup-s3-access-key CLÉ           la clé d'accès d'un dépôt S3
+  --backup-s3-secret-key-file FICHIER  sa clé secrète, dans un fichier
+  --backup-password-file FICHIER       le mot de passe d'un dépôt qui existe
+                          déjà ; sans lui, un dépôt neuf en reçoit un, tiré
+                          au hasard, à noter
+  --backup-media yes|no   les sons dans la sauvegarde (yes)
+  --backup-time HH:MM     son heure, à celle de la station (03:00)
+
+Le dépôt se vérifie avant que rien ne change : restic s'y connecte, avec le
+mot de passe, et le crée s'il n'existe pas. Un dépôt SFTP demande que le
+stockage autorise la clé SSH de la station, que la commande montre.
 
 Changer le domaine ou l'e-mail redémarre Caddy : le flux se coupe un instant.
 EOF
@@ -1075,11 +1138,18 @@ admin_password() {
 }
 
 cleanup() {
+  # Le code de sortie de la commande, lu avant toute autre commande.
+  local status=$?
   # Ce qui reste à défaire va jusqu'au bout : ni une erreur, ni un message qui
   # ne s'écrit plus (terminal fermé, | tee arrêté), ni un second Ctrl-C ne
   # l'arrêtent.
   set +e
   trap '' INT TERM HUP PIPE
+  # Une sauvegarde hors de la machine, ou un test, qui s'arrête en erreur.
+  if ((${#remote_job[@]})) && ((status != 0)); then
+    remote_failed "$status"
+  fi
+  remote_job=()
   [[ -z ${probe_started:-} ]] || docker rm -f "$PROBE" >/dev/null 2>&1 || true
   if [[ -n ${caddy_stopped:-} ]]; then
     (cd "$caddy_stopped" && docker compose up -d caddy >/dev/null 2>&1) ||
@@ -1105,6 +1175,7 @@ cleanup() {
   done
   [[ -z ${work:-} ]] || rm -rf "$work"
   [[ -z ${staged:-} ]] || rm -rf "$staged"
+  return 0
 }
 
 # --- install ---
@@ -1314,6 +1385,9 @@ cmd_install() {
     say "  Mises à jour : à la main, par station update"
   fi
   record_versions
+  # Les minuteurs de la sauvegarde hors de la machine, si .env la règle :
+  # après une désinstallation qui a gardé les données, par exemple.
+  remote_timers || true
   if [[ -n $first ]]; then
     admin_password
   fi
@@ -1437,12 +1511,19 @@ open_station() { # commande, --dir donné, ou rien
 
 # Une commande qui change la station la prend pour elle seule : une
 # restauration, une réparation par install et une mise à jour (MAJ-04) ne se
-# croisent pas. Le verrou tombe avec la commande.
+# croisent pas. Le verrou tombe avec la commande. STATION_LOCK_WAIT, en
+# secondes, fait attendre qu'il se libère : les minuteurs de la sauvegarde
+# hors de la machine le posent, plutôt que d'échouer pendant une mise à jour.
 lock_station() { # commande
+  local wait=${STATION_LOCK_WAIT:-}
   mkdir -p "${LOCK%/*}"
   exec 9>>"$LOCK"
-  flock -n 9 ||
-    die "Une autre commande station tourne déjà sur cette machine." "Attendre qu'elle finisse, puis relancer station $1."
+  flock -n 9 && return 0
+  if [[ $wait =~ ^[0-9]{1,6}$ ]] && ((wait > 0)); then
+    say "Une autre commande station tourne : station $1 attend qu'elle finisse, $([[ $wait -ge 120 ]] && echo "$((wait / 60)) min" || echo "$wait s") au plus."
+    flock -w "$wait" 9 && return 0
+  fi
+  die "Une autre commande station tourne déjà sur cette machine." "Attendre qu'elle finisse, puis relancer station $1."
 }
 
 # La version de la station : celle que .env épingle, sinon celle du dossier.
@@ -1716,6 +1797,7 @@ cmd_status() {
   disk_report
   next_live_report
   backup_report
+  remote_report
   [[ -n $healthy ]]
 }
 
@@ -1894,9 +1976,21 @@ cmd_backup() {
   local dir="" env_file="" archive
   local -A opts=()
   local args=()
-  parse_options "--with-media -h --help" "--dir" "$@"
+  parse_options "--with-media --remote -h --help" "--dir" "$@"
   if help_asked; then
     usage_command backup
+    return 0
+  fi
+  if [[ -n ${opts[--remote]:-} ]]; then
+    ((${#args[@]} == 0)) || usage_error "Argument inattendu : ${args[0]}. station backup --remote n'écrit pas d'archive : elle va dans le dépôt."
+    [[ -z ${opts[--with-media]:-} ]] ||
+      usage_error "--with-media ne va pas avec --remote : les sons de la sauvegarde hors de la machine se règlent par station config --backup-media."
+    open_station backup "${opts[--dir]:-}"
+    # L'échec se note et donne l'alerte, même celui du verrou.
+    remote_job=("$dir" sauvegarde "la sauvegarde hors de la machine")
+    trap cleanup EXIT
+    lock_station backup
+    backup_remote
     return 0
   fi
   ((${#args[@]} <= 1)) || usage_error "Argument inattendu : ${args[1]}. Une seule archive."
@@ -2050,17 +2144,524 @@ backup_pack() { # dossier, archive, banque de sons ou rien
   partial=""
 }
 
+# --- La sauvegarde hors de la machine (SAV-01) ---
+
+# Les réglages de la sauvegarde hors de la machine, lus dans .env, dans les
+# variables de l'appelant : le dépôt de restic, son mot de passe, et les clés
+# d'un dépôt S3.
+remote_load() {
+  remote=$(env_value BUTTON_BACKUP_REMOTE)
+  remote_password=$(env_value BUTTON_BACKUP_PASSWORD)
+  remote_access_key=$(env_value BUTTON_BACKUP_S3_ACCESS_KEY)
+  remote_secret_key=$(env_value BUTTON_BACKUP_S3_SECRET_KEY)
+}
+
+# Un dépôt réglé, avec son mot de passe.
+remote_ready() {
+  [[ -n $remote ]] ||
+    die "Aucune sauvegarde hors de la machine n'est réglée sur cette station." \
+      "La régler : station config --backup-remote DÉPÔT. Voir docs/exploitation/sauvegarde.md, « Hors de la machine »."
+  [[ -n $remote_password ]] ||
+    die "Le mot de passe du dépôt, BUTTON_BACKUP_PASSWORD, manque dans $env_file." \
+      "Le redonner : station config --backup-remote $remote --backup-password-file FICHIER."
+  return 0
+}
+
+# L'image de restic, tirée si elle manque.
+restic_image() {
+  docker image inspect "$RESTIC_IMAGE" >/dev/null 2>&1 || docker pull -q "$RESTIC_IMAGE" >/dev/null ||
+    die "L'image de restic, $RESTIC_IMAGE, ne se tire pas." "Vérifier l'accès de la machine à Docker Hub, puis relancer."
+}
+
+# restic, dans son image, sur le dépôt de l'appelant (remote, remote_password,
+# remote_access_key, remote_secret_key) : sur le réseau de la machine, à
+# l'heure de la station, avec son cache et la clé SSH de la station, dans
+# data/restic. Les secrets passent par l'environnement de docker, jamais par
+# sa ligne de commande, que ps montre. Il cède le processeur à l'antenne
+# (--cpu-shares, nice). Dans un terminal, il dit où il en est. Les options de
+# docker run viennent avant --, puis la commande de restic.
+restic_run() { # options de docker run…, --, commande de restic…
+  local options=() base=$dir/data/restic
+  while (($#)) && [[ $1 != -- ]]; do
+    options+=("$1")
+    shift
+  done
+  shift
+  install -d -m 700 "$base" "$base/cache" "$base/ssh"
+  ! terminal || options+=(-e RESTIC_PROGRESS_FPS=0.1)
+  RESTIC_REPOSITORY=$remote RESTIC_PASSWORD=$remote_password \
+    AWS_ACCESS_KEY_ID=$remote_access_key AWS_SECRET_ACCESS_KEY=$remote_secret_key \
+    docker run --rm --network host --cpu-shares 256 -e NICE=10 \
+    -e RESTIC_REPOSITORY -e RESTIC_PASSWORD -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY \
+    -e "TZ=$(env_value TZ Europe/Paris)" -e RESTIC_CACHE_DIR=/cache -v "$base/cache:/cache" -v "$base/ssh:/root/.ssh" \
+    "${options[@]}" "$RESTIC_IMAGE" "$@"
+}
+
+# restic restore de la sauvegarde $snapshot, la dernière ou celle d'un ID,
+# dans un dossier de la machine : ce qu'elle a sous /sauvegarde, que les
+# --include choisissent, y revient sous sauvegarde/.
+remote_restore() { # dossier, --include …
+  local target=$1 host=()
+  shift
+  [[ $snapshot != latest ]] || host=(--host "$REMOTE_HOST")
+  restic_run -v "$target:/cible" -- restore "$snapshot" "${host[@]}" --target /cible "$@"
+}
+
+# La sauvegarde du dépôt que lit restore --remote, en mots.
+snapshot_label() {
+  if [[ $snapshot == latest ]]; then
+    echo "la dernière sauvegarde"
+  else
+    echo "la sauvegarde $snapshot"
+  fi
+}
+
+# Pour un dépôt SFTP : la clé SSH de la station, tirée une fois dans
+# data/restic/ssh, que le stockage doit autoriser, et la configuration de ssh,
+# que restic lance dans son conteneur. L'hôte du stockage est retenu à la
+# première connexion, puis vérifié à chacune.
+remote_ssh() {
+  local ssh=$dir/data/restic/ssh config
+  install -d -m 700 "$dir/data/restic" "$ssh"
+  if [[ ! -s $ssh/id_ed25519 ]]; then
+    rm -f "$ssh/id_ed25519" "$ssh/id_ed25519.pub"
+    docker run --rm -v "$ssh:/cles" --entrypoint ssh-keygen "$RESTIC_IMAGE" \
+      -q -t ed25519 -N '' -C "button-sauvegarde@$(env_value DOMAIN station)" -f /cles/id_ed25519 >/dev/null ||
+      die "La clé SSH de la sauvegarde ne se crée pas : voir le message plus haut." "Vérifier Docker, puis relancer."
+    say "Clé SSH : créée pour la sauvegarde hors de la machine, $ssh/id_ed25519.pub."
+  fi
+  config="# Pour restic, dans son conteneur : la clé SSH de la station, et l'hôte du
+# stockage, retenu à la première connexion. Écrit par la commande station.
+Host *
+  IdentityFile /root/.ssh/id_ed25519
+  IdentitiesOnly yes
+  UserKnownHostsFile /root/.ssh/known_hosts
+  StrictHostKeyChecking accept-new
+  BatchMode yes
+  ServerAliveInterval 60
+  ServerAliveCountMax 10"
+  if [[ ! -f $ssh/config || $(<"$ssh/config") != "$config" ]]; then
+    install -m 600 /dev/null "$ssh/config.station-$$"
+    printf '%s\n' "$config" >"$ssh/config.station-$$"
+    mv -f "$ssh/config.station-$$" "$ssh/config"
+  fi
+}
+
+# Le dépôt de station config, vérifié avant que rien ne s'écrive dans .env :
+# restic init le crée s'il n'existe pas, sinon s'arrête sur lui, et restic
+# cat config l'ouvre avec son mot de passe. init échoue vite quand le
+# stockage ne répond pas ou refuse les clés, quand cat config, lui, réessaie
+# un quart d'heure. Un dépôt qui existe déjà demande son propre mot de passe :
+# celui tiré au hasard (generated) ne vaut que pour un dépôt neuf (fresh).
+remote_probe() {
+  local status=0
+  restic_image
+  [[ $remote != sftp:* ]] || remote_ssh
+  say "Dépôt : connexion à $remote."
+  restic_run -- init >"$work/restic.log" 2>&1 || status=$?
+  if ((status == 0)); then
+    fresh=1
+    return 0
+  fi
+  grep -qE 'already initialized|already exists' "$work/restic.log" || remote_refused
+  [[ -z $generated ]] ||
+    die "Le dépôt $remote existe déjà : il a son propre mot de passe. Rien n'est changé." \
+      "Donner le mot de passe noté à sa création : station config --backup-remote $remote --backup-password-file FICHIER."
+  status=0
+  restic_run -- cat config >"$work/restic.log" 2>&1 || status=$?
+  case $status in
+    0) return 0 ;;
+    12)
+      die "Ce mot de passe n'ouvre pas le dépôt $remote. Rien n'est changé." \
+        "Donner le mot de passe noté à sa création : --backup-password-file FICHIER."
+      ;;
+  esac
+  remote_refused
+}
+
+# Le dépôt ne s'ouvre pas : ce que dit restic, et quoi faire. Pour un dépôt
+# SFTP, la clé SSH que le stockage doit autoriser.
+remote_refused() {
+  grep -v '^ *$' "$work/restic.log" | tail -n 5 >&2
+  if [[ $remote == sftp:* ]]; then
+    printf '%s\n' "La clé SSH de la station, que le stockage doit autoriser, dans ses clés autorisées (authorized_keys) :" \
+      "  $(cat "$dir/data/restic/ssh/id_ed25519.pub" 2>/dev/null)" >&2
+    die "Le dépôt $remote ne s'ouvre pas : voir le message de restic plus haut. Rien n'est changé dans .env." \
+      "Vérifier l'adresse, et que le stockage autorise la clé SSH de la station, ci-dessus. Puis relancer la même commande."
+  fi
+  die "Le dépôt $remote ne s'ouvre pas : voir le message de restic plus haut. Rien n'est changé." \
+    "Vérifier l'adresse, le bucket, les clés S3 et l'accès de la machine au stockage. Puis relancer."
+}
+
+# La sauvegarde hors de la machine : ce que porte une archive de station
+# backup, préparé de même par backup_stage, et la banque de sons, sauf
+# BUTTON_BACKUP_MEDIA=no, envoyés par restic dans le dépôt, chiffrés avant
+# l'envoi. Dans le dépôt, tout est sous /sauvegarde, la banque sous
+# /sauvegarde/media : MANIFEST la nomme media. Elle se lit sur place, sans
+# copie, et restic n'envoie que ce que le dépôt n'a pas encore. Puis la
+# rotation : le dépôt ne garde que REMOTE_KEEP. L'antenne continue. Une ligne
+# de backups-remote.log la note ; un échec donne l'alerte (remote_failed).
+backup_remote() {
+  local remote remote_password remote_access_key remote_secret_key
+  local data media="" media_kb=0 data_kb caddy_kb stage mounts=() status=0 snapshot added detail
+  remote_load
+  remote_ready
+  data=$(env_path RT_DATA ./data/radiotomate)
+  [[ -f $data/radiotomate.db ]] ||
+    die "La station n'a pas de base : $data/radiotomate.db manque." \
+      "Finir l'installation : station install. Ou vérifier RT_DATA, dans $env_file."
+  [[ -f $dir/scripts/backup-radiotomate.sh ]] ||
+    die "$dir/scripts/backup-radiotomate.sh manque." "station install le remet. Puis relancer."
+  if [[ $(env_value BUTTON_BACKUP_MEDIA yes) != no ]]; then
+    # La banque elle-même, au bout d'un lien.
+    media=$(real_path "$(env_path BUTTON_MEDIA ./media)")
+    [[ -d $media ]] ||
+      die "La banque de sons, $media, n'existe pas." \
+        "Vérifier BUTTON_MEDIA, dans $env_file. Ou sauvegarder sans les sons : station config --backup-media no."
+    media_kb=$(size_kb "$media")
+  fi
+  # La place de la sauvegarde préparée, comme pour une archive, sans les sons.
+  data_kb=$(($(size_kb "$data") - $(size_kb "$data/backups")))
+  caddy_kb=$(size_kb "$(env_path CADDY_DATA ./data/caddy)")
+  install -d -m 700 "$dir/backups"
+  space_for "$dir/backups" $((2 * data_kb + caddy_kb)) "Libérer de la place, puis relancer."
+  restic_image
+  [[ $remote != sftp:* ]] || remote_ssh
+  work=$(mktemp -d "$dir/backups/.station-XXXXXX")
+  stage=$work/sauvegarde
+  mkdir "$stage" "$work/tmp"
+  say "Sauvegarde hors de la machine : la base, sans couper l'antenne."
+  backup_stage "$stage" "$data_kb" "${media:+media}" "$media_kb" ""
+  mounts=(-v "$stage:/sauvegarde:ro")
+  if [[ -n $media ]]; then
+    # Le point de montage de la banque, dans la sauvegarde.
+    mkdir "$stage/media"
+    mounts+=(-v "$media:/sauvegarde/media:ro")
+  fi
+  say "Sauvegarde hors de la machine : l'envoi vers $remote, chiffré$([[ -z $media ]] || echo ", avec les sons, $(human_kb "$media_kb")")."
+  restic_run "${mounts[@]}" -- backup /sauvegarde --host "$REMOTE_HOST" --tag button \
+    --tag "version:$(installed_version)" --tag "$([[ -n $media ]] && echo sons || echo sans-sons)" 2>&1 |
+    tee "$work/restic.log" || status=$?
+  snapshot=$(sed -n 's/^snapshot \([0-9a-f]\{8,\}\) saved$/\1/p' "$work/restic.log" | tail -n 1)
+  # 3 : la sauvegarde est faite, sans des fichiers qui ne se lisaient pas.
+  if [[ -z $snapshot ]] || ((status != 0 && status != 3)); then
+    die "La sauvegarde hors de la machine n'a pas abouti : voir le message de restic plus haut." \
+      "Vérifier l'accès au dépôt : station config --backup-remote $remote le revérifie. Puis relancer station backup --remote."
+  fi
+  added=$(sed -n 's/^Added to the repository: \(.*\) (\(.*\) stored)$/\1 de neuf, \2 une fois compressés/p' "$work/restic.log" | tail -n 1)
+  detail=$added
+  if ((status == 3)); then
+    warn "des fichiers ne se lisaient pas pendant la sauvegarde, des sons déposés ou rangés entre-temps : la sauvegarde $snapshot est faite sans eux."
+    detail="sans des fichiers qui ne se lisaient pas${detail:+ ; $detail}"
+  fi
+  say "Sauvegarde hors de la machine : la rotation, le dépôt garde 7 sauvegardes quotidiennes, 4 hebdomadaires et 6 mensuelles."
+  status=0
+  restic_run -- forget --host "$REMOTE_HOST" "${REMOTE_KEEP[@]}" --prune >"$work/rotation.log" 2>&1 || status=$?
+  if ((status != 0)); then
+    grep -v '^ *$' "$work/rotation.log" | tail -n 5 >&2
+    detail="${detail:+$detail ; }la rotation a échoué : $(grep -m 1 '^Fatal' "$work/rotation.log" || tail -n 1 "$work/rotation.log")"
+    warn "la rotation du dépôt a échoué : la sauvegarde $snapshot est faite, mais le dépôt garde encore les plus anciennes."
+    station_alert "Rotation de la sauvegarde hors de la machine ratée" \
+      "la sauvegarde $snapshot est faite, dans $remote, mais la rotation du dépôt a échoué : il grossit. Voir journalctl -u button-sauvegarde."
+  fi
+  remote_log "$dir" sauvegarde faite "$snapshot" "$detail"
+  say "Sauvegarde hors de la machine : faite, $snapshot, dans $remote${added:+ : $added}." \
+    "  Elle se remet par station restore --remote ; le dépôt les montre par station restore --remote --list."
+}
+
+# backups-remote.log, dans le dossier de la station : une ligne par
+# sauvegarde hors de la machine, ou par test de restauration, que status lit.
+remote_log() { # dossier, sauvegarde ou test, résultat, ID de la sauvegarde, détail
+  local log=$1/$REMOTE_LOG detail
+  if [[ ! -f $log ]]; then
+    printf '%s\n' "# Les sauvegardes hors de la machine et les tests de restauration, une ligne chacun : l'heure, en secondes depuis 1970, sauvegarde ou test, le résultat, l'ID de la sauvegarde dans le dépôt, et ce qu'il faut en savoir." \
+      >"$log"
+  fi
+  detail=$(tr '\t\n' '  ' <<<"${5:--}")
+  # Un champ vide se lirait mal : read fond deux tabulations qui se suivent.
+  printf '%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$2" "$3" "${4:--}" "$(trim "$detail")" >>"$log"
+}
+
+# Une sauvegarde hors de la machine, ou un test de restauration, arrêté en
+# erreur : cleanup le note dans backups-remote.log, avec le message du
+# dernier die, et donne l'alerte. Tout ce qu'il lit est global.
+remote_failed() { # code de sortie
+  local dir=${remote_job[0]} kind=${remote_job[1]} what=${remote_job[2]} reason result=échouée
+  reason=$(trim "${died:-}")
+  [[ -n $reason ]] || reason="arrêté, code $1 : voir journalctl -u button-$([[ $kind == test ]] && echo test-restauration || echo sauvegarde)"
+  [[ $kind != test ]] || result=échoué
+  remote_log "$dir" "$kind" "$result" - "$reason" 2>/dev/null ||
+    warn "$dir/$REMOTE_LOG ne s'écrit pas."
+  station_alert "${what^} a échoué" "$reason"
+  return 0
+}
+
+# Les sauvegardes du dépôt, avec leur ID et leur heure, à celle de la station.
+remote_list() {
+  local remote remote_password remote_access_key remote_secret_key
+  remote_load
+  remote_ready
+  restic_image
+  [[ $remote != sftp:* ]] || remote_ssh
+  say "Les sauvegardes du dépôt, $remote :"
+  restic_run -- snapshots --host "$REMOTE_HOST" ||
+    die "Le dépôt ne se lit pas : voir le message de restic plus haut." "Vérifier ses réglages : station config. Puis relancer."
+  say "Pour en remettre une : station restore --remote ID. La dernière : station restore --remote."
+}
+
+# Le test de restauration du mois : restic check vérifie le dépôt, sans
+# relire les données. Puis la sauvegarde, la dernière ou celle d'un ID, se
+# restaure dans un dossier temporaire, sans ses sons, et se vérifie comme
+# restore la vérifie : son format, ses sommes, sa base par
+# restore-radiotomate.sh, le schéma qu'elle porte, et les certificats de
+# Caddy. Rien ne change dans la station, qui continue. Une ligne de
+# backups-remote.log le note ; un échec donne l'alerte (remote_failed).
+remote_test() {
+  local remote remote_password remote_access_key remote_secret_key archive=""
+  local data in schemas restored version saved_at data_kb
+  remote_load
+  remote_ready
+  data=$(real_path "$(env_path RT_DATA ./data/radiotomate)")
+  [[ -f $data/radiotomate.db ]] ||
+    die "La station n'a pas de base : $data/radiotomate.db manque." "Finir l'installation : station install."
+  [[ -f $dir/scripts/restore-radiotomate.sh ]] ||
+    die "$dir/scripts/restore-radiotomate.sh manque." "station install le remet. Puis relancer."
+  restic_image
+  [[ $remote != sftp:* ]] || remote_ssh
+  # Le travail, sur le disque des données, comme une restauration.
+  work=$(mktemp -d "${data%/*}/.station-XXXXXX")
+  in=$work/sauvegarde
+  mkdir "$in" "$work/tmp" "$work/base"
+  say "Test de restauration : le dépôt, $remote, vérifié par restic check."
+  if ! restic_run -- check >"$work/check.log" 2>&1; then
+    grep -v '^ *$' "$work/check.log" | tail -n 5 >&2
+    die "Le dépôt ne passe pas restic check : $(grep -m 1 '^Fatal' "$work/check.log" || tail -n 1 "$work/check.log")" \
+      "Voir docs/exploitation/sauvegarde.md, « Hors de la machine »."
+  fi
+  say "Test de restauration : $(snapshot_label), sans ses sons, dans un dossier temporaire."
+  restore_unpack "$in"
+  version=$(manifest_value version)
+  saved_at=$(manifest_number time)
+  data_kb=$(manifest_number data_kb)
+  space_for "$work" $((2 * data_kb)) "Libérer de la place à côté de $data, puis relancer."
+  engine_restore "$in/radiotomate.tar.gz" "$work/base" "$work/tmp" ||
+    die "La base de la sauvegarde $snapshot ne se remet pas : voir le message plus haut." \
+      "En faire une neuve, station backup --remote, puis refaire le test : station restore --remote --test."
+  schemas=$(engine_schemas "$work/base") ||
+    die "La version du schéma de la base de la sauvegarde $snapshot ne se lit pas : voir le message plus haut." \
+      "Voir l'état de la station : station status."
+  restored=$(sed -n 2p <<<"$schemas")
+  [[ $restored =~ ^[0-9]+$ ]] ||
+    die "La base de la sauvegarde $snapshot n'a pas de version de schéma lisible : « $restored »." \
+      "En faire une neuve, station backup --remote, puis refaire le test : station restore --remote --test."
+  tar -tzf "$in/caddy.tar.gz" >/dev/null 2>&1 ||
+    die "Les certificats de Caddy de la sauvegarde $snapshot ne se lisent pas." \
+      "En faire une neuve, station backup --remote, puis refaire le test : station restore --remote --test."
+  remote_log "$dir" test réussi "$snapshot" \
+    "la sauvegarde du $(station_date "$saved_at"), en version ${version:-inconnue}, avec sa base au schéma v$restored"
+  say "" "Test de restauration : réussi. La sauvegarde $snapshot, du $(station_date "$saved_at"), d'une station en version ${version:-inconnue}, se remet : ses sommes et sa base sont bonnes, au schéma v$restored." \
+    "  Ses sons ne sont pas relus : restic check vérifie que le dépôt les a tous."
+}
+
+# La dernière ligne de backups-remote.log d'une sorte, et d'un résultat.
+remote_last() { # sauvegarde ou test, résultat ou rien
+  { grep -v '^#' "$dir/$REMOTE_LOG" 2>/dev/null || true; } |
+    awk -F '\t' -v kind="$1" -v result="${2:-}" '$2 == kind && (result == "" || $3 == result)' | tail -n 1
+}
+
+# La sauvegarde hors de la machine, pour status et config : le dépôt, l'heure,
+# et les sons ou non.
+remote_label() {
+  local remote time
+  remote=$(env_value BUTTON_BACKUP_REMOTE)
+  if [[ -z $remote ]]; then
+    echo "aucune"
+    return 0
+  fi
+  time=$(env_value BUTTON_BACKUP_TIME "$BACKUP_TIME")
+  printf 'chaque nuit à %s (%s), vers %s, %s\n' "$time" "$(env_value TZ Europe/Paris)" "$remote" \
+    "$([[ $(env_value BUTTON_BACKUP_MEDIA yes) == no ]] && echo 'sans les sons' || echo 'avec les sons')"
+}
+
+# status : la sauvegarde hors de la machine, la dernière, et le dernier test
+# de restauration, d'après backups-remote.log.
+remote_report() {
+  local line made result snapshot detail
+  if [[ -z $(env_value BUTTON_BACKUP_REMOTE) ]]; then
+    say "Sauvegarde hors de la machine : aucune. La régler : station config --backup-remote. Voir docs/exploitation/sauvegarde.md."
+    return 0
+  fi
+  say "Sauvegarde hors de la machine : $(remote_label)."
+  [[ -f $UNITS/button-sauvegarde.timer ]] ||
+    warn "le minuteur de la sauvegarde hors de la machine manque : elle ne part pas seule chaque nuit. station install le remet."
+  line=$(remote_last sauvegarde)
+  IFS=$'\t' read -r made _ result snapshot detail <<<"$line"
+  if [[ ! $made =~ ^[0-9]+$ ]]; then
+    say "  Aucune encore : la première part à l'heure dite, ou maintenant, par station backup --remote."
+  else
+    say "  La dernière : le $(station_date "$made"), il y a $(since "$made"), $result${snapshot:+$([[ $snapshot == - ]] || echo " ($snapshot)")}${detail:+$([[ $detail == - ]] || echo " : $detail")}."
+    line=$(remote_last sauvegarde faite)
+    IFS=$'\t' read -r made _ <<<"$line"
+    if [[ ! $made =~ ^[0-9]+$ ]]; then
+      warn "aucune sauvegarde hors de la machine n'a encore réussi. Voir pourquoi : journalctl -u button-sauvegarde."
+    elif (($(date +%s) - made > 2 * 86400)); then
+      warn "la dernière sauvegarde hors de la machine réussie date du $(station_date "$made"), il y a $(since "$made"). Voir pourquoi : journalctl -u button-sauvegarde."
+    fi
+  fi
+  line=$(remote_last test)
+  IFS=$'\t' read -r made _ result snapshot detail <<<"$line"
+  if [[ ! $made =~ ^[0-9]+$ ]]; then
+    say "  Test de restauration : aucun encore. Le minuteur le fait le 1er de chaque mois ; le faire maintenant : station restore --remote --test."
+  else
+    say "  Le dernier test de restauration : le $(station_date "$made"), $result${detail:+$([[ $detail == - ]] || echo " : $detail")}."
+  fi
+}
+
+# Les minuteurs systemd de la sauvegarde hors de la machine : la sauvegarde
+# chaque nuit, à BUTTON_BACKUP_TIME, et le test de restauration le 1er de
+# chaque mois, à REMOTE_TEST_TIME, à l'heure de la station. Ils lancent la
+# commande station du dossier, qui attend 2 h au plus une autre commande en
+# cours (STATION_LOCK_WAIT). Sans dépôt réglé, ou devant une commande station
+# qui ne connaît pas la sauvegarde hors de la machine, celle d'une version
+# d'avant, remise par un retour arrière, ils s'en vont. Réécrits seulement
+# quand ils changent : l'heure, le fuseau, le dossier. Rend 1 si systemd ne
+# les prend pas.
+remote_timers() {
+  local zone time command changed=""
+  if [[ -z $(env_value BUTTON_BACKUP_REMOTE) ]]; then
+    remote_timers_off
+    return 0
+  fi
+  if ! grep -q BUTTON_BACKUP_REMOTE "$dir/station" 2>/dev/null; then
+    if [[ -e $UNITS/button-sauvegarde.timer ]]; then
+      remote_timers_off
+      warn "la commande station de la version $(installed_version) ne connaît pas la sauvegarde hors de la machine : ses minuteurs s'en vont. Ils reviennent avec une version qui la connaît, par station update."
+    fi
+    return 0
+  fi
+  if ! command -v systemctl >/dev/null 2>&1; then
+    warn "systemd manque : la sauvegarde hors de la machine ne part pas seule chaque nuit. La lancer à la main : station backup --remote."
+    return 1
+  fi
+  zone=$(env_value TZ Europe/Paris)
+  time=$(env_value BUTTON_BACKUP_TIME "$BACKUP_TIME")
+  check_update_time "$time" 2>/dev/null || time=$BACKUP_TIME
+  command=$(systemd_quote "$dir/station")
+  unit_write button-sauvegarde.service "# La sauvegarde hors de la machine, que lance button-sauvegarde.timer. Écrit
+# par la commande station de $dir : station config la règle.
+[Unit]
+Description=BUTTON : la sauvegarde hors de la machine
+Documentation=https://github.com/$REPO/blob/main/docs/exploitation/sauvegarde.md
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+Environment=STATION_LOCK_WAIT=7200
+ExecStart=$command backup --remote --dir $(systemd_quote "$dir")
+TimeoutStartSec=20h"
+  unit_write button-sauvegarde.timer "# Chaque nuit, la sauvegarde hors de la machine. Écrit par la commande
+# station : station config --backup-time change son heure.
+[Unit]
+Description=BUTTON : la sauvegarde hors de la machine, chaque nuit
+
+[Timer]
+OnCalendar=*-*-* $time:00 $zone
+Persistent=true
+
+[Install]
+WantedBy=timers.target"
+  unit_write button-test-restauration.service "# Le test de restauration de la sauvegarde hors de la machine, que lance
+# button-test-restauration.timer. Écrit par la commande station de $dir.
+[Unit]
+Description=BUTTON : le test de restauration de la sauvegarde hors de la machine
+Documentation=https://github.com/$REPO/blob/main/docs/exploitation/sauvegarde.md
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+Environment=STATION_LOCK_WAIT=7200
+ExecStart=$command restore --remote --test --dir $(systemd_quote "$dir")
+TimeoutStartSec=6h"
+  unit_write button-test-restauration.timer "# Le 1er de chaque mois, le test de restauration de la sauvegarde hors de la
+# machine. Écrit par la commande station.
+[Unit]
+Description=BUTTON : le test de restauration, chaque mois
+
+[Timer]
+OnCalendar=*-*-01 $REMOTE_TEST_TIME:00 $zone
+Persistent=true
+
+[Install]
+WantedBy=timers.target"
+  [[ -n $changed ]] || return 0
+  if ! { systemctl daemon-reload && systemctl enable --now button-sauvegarde.timer button-test-restauration.timer; } >/dev/null 2>&1; then
+    warn "systemd ne prend pas les minuteurs de la sauvegarde hors de la machine : voir systemctl status button-sauvegarde.timer."
+    return 1
+  fi
+  say "Sauvegarde hors de la machine : chaque nuit à $time ($zone), et le test de restauration le 1er de chaque mois, à $REMOTE_TEST_TIME, par les minuteurs de systemd."
+}
+
+# Les minuteurs de la sauvegarde hors de la machine s'en vont, s'ils sont là.
+remote_timers_off() {
+  local name present=()
+  for name in "${REMOTE_UNITS[@]}"; do
+    [[ ! -e $UNITS/$name ]] || present+=("$UNITS/$name")
+  done
+  ((${#present[@]})) || return 0
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl disable --now button-sauvegarde.timer button-test-restauration.timer >/dev/null 2>&1 || true
+  fi
+  rm -f "${present[@]}"
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload >/dev/null 2>&1 || true
+  fi
+  return 0
+}
+
+# Un fichier de systemd, réécrit s'il change : changed le note.
+unit_write() { # nom, contenu
+  local file=$UNITS/$1
+  if [[ -f $file && $(<"$file") == "$2" ]]; then
+    return 0
+  fi
+  mkdir -p "$UNITS"
+  printf '%s\n' "$2" >"$file.station-$$"
+  chmod 644 "$file.station-$$"
+  mv -f "$file.station-$$" "$file"
+  changed=1
+}
+
+# Un chemin dans une ligne de commande de systemd : entre guillemets, avec %
+# et $ doublés, que systemd lirait sinon.
+systemd_quote() { # chemin
+  local text=$1
+  text=${text//\\/\\\\}
+  text=${text//\"/\\\"}
+  text=${text//%/%%}
+  text=${text//\$/\$\$}
+  printf '"%s"\n' "$text"
+}
+
 # --- restore ---
 
 cmd_restore() {
-  local dir="" env_file="" archive assume_yes="" aborted="Rien n'est changé."
+  local dir="" env_file="" archive="" snapshot="" assume_yes="" aborted="Rien n'est changé."
+  local remote="" remote_password="" remote_access_key="" remote_secret_key=""
   local -A opts=()
   local args=()
-  parse_options "--yes --without-media -h --help" "--dir" "$@"
+  parse_options "--yes --without-media --remote --list --test -h --help" "--dir" "$@"
   if help_asked; then
     usage_command restore
     return 0
   fi
+  if [[ -n ${opts[--remote]:-} ]]; then
+    restore_remote
+    return 0
+  fi
+  [[ -z ${opts[--list]:-}${opts[--test]:-} ]] ||
+    usage_error "--list et --test vont avec --remote : station restore --remote --list, ou --test."
   ((${#args[@]} == 1)) || usage_error "station restore attend une archive, et une seule : station restore ARCHIVE."
   archive=${args[0]}
   [[ $archive == /* ]] || archive=$PWD/$archive
@@ -2072,6 +2673,42 @@ cmd_restore() {
   lock_station restore
   trap cleanup EXIT
   restore_station "$archive" "${opts[--without-media]:-}"
+}
+
+# restore --remote : une sauvegarde du dépôt, la dernière ou celle d'un ID ;
+# --list les montre ; --test en vérifie une, sans rien changer. Les variables
+# sont celles de cmd_restore.
+restore_remote() {
+  ((${#args[@]} <= 1)) || usage_error "Argument inattendu : ${args[1]}. Une seule sauvegarde, par son ID."
+  [[ -z ${opts[--list]:-} || -z ${opts[--test]:-} ]] || usage_error "--list ou --test, pas les deux."
+  snapshot=${args[0]:-latest}
+  [[ $snapshot == latest || $snapshot =~ ^[0-9a-f]{8,64}$ ]] ||
+    usage_error "« $snapshot » n'est pas l'ID d'une sauvegarde du dépôt : 8 chiffres ou lettres de a à f au moins, comme les montre station restore --remote --list."
+  if [[ -n ${opts[--list]:-} ]]; then
+    ((${#args[@]} == 0)) || usage_error "station restore --remote --list montre toutes les sauvegardes : pas d'ID."
+    open_station restore "${opts[--dir]:-}"
+    remote_list
+    return 0
+  fi
+  if [[ -n ${opts[--test]:-} ]]; then
+    open_station restore "${opts[--dir]:-}"
+    # L'échec se note et donne l'alerte, même celui du verrou.
+    remote_job=("$dir" test "le test de restauration")
+    trap cleanup EXIT
+    lock_station restore
+    remote_test
+    return 0
+  fi
+  assume_yes=${opts[--yes]:-}
+  open_station restore "${opts[--dir]:-}"
+  confirm_possible restore
+  remote_load
+  remote_ready
+  lock_station restore
+  trap cleanup EXIT
+  restic_image
+  [[ $remote != sftp:* ]] || remote_ssh
+  restore_station "" "${opts[--without-media]:-}"
 }
 
 # Une valeur du MANIFEST de la sauvegarde.
@@ -2101,18 +2738,27 @@ env_set_in() { # .env, clé, valeur, commande
   env_set "$@"
 }
 
-# Ouvre la sauvegarde dans un dossier : MANIFEST et SHA256SUMS d'abord, au
-# début de l'archive, puis les fichiers que SHA256SUMS nomme, vérifiés. Le
-# format se lit avant le reste : une archive d'un format plus ancien se lit
-# aussi. Les sons restent dans l'archive.
-restore_unpack() { # archive, dossier
-  local archive=$1 in=$2 format name listed=()
-  tar -xf "$archive" -C "$in" --occurrence MANIFEST SHA256SUMS 2>"$work/tar.log" ||
-    die "$archive n'est pas une sauvegarde de station, ou elle est abîmée : $(head -n 1 "$work/tar.log")" \
-      "Prendre une archive faite par station backup."
+# Ouvre la sauvegarde dans un dossier, $work/sauvegarde : MANIFEST et
+# SHA256SUMS d'abord, au début de l'archive, puis les fichiers que SHA256SUMS
+# nomme, vérifiés. Le format se lit avant le reste : une archive d'un format
+# plus ancien se lit aussi. Les sons restent dans l'archive. La sauvegarde est
+# l'archive, $archive, ou celle du dépôt, $snapshot (backup_fetch).
+restore_unpack() { # dossier
+  local in=$1 format name listed=() source=${archive:-} other="Prendre une archive faite par station backup." label
+  if [[ -n ${snapshot:-} ]]; then
+    label=$(snapshot_label)
+    backup_fetch "$in" MANIFEST SHA256SUMS ||
+      die "${label^} ne se lit pas dans le dépôt, $remote : $(fetch_error)" \
+        "Les sauvegardes du dépôt, avec leur ID : station restore --remote --list."
+    source="La sauvegarde $snapshot du dépôt"
+    other="Les sauvegardes du dépôt, avec leur ID : station restore --remote --list."
+  else
+    backup_fetch "$in" MANIFEST SHA256SUMS ||
+      die "$source n'est pas une sauvegarde de station, ou elle est abîmée : $(fetch_error)" "$other"
+  fi
   format=$(manifest_value format)
   [[ $format =~ ^[0-9]+$ ]] ||
-    die "$archive n'a pas de MANIFEST lisible : ce n'est pas une sauvegarde de station." "Prendre une archive faite par station backup."
+    die "$source n'a pas de MANIFEST lisible : ce n'est pas une sauvegarde de station." "$other"
   ((format <= BACKUP_FORMAT)) ||
     die "Cette sauvegarde est au format $format, plus récent que celui de cette commande, $BACKUP_FORMAT." \
       "Prendre la commande station de la version de la sauvegarde, ou d'une plus récente, puis relancer."
@@ -2121,13 +2767,45 @@ restore_unpack() { # archive, dossier
       die "La sauvegarde est abîmée : SHA256SUMS nomme « $name »." "En prendre une autre."
     listed+=("$name")
   done <"$in/SHA256SUMS"
-  tar -xf "$archive" -C "$in" --occurrence "${listed[@]}" 2>"$work/tar.log" ||
-    die "La sauvegarde est abîmée : $(head -n 1 "$work/tar.log")" "En prendre une autre."
+  backup_fetch "$in" "${listed[@]}" ||
+    die "La sauvegarde est abîmée : $(fetch_error)" "En prendre une autre."
   (cd "$in" && sha256sum -c SHA256SUMS >/dev/null 2>&1) ||
     die "La sauvegarde est abîmée : un de ses fichiers ne correspond pas à sa somme, dans SHA256SUMS." "En prendre une autre."
   for name in "${BACKUP_FILES[@]}"; do
     [[ -f $in/$name ]] || die "La sauvegarde est abîmée : il y manque $name." "En prendre une autre."
   done
+}
+
+# Des fichiers de la sauvegarde, dans le dossier où elle s'ouvre : de
+# l'archive, ou de la sauvegarde du dépôt, $snapshot, la dernière ou celle
+# d'un ID. Dans le dépôt, ils sont sous /sauvegarde (backup_remote) : restic
+# les remet dans le dossier, qui doit s'appeler sauvegarde. La première
+# lecture d'une sauvegarde du dépôt pose dans snapshot son ID complet, pour
+# que la suite lise la même. Ce que disent tar ou restic va dans
+# $work/lecture.log.
+backup_fetch() { # dossier, fichier…
+  local in=$1 name includes=() id
+  shift
+  if [[ -z ${snapshot:-} ]]; then
+    tar -xf "$archive" -C "$in" --occurrence "$@" 2>"$work/lecture.log"
+    return $?
+  fi
+  for name; do
+    includes+=(--include "/sauvegarde/$name")
+  done
+  remote_restore "${in%/*}" "${includes[@]}" >"$work/lecture.log" 2>&1 || return 1
+  id=$(sed -n 's/^restoring snapshot \([0-9a-f]\{8,\}\) of .*/\1/p' "$work/lecture.log" | head -n 1)
+  [[ -z $id ]] || snapshot=$id
+  return 0
+}
+
+# Ce qui dit pourquoi une lecture de la sauvegarde échoue : la ligne Fatal de
+# restic, sinon la première, celle de tar.
+fetch_error() {
+  local line
+  line=$(grep -m 1 '^Fatal' "$work/lecture.log" 2>/dev/null) || line=$(head -n 1 "$work/lecture.log" 2>/dev/null) || true
+  [[ -n $line ]] || line="sans autre message"
+  printf '%s\n' "$line"
 }
 
 # Une variable de .env qui va avec la base : celle de la sauvegarde, à la
@@ -2147,11 +2825,12 @@ restore_env_value() { # clé, défaut, contrôle ou rien
 # Remet une sauvegarde de station backup. Tout se prépare à côté, pendant que
 # l'antenne continue : la base vérifiée, Caddy, les sons, .env. Puis la
 # station s'arrête, chacun prend la place du sien, et elle repart. Si elle ne
-# repart pas, cleanup remet celle d'avant (restore_undo).
-restore_station() { # archive, sans les sons (1) ou non
+# repart pas, cleanup remet celle d'avant (restore_undo). Sans archive, la
+# sauvegarde est celle du dépôt, $snapshot : restore --remote.
+restore_station() { # archive ou rien, sans les sons (1) ou non
   local archive=$1 without_media=$2 in stamp version saved_at media media_kb data_kb path
-  local data caddy media_dir new_data new_caddy="" new_media="" new_env schemas current restored
-  local listing saved_domain differs="" taken="" key domain tls entry aside keys="" profiles=()
+  local data caddy media_dir new_data new_caddy="" new_media="" media_from="" new_env schemas current restored
+  local listing saved_domain differs="" taken="" key domain tls entry aside keys="" profiles=() values=""
   stamp=$(date -u +%Y%m%dT%H%M%SZ)
   # Les dossiers réels, au bout d'un lien.
   data=$(real_path "$(env_path RT_DATA ./data/radiotomate)")
@@ -2166,8 +2845,12 @@ restore_station() { # archive, sans les sons (1) ou non
   work=$(mktemp -d "${data%/*}/.station-XXXXXX")
   in=$work/sauvegarde
   mkdir "$in" "$work/tmp"
-  say "Restauration : lecture de $archive."
-  restore_unpack "$archive" "$in"
+  if [[ -n $archive ]]; then
+    say "Restauration : lecture de $archive."
+  else
+    say "Restauration : lecture de $(snapshot_label) du dépôt, $remote."
+  fi
+  restore_unpack "$in"
   version=$(manifest_value version)
   saved_at=$(manifest_number time)
   media=$(manifest_value media)
@@ -2190,7 +2873,7 @@ restore_station() { # archive, sans les sons (1) ou non
     die "La banque de sons, $media_dir, est un point de montage : restore ne sait pas la remplacer. Rien n'a changé." \
       "Restaurer sans les sons, station restore --without-media, puis y remettre ceux de la sauvegarde : tar -xf ARCHIVE -C $media_dir --strip-components=1 $media."
   fi
-  say "Sauvegarde du $(station_date "$saved_at"), d'une station en version ${version:-inconnue}$([[ -z $media ]] || echo ', avec ses sons')."
+  say "Sauvegarde du $(station_date "$saved_at"), d'une station en version ${version:-inconnue}$([[ -z $media ]] || echo ', avec ses sons')${snapshot:+ : $snapshot, dans le dépôt}."
   # La place : la base deux fois à côté de la sienne, le temps de la vérifier ;
   # les sons à côté de la banque.
   if [[ -n $media && $(mount_of "$data") == "$(mount_of "$media_dir")" ]]; then
@@ -2236,14 +2919,27 @@ restore_station() { # archive, sans les sons (1) ou non
         die "Les certificats de Caddy de la sauvegarde ne s'extraient pas : voir le message de tar plus haut. Rien n'a changé." "Vérifier la place, puis relancer."
     fi
   fi
-  # Les sons, sous leur nom dans l'archive, à côté de la banque en place.
+  # Les sons, sous leur nom dans l'archive, à côté de la banque en place. Du
+  # dépôt, sous sauvegarde/.
   if [[ -n $media ]]; then
     new_media=$media_dir.restauration-$stamp
     prepared+=("$new_media")
     mkdir "$new_media"
     say "Restauration : les sons de la sauvegarde, $(human_kb "$media_kb"), à côté de la banque en place."
-    tar -xf "$archive" -C "$new_media" "$media" ||
-      die "Les sons de la sauvegarde ne s'extraient pas : voir le message de tar plus haut. Rien n'a changé." "Vérifier la place, puis relancer."
+    if [[ -n $archive ]]; then
+      tar -xf "$archive" -C "$new_media" "$media" ||
+        die "Les sons de la sauvegarde ne s'extraient pas : voir le message de tar plus haut. Rien n'a changé." "Vérifier la place, puis relancer."
+      media_from=$new_media/$media
+    else
+      mkdir "$new_media/sauvegarde"
+      remote_restore "$new_media" --include "/sauvegarde/$media" ||
+        die "Les sons de la sauvegarde ne se remettent pas : voir le message de restic plus haut. Rien n'a changé." \
+          "Vérifier la place, et l'accès au dépôt, puis relancer."
+      media_from=$new_media/sauvegarde/$media
+      [[ -d $media_from ]] ||
+        die "La sauvegarde $snapshot n'a pas les sons que dit son MANIFEST. Rien n'a changé." \
+          "En prendre une autre, ou la remettre sans les sons : station restore --remote $snapshot --without-media."
+    fi
   fi
   # .env : celui de cette machine, sa version, son domaine, ses ports et ses
   # secrets ; de la sauvegarde, le fuseau et le compte admin, qui vont avec la
@@ -2259,7 +2955,9 @@ restore_station() { # archive, sans les sons (1) ou non
     case $key in
       TZ | RT_ADMIN_USER | RT_ADMIN_PASSWORD | BUTTON_VERSION | DOMAIN | *PASSWORD* | *SECRET* | *_KEY) continue ;;
     esac
-    [[ $(env_value_in "$in/env" "$key") == "$(env_value_in "$new_env" "$key")" ]] || differs="$differs${differs:+,} $key"
+    [[ $(env_value_in "$in/env" "$key") == "$(env_value_in "$new_env" "$key")" ]] && continue
+    differs="$differs${differs:+,} $key"
+    values="$values${values:+, }$key=$(env_value_in "$in/env" "$key")"
   done < <(sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' "$in/env" "$new_env" | sort -u)
 
   # Tous les profils s'arrêtent, share compris s'il est lancé à part : sinon,
@@ -2274,7 +2972,7 @@ restore_station() { # archive, sans les sons (1) ou non
     die "La station ne s'arrête pas : voir le message de docker compose plus haut." "Voir pourquoi, puis relancer la restauration."
   swap "$data" "$new_data" "$stamp"
   [[ -z $new_caddy ]] || swap "$caddy" "$new_caddy" "$stamp"
-  [[ -z $new_media ]] || swap "$media_dir" "$new_media/$media" "$stamp"
+  [[ -z $new_media ]] || swap "$media_dir" "$media_from" "$stamp"
   swap "$env_file" "$new_env" "$stamp"
   env_isolate
   # La station garde son domaine : les adresses publiques de la base qui
@@ -2302,6 +3000,8 @@ restore_station() { # archive, sans les sons (1) ou non
   station_stopped=""
   rm -f "$dir/$JOURNAL"
   record_versions
+  # Le fuseau de la sauvegarde règle aussi l'heure des minuteurs.
+  remote_timers || true
 
   # Le .env d'avant garde à côté le mot de passe admin d'une installation qui
   # ne l'a pas affiché : il ne sert plus, et ne s'écrit que dans .env.
@@ -2323,8 +3023,12 @@ restore_station() { # archive, sans les sons (1) ou non
     fi
     say "  Pour reprendre $saved_domain : station config --domain $saved_domain."
   fi
-  [[ -z $differs ]] ||
+  if [[ -n $differs && -n $archive ]]; then
     say "  Gardés de cette machine, autres dans la sauvegarde :$differs. Leurs valeurs : tar -xOf $archive --occurrence env."
+  elif [[ -n $differs ]]; then
+    # Aucun secret : differs les passe.
+    say "  Gardés de cette machine, autres dans la sauvegarde :$differs. Leurs valeurs dans la sauvegarde : $values."
+  fi
   say "  Les données d'avant restent à côté, à effacer une fois la station vérifiée :"
   for entry in "${swapped[@]}"; do
     aside=${entry#*|}
@@ -2681,6 +3385,8 @@ update_station() {
   updating=()
   update_stage=""
   record_versions
+  # Les minuteurs que pose la commande de cette version.
+  remote_timers || true
 
   say "" "La station est à jour : $target, au lieu de $installed. Le contrôle passe."
   say "  Redémarrée et contrôlée en $cut s, coupure de l'antenne comprise."
@@ -2774,6 +3480,9 @@ update_undo() {
       restart_station "$installed" && check_station "$installed" && record_versions
     fi
   fi
+  # La commande de la version d'avant ne connaît peut-être pas la sauvegarde
+  # hors de la machine : ses minuteurs s'en vont alors.
+  [[ -z $reverted ]] || remote_timers || true
   if [[ -z $failure ]]; then
     update_log annulée "pendant $stage ; revenue en $installed${base:+, $base}"
     hold_write "Bloquées par station update" \
@@ -3389,6 +4098,9 @@ rollback_station() {
   update_stage=""
   rolling_back=""
   record_versions
+  # Les minuteurs de la sauvegarde hors de la machine s'en vont si la commande
+  # de la version d'avant ne la connaît pas.
+  remote_timers || true
   station_alert "Mise à jour défaite" \
     "station rollback a ramené la station de $leaving à $target, à la main : HOLD bloque les mises à jour suivantes."
 
@@ -3486,10 +4198,13 @@ rollback_failed() {
 # --- config ---
 
 cmd_config() {
-  local dir="" env_file="" domain="" email="" old="" changed=""
+  local dir="" env_file="" domain="" email="" old="" changed="" option
+  local remote="" remote_password="" remote_access_key="" remote_secret_key="" generated="" fresh="" probed=""
   local -A opts=()
   local args=()
-  parse_options "--no-domain-check -h --help" "--dir --domain --email --updates --update-time" "$@"
+  local valued="--dir --domain --email --updates --update-time --backup-remote --backup-s3-access-key"
+  valued+=" --backup-s3-secret-key-file --backup-password-file --backup-media --backup-time"
+  parse_options "--no-domain-check -h --help" "$valued" "$@"
   if help_asked; then
     usage_command config
     return 0
@@ -3505,8 +4220,16 @@ cmd_config() {
   fi
   [[ -z ${opts[--updates]+x} ]] || check_updates "${opts[--updates]}" || exit 2
   [[ -z ${opts[--update-time]+x} ]] || check_update_time "${opts[--update-time]}" || exit 2
+  [[ -z ${opts[--backup-remote]:-} ]] || check_remote "${opts[--backup-remote]}" || exit 2
+  [[ -z ${opts[--backup-s3-access-key]+x} ]] || check_access_key "${opts[--backup-s3-access-key]}" || exit 2
+  [[ -z ${opts[--backup-media]+x} || ${opts[--backup-media]} == yes || ${opts[--backup-media]} == no ]] ||
+    usage_error "--backup-media vaut yes ou no."
+  [[ -z ${opts[--backup-time]+x} ]] || check_update_time "${opts[--backup-time]}" || exit 2
+  for option in --backup-s3-secret-key-file --backup-password-file; do
+    [[ -z ${opts[$option]+x} || -f ${opts[$option]} ]] || usage_error "$option : ${opts[$option]} n'existe pas."
+  done
   open_station config "${opts[--dir]:-}"
-  if [[ -z ${opts[--domain]+x}${opts[--email]+x}${opts[--updates]+x}${opts[--update-time]+x} ]]; then
+  if [[ -z ${opts[--domain]+x}${opts[--email]+x}${opts[--updates]+x}${opts[--update-time]+x}${opts[--backup-remote]+x}${opts[--backup-s3-access-key]+x}${opts[--backup-s3-secret-key-file]+x}${opts[--backup-password-file]+x}${opts[--backup-media]+x}${opts[--backup-time]+x} ]]; then
     config_report
     return 0
   fi
@@ -3515,10 +4238,13 @@ cmd_config() {
   trap cleanup EXIT
   old=$(env_value DOMAIN)
   # Le domaine se vérifie avant tout : s'il ne mène pas ici, rien ne change.
+  # Le dépôt de la sauvegarde hors de la machine aussi.
   [[ -z ${opts[--domain]+x} || $domain == "$old" ]] || domain_verify
+  remote_verify
   [[ -z ${opts[--updates]+x} ]] || config_set BUTTON_UPDATES "${opts[--updates]}"
   [[ -z ${opts[--update-time]+x} ]] || config_set BUTTON_UPDATE_TIME "${opts[--update-time]}"
   [[ -z ${opts[--email]+x} ]] || config_set ACME_EMAIL "$email"
+  remote_apply
   if [[ -n ${opts[--domain]+x} && $domain != "$old" ]]; then
     domain_apply "$old"
   elif [[ $changed == *ACME_EMAIL* ]] && station_running caddy; then
@@ -3550,7 +4276,147 @@ config_report() {
     "  Domaine : ${domain:-aucun}" \
     "  E-mail du compte Let's Encrypt : ${email:-aucun}" \
     "  Mises à jour : $(updates_label)" \
-    "Pour en changer : station config --domain DOMAINE, --email E-MAIL, --updates auto|manual ou --update-time HH:MM."
+    "  Sauvegarde hors de la machine : $(remote_label)" \
+    "Pour en changer : station config --domain DOMAINE, --email E-MAIL, --updates auto|manual ou --update-time HH:MM." \
+    "La sauvegarde hors de la machine : --backup-remote DÉPÔT, --backup-media yes|no ou --backup-time HH:MM. Voir station help config."
+}
+
+# Un dépôt de restic que la commande sait régler, S3 ou SFTP, qui tient sur
+# une ligne de .env, sans guillemets ni rien que docker compose y lirait.
+check_remote() {
+  local s3='^s3:(https?://)?[^/]+/[^/].*$'
+  if [[ ${#1} -gt 512 || $1 == *[[:space:][:cntrl:]\"\'\$\#\\\`]* ]]; then
+    echo "  « $1 » : un dépôt s'écrit sur une ligne, sans espace, guillemet, \$, # ni \\." >&2
+    return 1
+  fi
+  [[ ! $1 =~ $s3 && $1 != sftp:?*@?*:?* ]] || return 0
+  echo "  « $1 » n'est pas un dépôt S3 ou SFTP : s3:https://HÔTE/BUCKET/CHEMIN, ou sftp:COMPTE@HÔTE:/CHEMIN, ou sftp://COMPTE@HÔTE:PORT//CHEMIN." >&2
+  return 1
+}
+
+# La clé d'accès d'un stockage S3 : son identifiant, que les fournisseurs
+# écrivent en lettres et chiffres.
+check_access_key() {
+  # Pas de {1,256} : la libc de musl n'en accepte que 255.
+  [[ ${#1} -le 256 && $1 =~ ^[A-Za-z0-9._~+/=-]+$ ]] && return 0
+  echo "  « $1 » : une clé d'accès S3 s'écrit en lettres et chiffres, sans espace." >&2
+  return 1
+}
+
+# Un secret lu dans un fichier, sa première ligne, sans les espaces autour :
+# un mot de passe ou une clé, jamais sur la ligne de commande, que ps montre.
+# .env le garde entre apostrophes, s'il le faut (remote_set) : il ne peut
+# pas en avoir une.
+secret_from() { # fichier, ce qu'il est
+  local value=""
+  [[ -r $1 ]] || die "$2 ne se lit pas dans $1." "Donner un fichier lisible par root, qui le contient sur sa première ligne."
+  IFS= read -r value <"$1" || true
+  value=$(trim "$value")
+  [[ -n $value ]] || die "$2 manque dans $1 : sa première ligne est vide." "L'y mettre, puis relancer."
+  [[ ${#value} -le 1024 && $value != *[[:cntrl:]]* && $value != *\'* ]] ||
+    die "$2, dans $1, a un caractère que .env ne garde pas : une apostrophe, ou un caractère de contrôle." \
+      "Pour un dépôt neuf, en choisir un autre ; pour un dépôt qui existe, en ajouter un sans eux, avec restic key add."
+  printf '%s\n' "$value"
+}
+
+# Une valeur de la sauvegarde hors de la machine dans .env, si elle change,
+# et la note. Entre apostrophes si elle a un caractère que docker compose,
+# qui lit aussi .env, comprendrait : $, #, un espace.
+remote_set() { # clé, valeur
+  local value=$2
+  # Rien à vider qui ne soit pas là.
+  [[ -n $value ]] || env_has "$1" || return 0
+  [[ $value =~ ^[A-Za-z0-9._~+/=:@,%-]*$ ]] || value="'$value'"
+  if ! env_has "$1" || [[ $(env_value "$1") != "$2" ]]; then
+    env_set "$1" "$value" config
+    changed="$changed${changed:+,} $1"
+  fi
+}
+
+# Ce que config change du dépôt de la sauvegarde hors de la machine, vérifié
+# avant que rien ne s'écrive : le dépôt, son mot de passe et ses clés, ceux
+# donnés, sinon ceux de .env, dans les variables de cmd_config. restic s'y
+# connecte (remote_probe) quand l'un d'eux est donné. Un dépôt neuf, sans
+# mot de passe, en reçoit un tiré au hasard (generated). Un dépôt vide, "",
+# arrête la sauvegarde : rien à vérifier.
+remote_verify() {
+  [[ -n ${opts[--backup-remote]+x}${opts[--backup-password-file]+x}${opts[--backup-s3-access-key]+x}${opts[--backup-s3-secret-key-file]+x} ]] ||
+    return 0
+  remote=${opts[--backup-remote]-$(env_value BUTTON_BACKUP_REMOTE)}
+  if [[ -z $remote ]]; then
+    [[ -n ${opts[--backup-remote]+x} ]] ||
+      die "Aucun dépôt n'est réglé pour la sauvegarde hors de la machine. Rien n'est changé." \
+        "Le donner avec le reste : station config --backup-remote DÉPÔT."
+    return 0
+  fi
+  remote_password=$(env_value BUTTON_BACKUP_PASSWORD)
+  if [[ -n ${opts[--backup-password-file]+x} ]]; then
+    remote_password=$(secret_from "${opts[--backup-password-file]}" "Le mot de passe du dépôt")
+  fi
+  remote_access_key=${opts[--backup-s3-access-key]-$(env_value BUTTON_BACKUP_S3_ACCESS_KEY)}
+  remote_secret_key=$(env_value BUTTON_BACKUP_S3_SECRET_KEY)
+  if [[ -n ${opts[--backup-s3-secret-key-file]+x} ]]; then
+    remote_secret_key=$(secret_from "${opts[--backup-s3-secret-key-file]}" "La clé secrète S3")
+  fi
+  if [[ $remote == s3:* && (-z $remote_access_key || -z $remote_secret_key) ]]; then
+    die "Un dépôt S3 demande ses clés : --backup-s3-access-key CLÉ et --backup-s3-secret-key-file FICHIER. Rien n'est changé." \
+      "Les créer chez le fournisseur du stockage, pour ce seul bucket si possible. Puis relancer."
+  fi
+  if [[ $remote == s3:http://* && ! $remote =~ ^s3:http://(localhost|127\.0\.0\.1|\[::1\])[:/] ]]; then
+    warn "le dépôt $remote se joint en http : ses données sont chiffrées par restic, mais le transport ne l'est pas. Préférer https."
+  fi
+  if [[ -z $remote_password ]]; then
+    remote_password=$(secret)
+    generated=1
+  fi
+  remote_probe
+  probed=1
+}
+
+# Les réglages de la sauvegarde hors de la machine dans .env, une fois
+# vérifiés, puis ses minuteurs. Le mot de passe d'un dépôt neuf ne s'affiche
+# qu'une fois, et seulement dans un terminal : il reste dans .env, où la
+# sauvegarde de chaque nuit le lit.
+remote_apply() {
+  local off=""
+  [[ -n ${opts[--backup-remote]+x}${opts[--backup-password-file]+x}${opts[--backup-s3-access-key]+x}${opts[--backup-s3-secret-key-file]+x}${opts[--backup-media]+x}${opts[--backup-time]+x} ]] ||
+    return 0
+  if [[ -n ${opts[--backup-remote]+x} && -z ${opts[--backup-remote]} ]]; then
+    off=1
+    remote_set BUTTON_BACKUP_REMOTE ""
+  fi
+  if [[ -n $probed ]]; then
+    remote_set BUTTON_BACKUP_REMOTE "$remote"
+    remote_set BUTTON_BACKUP_PASSWORD "$remote_password"
+    if [[ $remote == s3:* ]]; then
+      remote_set BUTTON_BACKUP_S3_ACCESS_KEY "$remote_access_key"
+      remote_set BUTTON_BACKUP_S3_SECRET_KEY "$remote_secret_key"
+    fi
+  fi
+  [[ -z ${opts[--backup-media]+x} ]] || remote_set BUTTON_BACKUP_MEDIA "${opts[--backup-media]}"
+  [[ -z ${opts[--backup-time]+x} ]] || remote_set BUTTON_BACKUP_TIME "${opts[--backup-time]}"
+  remote_timers ||
+    die "Les réglages de la sauvegarde hors de la machine sont dans .env, mais ses minuteurs ne se posent pas : voir plus haut." \
+      "Une fois systemd réglé, relancer : station install les repose. D'ici là, la lancer à la main : station backup --remote."
+  if [[ -n $off ]]; then
+    say "Sauvegarde hors de la machine : arrêtée. Le dépôt garde ses sauvegardes, et .env son mot de passe, BUTTON_BACKUP_PASSWORD."
+    return 0
+  fi
+  [[ -n $probed ]] || return 0
+  if [[ -n $fresh ]]; then
+    say "Dépôt : créé, vide, à $remote. restic chiffre tout ce qui y entre, avec son mot de passe."
+  else
+    say "Dépôt : $remote, ouvert avec son mot de passe. Ses sauvegardes : station restore --remote --list."
+  fi
+  if [[ -n $generated ]]; then
+    if terminal; then
+      say "" "Mot de passe du dépôt : $remote_password" \
+        "  À noter maintenant, hors de cette machine, avec l'adresse du dépôt : sans lui, ses sauvegardes ne se lisent pas, et une machine neuve ne les remet pas. Il reste dans $env_file, BUTTON_BACKUP_PASSWORD." ""
+    else
+      say "Mot de passe du dépôt : pas affiché, la sortie n'est pas un terminal. Il est dans $env_file, BUTTON_BACKUP_PASSWORD : le noter hors de cette machine, sans quoi ses sauvegardes ne se lisent pas."
+    fi
+  fi
+  say "La première sauvegarde part cette nuit, ou maintenant : station backup --remote. Avec les sons, elle peut durer des heures ; les suivantes n'envoient que ce qui a changé."
 }
 
 # Le nouveau domaine, $domain, mène-t-il ici ? Comme install : Caddy s'arrête
@@ -3709,6 +4575,8 @@ cmd_uninstall() {
   else
     say "Désinstaller la station de $dir : ses conteneurs, ses images, les fichiers de sa version et la commande station s'en vont." \
       "Restent .env, data/, media/ et backups/ : station install les reprend, pour la même station."
+    [[ -z $(env_value BUTTON_BACKUP_REMOTE) ]] ||
+      say "La sauvegarde hors de la machine s'arrête avec la commande ; station install la reprend."
     confirm uninstall "Désinstaller ? (o/n)"
   fi
   lock_station uninstall
@@ -3721,11 +4589,15 @@ cmd_uninstall() {
     say "Désinstallation : arrêt de la station."
     compose "${profiles[@]}" "${down[@]}" ||
       die "La station ne s'arrête pas : voir le message de docker compose plus haut." "Voir pourquoi, puis relancer station uninstall."
-    # Une image qu'un autre conteneur prend encore reste.
-    for image in "${images[@]}"; do
+    # Une image qu'un autre conteneur prend encore reste. Celle de restic
+    # n'est pas dans compose.yml.
+    for image in "${images[@]}" "$RESTIC_IMAGE"; do
       docker image rm "$image" >/dev/null 2>&1 || true
     done
   fi
+  # La sauvegarde hors de la machine ne part plus : la commande s'en va.
+  # station install remet ses minuteurs, si .env la règle encore.
+  remote_timers_off
   # Ce que le projet garde encore, par son étiquette : après une
   # désinstallation qui gardait les données, compose.yml n'est plus là.
   [[ -z $purge ]] || project_leftovers
@@ -3756,7 +4628,7 @@ project_leftovers() {
 
 # Ce que --purge efface, et ce qu'il laisse, hors du dossier.
 uninstall_purge_report() {
-  local key path outside="" count=0 media
+  local key path outside="" count=0 media remote
   if [[ -d $dir/backups ]]; then
     count=$(find "$dir/backups" -maxdepth 1 -name 'button-*.tar' | wc -l)
   fi
@@ -3773,7 +4645,12 @@ uninstall_purge_report() {
     [[ $path == "$dir"/* ]] || outside="$outside ${key%%:*} ($path)"
   done
   [[ -z $outside ]] || say "Hors du dossier, rien ne s'efface :$outside."
-  say "Une sauvegarde d'abord, copiée hors de cette machine : station backup --with-media."
+  remote=$(env_value BUTTON_BACKUP_REMOTE)
+  if [[ -n $remote ]]; then
+    say "Les sauvegardes hors de la machine restent dans leur dépôt, $remote. Son mot de passe s'efface avec .env : le noter d'abord, BUTTON_BACKUP_PASSWORD, sans quoi elles ne se lisent plus."
+  else
+    say "Une sauvegarde d'abord, copiée hors de cette machine : station backup --with-media."
+  fi
 }
 
 main() {

@@ -197,6 +197,211 @@ compose_run() {
   esac
 }
 
+# docker run de l'image de restic : un faux restic, sur un dépôt fait d'un
+# dossier, $state/depots/<le dépôt, en lettres et _>, avec son mot de passe et
+# ses sauvegardes, une par dossier, dans l'ordre, sous snapshots/. Les chemins
+# du conteneur mènent à ceux de la machine par les -v, le plus long d'abord :
+# la banque se monte dans la sauvegarde. Les secrets viennent de
+# l'environnement, comme pour le vrai, jamais de la ligne de commande. Un
+# stockage qui ne répond pas : $state/restic-down ; qui refuse la clé SSH ou
+# les clés S3 : $state/restic-refuses. Une sauvegarde qui échoue :
+# $state/restic-backup-fails ; faite sans des fichiers illisibles, code 3 :
+# $state/restic-backup-partial. Une rotation qui échoue :
+# $state/restic-forget-fails ; un dépôt que check refuse :
+# $state/restic-check-fails. ssh-keygen, par --entrypoint, pose une fausse clé.
+restic_run() {
+  local volumes=() entrypoint="" spec repo command
+  shift
+  while (($#)); do
+    case $1 in
+      --rm) shift ;;
+      --network | --cpu-shares) shift 2 ;;
+      -e)
+        [[ $2 != *=* ]] || export "${2?}"
+        shift 2
+        ;;
+      -v)
+        volumes+=("$2")
+        shift 2
+        ;;
+      --entrypoint)
+        entrypoint=$2
+        shift 2
+        ;;
+      docker.io/restic/restic:*)
+        shift
+        break
+        ;;
+      *)
+        echo "docker : option inattendue pour restic, $1" >&2
+        exit 2
+        ;;
+    esac
+  done
+  on_host() { # chemin dans le conteneur
+    local target best="" path=""
+    for spec in "${volumes[@]}"; do
+      target=${spec#*:}
+      target=${target%:ro}
+      if [[ $1 == "$target" || $1 == "$target"/* ]] && ((${#target} > ${#best})); then
+        best=$target
+        path=${spec%%:*}
+      fi
+    done
+    [[ -n $best ]] || {
+      echo "docker : $1, dans le conteneur de restic, sans volume" >&2
+      exit 2
+    }
+    echo "$path${1#"$best"}"
+  }
+  if [[ $entrypoint == ssh-keygen ]]; then
+    local key=""
+    while (($#)); do
+      [[ $1 != -f ]] || key=$(on_host "$2")
+      shift
+    done
+    echo "une fausse clé privée" >"$key"
+    chmod 600 "$key"
+    echo "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFAUSSE button-sauvegarde@radio.example" >"$key.pub"
+    exit 0
+  fi
+  repo=$state/depots/$(printf '%s' "$RESTIC_REPOSITORY" | tr -c 'A-Za-z0-9' '_')
+  command=$1
+  shift
+  if [[ -e $state/restic-down ]]; then
+    echo "Fatal: unable to open repository at $RESTIC_REPOSITORY: dial tcp: connection refused" >&2
+    exit 1
+  fi
+  if [[ -e $state/restic-refuses ]]; then
+    if [[ $RESTIC_REPOSITORY == sftp:* ]]; then
+      echo "subprocess ssh: ci@sauvegarde.example: Permission denied (publickey)." >&2
+    else
+      echo "Fatal: Fatal: create repository at $RESTIC_REPOSITORY failed: client.BucketExists: The request signature we calculated does not match the signature you provided." >&2
+    fi
+    exit 1
+  fi
+  if [[ $command == init ]]; then
+    if [[ -d $repo ]]; then
+      echo "Fatal: Fatal: create key in repository at $RESTIC_REPOSITORY failed: repository master key and config already initialized" >&2
+      exit 1
+    fi
+    mkdir -p "$repo/snapshots"
+    printf '%s\n' "$RESTIC_PASSWORD" >"$repo/password"
+    echo "created restic repository 0f1e2d3c4b at $RESTIC_REPOSITORY"
+    exit 0
+  fi
+  if [[ ! -d $repo ]]; then
+    echo "Fatal: repository does not exist: unable to open config file: Stat: The specified key does not exist." >&2
+    exit 10
+  fi
+  if [[ $(cat "$repo/password") != "$RESTIC_PASSWORD" ]]; then
+    echo "Fatal: wrong password or no key found" >&2
+    exit 12
+  fi
+  local snapshot id tags=() host="" target="" includes=() path destination
+  case $command in
+    cat) echo '{"version": 2, "id": "0f1e2d3c4b"}' ;;
+    backup)
+      # backup /sauvegarde --host … --tag … : ce qui est monté là, et dessous.
+      local source=$1
+      shift
+      while (($#)); do
+        case $1 in
+          --host) host=$2 ;;
+          --tag) tags+=("$2") ;;
+        esac
+        shift 2
+      done
+      if [[ -e $state/restic-backup-fails ]]; then
+        echo "Fatal: unable to save snapshot: connection reset by peer" >&2
+        exit 1
+      fi
+      id=$(printf '%04x%04x' "$RANDOM" "$RANDOM")
+      snapshot=$repo/snapshots/$(printf '%03d' $(($(find "$repo/snapshots" -mindepth 1 -maxdepth 1 | wc -l) + 1)))-$id
+      mkdir -p "$snapshot/tree"
+      while IFS= read -r spec; do
+        path=${spec%%:*}
+        spec=${spec#*:}
+        spec=${spec%:ro}
+        [[ $spec == "$source" || $spec == "$source"/* ]] || continue
+        mkdir -p "$snapshot/tree$spec"
+        cp -a "$path/." "$snapshot/tree$spec/"
+      done < <(for spec in "${volumes[@]}"; do
+        path=${spec#*:}
+        printf '%d\t%s\n' "${#path}" "$spec"
+      done | sort -n | cut -f2-)
+      printf '%s\n' "${tags[@]}" >"$snapshot/tags"
+      echo "$host" >"$snapshot/host"
+      echo "no parent snapshot found, will read all files"
+      echo "Added to the repository: 2.000 KiB (1.000 KiB stored)"
+      echo "snapshot $id saved"
+      if [[ -e $state/restic-backup-partial ]]; then
+        echo "Warning: at least one source file could not be read" >&2
+        exit 3
+      fi
+      ;;
+    forget)
+      if [[ -e $state/restic-forget-fails ]]; then
+        echo "Fatal: unable to remove snapshots: connection reset by peer" >&2
+        exit 3
+      fi
+      echo "Applying Policy: keep 7 daily, 4 weekly, 6 monthly snapshots"
+      ;;
+    snapshots)
+      echo "ID        Time                 Host    Tags"
+      for snapshot in "$repo"/snapshots/*; do
+        [[ -d $snapshot ]] || continue
+        printf '%s  %s  %s  %s\n' "${snapshot##*-}" "$(date -r "$snapshot" '+%Y-%m-%d %H:%M:%S')" "$(cat "$snapshot/host")" \
+          "$(paste -sd , "$snapshot/tags")"
+      done
+      ;;
+    restore)
+      # restore ID|latest [--host …] --target … --include … : chaque chemin
+      # inclus, de la sauvegarde au dossier monté.
+      local wanted=$1
+      shift
+      while (($#)); do
+        case $1 in
+          --target) target=$2 ;;
+          --include) includes+=("$2") ;;
+        esac
+        shift 2
+      done
+      if [[ $wanted == latest ]]; then
+        snapshot=$(find "$repo/snapshots" -mindepth 1 -maxdepth 1 | sort | tail -n 1)
+      else
+        snapshot=$(find "$repo/snapshots" -mindepth 1 -maxdepth 1 -name "*-$wanted*" | head -n 1)
+      fi
+      if [[ -z $snapshot && $wanted == latest ]]; then
+        echo "Fatal: failed to find snapshot: snapshot filter (Paths:[] Tags:[] Hosts:[button]): no snapshot found" >&2
+        exit 1
+      elif [[ -z $snapshot ]]; then
+        echo "Fatal: no matching ID found for prefix \"$wanted\"" >&2
+        exit 1
+      fi
+      echo "restoring snapshot ${snapshot##*-} of [/sauvegarde] at $(date) by root@button to $target"
+      destination=$(on_host "$target")
+      for path in "${includes[@]}"; do
+        [[ -e $snapshot/tree$path ]] || continue
+        mkdir -p "$destination${path%/*}"
+        cp -a "$snapshot/tree$path" "$destination$path"
+      done
+      echo "Summary: Restored ${#includes[@]} files/dirs"
+      ;;
+    check)
+      if [[ -e $state/restic-check-fails ]]; then
+        echo "Fatal: repository contains errors" >&2
+        exit 1
+      fi
+      echo "no errors were found"
+      ;;
+    *)
+      echo "docker : commande de restic inattendue, $command" >&2
+      exit 2
+      ;;
+  esac
+}
+
 case $1 in
   version) echo 27.3.1 ;;
   info)
@@ -226,7 +431,9 @@ case $1 in
   volume) [[ ${2:-} != ls ]] || cat "$state/volumes" 2>/dev/null || true ;;
   login) echo "login ${*:2} jeton=$(cat)" >>"$state/login" ;;
   run)
-    if [[ " $* " == *" caddy respond "* ]]; then
+    if [[ " $* " == *" docker.io/restic/restic:"* ]]; then
+      restic_run "$@"
+    elif [[ " $* " == *" caddy respond "* ]]; then
       # Le jeton de la vérification du domaine : son dernier argument.
       echo "${*: -1}" >"$state/probe-token"
       echo probe
