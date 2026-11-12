@@ -184,8 +184,10 @@ export function RundownPanel({
   const broken = linesToRepair(onAir ? [onAir, ...upcoming] : upcoming);
   const end = planEnd(rundown.items);
   const notice = repairNotice(broken.length, end, canEdit);
-  // Le temps qui reste ne se compte que si le playout dit jouer cette ligne-là.
-  const timed = Boolean(onAir && onAir.origin !== "live" && onAir.queue !== "stream" && itemNamedLikeLive(onAir, live));
+  // Le temps qui reste ne se compte que si le playout dit jouer cette ligne-là, et quand elle finit.
+  const timed =
+    Boolean(onAir && onAir.origin !== "live" && onAir.queue !== "stream" && itemNamedLikeLive(onAir, live)) &&
+    clock.durationSec > 1;
   const remaining = timed ? clock.remainingSec : null;
   const progress = timed ? Math.min(1, clock.elapsedSec / Math.max(1, clock.durationSec)) : null;
 
