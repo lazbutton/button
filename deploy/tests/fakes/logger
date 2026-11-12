@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Un faux logger : l'alerte de station, notée dans $FAKE_STATE/alerts au lieu
+# du journal du système.
+echo "logger $*" >>"$FAKE_STATE/alerts"

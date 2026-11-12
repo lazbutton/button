@@ -19,18 +19,20 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import httpx
+from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 
 from radiotomate.beets import BeetsIntegration
 from radiotomate.db import QuartAlchemy
-from radiotomate.domain.execution import rundown_summary
-from radiotomate.enums import CartMode
-from radiotomate.models import Cart, Sound
+from radiotomate.domain.execution import ENGAGED_STATUSES, rundown_summary
+from radiotomate.enums import CartMode, RundownStatus
+from radiotomate.models import Cart, RundownItem, Sound
 from radiotomate.quart import ShutdownError, or_shutdown
 from radiotomate.scheduler.clock import (
     advance_sequencer_cursor,
     now_paris,
 )
-from radiotomate.scheduler.execution import ensure_forecast
+from radiotomate.scheduler.execution import DESK_ORIGIN, PLAYED_NOW, ensure_forecast
 from radiotomate.scheduler.rundown import (
     DEFAULT_CART_SEC,
     DEFAULT_MUSIC_SEC,
@@ -587,6 +589,39 @@ class SchedulerDemo(Scheduler):
         self._played.append(item)
         del self._played[:-12]
 
+    async def _close_played_now(self) -> None:
+        """
+        Nothing reconciles the demo's rundown with what airs, as reconcile_as_run
+        does on a station, where the line of « Jouer tout de suite » closes,
+        played, once the next title airs. The demo closes it here, before it
+        leaves the title on air: left sent, the line stayed locked in the antenna
+        file after its title, until its time was over. During its own title, it
+        stays sent, never on air. Bookkeeping only: a failure is logged, and the
+        title changes all the same.
+        """
+        try:
+            db = QuartAlchemy.get()
+            async with db.session() as session:
+                rows = await session.scalars(
+                    select(RundownItem).where(
+                        RundownItem.origin == DESK_ORIGIN,
+                        RundownItem.status.in_(list(ENGAGED_STATUSES)),
+                    )
+                )
+                closed = [row for row in rows if (row.details or {}).get(PLAYED_NOW)]
+                if not closed:
+                    return
+                now = datetime.now()
+                for row in closed:
+                    row.status = RundownStatus.PLAYED.value
+                    row.started_at = row.started_at or row.planned_at
+                    row.closed_at = now
+                await session.commit()
+        except SQLAlchemyError:
+            _log.warning(
+                "demo: closing the line of a title played now failed", exc_info=True
+            )
+
     def discard_forecast(self) -> None:
         self._forecast = []
         self._forecast_horizon = 0
@@ -739,6 +774,7 @@ class SchedulerDemo(Scheduler):
             await self._skip_unlocked()
 
     async def _skip_unlocked(self):
+        await self._close_played_now()
         self._archive_current()
         self._on_air = datetime.now().replace(microsecond=0)
         self._override = None
@@ -843,6 +879,7 @@ class SchedulerDemo(Scheduler):
             if cart.mode is CartMode.RELAY:
                 # As the scheduler: a relay cart starts its stream, it has no sound.
                 async with self._lock:
+                    await self._close_played_now()
                     self._archive_current()
                     self._set_now_from_relay(cart)
                 return
@@ -851,6 +888,7 @@ class SchedulerDemo(Scheduler):
             if sound is None:
                 raise CartEmptyError
             async with self._lock:
+                await self._close_played_now()
                 self._archive_current()
                 await self._set_now_from_sound(cart, sound)
 
@@ -864,6 +902,7 @@ class SchedulerDemo(Scheduler):
             if sound is None:
                 raise RuntimeError(f"sound #{sound_id} not in cart #{cart_id}")
             async with self._lock:
+                await self._close_played_now()
                 self._archive_current()
                 await self._set_now_from_sound(cart, sound)
 
@@ -876,6 +915,7 @@ class SchedulerDemo(Scheduler):
         kind: str = "son",
     ):
         async with self._lock:
+            await self._close_played_now()
             self._archive_current()
             self._set_now_from_path(path, artist=artist, title=title, kind=kind)
 

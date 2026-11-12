@@ -1,14 +1,19 @@
 from asyncio import sleep
-from datetime import datetime
+from datetime import datetime, timedelta
+from unittest.mock import patch
 
+import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session as ormSession
 
 from radiotomate.beets import BeetsIntegration
 from radiotomate.enums import CartMode, ScheduleMode
 from radiotomate.interface import live as live_mod
 from radiotomate.interface_app import app_factory as interface_factory
-from radiotomate.models import Cart, Sound, User
+from radiotomate.models import Cart, RundownItem, Sound, User
+from radiotomate.scheduler.execution import DESK_ORIGIN
+from radiotomate.scheduler.rundown import DEFAULT_MUSIC_SEC
 from radiotomate.scheduler_api import Scheduler
 from tests.scheduler.test_studio_json import _login
 
@@ -246,5 +251,153 @@ async def test_demo_conducteur_follows_live_queue(  # noqa: PLR0913
             assert after_on_air["resource"] != first_on_air["resource"]
             second_live = await (await client.get("/live.json")).get_json()
             assert second_live["title"] in after_on_air["resource"]
+    finally:
+        Scheduler.reset_instance()
+
+
+async def _desk_lines(dbsession: ormSession) -> dict[str, str]:
+    """The status of each desk line, by path. Columns, not rows: the session
+    would keep the status it read first."""
+    rows = await dbsession.execute(
+        select(RundownItem.path, RundownItem.status).where(
+            RundownItem.origin == DESK_ORIGIN
+        )
+    )
+    return dict(rows.all())
+
+
+async def _play_now(client, title: str):
+    """« Jouer tout de suite » on a title of the bank: its desk line is sent."""
+    return await client.post(
+        "/autodj/conducteur/now.json",
+        json={
+            "path": f"/media/{title}.wav",
+            "title": title,
+            "kind": "musique",
+            "duration": 180,
+        },
+    )
+
+
+@pytest.mark.parametrize("passage", ["path", "sound", "cart", "relay", "skip", "end"])
+async def test_demo_closes_the_line_of_play_now(  # noqa: PLR0913
+    raw_app,
+    app_configration: dict,
+    beets_integration: BeetsIntegration,
+    dbsession: ormSession,
+    users_password: str,
+    jingles_cart,
+    pubs_cart,
+    passage: str,
+):
+    """
+    As a station, whose rundown is reconciled with what airs: the line of « Jouer
+    tout de suite » closes, played, once another title airs, whatever puts it on
+    air: another title of the bank, a sound or a cart, a relay, « Suivant », or
+    the end of its own title. The demo used to leave it sent: locked in the
+    antenna file after its title, until its time was over.
+    """
+    user = User(username=f"demo-play-now-{passage}")
+    user.update_password(users_password)
+    user.update_permissions({"can_live": "true"})
+    dbsession.add(user)
+    relay = Cart(
+        title="Radio partenaire",
+        path=raw_app.config["DATA_ROOT"] / "relay",
+        url="https://radio.example/direct.mp3",
+        max_duration=600,
+        mode=CartMode.RELAY,
+        schedule_mode=ScheduleMode.CLOCK,
+    )
+    dbsession.add(relay)
+    sound = await dbsession.scalar(
+        select(Sound).where(Sound.cart_id == jingles_cart.id)
+    )
+    await dbsession.commit()
+
+    iface = _demo_app(app_configration, beets_integration)
+    try:
+        async with iface.test_app():
+            client = iface.test_client()
+            await _login(client, f"demo-play-now-{passage}", users_password)
+            await _wait_simulating(client)
+            fired = await _play_now(client, "Grande distance")
+            assert fired.status_code == 200, await fired.get_data(as_text=True)
+            assert await _desk_lines(dbsession) == {
+                "/media/Grande distance.wav": "in_queue"
+            }
+
+            answer = None
+            if passage == "path":
+                answer = await _play_now(client, "Bande large")
+            elif passage == "sound":
+                answer = await client.post(
+                    f"/carts/{jingles_cart.id}/sounds/{sound.id}/now.json"
+                )
+            elif passage == "cart":
+                answer = await client.post(f"/carts/{pubs_cart.id}/now.json")
+            elif passage == "relay":
+                answer = await client.post(f"/carts/{relay.id}/now.json")
+            elif passage == "skip":
+                answer = await client.delete("/live.json")
+            else:
+                # Its title over, the loop of the demo passes to the next one.
+                Scheduler.get()._on_air -= timedelta(seconds=DEFAULT_MUSIC_SEC + 1)
+            if answer is not None:
+                assert answer.status_code == 200, await answer.get_data(as_text=True)
+            for _ in range(40):
+                lines = await _desk_lines(dbsession)
+                if lines["/media/Grande distance.wav"] == "played":
+                    break
+                await sleep(0.1)
+            assert lines["/media/Grande distance.wav"] == "played"
+
+            # Out of the antenna file: only the line of a new title of the bank.
+            rundown = await (await client.get("/autodj/conducteur.json")).get_json()
+            assert [
+                item["path"]
+                for item in rundown["items"]
+                if item.get("origin") == DESK_ORIGIN
+            ] == (["/media/Bande large.wav"] if passage == "path" else [])
+    finally:
+        Scheduler.reset_instance()
+
+
+async def test_demo_play_now_when_the_line_cannot_close(  # noqa: PLR0913
+    raw_app,
+    app_configration: dict,
+    beets_integration: BeetsIntegration,
+    dbsession: ormSession,
+    users_password: str,
+    jingles_cart,
+    pubs_cart,
+):
+    """Closing the line is bookkeeping: a base that refuses it does not stop the
+    next title, which goes on air all the same. The line waits for the next one."""
+    user = User(username="demo-play-now-locked")
+    user.update_password(users_password)
+    user.update_permissions({"can_live": "true"})
+    dbsession.add(user)
+    await dbsession.commit()
+
+    iface = _demo_app(app_configration, beets_integration)
+    try:
+        async with iface.test_app():
+            client = iface.test_client()
+            await _login(client, "demo-play-now-locked", users_password)
+            await _wait_simulating(client)
+            fired = await _play_now(client, "Grande distance")
+            assert fired.status_code == 200, await fired.get_data(as_text=True)
+
+            locked = OperationalError("SELECT", {}, Exception("database is locked"))
+            with patch("radiotomate.scheduler_api.select", side_effect=locked):
+                answer = await _play_now(client, "Bande large")
+            assert answer.status_code == 200, await answer.get_data(as_text=True)
+            live = await (await client.get("/live.json")).get_json()
+            assert live["title"] == "Bande large"
+            assert await _desk_lines(dbsession) == {
+                "/media/Grande distance.wav": "in_queue",
+                "/media/Bande large.wav": "in_queue",
+            }
     finally:
         Scheduler.reset_instance()

@@ -104,6 +104,7 @@ Une fois installée, la station s'exploite par la même commande, en root : `sud
 | Commande | Pour |
 |---|---|
 | `update` | la mettre à jour, vers la plus haute version publiée : voir [mettre à jour](#avec-la-commande-station) |
+| `rollback` | défaire la dernière mise à jour : voir [revenir en arrière](#avec-station-rollback) |
 | `status` | l'état de la station : sa version et la plus haute publiée, ses services, la place sur le disque, le prochain direct, la dernière sauvegarde, et les mises à jour, bloquées ou non. Elle sort en erreur quand un service ne va pas |
 | `logs [service]` | les journaux, les 200 dernières lignes. `-f` les suit |
 | `backup [archive]` | une sauvegarde, sans couper l'antenne. `--with-media` y met la banque de sons |
@@ -122,7 +123,7 @@ Sauvegarder et restaurer : voir [`exploitation/sauvegarde.md`](exploitation/sauv
 - les adresses publiques de **Réglages → Station** qui suivaient l'ancien domaine passent au nouveau. Celles qu'un admin a changées restent ;
 - les encodeurs du direct se branchent ensuite sur le nouveau domaine.
 
-**Les mises à jour.** `station update` les fait, à la main : voir [mettre à jour](#avec-la-commande-station). Réglées en automatique, le défaut, elles se feront seules quand la commande saura se lancer seule. `station config --updates manual` les passe à la main, `--update-time 03:30` change leur heure, à celle de la station, 04:00 par défaut. `station hold la grille de Noël` les bloque : elle pose le fichier `HOLD` dans le dossier de la station, avec la date et la raison. `station unhold` le retire.
+**Les mises à jour.** `station update` les fait, à la main : voir [mettre à jour](#avec-la-commande-station). Réglées en automatique, le défaut, elles se feront seules quand la commande saura se lancer seule. `station config --updates manual` les passe à la main, `--update-time 03:30` change leur heure, à celle de la station, 04:00 par défaut. `station hold la grille de Noël` les bloque : elle pose le fichier `HOLD` dans le dossier de la station, avec la date et la raison. `station unhold` le retire. Un retour arrière le pose aussi : voir [revenir en arrière](#revenir-en-arrière).
 
 **Désinstaller.** `sudo station uninstall` arrête la station, et retire ses conteneurs, ses images, les fichiers de sa version et la commande `station`. Restent `.env`, `data/`, `media/` et `backups/` : le script d'une version publiée, `sudo bash station install`, reprend la même station. `sudo station uninstall --purge` efface tout le dossier, données et sauvegardes comprises, une fois le mot `effacer` tapé. Ce qui vit hors du dossier, comme une banque de sons ailleurs (`BUTTON_MEDIA`), reste, et la commande le dit. Docker reste installé, avec le jeton du registre s'il y en a un : `docker logout ghcr.io` le retire.
 
@@ -384,9 +385,11 @@ Elle passe à la plus haute version publiée, ou à celle de `--version X.Y.Z`, 
 7. **Elle redémarre la station** : les trois services du moteur ensemble, puis les autres, puis ceux d'un autre profil qui tournaient, comme `share`. Un service à l'image épinglée qui monte un fichier changé de la version, comme Caddy et son `Caddyfile`, est recréé lui aussi. L'antenne se coupe le temps du redémarrage.
 8. **Elle la contrôle** : son adresse en HTTPS, puis `scripts/smoke.sh`, décrit plus bas.
 
-Au clavier, elle demande une confirmation avant la sauvegarde ; `--yes` répond pour un script. `--from station.tar.gz` prend les fichiers de la version dans une archive, comme `station install`, `main` compris, pour un essai. Sur une machine distante, la lancer dans `tmux` ou `screen` : une connexion SSH coupée en plein redémarrage l'arrêterait là.
+Si les fichiers ne se posent pas, si la station ne redémarre pas, ou si le contrôle échoue, elle revient seule à la version d'avant, base comprise, et bloque les mises à jour suivantes : voir [revenir en arrière](#seule-quand-une-mise-à-jour-échoue).
 
-Chaque mise à jour se note dans `updates.log`, dans le dossier de la station : faite, arrêtée ou échouée, avec la sauvegarde d'avant. `station status` dit la dernière. Si le redémarrage ou le contrôle échoue, la commande le dit, avec la sauvegarde d'avant : revenir en arrière se fait encore à la main, voir [revenir en arrière](#revenir-en-arrière). La station est alors déjà à la nouvelle version : relancée, `station update` n'a plus rien à faire, et `station install` la répare, sur cette version.
+Au clavier, elle demande une confirmation avant la sauvegarde ; `--yes` répond pour un script. `--from station.tar.gz` prend les fichiers de la version dans une archive, comme `station install`, `main` compris, pour un essai. Sur une machine distante, la lancer dans `tmux` ou `screen` : une connexion SSH coupée en plein redémarrage l'arrête là, et la station revient alors à la version d'avant.
+
+Chaque mise à jour se note dans `updates.log`, dans le dossier de la station, à l'heure de son début : faite, arrêtée, annulée quand la station est revenue seule à la version d'avant, ou échouée, avec la sauvegarde d'avant. `station status` dit la dernière.
 
 La version de chaque service, d'après ses images, est relevée après chaque installation, mise à jour ou restauration, dans `versions.json`, avec les données du moteur. `GET /system/version.json` la donne aux admins : voir [api.md](api.md#système).
 
@@ -439,6 +442,40 @@ Le contrôle prend l'adresse de la console, puis celle du flux public. Sur la ma
 Au premier point qui échoue, il s'arrête en erreur, nomme le point et ce qui ne va pas, et dit quel journal lire. Un service du moteur arrêté le fait échouer tout de suite, sans attendre. Le point 4 ne voit pas un catalogue arrêté : sans cookie, nginx répond 401 sans le joindre. Sur une machine lente, `SMOKE_WAIT=300 scripts/smoke.sh …` attend la santé du moteur cinq minutes. Le contrôle appelle `docker compose` sans option : une station lancée avec `-p <station>` ou `--env-file <fichier>` se contrôle avec `COMPOSE_PROJECT_NAME=<station>` ou `COMPOSE_ENV_FILES=<fichier>` devant la commande. Le contrôle ne change rien à la station : il sert aussi après une installation, ou à tout moment.
 
 ## Revenir en arrière
+
+Une station installée par `station install` revient en arrière par sa commande : seule, quand une mise à jour échoue, ou par `station rollback`. Les autres reviennent à la main.
+
+### Seule, quand une mise à jour échoue
+
+`station update` se défait si les fichiers de la version ne se posent pas, si la station ne redémarre pas, ou si le contrôle échoue : une image qui ne démarre pas, une migration du schéma qui échoue à mi-chemin, un flux qui ne répond plus. La station revient à la version d'avant :
+
+- ses fichiers, tels qu'ils étaient dans le dossier, et `BUTTON_VERSION` dans `.env` ;
+- ses images, pour tous les services, recréés, les trois du moteur ensemble. Un service venu avec la nouvelle version s'en va ;
+- la base d'avant la mise à jour, si le schéma a migré : la version d'avant ne lit pas un schéma plus récent. C'est la copie que le moteur fait avant de migrer, dans `RT_DATA/backups/`. Ce qui s'est écrit depuis est perdu, et `updates.log` le dit. La base de la nouvelle version reste à côté, dans `RT_DATA/backups/avant-restauration-….db`.
+
+Puis elle la contrôle, comme après une mise à jour, sur le mount que sert la version d'avant : `button.mp3` pour une 0.2.0. Avant de recréer les conteneurs de la nouvelle version, elle garde leurs journaux dans `updates-failed.log`, dans le dossier de la station, en droits 600 : de quoi voir pourquoi elle n'a pas démarré.
+
+Si la base d'avant ne peut pas revenir, parce que sa copie est abîmée ou que la place manque à côté de la base, rien ne se défait : la station reste à la nouvelle version, qui tourne peut-être encore, plutôt que de s'arrêter sur une base que la version d'avant ne lirait pas. La commande le dit.
+
+Elle pose ensuite `HOLD`, qui bloque les mises à jour suivantes jusqu'à ce qu'une personne le retire, la cause trouvée : `station unhold`. `updates.log` note la mise à jour « annulée », et `station status` la dit. L'alerte « mise à jour annulée » part dans le journal du système, `journalctl -t button` ; sur un téléphone et par e-mail, ce sera avec les alertes de SUR-01. La commande sort en erreur.
+
+Si le retour échoue lui aussi, la commande le dit, avec l'état où il laisse la station, `updates.log` le note « échouée », et `HOLD` bloque de même. Une fois la cause réglée, `station rollback` refait le retour.
+
+Revenue en 0.2.0, une station retrouve la commande `station` de la 0.2.0, qui n'a que `install`. Les messages citent la commande lancée, `bash station` pour la première mise à jour, qui a le reste : `sudo bash station status`, `sudo bash station unhold`.
+
+### Avec station rollback
+
+Une mise à jour passée peut décevoir ensuite. `sudo station rollback` défait la dernière encore en place, d'après `updates.log`, et ramène la station à la version d'avant. Une mise à jour arrêtée, revenue seule ou échouée avant de toucher la station n'a rien laissé : `rollback` la passe, et défait celle d'avant. Il ramène :
+
+- ses fichiers, d'après l'archive de cette version, vérifiée par sa somme comme pour `station install`, ou celle de `--from`. Un fichier que la station avait changé reste à côté, en `.local-…` ;
+- ses images, pour tous les services. Celles qui manquent se tirent d'abord, pendant que l'antenne joue ;
+- la base d'avant la mise à jour, si le schéma a migré, comme quand une mise à jour échoue. La question au clavier dit de quand date cette base, et ce qui se perd : tout ce qui s'est écrit depuis, comptes, conducteur, Agenda et réglages compris. La base d'aujourd'hui reste à côté. Pour garder ces écritures, redescendre plutôt le schéma, à la main : voir plus bas.
+
+Puis le contrôle, une ligne « retour arrière » dans `updates.log`, `HOLD`, et l'alerte. Au clavier, elle demande une confirmation ; `--yes` répond pour un script. Une mise à jour déjà défaite n'a plus rien à défaire.
+
+Avant de rien changer, `rollback` vérifie ce qui l'arrêterait en route : la copie de la base et la place pour la remettre, les images, et le schéma que lit la version d'avant. Sans la copie, une base plus récente que la version d'avant le fait refuser : revenir alors à la main, en redescendant le schéma.
+
+### À la main
 
 Revenir à la version d'avant, `0.1.0` par exemple, c'est la reposer : le dossier de la station à `v0.1.0`, et `BUTTON_VERSION=0.1.0` dans `.env`. Le schéma de la base décide du reste. `radiotomate-init` applique les migrations à chaque démarrage, mais une image plus ancienne ne sait pas défaire celles qu'elle ne connaît pas : le playout ne démarre plus.
 

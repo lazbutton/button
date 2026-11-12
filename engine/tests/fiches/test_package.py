@@ -18,6 +18,8 @@ SERVICES = ("quart", "beets", "httpx")
         "radiotomate.fiches.normalize",
         "radiotomate.fiches.variants",
         "radiotomate.fiches.rules",
+        "radiotomate.fiches.loose",
+        "radiotomate.fiches.third",
         "radiotomate.fiches.proposals",
     ],
 )

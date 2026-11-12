@@ -17,8 +17,10 @@ from radiotomate.fiches.rules import (
     Period,
     Person,
     YearInput,
+    calmed,
     clean_isrc,
     duration_level,
+    exotic_letters,
     fmg_verdict,
     genre_family,
     isrc_year,
@@ -28,6 +30,7 @@ from radiotomate.fiches.rules import (
     respelling,
     retyped,
     same_artist_name,
+    split_tail,
     without_edition_mentions,
     without_foreign_mentions,
 )
@@ -55,6 +58,12 @@ def fields(value, expected: dict) -> dict:
         ),
         (184, 138, {"level": "à revoir"}),
         (200, None, {"level": "à revoir", "why": "durée du morceau trouvé inconnue"}),
+        # NaN, comme pour JavaScript, est une durée inconnue.
+        (
+            float("nan"),
+            200,
+            {"level": "à revoir", "why": "durée du morceau trouvé inconnue"},
+        ),
     ],
 )
 def test_duration_confirms_within_ten_seconds(radio, found, expected):
@@ -330,6 +339,52 @@ def test_retyped_fixes_a_typo_the_file_s_way(radio, found, sentence, fixed):
 def test_without_foreign_mentions(found, radio, without):
     """Une correction n'ajoute pas de mention que le fichier n'a pas."""
     assert without_foreign_mentions(found, radio) == without
+
+
+@pytest.mark.parametrize(
+    ("title", "split"),
+    [
+        ("Murky Racing - Featuring Mocky", ("Murky Racing", "- Featuring Mocky")),
+        ("^eker Olan (Kozmonot Rework)", ("^eker Olan", "(Kozmonot Rework)")),
+        (
+            "You Got the Power - To Turn Me On",
+            ("You Got the Power - To Turn Me On", ""),
+        ),
+        # Les règles de JavaScript, relevées par Node : U+FEFF est une espace, et
+        # « FEATURİNG », avec le « İ » turc, n'est pas « featuring ».
+        ("Song (Live)\ufeff", ("Song", "(Live)")),
+        (
+            "BU GECE FEATUR\u0130NG G\u00d6KSEL",
+            ("BU GECE FEATUR\u0130NG G\u00d6KSEL", ""),
+        ),
+    ],
+)
+def test_split_tail(title, split):
+    """La base corrigée, les mentions du fichier gardées : du bloc « troisième
+    passe » de Hopper."""
+    assert split_tail(title) == split
+
+
+@pytest.mark.parametrize(
+    ("text", "calm"),
+    [
+        ("FEAT PRINCE RAPID", "Feat Prince Rapid"),
+        ("(DON'T STOP)", "(Don't Stop)"),
+        ("feat Prince Rapid", "feat Prince Rapid"),
+    ],
+)
+def test_calmed(text, calm):
+    """Un texte en capitales, une capitale par mot : d'après l'exemple de Hopper."""
+    assert calmed(text) == calm
+
+
+@pytest.mark.parametrize(
+    ("text", "exotic"),
+    [("Nehḗz fiúk", True), ("Nehéz fiúk", False), ("Wśród pampasów", False)],
+)
+def test_exotic_letters(text, exotic):
+    """Des lettres au-delà de l'alphabet latin étendu : d'après l'exemple de Hopper."""
+    assert exotic_letters(text) is exotic
 
 
 @pytest.mark.parametrize(

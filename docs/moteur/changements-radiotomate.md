@@ -166,7 +166,7 @@ Interface : `account.py`, `csrf.py`, `emissions.py`, `integrity.py`, `json_util.
 
 Agenda : `models/agenda.py`, `domain/agenda.py`, `services/agenda.py`, `scheduler/agenda.py`, `interface/agenda.py`, `interface/public.py`. Banque : `services/media_bank.py`.
 
-Fiches de la bibliothèque : `fiches/`, les règles de l’outil de catalogue de Hopper (texte normalisé, variantes d’un titre, règles, propositions), sans Quart, sans Beets, sans réseau.
+Fiches de la bibliothèque : `fiches/`, les règles de l’outil de catalogue de Hopper (texte normalisé, variantes d’un titre, règles, seconde et troisième passes, propositions), sans Quart, sans Beets, sans réseau.
 
 Les tests nouveaux couvrent l’horloge, le conducteur, les alertes, le harbor, la rétention, le CSRF, les JSON d’admin, le tick filtré, l’Agenda et la banque. `liquidsoap --check` sur `playout/radiotomate.liq` fait partie de la vérification.
 
