@@ -24,7 +24,7 @@ Relevé le 12 novembre 2026, sur `main` après la PR 178. La dernière version p
 - l'antenne, une fiche à la fois sur un même fichier : FON-50 sur le pupitre (`desk.py`) ; FON-49, en cours, puis FON-35, FON-37, FON-38 et FON-51 sur `clock.py` ; FON-19 sur `execution.py`. FON-14, FON-39, FON-33, FON-32 et FON-36 viennent de changer ces fichiers : rejouer chaque défaut avant de coder ;
 - les bacs et la banque : FON-21, FON-31, et FON-20 et FON-40, ces deux-là l'une après l'autre, sur le script du pont Dropbox ;
 - les fiches de la bibliothèque : ARC-06, puis FON-25, qui attend aussi une clé AcoustID pour BUTTON. FON-26 à FON-30 les suivent ;
-- sans ordre, chacune avec ses conflits : FON-47 sur la page Semaine, FON-44, sur `alerts.py`, TST-04, TST-13, TST-07 et FON-41, qui touchent le même parcours, DEV-05 et TST-12, l'une après l'autre sur `scheduler_api.py`, INS-05, FON-48, en cours, FON-46, DEV-01 à DEV-04, PUB-02, LEG-03, GEN-04, SEC-08, SEC-10, ARC-01, et MAJ-08, que MAJ-04 ne retient plus.
+- sans ordre, chacune avec ses conflits : FON-47 sur la page Semaine, FON-44, sur `alerts.py`, TST-04, TST-13, TST-07 et FON-41, qui touchent le même parcours, DEV-05 et TST-12, l'une après l'autre sur `scheduler_api.py`, INS-05, FON-48, en cours, FON-46, DEV-01 à DEV-04, PUB-02, LEG-03, GEN-04, SEC-08, SEC-10, SEC-11 sur nowplaying, SEC-12 sur le script du playout, ARC-01, et MAJ-08, que MAJ-04 ne retient plus.
 
 Dans la commande `station`, une fiche à la fois, maintenant que MAJ-07 est faite : MAJ-06, les mises à jour de la nuit, MAJ-09, TST-10, SUR-03, et ARC-06, dont la bibliothèque de Beets migrée ne redescend pas avec le retour arrière de MAJ-05. SUR-02 peut passer. SEC-09 relit le tout à la fin.
 
