@@ -7,7 +7,7 @@ import type { AntenneState } from "./types";
 test("l'admin voit la station, puis son compte ; les autres rôles, leur compte seulement", () => {
   assert.deepEqual(
     reglagesSections("admin").map((section) => section.id),
-    ["comptes", "station", "automate", "compte"],
+    ["comptes", "station", "automate", "mises-a-jour", "compte"],
   );
   for (const role of ["programmateur", "animateur"] as const) {
     assert.deepEqual(

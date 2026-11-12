@@ -1132,3 +1132,128 @@
     padding-inline: 0.5rem;
   }
 }
+
+/* ---------- Mises à jour ---------- */
+
+/* Le geste d'un état, sous sa phrase : le bouton, ou pourquoi il n'y en a pas. */
+.reglages-updates-action {
+  grid-column: 2 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 0.75rem;
+}
+
+.reglages-updates-blocked {
+  max-width: 46rem;
+  margin: 0;
+  color: var(--app-text);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.reglages-updates-kicker {
+  margin: 0 0 0.15rem;
+  color: var(--app-text-muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.reglages-updates-hold {
+  margin: 0;
+  padding: 0.65rem 0.75rem;
+  border-radius: var(--app-radius-md);
+  background: var(--app-surface-2);
+  color: var(--app-text);
+  font-family: var(--code-font-family);
+  font-size: 0.74rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.reglages-updates-releases {
+  display: grid;
+  gap: 1rem;
+}
+
+.reglages-updates-release + .reglages-updates-release {
+  padding-top: 1rem;
+  border-top: 1px solid var(--app-border);
+}
+
+.reglages-updates-release h4 {
+  margin: 0 0 0.35rem;
+  color: var(--app-text);
+  font-size: 0.82rem;
+  font-weight: 650;
+}
+
+.reglages-updates-release h4 span {
+  color: var(--app-text-muted);
+  font-weight: 500;
+}
+
+.reglages-updates-notes {
+  color: var(--app-text);
+  font-size: 0.78rem;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.reglages-updates-notes p,
+.reglages-updates-notes ul,
+.reglages-updates-notes pre {
+  margin: 0 0 0.5rem;
+}
+
+.reglages-updates-notes ul {
+  padding-left: 1.2rem;
+}
+
+.reglages-updates-notes h5 {
+  margin: 0.6rem 0 0.25rem;
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+
+.reglages-updates-notes code,
+.reglages-updates-notes pre {
+  font-family: var(--code-font-family);
+  font-size: 0.72rem;
+}
+
+.reglages-updates-notes pre {
+  padding: 0.55rem 0.7rem;
+  border-radius: var(--app-radius-md);
+  background: var(--app-surface-2);
+  white-space: pre-wrap;
+}
+
+.reglages-updates-notes a,
+.reglages-card-body .reglages-note a {
+  color: var(--app-text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.reglages-updates-services {
+  margin-top: 0.75rem;
+  font-size: 0.78rem;
+}
+
+.reglages-updates-services summary {
+  min-height: 2.5rem;
+  display: flex;
+  align-items: center;
+  color: var(--app-text);
+  cursor: pointer;
+}
+
+.reglages-updates-services summary:focus-visible {
+  outline: 2px solid var(--app-focus);
+  outline-offset: 2px;
+}
+

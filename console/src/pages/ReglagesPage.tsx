@@ -1,5 +1,5 @@
 import { Tabs } from "@radix-ui/themes";
-import { Activity, RadioTower, UserRound, Users, type LucideIcon } from "lucide-react";
+import { Activity, CircleFadingArrowUp, RadioTower, UserRound, Users, type LucideIcon } from "lucide-react";
 import { useRef, type ReactNode } from "react";
 import { useAccount } from "../api/AccountContext";
 import { reglagesSections, type ReglagesSection, type ReglagesSectionId } from "../api/reglages";
@@ -8,6 +8,7 @@ import { useMediaQuery } from "../lib/useMediaQuery";
 import { LoadingState } from "../ui/DataState";
 import { PageHeader } from "../ui/PageHeader";
 import { AutomatePage } from "./AutomatePage";
+import { MisesAJourPage } from "./MisesAJourPage";
 import { MonComptePage } from "./MonComptePage";
 import { StationPage } from "./StationPage";
 import { UsersPage } from "./UsersPage";
@@ -17,6 +18,7 @@ const ICON: Record<ReglagesSectionId, LucideIcon> = {
   comptes: Users,
   station: RadioTower,
   automate: Activity,
+  "mises-a-jour": CircleFadingArrowUp,
   compte: UserRound,
 };
 
@@ -28,6 +30,8 @@ function panel(id: ReglagesSectionId): ReactNode {
       return <StationPage />;
     case "automate":
       return <AutomatePage />;
+    case "mises-a-jour":
+      return <MisesAJourPage />;
     case "compte":
       return <MonComptePage />;
   }
@@ -74,7 +78,7 @@ export function ReglagesPage() {
     <div className="ui-page reglages-page">
       <PageHeader
         title="Réglages"
-        description="Les comptes de l’équipe, la station et l’automate, pour toute la radio. Puis ton compte."
+        description="Les comptes de l’équipe, la station, l’automate et ses mises à jour, pour toute la radio. Puis ton compte."
       />
       <Tabs.Root
         ref={layout}
