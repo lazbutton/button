@@ -3,9 +3,23 @@
 from __future__ import annotations
 
 from radiotomate.domain.errors import DomainConflict, DomainValidationError
-from radiotomate.enums import PositionKind, SyncMode, WhenMode
+from radiotomate.enums import CartMode, PositionKind, SyncMode, WhenMode
 
 MINUTES_PER_DAY = 24 * 60
+
+
+def refuse_relay_cart(title: str, mode: CartMode | None, *, field: str) -> None:
+    """
+    A clock plays the sounds of its carts: it never launches a relay, as
+    « Diffuser maintenant » does. A relay chosen for a position, or as a
+    fallback, is refused when the clock is saved.
+    """
+    if mode is CartMode.RELAY:
+        raise DomainValidationError(
+            f"Le bac « {title} » est un relais : une heure type ne joue que"
+            " des bacs de sons. Un relais se lance par « Diffuser maintenant ».",
+            field=field,
+        )
 
 
 def validate_slot_timing(day_of_week: int, minute: int) -> None:

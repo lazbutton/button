@@ -13,6 +13,7 @@ from radiotomate.enums import CartMode, PositionKind
 from radiotomate.models import AutoDJSlot, Clock
 from radiotomate.scheduler.clock import (
     OVERTAKEN,
+    RELAY_CART,
     _load_cart,
     _pick_music,
     load_sequencer_cursor,
@@ -250,7 +251,8 @@ async def _cached_draw(
 def _next_preview_sound(cart, used: set[int]):
     """
     For a cart planned from neither a draw nor its order (``cart_ahead``): a
-    random cart whose draw without repeat is switched off, or a relay.
+    random cart whose draw without repeat is switched off. A relay never comes
+    here: ``_resolve_cart`` passes it over.
     """
     if cart is None:
         return None
@@ -258,20 +260,14 @@ def _next_preview_sound(cart, used: set[int]):
     if not available:
         return None
     unused = [sound for sound in available if sound.id not in used]
-    if cart.mode is CartMode.RANDOM:
-        if not unused:
-            used.clear()
-            unused = list(available)
-        return choice(unused)
-    ordered = sorted(available, key=lambda sound: sound.rank or 0)
-    for sound in ordered:
-        if sound.id not in used and not sound.last_played:
-            return sound
-    for sound in ordered:
-        if sound.id not in used:
-            return sound
-    used.clear()
-    return ordered[0]
+    if not unused:
+        used.clear()
+        unused = list(available)
+    return choice(unused)
+
+
+def _is_relay(cart) -> bool:
+    return getattr(cart, "mode", None) is CartMode.RELAY
 
 
 async def _resolve_cart(
@@ -281,7 +277,14 @@ async def _resolve_cart(
     *,
     carts: dict,
     used_sounds: dict[int, set[int]],
-) -> tuple[Sound | None, object | None, bool]:
+) -> tuple[Sound | None, object | None, bool, bool]:
+    """
+    The sound a cart position plays, its cart, and whether that cart is a
+    fallback. A relay gives the clock nothing, like a cart without a ready sound.
+    The last value says whether the cart the position names first, the one its
+    line names, is a relay.
+    """
+    relay: bool | None = None
     references = [
         (pos.cart_id, pos.cart_title),
         (pos.fallback_cart_id, pos.fallback_cart_title),
@@ -292,6 +295,11 @@ async def _resolve_cart(
         if cart_id is None and not title:
             continue
         cart = await _cached_cart(session, carts, cart_id, title)
+        if relay is None:
+            relay = _is_relay(cart)
+        if _is_relay(cart):
+            # The clock does not launch a relay, nor play the sounds left in it.
+            continue
         used = used_sounds.setdefault(getattr(cart, "id", 0), set()) if cart else set()
         draw = await _cached_draw(session, carts, cart)
         sound = draw.pick_ahead(cart) if draw else _next_preview_sound(cart, used)
@@ -300,8 +308,8 @@ async def _resolve_cart(
             rescue = (primary_id is not None and cart.id != primary_id) or (
                 primary_id is None and title != primary_title
             )
-            return sound, cart, rescue
-    return None, None, False
+            return sound, cart, rescue, bool(relay)
+    return None, None, False, bool(relay)
 
 
 async def _header(
@@ -343,7 +351,7 @@ async def _prepare_cart(  # noqa: PLR0913
     carts: dict,
     used_sounds: dict[int, set[int]],
 ) -> tuple[dict, float] | None:
-    sound, cart, rescue = await _resolve_cart(
+    sound, cart, rescue, relay = await _resolve_cart(
         session,
         pos,
         clock,
@@ -376,7 +384,8 @@ async def _prepare_cart(  # noqa: PLR0913
             cart_id=cart_id,
         )
         payload["status_code"] = "failed"
-        payload["reason"] = "cart introuvable"
+        # A relay is no cart to play from: the conducteur says why, to repair it.
+        payload["reason"] = RELAY_CART if relay else "cart introuvable"
         return payload, DEFAULT_CART_SEC
     resource = (sound.title or "").strip() or cart.title
     duration = _duration_seconds(sound.duration, DEFAULT_CART_SEC)

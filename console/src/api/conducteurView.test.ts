@@ -128,6 +128,26 @@ test("un bac sans son : la ligne porte le nom du bac, une seule fois", () => {
   });
 });
 
+test("un bac en relais : la ligne dit qu'une heure type ne le lance pas", () => {
+  const item = line({
+    kind: "pub",
+    when: "anchored",
+    queue: "carts",
+    resource: "Radio Zef",
+    cart: "Radio Zef",
+    status: "échec",
+    status_code: "failed",
+    reason: "bac en relais",
+  });
+  assert.deepEqual(lineCopy(item), { title: "Radio Zef", artist: "" });
+  assert.deepEqual(lineStatus(item, "later"), {
+    label: "Manquant",
+    tone: "danger",
+    detail: "bac en relais : une heure type ne le lance pas",
+  });
+  assert.deepEqual(linesToRepair([item]), [item]);
+});
+
 test("une sélection sans titre : la ligne le dit, et garde sa sélection pour origine", () => {
   const item = line({
     resource: "musique manquante",

@@ -1,10 +1,11 @@
 import { Select } from "@radix-ui/themes";
 import { BAC_KINDS, bacKind } from "../../api/soundsView";
-import { STEP_KINDS, stepKindLabel, usesSelection } from "../../api/programmationView";
+import { isRelay, STEP_KINDS, stepKindLabel, usesSelection } from "../../api/programmationView";
 import type { Cart, Category, ClockPosition, PositionKind } from "../../api/types";
 
 const MISSING = "__missing__";
 const NONE = "__none__";
+const RELAY = "__relay__";
 
 /** Jingle, Titres, Programme or Pub. */
 export function KindSelect({
@@ -43,14 +44,15 @@ export function sourceOf(step: ClockPosition, carts: Cart[], categories: Categor
   if (usesSelection(step.kind)) {
     const name = (step.category || "").trim();
     const selection = name ? (categories.find((row) => row.name === name) ?? null) : null;
-    return { cart: null, selection, missing: Boolean(name) && !selection, empty: !name };
+    return { cart: null, selection, missing: Boolean(name) && !selection, empty: !name, relay: false };
   }
   const title = (step.cart || "").trim();
   const cart =
     carts.find((row) => step.cart_id != null && row.id === step.cart_id) ??
     (title ? carts.find((row) => row.title.trim().toLowerCase() === title.toLowerCase()) : undefined) ??
     null;
-  return { cart, selection: null, missing: Boolean(title) && !cart, empty: !title };
+  // A relais saved before the engine refused it, or turned relais since: the antenna plays nothing of it.
+  return { cart, selection: null, missing: Boolean(title) && !cart, empty: !title, relay: isRelay(cart) };
 }
 
 /** The bac (or the sélection, for titres) a step plays from. */
@@ -116,10 +118,10 @@ export function SourceSelect({
     );
   }
 
-  const value = source.cart ? String(source.cart.id) : source.missing ? MISSING : NONE;
+  const value = source.relay ? RELAY : source.cart ? String(source.cart.id) : source.missing ? MISSING : NONE;
   const groups = BAC_KINDS.map((kind) => ({
     ...kind,
-    carts: carts.filter((cart) => bacKind(cart) === kind.id),
+    carts: carts.filter((cart) => bacKind(cart) === kind.id && !isRelay(cart)),
   })).filter((group) => group.carts.length);
   return (
     <Select.Root
@@ -131,7 +133,7 @@ export function SourceSelect({
       }}
     >
       <Select.Trigger
-        className={`prog-source${source.missing || source.empty ? " is-missing" : ""}`}
+        className={`prog-source${source.missing || source.empty || source.relay ? " is-missing" : ""}`}
         aria-label={label}
       />
       <Select.Content variant="soft" position="popper" className="prog-select-menu">
@@ -145,6 +147,11 @@ export function SourceSelect({
             « {step.cart} » (introuvable)
           </Select.Item>
         ) : null}
+        {source.relay ? (
+          <Select.Item value={RELAY} disabled>
+            « {source.cart?.title} » (relais, à remplacer)
+          </Select.Item>
+        ) : null}
         {groups.map((group, index) => (
           <Select.Group key={group.id}>
             {index > 0 ? <Select.Separator /> : null}
@@ -153,11 +160,7 @@ export function SourceSelect({
               <Select.Item key={cart.id} value={String(cart.id)}>
                 <span className="prog-source-option">
                   {cart.title}
-                  <small>
-                    {cart.mode === "relay"
-                      ? "relais"
-                      : `${cart.sounds.length} son${cart.sounds.length === 1 ? "" : "s"}`}
-                  </small>
+                  <small>{`${cart.sounds.length} son${cart.sounds.length === 1 ? "" : "s"}`}</small>
                 </span>
               </Select.Item>
             ))}

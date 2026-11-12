@@ -1,8 +1,16 @@
-import { DropdownMenu, IconButton, Select, Spinner } from "@radix-ui/themes";
+import { Button, DropdownMenu, IconButton, Select, Spinner } from "@radix-ui/themes";
 import { AlertTriangle, ArrowLeft, ArrowUpRight, Check, Clock3, Copy, MoreHorizontal, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { cutsSummary, nameTaken, usesSelection } from "../../api/programmationView";
+import {
+  cutsSummary,
+  hasRelayFallback,
+  isRelay,
+  nameTaken,
+  relaysNamed,
+  usesSelection,
+  withoutRelayFallbacks,
+} from "../../api/programmationView";
 import type { SaveState } from "../../api/useClockSaver";
 import type { Cart, Category, Clock } from "../../api/types";
 import { ClockCuts, newCut } from "./ClockCuts";
@@ -11,6 +19,7 @@ import { HourBar } from "./HourBar";
 import { sourceOf } from "./StepFields";
 
 const NO_FALLBACK = "__none__";
+const RELAY_FALLBACK = "__relay__";
 
 export function ClockEditor({
   clock,
@@ -53,6 +62,9 @@ export function ClockEditor({
   const [flash, setFlash] = useState<number | null>(null);
   const cuts = cutsSummary(clock);
   const fallbackKnown = carts.some((cart) => cart.title === clock.fallback_cart);
+  const fallbackRelay = isRelay(carts.find((cart) => cart.title === clock.fallback_cart));
+  const relays = relaysNamed(clock, carts);
+  const relayFallbacks = hasRelayFallback(clock, carts);
   const broken = [
     ...new Set(
       [...clock.motif, ...clock.anchors]
@@ -148,6 +160,36 @@ export function ClockEditor({
             </span>
           </p>
         ) : null}
+        {relays.length ? (
+          <p className="prog-alert" role="note">
+            <AlertTriangle size={15} aria-hidden="true" />
+            <span>
+              Cette heure type cite {relays.length === 1 ? "un bac en relais" : "des bacs en relais"} :{" "}
+              {relays.map((name) => `« ${name} »`).join(", ")}. Une heure type ne lance pas de relais : à l'antenne,{" "}
+              {relays.length === 1 ? "il ne passe pas" : "ils ne passent pas"}, et le moteur refuse de l'enregistrer tant{" "}
+              {relays.length === 1
+                ? "qu'il n'est pas remplacé par un bac de sons (en rouge ci-dessous)."
+                : "qu'ils ne sont pas remplacés par des bacs de sons (en rouge ci-dessous)."}{" "}
+              Un relais se lance par « Diffuser maintenant », dans Sons → Bacs.
+              {relayFallbacks ? (
+                <>
+                  {" "}
+                  Le secours en relais d'une étape ou d'une coupure s'enlève ici, et le secours de l'heure type joue
+                  à sa place.{" "}
+                  <Button
+                    size="1"
+                    variant="soft"
+                    color="gray"
+                    highContrast
+                    onClick={() => onChange(withoutRelayFallbacks(clock, carts))}
+                  >
+                    Retirer les secours en relais
+                  </Button>
+                </>
+              ) : null}
+            </span>
+          </p>
+        ) : null}
         <section className="prog-card prog-card--hour" aria-label="L'heure en un coup d'œil">
           <HourBar
             clock={clock}
@@ -190,7 +232,7 @@ export function ClockEditor({
             </header>
             <Select.Root
               size="2"
-              value={clock.fallback_cart ? clock.fallback_cart : NO_FALLBACK}
+              value={fallbackRelay ? RELAY_FALLBACK : clock.fallback_cart ? clock.fallback_cart : NO_FALLBACK}
               onValueChange={(value) => {
                 const cart = carts.find((row) => row.title === value);
                 onChange({
@@ -200,12 +242,20 @@ export function ClockEditor({
                 });
               }}
             >
-              <Select.Trigger className="prog-fallback" aria-label="Bac de secours" />
+              <Select.Trigger
+                className={`prog-fallback${fallbackRelay ? " is-missing" : ""}`}
+                aria-label="Bac de secours"
+              />
               <Select.Content variant="soft" position="popper" className="prog-select-menu">
                 <Select.Item value={NO_FALLBACK}>Rien : un blanc plutôt qu'un secours</Select.Item>
                 {clock.fallback_cart && !fallbackKnown ? (
                   <Select.Item value={clock.fallback_cart} disabled>
                     « {clock.fallback_cart} » (introuvable)
+                  </Select.Item>
+                ) : null}
+                {fallbackRelay ? (
+                  <Select.Item value={RELAY_FALLBACK} disabled>
+                    « {clock.fallback_cart} » (relais, à remplacer)
                   </Select.Item>
                 ) : null}
                 <Select.Separator />

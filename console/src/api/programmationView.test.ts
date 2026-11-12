@@ -9,17 +9,22 @@ import {
   daySetLabel,
   defaultSource,
   engineErrorText,
+  fallbackIsRelay,
+  hasRelayFallback,
   hhmm,
+  isRelay,
   minuteMark,
   nameTaken,
   nextRun,
   parseHhmm,
   redundantSlotIds,
+  relaysNamed,
   runAt,
   spanLabel,
   starterMotif,
   stepsSummary,
   weekRuns,
+  withoutRelayFallbacks,
 } from "./programmationView.ts";
 import type { ClockPosition, Slot } from "./types.ts";
 
@@ -127,6 +132,9 @@ test("tints stay put and the engine speaks French", () => {
   assert.equal(engineErrorText("", "Enregistrement impossible."), "Enregistrement impossible.");
   assert.match(engineErrorText("Unknown cart: Pubs", "x"), /Le bac « Pubs » n'existe plus/);
   assert.match(engineErrorText("unknown category: Jazz", "x"), /La sélection « Jazz » n'existe plus/);
+  const relay =
+    "Le bac « Radio Zef » est un relais : une heure type ne joue que des bacs de sons. Un relais se lance par « Diffuser maintenant ».";
+  assert.equal(engineErrorText(relay, "x"), relay);
 });
 
 test("a new heure type starts with a jingle and titres", () => {
@@ -168,4 +176,58 @@ test("a new step plays what its kind suggests", () => {
   assert.equal(defaultSource("son", carts, selections).cart, "Chroniques");
   assert.deepEqual(defaultSource("musique", carts, selections), { cart: null, cart_id: null, category: "Rotation" });
   assert.equal(defaultSource("pub", [], []).cart, null);
+});
+
+test("an heure type names the relais it can no longer play", () => {
+  const carts = [
+    { id: 1, title: "Jingles", mode: "random" },
+    { id: 2, title: "Radio Zef", mode: "relay" },
+    { id: 3, title: "Journal", mode: "relay" },
+    { id: 4, title: "Pubs", mode: "playlist_loop" },
+  ];
+  assert.equal(isRelay(carts[1]), true);
+  assert.equal(isRelay(carts[0]), false);
+  assert.equal(isRelay(null), false);
+  const clock = {
+    fallback_cart: "journal",
+    fallback_cart_id: null,
+    motif: [
+      step("jingle", { cart: "Jingles", cart_id: 1, fallback_cart: "Radio Zef" }),
+      step("son", { cart: "ancien nom", cart_id: 2 }),
+      step("musique", { category: "Rotation" }),
+    ],
+    anchors: [step("pub", { when: "anchored", minute: 20, cart: "Pubs", cart_id: 4 })],
+  };
+  assert.deepEqual(relaysNamed(clock, carts), ["Radio Zef", "Journal"]);
+  const plain = { ...clock, fallback_cart: "", motif: [clock.motif[0]].map((row) => ({ ...row, fallback_cart: null })) };
+  assert.deepEqual(relaysNamed(plain, carts), []);
+  assert.deepEqual(relaysNamed(clock, []), []);
+});
+
+test("the relais a step or a cut has for secours goes in one gesture", () => {
+  const carts = [
+    { id: 1, title: "Jingles", mode: "random" },
+    { id: 2, title: "Radio Zef", mode: "relay" },
+    { id: 4, title: "Pubs", mode: "playlist_loop" },
+  ];
+  const clock = {
+    fallback_cart: "Jingles",
+    motif: [step("jingle", { cart: "Jingles", cart_id: 1, fallback_cart: "radio zef" }), step("musique")],
+    anchors: [
+      step("pub", { when: "anchored", minute: 20, cart: "Pubs", cart_id: 4, fallback_cart_id: 2, fallback_cart: "Radio Zef" }),
+      step("pub", { when: "anchored", minute: 40, cart: "Pubs", cart_id: 4, fallback_cart: "Jingles" }),
+    ],
+  };
+  assert.equal(fallbackIsRelay(clock.motif[0], carts), true);
+  assert.equal(fallbackIsRelay(clock.anchors[1], carts), false);
+  assert.equal(hasRelayFallback(clock, carts), true);
+  const cleared = withoutRelayFallbacks(clock, carts);
+  assert.equal(hasRelayFallback(cleared, carts), false);
+  assert.deepEqual(
+    [...cleared.motif, ...cleared.anchors].map((row) => row.fallback_cart),
+    [null, null, null, "Jingles"],
+  );
+  assert.equal(cleared.anchors[0].fallback_cart_id, null);
+  assert.equal(cleared.fallback_cart, "Jingles");
+  assert.equal(cleared.motif[1], clock.motif[1]);
 });

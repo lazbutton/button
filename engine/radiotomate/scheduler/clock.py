@@ -104,6 +104,8 @@ _SETTING_OFF = {"0", "false", "off", ""}
 HELD_BY_LIVE = "retenue pendant le direct"
 HELD_BY_SET = "retenue pendant un set de l'Agenda"
 OVERTAKEN = "dépassé par une ancre dure"
+# A position whose cart is a relay, and no fallback with a sound: it plays nothing.
+RELAY_CART = "bac en relais"
 TARGET_QUEUE_DEPTH = 2
 # Une seule avance dans la file jingles : fallback Liquidsoap les joue
 # tant qu'il en reste, donc un stock de 2 bouche l'Auto-DJ.
@@ -857,6 +859,13 @@ async def _push_existing_rundown_item(  # noqa: PLR0912
     path = (item.path or "").strip()
     if not path:
         return False
+    if item.origin != _DESK_ORIGIN and await _cart_turned_relay(session, item):
+        # Planned before its cart turned relay: the clock plays none of its sounds.
+        # The line closes, committed here, or the next tick would find it again.
+        _close_line(item, RELAY_CART, now_paris())
+        await session.commit()
+        _log.warning("Rundown %s: its cart is a relay now, the clock skips it", item.id)
+        return False
     artist, title = _meta_from_item(item)
     payload: dict = {"path": path, "radiotomate_item_id": item.id}
     if artist:
@@ -908,6 +917,15 @@ async def _push_existing_rundown_item(  # noqa: PLR0912
             sound.last_played = datetime.now()
     _log.info("Clock pushed rundown %s %s to %s", item.kind, path, target)
     return True
+
+
+async def _cart_turned_relay(session: ormSession, item: RundownItem) -> bool:
+    """Whether the cart of a planned line is a relay now, as it may have turned
+    since the forecast."""
+    if item.cart_id is None:
+        return False
+    mode = await session.scalar(select(Cart.mode).where(Cart.id == item.cart_id))
+    return mode is CartMode.RELAY
 
 
 async def _push_desk_line(
@@ -1330,6 +1348,7 @@ async def _fire_due_anchors(  # noqa: PLR0913
                 pos,
                 clock,
                 "carts",
+                now=now,
             )
         if not pushed:
             continue
@@ -1442,6 +1461,7 @@ async def _fire_due_soft_anchors(  # noqa: PLR0913
                 clock,
                 "carts",
                 reason="glissement" if now > occurrence else None,
+                now=now,
             )
         if not pushed:
             continue
@@ -1456,6 +1476,8 @@ async def _push_cart_to_queue(  # noqa: PLR0913
     clock: Clock,
     queue: str,
     reason: str | None = None,
+    *,
+    now: datetime,
 ) -> bool:
     references = [
         (pos.cart_id, pos.cart_title),
@@ -1464,10 +1486,15 @@ async def _push_cart_to_queue(  # noqa: PLR0913
     ]
     sound: Sound | None = None
     cart: Cart | None = None
+    tried: list[Cart | None] = []
     for cart_id, title in references:
         if cart_id is None and not title:
             continue
         cart = await _load_cart(session, cart_id=cart_id, title=title)
+        tried.append(cart)
+        if cart is not None and cart.mode is CartMode.RELAY:
+            # The clock does not launch a relay: the fallback plays, if any.
+            continue
         sound = await next_cart_sound(session, cart)
         if sound:
             break
@@ -1477,6 +1504,10 @@ async def _push_cart_to_queue(  # noqa: PLR0913
             pos.id,
             references,
         )
+        # The cart the position names first, as its line in the conducteur does.
+        named = tried[0] if tried else None
+        if named is not None and named.mode is CartMode.RELAY:
+            await _say_relay_passed(session, pos, clock, named, now)
         return False
     fallback_used = (
         bool(cart.id != pos.cart_id)
@@ -1528,6 +1559,70 @@ async def _push_cart_to_queue(  # noqa: PLR0913
         return True
     _log.error("Clock push to %s failed: %s", queue, result.error)
     return False
+
+
+async def _say_relay_passed(
+    session: ormSession,
+    pos: ClockPosition,
+    clock: Clock,
+    relay: Cart,
+    now: datetime,
+) -> None:
+    """
+    An anchor whose cart is a relay, without a fallback that has a sound, plays
+    nothing: the conducteur says it, reason ``RELAY_CART``. By the line the
+    forecast planned for this occurrence, « manquant », or else by a line closed
+    here, once, « sauté »: the forecast does not see an anchor due when it is
+    built. Closed, the line is no anchor to come any more.
+    """
+    from radiotomate.scheduler.execution import (
+        ensure_programming_version,
+        item_from_forecast,
+    )
+
+    local = now.replace(tzinfo=None)
+    occurrence = local.replace(minute=pos.minute, second=0, microsecond=0)
+    said = await session.scalar(
+        select(RundownItem.id)
+        .where(
+            RundownItem.clock_position_id == pos.id,
+            RundownItem.planned_at >= occurrence,
+            RundownItem.planned_at < occurrence + timedelta(hours=1),
+        )
+        .limit(1)
+    )
+    if said is not None:
+        return
+    version = await ensure_programming_version(session)
+    line = item_from_forecast(
+        {
+            "at": local.isoformat(),
+            "kind": pos.kind,
+            "when": pos.when_mode,
+            "minute": pos.minute,
+            "sync": pos.sync,
+            "queue": CARTS_QUEUE,
+            "resource": relay.title,
+            "cart": relay.title,
+            "status": RundownStatus.SKIPPED.value,
+            "reason": RELAY_CART,
+            "clock": clock.name,
+            "clock_id": clock.id,
+            "position_id": pos.id,
+            "cart_id": relay.id,
+        },
+        version,
+        0,
+    )
+    line.closed_at = local
+    session.add(line)
+    # The tick commits only when the cursor or the anchors fired change.
+    await session.commit()
+    _log.warning(
+        "Clock position %s: cart %s is a relay, the clock does not launch it",
+        pos.id,
+        relay.id,
+    )
 
 
 async def _load_cart(

@@ -9,6 +9,7 @@ from sqlalchemy import select, update
 
 from radiotomate.domain.autodj import (
     protect_midnight_slot,
+    refuse_relay_cart,
     require_expected_version,
     validate_clock_rows,
     validate_position,
@@ -141,6 +142,25 @@ async def resolve_cart_ref(
     return None
 
 
+async def _clock_cart_ref(
+    session: ormSession,
+    data: dict,
+    *,
+    id_field: str,
+    title_field: str,
+) -> Cart | None:
+    """The cart a clock names, never a relay: the clock would not launch it."""
+    cart = await resolve_cart_ref(
+        session,
+        data,
+        id_field=id_field,
+        title_field=title_field,
+    )
+    if cart is not None:
+        refuse_relay_cart(cart.title, cart.mode, field=title_field)
+    return cart
+
+
 def _position_id(data: dict) -> int | None:
     raw = data.get("id")
     if raw in {None, ""}:
@@ -168,13 +188,13 @@ async def _fill_position(
                 f"unknown category: {category_name}",
                 field="category",
             )
-    cart = await resolve_cart_ref(
+    cart = await _clock_cart_ref(
         session,
         data,
         id_field="cart_id",
         title_field="cart",
     )
-    fallback = await resolve_cart_ref(
+    fallback = await _clock_cart_ref(
         session,
         data,
         id_field="fallback_cart_id",
@@ -223,7 +243,7 @@ async def apply_clock(  # noqa: PLR0912
 
     clock.name = name
     if "fallback_cart" in data or "fallback_cart_id" in data or creating:
-        fallback = await resolve_cart_ref(
+        fallback = await _clock_cart_ref(
             session,
             data,
             id_field="fallback_cart_id",

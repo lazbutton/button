@@ -142,6 +142,7 @@ export function lineOrigin(item: RundownItem): string {
 
 const REASONS: Record<string, string> = {
   "cart introuvable": "bac introuvable ou sans son",
+  "bac en relais": "bac en relais : une heure type ne le lance pas",
   "aucun titre Beets": "aucun titre dans la sélection",
   "dépassé par une ancre dure": "une coupure pile suit de près",
   "file vidée": "file vidée",

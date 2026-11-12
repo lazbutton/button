@@ -3,6 +3,7 @@ import { Library, Plus } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { apiPostJson, ApiRequestError } from "../api/client";
 import { clockPositionsEqual, saveClock, setClockPositionCart } from "../api/clockWrite";
+import { isRelay } from "../api/programmationView";
 import type { Cart, Clock } from "../api/types";
 import { SelectField } from "../ui/FormField";
 
@@ -42,12 +43,15 @@ export function RepairClockCartDialog({
   const actualOpen = controlled ? open : internalOpen;
   const setOpen = onOpenChange ?? setInternalOpen;
   const [saving, setSaving] = useState(false);
-  const [pickedId, setPickedId] = useState(carts[0] ? String(carts[0].id) : "");
+  // An heure type never plays a relais: the engine refuses to save one in it.
+  const playable = useMemo(() => carts.filter((cart) => !isRelay(cart)), [carts]);
+  const [pickedId, setPickedId] = useState(playable[0] ? String(playable[0].id) : "");
 
   const title = missingTitle.trim();
   const existing = title
     ? carts.find((cart) => cart.title.trim().toLowerCase() === title.toLowerCase())
     : undefined;
+  const relay = isRelay(existing);
   const clock =
     clocks.find((row) => row.id === clockId) ||
     clocks.find((row) => row.name === clockName) ||
@@ -55,12 +59,12 @@ export function RepairClockCartDialog({
 
   useEffect(() => {
     if (!actualOpen) return;
-    setPickedId(carts[0] ? String(carts[0].id) : "");
-  }, [actualOpen, carts]);
+    setPickedId(playable[0] ? String(playable[0].id) : "");
+  }, [actualOpen, playable]);
 
   const options = useMemo(
-    () => carts.map((cart) => ({ value: String(cart.id), label: cart.title })),
-    [carts],
+    () => playable.map((cart) => ({ value: String(cart.id), label: cart.title })),
+    [playable],
   );
 
   const createOrOpen = async () => {
@@ -98,7 +102,7 @@ export function RepairClockCartDialog({
   };
 
   const useExisting = async () => {
-    const cart = carts.find((row) => String(row.id) === pickedId) ?? carts[0];
+    const cart = playable.find((row) => String(row.id) === pickedId) ?? playable[0];
     if (!cart) {
       onError("Choisis un cart.");
       return;
@@ -143,14 +147,16 @@ export function RepairClockCartDialog({
       <Dialog.Content maxWidth="24rem">
         <Dialog.Title>{title ? `Réparer « ${title} »` : "Réparer la case"}</Dialog.Title>
         <Dialog.Description>
-          {existing
+          {relay
+            ? "Ce cart est un relais : une heure type ne lance pas de relais. Remplace l’étape par un cart de sons."
+            : existing
             ? "Ce cart existe déjà mais n’a pas de son utilisable, ou l’heure type le cherche encore. Ouvre-le pour y coller des fichiers, ou remplace l’étape par un autre cart."
             : title
               ? "L’heure type demande ce cart, qui n’existe pas. Crée-le ou branche un cart déjà là."
               : "Cette étape n’a pas de cart. Branche-en un."}
         </Dialog.Description>
         <Flex direction="column" gap="3" mt="3">
-          {title ? (
+          {title && !relay ? (
             <Button highContrast disabled={saving} onClick={() => void createOrOpen()}>
               {saving ? <Spinner size="1" /> : existing ? <Library className="ui-button-icon" /> : <Plus className="ui-button-icon" />}
               {existing ? "Ouvrir le cart" : `Créer « ${title} »`}
