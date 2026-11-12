@@ -360,28 +360,19 @@ EOF
   [ "$(last_update | cut -f5)" = "pendant les images" ]
 }
 
-@test "un contrôle qui échoue se dit, avec le chemin du retour, et se note" {
-  installed_then 0.2.0
-  touch "$FAKE_STATE/smoke-fails"
-  station update
-  assert_failure
-  assert_output --partial "Le contrôle de la station a échoué en 0.2.0 : voir plus haut."
-  assert_output --regexp "Revenir à la version 0\.1\.0 : voir docs/deploiement\.md, « Revenir en arrière », avec la sauvegarde $DIR/backups/button-[0-9TZ]+\.tar\."
-  [ "$(last_update | cut -f1-3)" = "$(printf '0.1.0\t0.2.0\téchouée')" ]
-  [ "$(last_update | cut -f5)" = "pendant le contrôle" ]
-}
+# Un redémarrage ou un contrôle qui échoue : la station revient seule à la
+# version d'avant. Voir retour-arriere.bats.
 
-@test "relancée après un échec au redémarrage, update dit de réparer la station" {
+@test "une station restée à la nouvelle version, son retour arrière raté : update dit comment en sortir" {
   installed_then 0.2.0
-  touch "$FAKE_STATE/up-fails"
   station update
-  assert_failure
-  assert_output --partial "Le moteur ne repart pas en 0.2.0"
-  [ "$(last_update | cut -f3,5)" = "$(printf 'échouée\tpendant le redémarrage')" ]
+  assert_success
+  printf '%s\t0.1.0\t0.2.0\téchouée\t-\tpendant le contrôle ; le retour en 0.1.0 a échoué : un essai\n' "$(date +%s)" \
+    >>"$DIR/updates.log"
   station update
   assert_success
   assert_output --partial "La station est déjà en 0.2.0. Rien à faire."
-  assert_output --partial "Attention : la mise à jour vers 0.2.0 a échoué : voir station status. station install la répare, sur cette version."
+  assert_output --partial "Attention : la mise à jour vers 0.2.0 a échoué : voir station status. station rollback revient à la version d'avant ; station install répare celle-ci."
 }
 
 @test "un échec pendant la sauvegarde se note, et status le dit" {

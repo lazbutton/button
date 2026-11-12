@@ -2,7 +2,7 @@
 
 | Fichier | Rôle |
 |---|---|
-| [`station`](station) | La commande d'une station sur un VPS : `station install` l'installe en une commande, et la répare. Puis `update` la met à jour, et `status`, `logs`, `backup`, `restore`, `config`, `hold`, `unhold`, `cli` et `uninstall` l'exploitent. Voir [`docs/deploiement.md`](../docs/deploiement.md#installer-sur-un-vps) |
+| [`station`](station) | La commande d'une station sur un VPS : `station install` l'installe en une commande, et la répare. Puis `update` la met à jour, `rollback` défait la dernière mise à jour, et `status`, `logs`, `backup`, `restore`, `config`, `hold`, `unhold`, `cli` et `uninstall` l'exploitent. Voir [`docs/deploiement.md`](../docs/deploiement.md#installer-sur-un-vps) |
 | [`compose.yml`](compose.yml) | La station complète : moteur, console, Icecast, titre en cours, catalogue, envoi reprenable |
 | [`.env.example`](.env.example) | Modèle des variables : à copier en `.env`, qui reste hors de git |
 | [`Caddyfile`](Caddyfile) | HTTPS sur Internet : Caddy devant la console, le flux et `now.json`, avec `--profile vps` |

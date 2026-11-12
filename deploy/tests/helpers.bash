@@ -23,6 +23,8 @@ make_release() { # version, dossier
   cat >"$files/scripts/smoke.sh" <<'EOF'
 #!/usr/bin/env bash
 echo "smoke $* SMOKE_WAIT=${SMOKE_WAIT:-} dans $PWD" >>"$FAKE_STATE/log"
+# Un contrôle qui dure, tant que $FAKE_STATE/smoke-hangs est là.
+while [[ -e $FAKE_STATE/smoke-hangs ]]; do sleep 0.1; done
 # Un échec, une fois : $FAKE_STATE/smoke-fails.
 if [[ -e $FAKE_STATE/smoke-fails ]]; then
   rm "$FAKE_STATE/smoke-fails"

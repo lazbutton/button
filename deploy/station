@@ -2,6 +2,7 @@
 # station : installer une station BUTTON sur un VPS, puis l'exploiter. En root.
 #   station install [options]   installer la station, ou la réparer
 #   station update [options]    la mettre à jour
+#   station rollback [options]  défaire la dernière mise à jour
 #   station status              son état ; logs, backup, restore, config,
 #                               hold, unhold, cli et uninstall : station help
 # Sur un VPS neuf, ce script se télécharge seul, depuis la plus haute version
@@ -13,8 +14,7 @@
 # mène. Voir docs/deploiement.md, « Installer sur un VPS » et « Exploiter la
 # station ».
 #
-# Une commande, une fonction cmd_<nom>, avec les mêmes aides. Viendra ici
-# rollback (MAJ-05).
+# Une commande, une fonction cmd_<nom>, avec les mêmes aides.
 set -euo pipefail
 
 # Le dépôt dont chaque version publiée joint station, station.tar.gz et
@@ -44,6 +44,8 @@ BACKUP_FORMAT=1
 BACKUP_FILES=(MANIFEST radiotomate.tar.gz env caddy.tar.gz)
 # La marge de place demandée par une sauvegarde ou une restauration, en Ko.
 SPACE_MARGIN_KB=1048576
+# Celle d'une copie de la base, remise à sa place par un retour arrière.
+COPY_MARGIN_KB=10240
 # Les dossiers de données de la station, que compose.yml monte : la variable
 # de .env, et son défaut.
 DATA_DIRS=(RT_DATA:./data/radiotomate NOWPLAYING_DATA:./data/nowplaying MEILI_DATA:./data/meilisearch
@@ -57,6 +59,10 @@ KEEP_BACKUPS=5
 # Les trois services du moteur, recréés ensemble par une mise à jour : les
 # deux derniers partagent le réseau du premier, qui ne redémarre jamais seul.
 ENGINE_SERVICES=(radiotomate-playout radiotomate-interface radiotomate-scheduler)
+# Les journaux d'une mise à jour qui n'aboutit pas, gardés dans le dossier de
+# la station avant que le retour arrière ne recrée ses conteneurs : ils
+# partiraient avec eux. Réécrit à chaque échec.
+FAILED_LOGS="updates-failed.log"
 # Le projet Compose, name dans compose.yml : ses conteneurs et ses volumes
 # portent son nom.
 PROJECT=button
@@ -74,9 +80,11 @@ UPDATE_TIME=04:00
 # fichiers d'une version, que station update garde à part ; le conteneur de
 # la vérification du domaine s'il tourne encore ; Caddy, arrêté pour elle ;
 # une archive à moitié écrite ; une restauration interrompue ; ce qu'elle
-# préparait ; une mise à jour qui n'a pas fini, que updates.log note.
+# préparait ; une mise à jour qui n'a pas fini, que updates.log note, et qui
+# revient à la version d'avant une fois ses fichiers touchés (update_undo).
 # caddy_stopped, station_stopped et updating portent le dossier de la
-# station : cleanup ne voit pas toujours les variables locales des commandes.
+# station : cleanup ne voit pas toujours les variables locales des commandes,
+# et plus aucune après une erreur que set -e arrête.
 work=""
 staged=""
 probe_started=""
@@ -90,6 +98,19 @@ restart_others=()
 # nouvelle, la sauvegarde d'avant, puis l'étape où elle en est.
 updating=()
 update_stage=""
+# De quoi la défaire (update_undo) : l'heure de son début ; les fichiers de la
+# version d'avant, téléchargés ; ceux qu'elle a remplacés, et parmi eux ceux
+# qui n'étaient pas là ; le suffixe des copies .local-… qu'elle a gardées ; les
+# services d'un autre profil qui tournaient.
+update_started=""
+previous=""
+replaced=()
+added=()
+files_stamp=""
+others=()
+# Un retour arrière de station rollback, en cours : cleanup note son échec,
+# sans revenir sur ses pas.
+rolling_back=""
 # Sans --yes, une question se pose au clavier. Une interruption au clavier
 # dit ce message.
 assume_yes=""
@@ -117,6 +138,7 @@ La commande d'une station BUTTON sur un VPS, en root.
 
   install        installer la station, ou la réparer
   update         la mettre à jour, vers la plus haute version publiée
+  rollback       défaire la dernière mise à jour
   status         son état : version, services, disque, prochain direct
   logs           ses journaux
   backup         la sauvegarder, sans couper l'antenne
@@ -148,6 +170,10 @@ vérifiés par leur somme, et ses images, tirées pendant que l'antenne joue.
 s'ajoute. L'antenne se coupe le temps de redémarrer. Puis le contrôle de la
 station, et une ligne dans updates.log.
 
+Si la station ne redémarre pas, ou que le contrôle échoue, elle revient seule
+à la version d'avant : ses fichiers, ses images, et la base d'avant la mise à
+jour si le schéma a migré. Puis HOLD bloque les mises à jour suivantes.
+
 Pas de mise à jour quand HOLD la bloque, ni quand un direct ou une diffusion
 de l'Agenda est à l'antenne ou commence dans les 30 minutes. Une version
 majeure demande une action, que la commande cite, avant de la prendre.
@@ -162,6 +188,27 @@ majeure demande une action, que la commande cite, avant de la prendre.
   --yes             sans confirmation, pour un script
 
 Voir docs/deploiement.md, « Mettre à jour ».
+EOF
+      ;;
+    rollback)
+      cat <<'EOF'
+Usage : station rollback [--from ARCHIVE] [--yes] [--dir DOSSIER]
+
+Défait la dernière mise à jour, celle que note updates.log : la station
+revient à la version d'avant, ses fichiers et ses images. Si la mise à jour a
+migré le schéma de la base, la base d'avant la mise à jour revient aussi : ce
+qui s'est écrit depuis est perdu, et la base d'aujourd'hui reste à côté.
+L'antenne se coupe le temps de redémarrer. Puis le contrôle, une ligne dans
+updates.log, et HOLD, qui bloque les mises à jour suivantes.
+
+Une mise à jour qui ne redémarre pas, ou que le contrôle refuse, revient déjà
+seule : rollback sert quand la nouvelle version déçoit ensuite.
+
+  --from ARCHIVE    les fichiers de la version d'avant depuis cette archive,
+                    station.tar.gz, plutôt que de GitHub
+  --yes             sans confirmation, pour un script
+
+Voir docs/deploiement.md, « Revenir en arrière ».
 EOF
       ;;
     status)
@@ -319,14 +366,14 @@ ask() {
     answer=${answer:-$2}
     if "$3" "$answer"; then
       printf '%s\n' "$answer"
-      return
+      return 0
     fi
   done
 }
 
 check_yes_no() {
   case ${1,,} in
-    o | oui | y | yes | n | non | no) return ;;
+    o | oui | y | yes | n | non | no) return 0 ;;
   esac
   echo "  Répondre o ou n." >&2
   return 1
@@ -354,40 +401,40 @@ check_domain() {
 
 check_email() {
   local address='^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$'
-  [[ -z $1 || $1 =~ $address ]] && return
+  [[ -z $1 || $1 =~ $address ]] && return 0
   echo "  « $1 » n'est pas un e-mail. Rien, pour un compte Let's Encrypt sans e-mail." >&2
   return 1
 }
 
 check_timezone() {
   local zone='^[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+)*$'
-  [[ $1 =~ $zone && -f $ROOT/usr/share/zoneinfo/$1 ]] && return
+  [[ $1 =~ $zone && -f $ROOT/usr/share/zoneinfo/$1 ]] && return 0
   echo "  « $1 » n'est pas un fuseau connu de cette machine, comme Europe/Paris ou America/Montreal." >&2
   return 1
 }
 
 check_admin() {
   local id='^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$'
-  [[ $1 =~ $id ]] && return
+  [[ $1 =~ $id ]] && return 0
   echo "  « $1 » : un identifiant de 32 caractères au plus, en lettres, chiffres, point, tiret ou soulignement." >&2
   return 1
 }
 
 check_updates() {
-  [[ $1 == auto || $1 == manual ]] && return
+  [[ $1 == auto || $1 == manual ]] && return 0
   echo "  « $1 » : auto ou manual." >&2
   return 1
 }
 
 check_update_time() {
-  [[ $1 =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]] && return
+  [[ $1 =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]] && return 0
   echo "  « $1 » : une heure s'écrit HH:MM, comme 04:00." >&2
   return 1
 }
 
 check_version() {
   local number='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
-  [[ $1 =~ $number ]] && return
+  [[ $1 =~ $number ]] && return 0
   echo "  « $1 » : une version s'écrit X.Y.Z, comme 0.1.0. main ne s'installe que depuis une archive : voir --from." >&2
   return 1
 }
@@ -401,7 +448,7 @@ env_value() { # clé, défaut
   line=$(grep -E "^$1=" "$env_file" 2>/dev/null | tail -n 1) || true
   if [[ -z $line ]]; then
     printf '%s\n' "${2:-}"
-    return
+    return 0
   fi
   line=${line#*=}
   if [[ ${#line} -ge 2 && ($line == \"*\" || $line == \'*\') ]]; then
@@ -412,8 +459,14 @@ env_value() { # clé, défaut
 
 # Le mount public du flux, celui qu'écrit init-radiotomate.sh : ICECAST_MOUNT
 # dans .env, sans son / du début, et radio.mp3 sans elle, comme compose.yml.
+# Le dossier d'une version d'avant cette variable, comme la 0.2.0, qu'un retour
+# arrière peut remettre, sert button.mp3, en dur.
 stream_mount() {
   local mount
+  if [[ -f $dir/compose.yml ]] && ! grep -q ICECAST_MOUNT "$dir/compose.yml"; then
+    echo button.mp3
+    return 0
+  fi
   mount=$(env_value ICECAST_MOUNT "")
   mount=${mount#/}
   printf '%s\n' "${mount:-radio.mp3}"
@@ -456,7 +509,7 @@ env_replace() { # clé, valeur
 env_set() { # clé, valeur, commande
   if env_has "$1"; then
     env_replace "$1" "$2"
-    return
+    return $?
   fi
   [[ -z $(tail -c 1 "$env_file") ]] || printf '\n' >>"$env_file"
   printf '\n# Ajouté par station %s, le %s.\n%s=%s\n' "$3" "$(date +%F)" "$1" "$2" >>"$env_file"
@@ -694,13 +747,14 @@ latest_version() { # [attente en secondes, 30]
   esac
 }
 
-# Télécharge station.tar.gz et SHA256SUMS de la version, puis compare.
-fetch_version() { # version
+# Télécharge station.tar.gz et SHA256SUMS de la version, puis compare. Le
+# second argument dit quoi faire si un fichier ne se télécharge pas.
+fetch_version() { # version, que faire sinon
   local base="https://github.com/$REPO/releases/download/v$1" name expected actual
   for name in station.tar.gz SHA256SUMS; do
     curl --disable -fsSL --retry 3 --max-time 120 -o "$work/$name" "$base/$name" ||
-      die "La version $1 n'a pas de fichier $name sur GitHub : elle n'existe pas, ou elle date d'avant la commande station." \
-        "Les versions publiées : https://github.com/$REPO/releases. En prendre une plus récente avec --version ; pour un essai, installer depuis une archive avec --from."
+      die "La version $1 n'a pas de fichier $name sur GitHub : elle n'existe pas, elle date d'avant la commande station, ou GitHub ne répond pas." \
+        "${2:-Les versions publiées : https://github.com/$REPO/releases. En prendre une plus récente avec --version ; pour un essai, installer depuis une archive avec --from.}"
   done
   expected=$(awk '$2 == "station.tar.gz" { print $1 }' "$work/SHA256SUMS")
   actual=$(sha256sum "$work/station.tar.gz" | cut -d' ' -f1)
@@ -1009,7 +1063,7 @@ admin_password() {
   password=$(env_value RT_ADMIN_PASSWORD)
   if ! terminal; then
     say "Mot de passe admin : pas affiché, la sortie n'est pas un terminal. Il reste dans $env_file, en droits 600, jusqu'à ce que station install l'affiche, une fois, dans un terminal."
-    return
+    return 0
   fi
   env_replace RT_ADMIN_PASSWORD ""
   compose up -d >/dev/null 2>&1 || restarted=""
@@ -1035,8 +1089,14 @@ cleanup() {
   if [[ -n ${station_stopped:-} ]]; then
     restore_undo
   fi
-  if ((${#updating[@]})); then
-    update_log échouée "pendant $update_stage"
+  if ((${#updating[@]})) && [[ -n ${rolling_back:-} ]]; then
+    rollback_failed
+  elif ((${#updating[@]})); then
+    # Une fois les fichiers touchés, la station revient à la version d'avant.
+    case $update_stage in
+      "les fichiers" | "le redémarrage" | "le contrôle") update_undo ;;
+      *) update_log échouée "pendant $update_stage" ;;
+    esac
     updating=()
   fi
   local path
@@ -1288,7 +1348,7 @@ choose_updates() {
   local answer
   if { [[ -f $env_file ]] && env_has BUTTON_UPDATES; } || [[ $given == *" updates "* ]] || ! interactive; then
     choose BUTTON_UPDATES updates "$updates" auto check_updates ""
-    return
+    return $?
   fi
   answer=$(ask "Mises à jour automatiques, dès que station update saura se lancer seule ? (o/n)" o check_yes_no)
   if [[ ${answer,,} == [oy]* ]]; then echo auto; else echo manual; fi
@@ -1304,7 +1364,7 @@ default_dir() {
     folder=${script%/*}
     if [[ -f $folder/VERSION && -f $folder/compose.yml ]]; then
       printf '%s\n' "$folder"
-      return
+      return 0
     fi
   done
   printf '%s\n' "$DEFAULT_DIR"
@@ -1445,6 +1505,16 @@ space_for() { # chemin, Ko, que faire sinon
     die "Pas assez de place pour $1 : $(human_kb "$free") libres, il en faut $(human_kb "$need")." "$3"
 }
 
+# Assez de place, là où vit ce chemin, pour y écrire tant de Ko ? Comme
+# space_for, sans arrêter la commande : le retour arrière le demande.
+room_for() { # chemin, Ko
+  local line free
+  line=$(df_line "$1")
+  free=${line%% *}
+  [[ $free =~ ^[0-9]+$ ]] || return 0
+  ((free >= $2))
+}
+
 # La taille de ces chemins, en Ko, 0 pour un chemin absent. Un fichier qui
 # bouge pendant le calcul, déposé ou rangé, ne l'arrête pas.
 size_kb() { # chemin…
@@ -1556,6 +1626,43 @@ for path in ("/data/radiotomate.db", "/cible/radiotomate.db"):
         row = con.execute("select value from settings where key = 'SCHEMA_VERSION'").fetchone()
     print(row[0] if row else "")
 PY
+}
+
+# La version du schéma de la base en place, ou rien si elle ne se lit pas,
+# puis l'état d'une copie de RT_DATA/backups, comme celles qu'une migration
+# fait d'abord : ok, ou ce que disent integrity_check ou SQLite. Le schéma de
+# la copie se lit dans son nom (copy_schema) : une copie abîmée le garde.
+engine_copy_check() { # nom de la copie
+  engine_run -e "BUTTON_COPY=$1" --entrypoint python3 radiotomate-init - <<'PY'
+# copie : la version du schéma de la base en place, puis l'état de la copie.
+import os
+import sqlite3
+from contextlib import closing
+
+try:
+    with closing(sqlite3.connect("/data/radiotomate.db")) as con:
+        row = con.execute("select value from settings where key = 'SCHEMA_VERSION'").fetchone()
+    print(row[0] if row else "")
+except sqlite3.Error:
+    print("")
+try:
+    # En lecture seule : une copie qui manque ne se crée pas, vide.
+    copy = "file:/data/backups/" + os.environ["BUTTON_COPY"] + "?mode=ro"
+    with closing(sqlite3.connect(copy, uri=True)) as con:
+        state = " ".join(str(row[0]) for row in con.execute("pragma integrity_check"))
+except sqlite3.Error as error:
+    state = str(error) or "illisible"
+print(state.replace("\n", " ")[:200])
+PY
+}
+
+# Une copie de RT_DATA/backups remise à la place de la base, moteur arrêté :
+# restore-radiotomate.sh, dans l'image du moteur, garde à côté la base qu'elle
+# remplace, dans backups/avant-restauration-….db. Le script est donné : celui
+# d'une 0.2.0 demande sqlite3, que l'image n'a pas.
+engine_restore_copy() { # nom de la copie, script de restauration
+  engine_run -v "$2:/restore-radiotomate.sh:ro" \
+    --entrypoint bash radiotomate-init /restore-radiotomate.sh "/data/backups/$1" /data </dev/null >/dev/null
 }
 
 # Les adresses publiques des réglages Station qui suivaient l'ancien domaine
@@ -1747,7 +1854,7 @@ backup_report() {
   IFS=$'\t' read -r made archive size media <<<"$line"
   if [[ ! $made =~ ^[0-9]+$ || ! $size =~ ^[0-9]+$ ]]; then
     say "Dernière sauvegarde : aucune. En faire une : station backup."
-    return
+    return 0
   fi
   say "Dernière sauvegarde : le $(station_date "$made"), il y a $(since "$made"), $(human_kb "$size")$([[ $media != 1 ]] || echo ', avec les sons') : $archive$([[ -f $archive ]] || echo ", qui n'y est plus")."
 }
@@ -2345,7 +2452,7 @@ cmd_update() {
     say "Mise à jour : la commande station de la version $target prend la main."
     STATION_SELF=$(self_command) STATION_UPDATE_HANDOFF=1 \
       bash "$work/files/station" update --from "$from" --dir "$dir" "${forwarded[@]}"
-    return
+    return $?
   fi
 
   lock_station update
@@ -2385,7 +2492,7 @@ version_below() { # a, b
   for i in 0 1 2; do
     if ((10#${a[i]} != 10#${b[i]})); then
       ((10#${a[i]} < 10#${b[i]}))
-      return
+      return $?
     fi
   done
   return 1
@@ -2398,9 +2505,10 @@ version_below() { # a, b
 update_compare() { # quiet, ou rien
   if [[ $target == "$installed" && $target != main ]]; then
     say "La station est déjà en $installed. Rien à faire."
-    # Une mise à jour qui a échoué au redémarrage a déjà posé la version.
+    # Une mise à jour dont le retour arrière a échoué peut avoir déjà posé la
+    # version.
     if [[ $(grep -v '^#' "$dir/updates.log" 2>/dev/null | tail -n 1 | cut -f3,4) == "$installed"$'\t'échouée ]]; then
-      warn "la mise à jour vers $installed a échoué : voir station status. station install la répare, sur cette version."
+      warn "la mise à jour vers $installed a échoué : voir station status. station rollback revient à la version d'avant ; station install répare celle-ci."
     fi
     return 1
   fi
@@ -2517,16 +2625,23 @@ update_handoff_needed() {
 
 # La mise à jour, une fois tout vérifié : la sauvegarde, .env, les images,
 # tirées pendant que l'antenne joue, les fichiers, le redémarrage, puis le
-# contrôle. updates.log la note, faite, ou échouée, par cleanup.
+# contrôle. updates.log la note, faite, ou échouée, par cleanup, qui la défait
+# une fois ses fichiers touchés (update_undo).
 update_station() {
-  local archive="" previous="" kept="" env_added="" env_left_out="" profiles=() others=() replaced=() mounting=()
-  local started cut tls domain back
+  local archive="" kept="" env_added="" env_left_out="" profiles=() mounting=()
+  local started cut failure=""
   # Les fichiers de la version, à part : backup_station prend work.
   staged=$work
   work=""
+  update_started=$(date +%s)
+  previous=""
+  replaced=()
+  added=()
+  files_stamp=""
+  others=()
   updating=("$dir" "$installed" "$target" "")
   update_stage="la sauvegarde"
-  if previous_files; then
+  if previous_files "$installed"; then
     previous=$staged/avant/files
   elif [[ $installed != main ]]; then
     warn "les fichiers de la version $installed ne se téléchargent pas : chaque fichier que la mise à jour remplace sera gardé à côté."
@@ -2537,7 +2652,6 @@ update_station() {
   backup_station "$archive" "" "$staged/files/scripts/backup-radiotomate.sh"
   updating[3]=$archive
   backup_rotate "$archive"
-  back="Revenir à la version $installed : voir docs/deploiement.md, « Revenir en arrière », avec la sauvegarde $archive."
 
   update_stage="les images"
   update_env
@@ -2555,32 +2669,18 @@ update_station() {
   update_stage="le redémarrage"
   say "Mise à jour : la station repart en $target. L'antenne se coupe le temps du redémarrage."
   started=$SECONDS
-  compose up -d --force-recreate "${ENGINE_SERVICES[@]}" ||
-    die "Le moteur ne repart pas en $target : voir le message de docker compose plus haut." \
-      "Voir pourquoi : cd $dir && docker compose logs radiotomate-init. $back"
-  compose up -d ||
-    die "La station ne repart pas en $target : voir le message de docker compose plus haut." "$back"
-  if ((${#others[@]})); then
-    compose "${profiles[@]}" up -d "${others[@]}" ||
-      die "Les services lancés à part ne repartent pas en $target : voir le message de docker compose plus haut." "$back"
-  fi
-  remount ||
-    die "Les services qui montent un fichier changé de la version ne repartent pas : voir le message de docker compose plus haut." "$back"
+  restart_station "$target" || die "$failure"
 
   update_stage="le contrôle"
-  tls=$(env_value CADDY_TLS acme)
-  domain=$(env_value DOMAIN)
-  if [[ -n $domain && ,$(env_value COMPOSE_PROFILES), == *,vps,* ]]; then
-    https_ok ||
-      die "https://$domain ne répond pas au bout de $HTTPS_WAIT s, en $target." \
-        "Voir pourquoi : cd $dir && docker compose logs caddy. $back"
-  fi
-  smoke_ok || die "Le contrôle de la station a échoué en $target : voir plus haut." "$back"
+  check_station "$target" || die "$failure"
+  # Faite : rien de ce qui suit ne la défait, pas même un journal qui ne
+  # s'écrit pas.
   cut=$((SECONDS - started))
-  record_versions
-  update_log faite "redémarrée et contrôlée en $cut s"
+  update_log faite "redémarrée et contrôlée en $cut s" ||
+    warn "updates.log ne s'écrit pas : la mise à jour, faite, n'y est pas notée. Voir la place sur le disque : station status."
   updating=()
   update_stage=""
+  record_versions
 
   say "" "La station est à jour : $target, au lieu de $installed. Le contrôle passe."
   say "  Redémarrée et contrôlée en $cut s, coupure de l'antenne comprise."
@@ -2592,11 +2692,285 @@ update_station() {
     say "  Changés sur cette station, gardés à côté, en .local-… :$kept. Les changements d'une station vont dans compose.override.yml."
 }
 
-# Les fichiers de la version d'avant, dans $staged/avant/files : de quoi
-# reconnaître ce que la station a changé elle-même.
-previous_files() {
-  local base="https://github.com/$REPO/releases/download/v$installed" name expected
-  check_version "$installed" >/dev/null 2>&1 || return 1
+# Redémarre la station sur ses fichiers et la version de .env, après une mise
+# à jour ou un retour arrière : les trois services du moteur ensemble, puis le
+# reste, puis les services d'un autre profil qui tournaient (others), puis
+# ceux qu'up ne recrée pas et qui montent un fichier changé (mounting). Ne
+# s'arrête pas sur un échec : failure dit ce qui ne repart pas.
+restart_station() { # version
+  if ! compose up -d --force-recreate "${ENGINE_SERVICES[@]}"; then
+    failure="Le moteur ne repart pas en $1 : voir le message de docker compose plus haut."
+    return 1
+  fi
+  if ! compose up -d; then
+    failure="La station ne repart pas en $1 : voir le message de docker compose plus haut."
+    return 1
+  fi
+  if ((${#others[@]})) && ! compose "${profiles[@]}" up -d "${others[@]}"; then
+    failure="Les services lancés à part ne repartent pas en $1 : voir le message de docker compose plus haut."
+    return 1
+  fi
+  if ! remount; then
+    failure="Les services qui montent un fichier changé de la version ne repartent pas : voir le message de docker compose plus haut."
+    return 1
+  fi
+}
+
+# Le contrôle, après une mise à jour ou un retour arrière : l'adresse de la
+# station en HTTPS, si Caddy la sert, puis smoke.sh. Ne s'arrête pas sur un
+# échec : failure dit ce qui ne va pas.
+check_station() { # version
+  local tls domain
+  tls=$(env_value CADDY_TLS acme)
+  domain=$(env_value DOMAIN)
+  if [[ -n $domain && ,$(env_value COMPOSE_PROFILES), == *,vps,* ]] && ! https_ok; then
+    failure="https://$domain ne répond pas au bout de $HTTPS_WAIT s, en $1. Voir pourquoi : cd $dir && docker compose logs caddy."
+    return 1
+  fi
+  if ! smoke_ok; then
+    failure="Le contrôle de la station a échoué en $1 : voir plus haut."
+    return 1
+  fi
+}
+
+# Une mise à jour qui n'aboutit pas, une fois ses fichiers touchés : cleanup
+# l'appelle, et la station revient seule à la version d'avant. Si la station a
+# redémarré, la base d'avant la mise à jour doit-elle revenir, et le peut-elle ?
+# Cela se voit avant de rien défaire : sinon, la station reste à la version
+# nouvelle, qui tourne peut-être encore. Puis ses fichiers, tels qu'ils étaient,
+# et sa version dans .env. Si la station a redémarré : les services venus avec
+# la mise à jour s'en vont, la base d'avant revient si le schéma a migré, car
+# la version d'avant ne lit pas un schéma plus récent, et les images d'avant
+# repartent, pour tous les services. Puis le contrôle. Quoi qu'il arrive, une
+# ligne dans updates.log, HOLD, qui bloque les mises à jour suivantes, et
+# l'alerte. Rien ne l'arrête en route : elle ne fait que dire ses échecs.
+update_undo() {
+  local dir=${updating[0]} env_file=${updating[0]}/.env installed=${updating[1]} target=${updating[2]}
+  local stage=$update_stage failure="" base="" logs="" copy="" copy_schema="" reverted="" stopped="" state
+  local profiles=() mounting=()
+  warn "la mise à jour s'annule : la station revient en $installed."
+  [[ -n $work && -d $work ]] || work=$(mktemp -d)
+  if [[ $stage != "les fichiers" ]]; then
+    ! keep_failed_logs || logs=$dir/$FAILED_LOGS
+    undo_database_check
+  fi
+  if [[ -z $failure ]]; then
+    if ! undo_files; then
+      failure="Des fichiers de la version $installed ne reviennent pas : voir plus haut."
+    elif ! env_set BUTTON_VERSION "$installed" update; then
+      failure="BUTTON_VERSION ne revient pas à $installed, dans $env_file."
+    else
+      reverted=1
+    fi
+    env_isolate
+  fi
+  if [[ -n $reverted && $stage != "les fichiers" ]]; then
+    # Les profils du compose.yml d'avant, de nouveau en place.
+    all_profiles
+    drop_new_services
+    mounted_by_containers
+    if [[ -z $copy ]] || undo_database_restore "$staged/files/scripts/restore-radiotomate.sh"; then
+      say "Retour arrière : la station repart en $installed."
+      restart_station "$installed" && check_station "$installed" && record_versions
+    fi
+  fi
+  if [[ -z $failure ]]; then
+    update_log annulée "pendant $stage ; revenue en $installed${base:+, $base}"
+    hold_write "Bloquées par station update" \
+      "la mise à jour de $installed à $target a échoué pendant $stage, et la station est revenue en $installed${logs:+. Les journaux de la $target : $logs}."
+    station_alert "Mise à jour annulée" \
+      "la mise à jour de $installed à $target a échoué pendant $stage : la station est revenue en $installed, et HOLD bloque les suivantes."
+    if [[ $stage == "les fichiers" ]]; then
+      say "" "La station tourne toujours en $installed, qui n'a pas redémarré : ses fichiers sont revenus. La mise à jour vers $target est annulée."
+    else
+      say "" "La station est revenue en $installed : le contrôle passe. La mise à jour vers $target est annulée."
+    fi
+    [[ -z $base ]] || say "  ${base^} ; la base de la $target reste à côté, dans $(env_path RT_DATA ./data/radiotomate)/backups."
+    [[ -z $logs ]] || say "  Les journaux de la $target, pour voir pourquoi : $logs."
+    say "  Les mises à jour sont bloquées par $dir/HOLD. Les débloquer, une fois la cause trouvée : $(self_command) unhold, ou rm $dir/HOLD."
+  else
+    update_log échouée "pendant $stage ; le retour en $installed a échoué : $failure"
+    hold_write "Bloquées par station update" \
+      "la mise à jour de $installed à $target a échoué pendant $stage, et le retour en $installed aussi : $failure"
+    station_alert "Mise à jour ratée, station à réparer" \
+      "la mise à jour de $installed à $target a échoué pendant $stage, et le retour en $installed aussi : $failure"
+    if [[ -n $stopped ]]; then
+      state="La station est arrêtée."
+    elif [[ -n $reverted ]]; then
+      state="La station est peut-être coupée."
+    elif [[ $stage == "les fichiers" ]]; then
+      state="Ses fichiers sont en partie ceux de la $target, et ses conteneurs, ceux de la $installed, tournent encore."
+    elif [[ $stage == "le redémarrage" ]]; then
+      state="La station reste en $target, qui n'a pas redémarré : l'antenne est sans doute coupée."
+    else
+      state="La station reste en $target, qui tourne, mais que le contrôle refuse."
+    fi
+    warn "le retour en $installed a échoué : $failure"
+    printf '%s\n' "  $state Voir son état : $(self_command) status${logs:+ ; les journaux de la $target : $logs}." \
+      "  Une fois la cause réglée, $(self_command) rollback refait le retour en $installed." \
+      "  La sauvegarde d'avant la mise à jour : ${updating[3]:--}." >&2
+  fi
+}
+
+# Les fichiers d'avant la mise à jour reprennent leur place, chacun par un
+# renommage, comme update_files les a posés : la copie .local-… qu'elle a
+# gardée d'un fichier que la station avait changé, sinon celui de la version
+# d'avant. Un fichier qui n'était pas là s'en va. Ce que la mise à jour n'a
+# pas fini de poser, une copie partielle, ou la copie .local-… d'un fichier
+# resté tel quel, s'en va aussi.
+undo_files() {
+  local file path mode left=""
+  for file in "${replaced[@]}"; do
+    if [[ " ${added[*]} " == *" $file "* ]]; then
+      rm -f "$dir/$file" || left="$left $file"
+    elif [[ -n $files_stamp && -e $dir/$file.local-$files_stamp ]]; then
+      mv -f "$dir/$file.local-$files_stamp" "$dir/$file" || left="$left $file"
+    elif [[ -n $previous && -f $previous/$file ]]; then
+      mode=$(stat -c %a "$previous/$file")
+      { install -D -m "$mode" "$previous/$file" "$dir/$file.station-$$" &&
+        mv -f "$dir/$file.station-$$" "$dir/$file"; } || left="$left $file"
+    else
+      left="$left $file"
+    fi
+  done
+  while IFS= read -r path; do
+    file=${path#"$staged/files/"}
+    rm -f "$dir/$file.station-$$"
+    if [[ -n $files_stamp && -e $dir/$file.local-$files_stamp ]] && cmp -s "$dir/$file" "$dir/$file.local-$files_stamp"; then
+      rm -f "$dir/$file.local-$files_stamp"
+    fi
+  done < <(find "$staged/files" -type f)
+  [[ -n $left ]] || return 0
+  warn "ces fichiers ne reviennent pas à la version $installed :$left."
+  return 1
+}
+
+# Les journaux des conteneurs depuis le début de la mise à jour, dans
+# FAILED_LOGS, en 600 : le retour arrière recrée les conteneurs, et les leurs
+# partent avec eux.
+keep_failed_logs() {
+  local file=$dir/$FAILED_LOGS profiles=()
+  all_profiles
+  install -m 600 /dev/null "$file.part" 2>/dev/null || return 1
+  compose "${profiles[@]}" logs --no-color --timestamps --since "$(date -u -d "@$update_started" +%Y-%m-%dT%H:%M:%SZ)" \
+    >"$file.part" 2>&1 || true
+  mv -f "$file.part" "$file"
+}
+
+# Avant de rien défaire : la base d'avant la mise à jour doit-elle revenir, et
+# le peut-elle ? copy nomme la copie à remettre, si le schéma a migré depuis
+# le début de la mise à jour : celle que la migration a faite. Une copie
+# abîmée, ou la place qui manque à côté de la base pour l'y remettre, l'en
+# empêchent : failure le dit. Un contrôle qui ne se fait pas n'empêche rien :
+# le script de restauration vérifie encore la copie.
+undo_database_check() {
+  local found checks current saved integrity data need
+  found=$(db_copy_since "$update_started")
+  [[ -n $found ]] || return 0
+  saved=$(copy_schema "$found")
+  checks=$(engine_copy_check "$found") || checks=""
+  current=$(sed -n 1p <<<"$checks")
+  integrity=$(sed -n 2p <<<"$checks")
+  # La première migration a échoué, sans rien laisser : la base n'a pas bougé.
+  if [[ $current =~ ^[0-9]+$ ]] && ((current <= saved)); then
+    say "Retour arrière : la base est restée au schéma v$current, que la version $installed lit."
+    return 0
+  fi
+  if [[ -n $integrity && $integrity != ok ]]; then
+    failure="La copie de la base d'avant la mise à jour, $found, est abîmée : $integrity. La base ne peut pas revenir."
+    return 1
+  fi
+  data=$(env_path RT_DATA ./data/radiotomate)
+  need=$(($(size_kb "$data/backups/$found") + COPY_MARGIN_KB))
+  if ! room_for "$data" "$need"; then
+    failure="Il manque de la place à côté de la base pour y remettre celle d'avant la mise à jour, $(human_kb "$need") : la base ne peut pas revenir. Libérer de la place."
+    return 1
+  fi
+  copy=$found
+  copy_schema=$saved
+}
+
+# La base d'avant la mise à jour remise, la station arrêtée, tous ses profils :
+# rien ne garde la base ouverte. Le script de restauration est celui de la
+# version nouvelle, qui tourne dans l'image d'avant, les fichiers d'avant
+# posés : celui d'une 0.2.0 demande sqlite3, que l'image n'a pas.
+undo_database_restore() { # script de restauration
+  if ! compose "${profiles[@]}" stop >/dev/null 2>&1; then
+    failure="La station ne s'arrête pas : la base d'avant la mise à jour ne se remet pas sans cela."
+    return 1
+  fi
+  stopped=1
+  if ! engine_restore_copy "$copy" "$1"; then
+    failure="La base d'avant la mise à jour, $copy, ne se remet pas : voir le message plus haut."
+    return 1
+  fi
+  base="avec la base d'avant la mise à jour : ce qui s'est écrit depuis le $(station_date "$(copy_time "$copy")") est perdu"
+  say "Retour arrière : la base d'avant la mise à jour, au schéma v${copy_schema:-inconnu}, est remise."
+}
+
+# Les conteneurs d'un service que la version d'avant n'a pas, venus avec la
+# mise à jour : ils s'arrêtent et s'en vont, leurs volumes restent. Sans la
+# liste des services de la version d'avant, rien ne s'en va.
+drop_new_services() {
+  local known ids=() id service gone=""
+  known=$(compose "${profiles[@]}" config --services 2>/dev/null) || return 0
+  [[ -n $known ]] || return 0
+  known=" $(tr '\n' ' ' <<<"$known") "
+  mapfile -t ids < <(docker ps -aq --no-trunc --filter "label=com.docker.compose.project=$PROJECT" \
+    --filter label=com.docker.compose.oneoff=False 2>/dev/null)
+  ((${#ids[@]})) || return 0
+  while IFS='|' read -r id service; do
+    [[ -z $service || $known == *" $service "* ]] && continue
+    ! docker rm -f "$id" >/dev/null 2>&1 || gone="$gone $service"
+  done < <(docker inspect --format '{{.Id}}|{{index .Config.Labels "com.docker.compose.service"}}' "${ids[@]}" 2>/dev/null)
+  [[ -z $gone ]] || say "Retour arrière : retirés, venus avec la mise à jour :$gone."
+}
+
+# La copie de la base qu'une migration a faite depuis cette heure, dans
+# RT_DATA/backups : la plus ancienne, celle d'avant la première migration.
+# Son nom dit son heure, en UTC. Rien, s'il n'y en a pas.
+db_copy_since() { # secondes depuis 1970
+  local since path name stamp best=""
+  since=$(date -u -d "@$1" +%Y%m%dT%H%M%SZ)
+  for path in "$(env_path RT_DATA ./data/radiotomate)"/backups/avant-v*-*.db; do
+    name=${path##*/}
+    [[ $name =~ ^avant-v[0-9]+-([0-9]{8}T[0-9]{6}Z)\.db$ ]] || continue
+    stamp=${BASH_REMATCH[1]}
+    [[ ! $stamp < $since ]] || continue
+    [[ -n $best && ! $stamp < ${best%% *} ]] || best="$stamp $name"
+  done
+  printf '%s\n' "${best#* }"
+}
+
+# Le schéma d'une copie de la base, d'après son nom : avant-v19-… est la base
+# d'avant la migration v19, au schéma v18. db_copy_since a vérifié le nom.
+copy_schema() { # avant-vNN-AAAAMMJJTHHMMSSZ.db
+  local number=${1#avant-v}
+  number=${number%%-*}
+  printf '%s\n' "$((10#$number - 1))"
+}
+
+# L'heure d'une copie de la base, en secondes depuis 1970, d'après son nom.
+copy_time() { # avant-vNN-AAAAMMJJTHHMMSSZ.db
+  local stamp=${1##*-}
+  stamp=${stamp%Z.db}
+  date -u -d "${stamp:0:4}-${stamp:4:2}-${stamp:6:2} ${stamp:9:2}:${stamp:11:2}:${stamp:13:2}" +%s
+}
+
+# Une alerte aux personnes de la station : une mise à jour annulée, un retour
+# arrière. Elle part, pour l'instant, dans le journal du système :
+# journalctl -t button. SUR-01 l'enverra aussi, d'ici, sur un téléphone et
+# par e-mail. Une alerte qui ne part pas n'arrête rien.
+station_alert() { # sujet, message
+  logger -t button -p user.warning -- "$1 : $2" >/dev/null 2>&1 || true
+}
+
+# Les fichiers d'une version publiée, celle que la station quitte, dans
+# $staged/avant/files : de quoi reconnaître ce que la station a changé
+# elle-même, et ce qu'un retour arrière remet.
+previous_files() { # version
+  local base="https://github.com/$REPO/releases/download/v$1" name expected
+  check_version "$1" >/dev/null 2>&1 || return 1
   mkdir -p "$staged/avant/files"
   for name in station.tar.gz SHA256SUMS; do
     curl --disable -fsSL --retry 3 --max-time 120 -o "$staged/avant/$name" "$base/$name" 2>/dev/null || return 1
@@ -2643,19 +3017,14 @@ update_env() {
 # .env, à la version près. Aussi celles des services d'un autre profil qui
 # tournent, comme share lancé à part : ils repartiront avec la station.
 update_pull() {
-  local running active service files=(-f "$staged/files/compose.yml") unchanged
+  local files=(-f "$staged/files/compose.yml") unchanged
   local again="Images privées : docker login ghcr.io, avec un jeton GitHub qui a read:packages. Sinon, vérifier l'accès de la machine à ghcr.io. Puis relancer."
   unchanged="La station tourne toujours en $installed${env_added:+, mais .env a reçu :$env_added}."
   [[ ! -f $dir/compose.override.yml ]] || files+=(-f "$dir/compose.override.yml")
   all_profiles
-  running=$(compose "${profiles[@]}" ps --services --status running 2>/dev/null) || running=""
-  active=$(compose config --services 2>&1) ||
-    die "docker compose ne lit pas la station : $(head -n 1 <<<"$active") $unchanged" \
+  others_running ||
+    die "docker compose ne lit pas la station : $failure $unchanged" \
       "Voir pourquoi : cd $dir && docker compose config. Puis relancer."
-  active=" $(tr '\n' ' ' <<<"$active") "
-  while IFS= read -r service; do
-    [[ -z $service || $active == *" $service "* ]] || others+=("$service")
-  done <<<"$running"
   say "Mise à jour : les images de la version $target, pendant que l'antenne joue."
   (cd "$dir" && BUTTON_VERSION=$target docker compose "${files[@]}" --project-directory "$dir" pull) ||
     die "Les images de la version $target ne se tirent pas : voir le message de docker compose plus haut. $unchanged" "$again"
@@ -2668,11 +3037,13 @@ update_pull() {
 # Les fichiers de la version remplacent ceux du dossier, chacun par un
 # renommage : bash lit encore, sans le relire en entier, le script qui l'a
 # lancé. Un fichier que la station a changé elle-même, autre que celui de la
-# version d'avant, est gardé à côté, en .local-…, comme le fait install. Sans
-# les fichiers de la version d'avant, chaque fichier remplacé l'est.
+# version qu'elle quitte, est gardé à côté, en .local-…, comme le fait
+# install. Sans les fichiers de cette version, chaque fichier remplacé l'est.
+# Ce qui est remplacé se note dans replaced, et dans added ce qui n'était pas
+# là : de quoi les remettre (undo_files).
 update_files() {
-  local file mode stamp
-  stamp=$(date +%Y%m%d-%H%M%S)
+  local file mode
+  files_stamp=$(date +%Y%m%d-%H%M%S)
   while IFS= read -r file; do
     file=${file#"$staged/files/"}
     mode=$(stat -c %a "$staged/files/$file")
@@ -2681,13 +3052,32 @@ update_files() {
       continue
     fi
     if [[ -e $dir/$file ]] && { [[ -z $previous ]] || ! cmp -s "$dir/$file" "$previous/$file"; }; then
-      cp -p "$dir/$file" "$dir/$file.local-$stamp"
+      cp -p "$dir/$file" "$dir/$file.local-$files_stamp"
       kept="$kept $file"
     fi
+    [[ -e $dir/$file ]] || added+=("$file")
     install -D -m "$mode" "$staged/files/$file" "$dir/$file.station-$$"
     mv -f "$dir/$file.station-$$" "$dir/$file"
     replaced+=("$file")
   done < <(find "$staged/files" -type f | sort)
+}
+
+# Les services d'un autre profil qui tournent, comme share lancé à part, dans
+# others : ils repartent avec la station. Avec les profils de l'appelant,
+# tous (all_profiles). Si docker compose ne lit pas la station, failure dit
+# pourquoi.
+others_running() {
+  local running active service
+  running=$(compose "${profiles[@]}" ps --services --status running 2>/dev/null) || running=""
+  if ! active=$(compose config --services 2>&1); then
+    failure=$(head -n 1 <<<"$active")
+    return 1
+  fi
+  active=" $(tr '\n' ' ' <<<"$active") "
+  others=()
+  while IFS= read -r service; do
+    [[ -z $service || $active == *" $service "* ]] || others+=("$service")
+  done <<<"$running"
 }
 
 # Les conteneurs qui tournent et montent un fichier que la version vient de
@@ -2729,17 +3119,22 @@ remount() {
   compose "${profiles[@]}" up -d --force-recreate --no-deps $stale
 }
 
-# Une ligne de updates.log, dans le dossier de la station : l'heure, la
-# version d'avant, la nouvelle, le résultat, la sauvegarde d'avant, et ce
-# qu'il faut en savoir. status dit la dernière.
+# Une ligne de updates.log, dans le dossier de la station : l'heure de son
+# début, la version d'avant, la nouvelle, le résultat, la sauvegarde d'avant,
+# et ce qu'il faut en savoir. status dit la dernière. Le résultat d'une mise à
+# jour : faite, arrêtée, annulée, quand elle est revenue seule à la version
+# d'avant, ou échouée ; celui de station rollback : retour arrière, ou retour
+# arrière échoué. rollback y cherche la mise à jour à défaire, et la copie de
+# la base faite depuis son début.
 update_log() { # résultat, détail
   local log=${updating[0]}/updates.log
   if [[ ! -f $log ]]; then
-    printf '%s\n' "# Les mises à jour de station update, une par ligne : l'heure, en secondes depuis 1970, la version d'avant, la nouvelle, le résultat, la sauvegarde d'avant, et ce qu'il faut en savoir." \
+    printf '%s\n' "# Les mises à jour de station update, et les retours arrière, une par ligne : l'heure de son début, en secondes depuis 1970, la version d'avant, la nouvelle, le résultat, la sauvegarde d'avant, et ce qu'il faut en savoir." \
       >"$log"
   fi
   # Un champ vide se lirait mal : read fond deux tabulations qui se suivent.
-  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "${updating[1]}" "${updating[2]}" "$1" "${updating[3]:--}" "$2" >>"$log"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "${update_started:-$(date +%s)}" "${updating[1]}" "${updating[2]}" "$1" \
+    "${updating[3]:--}" "$2" >>"$log"
 }
 
 # La version de chaque service qui tourne, d'après Docker, dans versions.json,
@@ -2777,6 +3172,315 @@ record_versions() {
     rm -f "$file.part"
     warn "la version des services ne s'écrit pas dans $file : la console ne la dira pas."
   fi
+}
+
+# --- rollback ---
+
+cmd_rollback() {
+  local dir="" env_file="" assume_yes="" aborted="Rien n'est changé." installed target="" leaving="" undone="" from="" packed
+  local -A opts=()
+  local args=()
+  parse_options "--yes -h --help" "--dir --from" "$@"
+  if help_asked; then
+    usage_command rollback
+    return 0
+  fi
+  ((${#args[@]} == 0)) || usage_error "Argument inattendu : ${args[0]}."
+  assume_yes=${opts[--yes]:-}
+  from=${opts[--from]:-}
+  if [[ -n $from ]]; then
+    [[ $from == /* ]] || from=$PWD/$from
+    [[ -f $from ]] || usage_error "--from : $from n'existe pas."
+  fi
+  open_station rollback "${opts[--dir]:-}"
+  [[ -f $dir/VERSION ]] ||
+    die "La station de $dir n'a pas de fichier VERSION : elle n'a pas été installée par station install." \
+      "Revenir en arrière à la main : voir docs/deploiement.md, « Revenir en arrière »."
+  [[ ! -f $dir/$JOURNAL ]] ||
+    die "Une restauration ne s'est pas finie : $dir/$JOURNAL est encore là. Rien n'est changé." \
+      "Voir quoi faire : station status. Puis relancer."
+  lock_station rollback
+  installed=$(env_value BUTTON_VERSION)
+  rollback_target || return 0
+  docker_ok || die "Docker ne répond pas : la station ne revient pas en arrière sans lui." "Voir pourquoi : systemctl status docker. Puis relancer."
+  confirm_possible rollback
+  trap cleanup EXIT
+  work=$(mktemp -d)
+  if [[ -n $from ]]; then
+    unpack "$from"
+    packed=$(<"$work/files/VERSION")
+    [[ $packed == "$target" ]] ||
+      die "$from est la version $packed, et la version d'avant la dernière mise à jour la $target. Rien n'est changé." \
+        "Prendre l'archive de la version $target."
+  else
+    check_version "$target" >/dev/null 2>&1 ||
+      die "La version d'avant la dernière mise à jour, $target, n'est pas une version publiée : ses fichiers ne se téléchargent pas. Rien n'est changé." \
+        "Donner son archive : station rollback --from station.tar.gz."
+    fetch_version "$target" "Rien n'est changé. Vérifier l'accès de la machine à github.com, puis relancer ; ou donner l'archive de la version $target : station rollback --from station.tar.gz."
+    unpack "$work/station.tar.gz"
+    [[ $(<"$work/files/VERSION") == "$target" ]] ||
+      die "L'archive de la version $target se dit $(<"$work/files/VERSION")." "Archive inattendue : ne pas l'utiliser, et le signaler."
+  fi
+  rollback_station
+}
+
+# La mise à jour à défaire, d'après updates.log : la dernière encore en place.
+# Les lignes lues depuis la fin passent celles qui n'ont rien laissé : une
+# mise à jour arrêtée, annulée, ou échouée avant ses fichiers, et un retour
+# arrière raté, qui se reprend. Une mise à jour faite, ou échouée une fois ses
+# fichiers touchés, se défait ; un retour arrière réussi l'a déjà défaite. Sa
+# version d'avant dans target, celle qu'elle a posée dans leaving, l'heure de
+# son début dans undone. Sinon, dit qu'il n'y a rien à défaire, et rend 1.
+rollback_target() {
+  local line made from to result _backup detail found=""
+  while IFS= read -r line; do
+    [[ -n $line ]] || continue
+    IFS=$'\t' read -r made from to result _backup detail <<<"$line" || true
+    case $result in
+      "retour arrière")
+        say "Rien à défaire : la dernière mise à jour, de $to à $from, est déjà défaite."
+        return 1
+        ;;
+      "retour arrière échoué" | arrêtée | annulée) ;;
+      échouée)
+        case $detail in
+          "pendant la sauvegarde"* | "pendant les images"*) ;;
+          *)
+            found=1
+            break
+            ;;
+        esac
+        ;;
+      faite)
+        found=1
+        break
+        ;;
+      *)
+        die "$dir/updates.log a une ligne au résultat inattendu, « $result ». Rien n'est changé." \
+          "Voir updates.log, et l'état de la station : station status."
+        ;;
+    esac
+  done < <(grep -v '^#' "$dir/updates.log" 2>/dev/null | tac)
+  if [[ -z $found ]]; then
+    say "Rien à défaire : $dir/updates.log ne note aucune mise à jour en place."
+    return 1
+  fi
+  [[ $made =~ ^[0-9]+$ ]] ||
+    die "$dir/updates.log a une ligne sans heure : « $made ». Rien n'est changé." "Voir updates.log."
+  [[ $from == main ]] || check_version "$from" >/dev/null 2>&1 ||
+    die "$dir/updates.log nomme une version inattendue, « $from ». Rien n'est changé." "Voir updates.log."
+  [[ $installed == "$to" || $installed == "$from" ]] ||
+    die "La station est en ${installed:-une version inconnue}, et la dernière mise à jour allait de $from à $to : rollback ne sait pas d'où revenir. Rien n'est changé." \
+      "Voir updates.log, et l'état de la station : station status."
+  target=$from
+  leaving=$to
+  undone=$made
+}
+
+# Le retour arrière à la main, vers target, la version d'avant la dernière
+# mise à jour, dont les fichiers sont dans $work/files. Comme update, sans
+# sauvegarde ni fenêtre : la base d'avant la mise à jour revient si le schéma
+# a migré depuis, une fois confirmé. Tout ce qui pourrait l'arrêter en route se
+# vérifie avant : la copie de la base, le script qui la remet, la place, les
+# images, et le schéma que lira la version d'avant. HOLD se pose avant de rien
+# changer.
+rollback_station() {
+  local kept="" profiles=() mounting=() failure="" base="" copy schemas current saved integrity known after
+  local lost="" script="" need question
+  # Les fichiers de la version d'avant, à part, comme update.
+  staged=$work
+  work=$(mktemp -d)
+  update_started=$(date +%s)
+  previous=""
+  replaced=()
+  added=()
+  files_stamp=""
+  # Les fichiers de la version quittée : de quoi reconnaître ce que la station
+  # a changé elle-même, et son script de restauration.
+  if previous_files "$leaving"; then
+    previous=$staged/avant/files
+  fi
+  all_profiles
+  others_running ||
+    die "docker compose ne lit pas la station : $failure Rien n'est changé." "Voir pourquoi : cd $dir && docker compose config. Puis relancer."
+  # La base : la copie qu'en a faite la mise à jour, si son schéma a migré.
+  copy=$(db_copy_since "$undone")
+  if [[ -n $copy ]]; then
+    saved=$(copy_schema "$copy")
+    schemas=$(engine_copy_check "$copy") ||
+      die "La version du schéma de la base ne se lit pas : voir le message plus haut. Rien n'est changé." "Voir l'état de la station : station status."
+    current=$(sed -n 1p <<<"$schemas")
+    integrity=$(sed -n 2p <<<"$schemas")
+    [[ $current =~ ^[0-9]+$ ]] ||
+      die "La version du schéma de la base en place ne se lit pas. Rien n'est changé." "Voir l'état de la station : station status."
+    if ((current > saved)); then
+      [[ $integrity == ok ]] ||
+        die "La copie de la base d'avant la mise à jour, $copy, est abîmée : $integrity. Rien n'est changé." \
+          "Revenir à la main, en redescendant le schéma : voir docs/deploiement.md, « Revenir en arrière »."
+      lost=$(copy_time "$copy")
+      script=$(restore_script) ||
+        die "Aucun script de restauration à portée ne sait se passer de sqlite3, que l'image du moteur n'a pas : ni celui de la version $leaving, ni celui du dossier. Rien n'est changé." \
+          "Celui de la version $leaving vient de son archive, sur GitHub : vérifier l'accès de la machine à github.com, puis relancer."
+      need=$(($(size_kb "$(env_path RT_DATA ./data/radiotomate)/backups/$copy") + COPY_MARGIN_KB))
+      room_for "$(env_path RT_DATA ./data/radiotomate)" "$need" ||
+        die "Il manque de la place à côté de la base pour y remettre celle d'avant la mise à jour, $(human_kb "$need"). Rien n'est changé." \
+          "Libérer de la place, puis relancer."
+    fi
+  fi
+  rollback_images
+  # La base que trouvera la version d'avant, la copie ou celle en place : elle
+  # doit la lire.
+  schemas=$(engine_target_schemas) ||
+    die "Le moteur de la version $target ne dit pas jusqu'à quel schéma il lit : voir le message plus haut. Rien n'est changé." \
+      "Voir l'état de la station : station status."
+  current=$(sed -n 1p <<<"$schemas")
+  known=$(sed -n 2p <<<"$schemas")
+  [[ $current =~ ^[0-9]+$ && $known =~ ^[0-9]+$ ]] ||
+    die "La version du schéma de la base ne se lit pas : « $current », « $known ». Rien n'est changé." "Voir l'état de la station : station status."
+  after=$current
+  [[ -z $lost ]] || after=$saved
+  if ((after > known)); then
+    if [[ -z $lost ]]; then
+      die "La base est au schéma v$after, et la version $target ne lit que jusqu'au v$known : la copie de la base d'avant la mise à jour n'est plus dans $(env_path RT_DATA ./data/radiotomate)/backups. Rien n'est changé." \
+        "Revenir à la main, en redescendant le schéma avec l'image de la $leaving : voir docs/deploiement.md, « Revenir en arrière »."
+    fi
+    die "La copie de la base d'avant la mise à jour, $copy, est au schéma v$after, et la version $target ne lit que jusqu'au v$known. Rien n'est changé." \
+      "Revenir à la main : voir docs/deploiement.md, « Revenir en arrière »."
+  fi
+  question="Revenir de $leaving à $target ?"
+  if [[ -n $lost ]]; then
+    question="$question La base revient à celle d'avant la mise à jour, du $(station_date "$lost") : ce qui s'est écrit depuis, il y a $(since "$lost"), sera perdu, et la base d'aujourd'hui gardée à côté."
+  fi
+  confirm rollback "$question L'antenne se coupe le temps de redémarrer. (o/n)"
+
+  # Dès lors, un échec se note, et les mises à jour restent bloquées.
+  updating=("$dir" "$leaving" "$target" "-")
+  update_stage="les fichiers"
+  rolling_back=1
+  if [[ ! -f $dir/HOLD ]]; then
+    hold_write "Bloquées par station rollback" \
+      "retour de $leaving à $target, à la main. La version $leaving ne se reprend qu'une fois HOLD retiré."
+  fi
+  say "Retour arrière : de $leaving à $target."
+  update_files
+  env_set BUTTON_VERSION "$target" rollback
+  make_data_dirs
+  link_command
+  env_isolate
+  drop_new_services
+  mounted_by_containers
+
+  update_stage="le redémarrage"
+  if [[ -n $lost ]]; then
+    say "Retour arrière : la station s'arrête, le temps de remettre la base d'avant la mise à jour."
+    compose "${profiles[@]}" stop ||
+      die "La station ne s'arrête pas : voir le message de docker compose plus haut. Elle est peut-être coupée."
+    engine_restore_copy "$copy" "$script" ||
+      die "La base d'avant la mise à jour, $copy, ne se remet pas : voir le message plus haut. La station est arrêtée."
+    base="avec la base d'avant la mise à jour : ce qui s'est écrit depuis le $(station_date "$lost") est perdu"
+  fi
+  say "Retour arrière : la station repart en $target. L'antenne se coupe le temps du redémarrage."
+  restart_station "$target" || die "$failure"
+  update_stage="le contrôle"
+  check_station "$target" || die "$failure"
+  update_log "retour arrière" "à la main${base:+ ; $base}" ||
+    warn "updates.log ne s'écrit pas : le retour arrière, fait, n'y est pas noté. Voir la place sur le disque : station status."
+  updating=()
+  update_stage=""
+  rolling_back=""
+  record_versions
+  station_alert "Mise à jour défaite" \
+    "station rollback a ramené la station de $leaving à $target, à la main : HOLD bloque les mises à jour suivantes."
+
+  say "" "La station est revenue en $target, au lieu de $leaving : le contrôle passe."
+  [[ -z $base ]] || say "  ${base^} ; la base de la $leaving reste à côté, dans $(env_path RT_DATA ./data/radiotomate)/backups."
+  say "  Les mises à jour sont bloquées par $dir/HOLD. Les débloquer, une fois la cause trouvée : $(self_command) unhold, ou rm $dir/HOLD."
+  [[ -z $kept ]] ||
+    say "  Changés sur cette station, gardés à côté, en .local-… :$kept. Les changements d'une station vont dans compose.override.yml."
+}
+
+# Le script de restauration d'un retour arrière à la main, copié à part : le
+# premier qui sait se passer de sqlite3, que l'image du moteur n'a pas, parmi
+# ceux de la version quittée, du dossier, et de la version d'avant. Celui d'une
+# 0.2.0 ne le sait pas ; à la reprise d'un retour raté, le dossier porte déjà
+# les fichiers d'avant.
+restore_script() {
+  local candidate
+  for candidate in "$staged/avant/files/scripts/restore-radiotomate.sh" "$dir/scripts/restore-radiotomate.sh" \
+    "$staged/files/scripts/restore-radiotomate.sh"; do
+    if [[ -f $candidate ]] && grep -q python3 "$candidate"; then
+      cp "$candidate" "$work/restore-radiotomate.sh"
+      printf '%s\n' "$work/restore-radiotomate.sh"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# La version du schéma de la base en place, puis la plus haute que connaît
+# l'image du moteur de la version d'avant, target, déjà sur la machine : une
+# base plus récente, elle ne la lirait pas.
+engine_target_schemas() {
+  local files=(-f "$staged/files/compose.yml")
+  [[ ! -f $dir/compose.override.yml ]] || files+=(-f "$dir/compose.override.yml")
+  (cd "$dir" && BUTTON_VERSION=$target docker compose "${files[@]}" --project-directory "$dir" \
+    run --rm --no-deps -T --entrypoint python3 radiotomate-init - 2>"$work/moteur.log") <<'PY' || {
+# version : la version du schéma de la base en place, puis la plus haute que connaît cette image.
+import pkgutil
+import sqlite3
+from contextlib import closing
+
+import radiotomate.commands.update as update
+
+with closing(sqlite3.connect("/data/radiotomate.db")) as con:
+    row = con.execute("select value from settings where key = 'SCHEMA_VERSION'").fetchone()
+print(row[0] if row else "")
+print(max(int(module.name[1:]) for module in pkgutil.iter_modules(update.__path__) if module.name[1:].isdigit()))
+PY
+    cat "$work/moteur.log" >&2
+    return 1
+  }
+}
+
+# Les images de la version d'avant, pour un retour arrière à la main, celles
+# de ses services et des services lancés à part (others) : celles qui manquent
+# se tirent pendant que l'antenne joue encore. Les autres servent telles
+# quelles, sans réseau.
+rollback_images() {
+  local files=(-f "$staged/files/compose.yml") list image missing=""
+  [[ ! -f $dir/compose.override.yml ]] || files+=(-f "$dir/compose.override.yml")
+  list=$(cd "$dir" && BUTTON_VERSION=$target docker compose "${files[@]}" --project-directory "$dir" config --images 2>"$work/compose.log") ||
+    die "docker compose ne lit pas les fichiers de la version $target : $(head -n 1 "$work/compose.log") Rien n'est changé." \
+      "Prendre une autre archive de la version $target, avec --from. Sinon, le signaler."
+  if ((${#others[@]})); then
+    list+=$'\n'$(cd "$dir" && BUTTON_VERSION=$target docker compose "${files[@]}" --project-directory "$dir" "${profiles[@]}" \
+      config --images "${others[@]}" 2>/dev/null) || true
+  fi
+  while IFS= read -r image; do
+    [[ -z $image ]] || docker image inspect "$image" >/dev/null 2>&1 || missing="$missing $image"
+  done <<<"$list"
+  [[ -n $missing ]] || return 0
+  say "Retour arrière : les images de la version $target qui manquent, tirées pendant que l'antenne joue :$missing."
+  local again="Images privées : docker login ghcr.io, avec un jeton GitHub qui a read:packages. Sinon, vérifier l'accès de la machine à ghcr.io. Puis relancer."
+  (cd "$dir" && BUTTON_VERSION=$target docker compose "${files[@]}" --project-directory "$dir" pull) ||
+    die "Les images de la version $target ne se tirent pas : voir le message de docker compose plus haut. Rien n'est changé." "$again"
+  if ((${#others[@]})); then
+    (cd "$dir" && BUTTON_VERSION=$target docker compose "${files[@]}" --project-directory "$dir" "${profiles[@]}" pull "${others[@]}") ||
+      die "Les images de la version $target ne se tirent pas : voir le message de docker compose plus haut. Rien n'est changé." "$again"
+  fi
+}
+
+# Un retour arrière de station rollback qui n'a pas fini : cleanup le note,
+# sans revenir sur ses pas, et dit comment le reprendre. HOLD est déjà posé.
+rollback_failed() {
+  local dir=${updating[0]} from=${updating[1]} to=${updating[2]}
+  update_log "retour arrière échoué" "pendant $update_stage"
+  station_alert "Retour arrière raté" \
+    "station rollback, de $from à $to, a échoué pendant $update_stage : la station est peut-être coupée."
+  printf '%s\n' "Le retour arrière n'est pas fini : updates.log le note, et HOLD bloque les mises à jour." \
+    "  Une fois la cause trouvée, le reprendre : station rollback. Si la commande de la station ne l'a pas, prendre celle de la version $from, sur https://github.com/$REPO/releases." >&2
+  updating=()
+  rolling_back=""
 }
 
 # --- config ---
@@ -2914,8 +3618,8 @@ cmd_hold() {
 }
 
 # HOLD bloque les mises à jour, avec la date et la raison, jusqu'à ce qu'une
-# personne le retire : station unhold. MAJ-05 le pose aussi, après un retour
-# arrière.
+# personne le retire : station unhold. Un retour arrière le pose aussi, celui
+# d'une mise à jour ratée comme celui de station rollback.
 hold_write() { # qui, raison
   printf '%s, le %s.\nRaison : %s\nPour les débloquer : station unhold.\n' \
     "$1" "$(station_date "$(date +%s)")" "$2" >"$dir/HOLD"
@@ -3076,7 +3780,7 @@ main() {
   local command=${1:-help}
   (($# == 0)) || shift
   case $command in
-    install | update | status | logs | backup | restore | config | hold | unhold | cli | uninstall)
+    install | update | rollback | status | logs | backup | restore | config | hold | unhold | cli | uninstall)
       help_topic=$command
       "cmd_$command" "$@"
       ;;
