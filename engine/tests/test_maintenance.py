@@ -9,7 +9,7 @@ would leave the tests that follow without an event loop.
 
 import os
 import subprocess
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -103,6 +103,33 @@ def _dated_live(start: datetime) -> str:
     )
 
 
+def _day(at: datetime) -> str:
+    """The day of ``at``, as ``describe_next_live`` says it."""
+    return f"{WEEKDAYS[at.weekday()]} {at.day} {MONTHS[at.month - 1]}"
+
+
+def _weekly_show(start: datetime) -> str:
+    """A weekly show, « Ce soir », on the day and at the time of ``start``, in
+    Paris, for an hour, or until midnight."""
+    minute = start.hour * 60 + start.minute
+    return (
+        "insert into emissions (scope, title, artist, host_username, day_of_week,"
+        " start_minute, end_minute, version, created, modified)"
+        f" values ('weekly', 'Ce soir', '', '', {start.weekday()}, {minute},"
+        f" {min(minute + 60, 24 * 60)}, 1, '2026-09-01 00:00:00',"
+        " '2026-09-01 00:00:00')"
+    )
+
+
+def _cancelled(day: date) -> str:
+    """The show of ``_weekly_show`` cancelled on ``day`` in the Agenda."""
+    return (
+        "insert into agenda_exceptions (emission_id, day, created)"
+        f" select id, '{day}', '2026-09-01 00:00:00' from emissions"
+        " where title = 'Ce soir'"
+    )
+
+
 def _next_live(
     config_path: Path, timezone: str = "Europe/Paris"
 ) -> subprocess.CompletedProcess:
@@ -144,12 +171,33 @@ async def test_next_live_reads_a_dated_live(config_path: Path, timezone: str):
     result = _next_live(config_path, timezone)
     assert result.returncode == 0, result.stderr
     at = paris(start)
-    day = f"{WEEKDAYS[at.weekday()]} {at.day} {MONTHS[at.month - 1]}"
     # Nine minutes and some seconds, once the command has started.
     assert result.stdout in {
-        f"Direct de test, {day} à {at:%H:%M}, dans {minutes} min\n"
+        f"Direct de test, {_day(at)} à {at:%H:%M}, dans {minutes} min\n"
         for minutes in (9, 10)
     }, result.stdout
+
+
+@pytest.mark.parametrize("timezone", ["Europe/Paris", "America/Montreal"])
+async def test_next_live_skips_a_show_cancelled_in_the_agenda(
+    config_path: Path, timezone: str
+):
+    db_file = config_path.parent / "radiotomate.db"
+    # Tonight's show, in the last minute of the day: tonight's whatever the hour.
+    today = datetime.now(PARIS).date()
+    tonight = datetime.combine(today, time(23, 59), tzinfo=PARIS)
+    await _database(db_file, _weekly_show(tonight))
+    result = _next_live(config_path, timezone)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.startswith("Ce soir, "), result.stdout
+    # Cancelled in the Agenda: station status tells next week's.
+    await _database(db_file, _cancelled(today))
+    result = _next_live(config_path, timezone)
+    assert result.returncode == 0, result.stderr
+    week = tonight + timedelta(days=7)
+    assert result.stdout.startswith(
+        f"Ce soir, {_day(week)} à 23:59, dans "
+    ), result.stdout
 
 
 def test_what_blocks_nothing_on_an_empty_station():
@@ -322,3 +370,23 @@ async def test_window_is_taken_before_a_dated_live(config_path: Path, timezone: 
     assert result.stdout.startswith(
         "occupée : Direct de test, un direct de l'Agenda, commence à "
     ), result.stdout
+
+
+@pytest.mark.parametrize("timezone", ["Europe/Paris", "America/Montreal"])
+async def test_window_is_free_before_a_show_cancelled_in_the_agenda(
+    config_path: Path, timezone: str
+):
+    db_file = config_path.parent / "radiotomate.db"
+    # A weekly show starts in ten minutes, whatever the day.
+    soon = datetime.now(PARIS).replace(second=0, microsecond=0) + timedelta(minutes=10)
+    await _database(db_file, _weekly_show(soon))
+    result = _window(config_path, timezone)
+    assert result.returncode == 1, result.stderr
+    assert result.stdout.startswith(
+        f"occupée : Ce soir, un direct, commence à {soon:%H:%M}, dans "
+    ), result.stdout
+    # Cancelled in the Agenda: station update may go.
+    await _database(db_file, _cancelled(soon.date()))
+    result = _window(config_path, timezone)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.startswith("libre : "), result.stdout
