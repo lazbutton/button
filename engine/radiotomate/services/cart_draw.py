@@ -12,7 +12,8 @@ desk.
 
 A cart that plays in order, a playlist or a loop, keeps the order of
 ``Cart.next_sound``. The conducteur plans it ahead from what it already holds
-of the cart: ``CartOrder``.
+of the cart: ``CartOrder``. When the clock draws an anchor itself, the lines
+it plans of the cart then follow the sound drawn: ``planned_in_order``.
 """
 
 from __future__ import annotations
@@ -26,7 +27,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import select
 
 from radiotomate.domain.execution import ENGAGED_STATUSES
-from radiotomate.enums import CartMode, RundownStatus
+from radiotomate.enums import CartMode, RundownStatus, WhenMode
 from radiotomate.models import RundownItem, Setting, Sound
 
 if TYPE_CHECKING:
@@ -47,6 +48,8 @@ _AIRED_STATUSES = {RundownStatus.ON_AIR.value, RundownStatus.PLAYED.value}
 # How far back the conducteur is read for what a cart still has to play.
 _HELD_ROWS = 200
 _ORDERED_MODES = {CartMode.PLAYLIST, CartMode.PLAYLIST_LOOP}
+# A desk line plays the sound chosen for it.
+_DESK_ORIGIN = "desk"
 
 
 def draw_without_repeat(
@@ -260,13 +263,13 @@ async def cart_draw(session: ormSession, cart: Cart | None) -> CartDraw | None:
     return draw
 
 
-async def _held(session: ormSession, cart: Cart) -> tuple[list[int], list[int]]:
+async def _held_lines(session: ormSession, cart: Cart) -> list[RundownItem]:
     """
-    The sounds of a cart the conducteur holds, oldest first: those sent to the
-    antenna and not on air yet, and those it plans.
+    The lines of a cart the conducteur holds, oldest first: those sent to the
+    antenna and not on air yet, and those it plans. Read as the base has them.
     """
-    rows = await session.execute(
-        select(RundownItem.sound_id, RundownItem.status)
+    rows = await session.scalars(
+        select(RundownItem)
         .where(
             RundownItem.cart_id == cart.id,
             RundownItem.sound_id.is_not(None),
@@ -276,17 +279,26 @@ async def _held(session: ormSession, cart: Cart) -> tuple[list[int], list[int]]:
         )
         .order_by(RundownItem.planned_at.desc(), RundownItem.sequence.desc())
         .limit(_HELD_ROWS)
+        .execution_options(populate_existing=True)
     )
-    held: list[tuple[int, str]] = []
-    for sound_id, status in rows:
-        if status in _AIRED_STATUSES:
+    held: list[RundownItem] = []
+    for row in rows:
+        if row.status in _AIRED_STATUSES:
             # What comes before a sound heard has played, or was lost on its way.
             break
-        held.append((sound_id, status))
+        held.append(row)
+    return held[::-1]
+
+
+async def _held(session: ormSession, cart: Cart) -> tuple[list[int], list[int]]:
+    """
+    The sounds of a cart the conducteur holds, oldest first: those sent to the
+    antenna and not on air yet, and those it plans.
+    """
     engaged: list[int] = []
     planned: list[int] = []
-    for sound_id, status in reversed(held):
-        (planned if status in _PLANNED_STATUSES else engaged).append(sound_id)
+    for line in await _held_lines(session, cart):
+        (planned if line.status in _PLANNED_STATUSES else engaged).append(line.sound_id)
     return engaged, planned
 
 
@@ -304,6 +316,50 @@ async def cart_ahead(
         return draw
     engaged, planned = await _held(session, cart)
     return CartOrder([*engaged, *planned])
+
+
+async def planned_in_order(
+    session: ormSession,
+    cart: Cart | None,
+    since: datetime | None = None,
+) -> list[tuple[RundownItem, Sound]]:
+    """
+    The lines the conducteur plans of a cart in order that now name the wrong
+    sound, each with the one it plays: the order of the forecast
+    (``CartOrder``), counted again after the sounds sent to the antenna and not
+    on air yet. A sound the clock has just drawn for an anchor it held no line
+    for is one of them: the lines planned before would replay it. A desk line
+    keeps the sound chosen for it, and takes its turn with it. An anchor line
+    planned before ``since``, the time of that sound, neither moves nor counts:
+    a hard anchor never goes after its minute, and a soft one still waiting is
+    overtaken by the anchor drawn, or goes as planned. Nothing for any other
+    cart.
+    """
+    if cart is None or cart.mode not in _ORDERED_MODES:
+        return []
+    lines = await _held_lines(session, cart)
+    order = CartOrder(
+        [line.sound_id for line in lines if line.status not in _PLANNED_STATUSES]
+    )
+    moved: list[tuple[RundownItem, Sound]] = []
+    for line in lines:
+        if line.status not in _PLANNED_STATUSES:
+            continue
+        if (
+            since is not None
+            and line.when_mode == WhenMode.ANCHORED.value
+            and line.planned_at < since
+        ):
+            continue
+        if line.origin == _DESK_ORIGIN:
+            order.held.append(line.sound_id)
+            continue
+        sound = order.pick_ahead(cart)
+        if sound is None:
+            break
+        if sound.id != line.sound_id:
+            moved.append((line, sound))
+    return moved
 
 
 async def next_cart_sound(session: ormSession, cart: Cart | None) -> Sound | None:
