@@ -32,14 +32,14 @@ Le format des fiches, les tailles et la façon de prendre une fiche sont dans le
 | [INS-03](#ins-03--commandes-dexploitation) | Commandes d'exploitation | M | INS-02 | fait, `a5b2eb7` |
 | [INS-04](#ins-04--mesurer-une-station-sur-un-petit-vps) | Mesurer une station sur un petit VPS | S | INS-02 | à faire |
 | [SAV-01](#sav-01--sauvegardes-hors-de-la-machine) | Sauvegardes hors de la machine | M | INS-03 | fait, `6ac2f97` |
-| [SUR-01](#sur-01--alertes-sur-le-téléphone-et-par-e-mail) | Alertes sur le téléphone et par e-mail | M | — | à faire |
+| [SUR-01](#sur-01--alertes-sur-le-téléphone-et-par-e-mail) | Alertes sur le téléphone et par e-mail | M | — | fait, `0db31cc` |
 | [DOC-01](#doc-01--guide-dinstallation-sur-vps) | Guide d'installation sur VPS | M | INS-04, MAJ-05, SAV-01 | à faire |
 | [LEG-01](#leg-01--dépendances-images-et-licences) | Dépendances, images et licences | S | — | fait, `512be6f` |
 | [LEG-02](#leg-02--le-code-source-pour-chaque-utilisateur) | Le code source pour chaque utilisateur | S | MAJ-01 | fait, `ebc0ceb` |
 | [FON-14](#fon-14--les-lignes-mises-à-la-suite-passent-à-lantenne) | Les lignes mises à la suite passent à l'antenne | M | — | fait, `d4a2dd9` |
 | [FON-39](#fon-39--les-jingles-du-motif-passent-à-leur-tour) | Les jingles du motif passent à leur tour | M | FON-14 | fait, `7a497fd` |
 
-En tout : 30 fiches, 12 de taille S, 15 de taille M et 3 de taille L. Au 12 novembre 2026, 26 sont faites. Il en reste 4 : 1 de taille S et 3 de taille M. MAJ-07 est venue de P2 le 12 novembre 2026, à la demande de l'utilisateur.
+En tout : 30 fiches, 12 de taille S, 15 de taille M et 3 de taille L. Au 12 novembre 2026, 27 sont faites. Il en reste 3 : 1 de taille S et 2 de taille M. MAJ-07 est venue de P2 le 12 novembre 2026, à la demande de l'utilisateur.
 
 ## L'ordre
 
@@ -47,12 +47,12 @@ Ce qui reste, relevé le 12 novembre 2026. Les fiches de deux files différentes
 
 | File | Fiches, dans l'ordre | Fichier partagé |
 |---|---|---|
-| commande `station` | SUR-01, MAJ-07 | `deploy/station` |
+| commande `station` | MAJ-07 | `deploy/station` |
 | mesure | INS-04 | aucun |
 | guide | DOC-01, en dernier | `docs/` |
 
-- **SAV-01 est fusionnée**, par la PR 156, après MAJ-05 (PR 149) : la file de la commande `station` n'a plus que SUR-01, en cours depuis le 12 novembre. La vraie installation de la CI (`.github/workflows/station.yml`) est une machine jetable en x86-64 : son job `update` y essaie deux mises à jour cassées avant la vraie, et ses deux installations s'y sauvegardent hors de la machine, puis reviennent par `restore --remote`.
-- **SUR-01** pose ses réglages à l'installation, qui est `station install`. MAJ-05 et SAV-01 lui ont fait sa place : une seule fonction, `station_alert`, envoie au journal du système l'alerte d'une mise à jour annulée, d'une sauvegarde ratée ou d'un test de restauration raté. SUR-01 y branche ntfy et l'e-mail.
+- **SUR-01 est fusionnée**, par la PR 168, après SAV-01 (PR 156) et MAJ-05 (PR 149) : la file de la commande `station` n'a plus que MAJ-07, en cours. La vraie installation de la CI (`.github/workflows/station.yml`) est une machine jetable en x86-64 : son job `update` y essaie deux mises à jour cassées avant la vraie, et ses deux installations s'y sauvegardent hors de la machine, puis reviennent par `restore --remote`.
+- **Les alertes** partent maintenant par ntfy et par e-mail, du moteur comme de la commande `station` (`station_alert`). Sur une station sans alerte réglée, la page Antenne ne montre pas d'incident : c'est SUR-04, en P2.
 - **LEG-02 est fusionnée**, par la PR 146. Il reste à l'essayer sur une station d'essai : un animateur y télécharge le code de la version, et sans session la même adresse répond 401.
 - **FON-14 et FON-39 sont fusionnées**, par les PR 139 et 142 : la file du scheduler n'a plus de fiche en P1. Leurs « Accepté quand » restent à vérifier sur une station de test, fondu allumé : leur banc tournait sans. Pour FON-39, c'est une heure d'antenne. FON-33 et FON-35 à FON-38, en P2, touchent les fichiers qu'elles viennent de changer : rejouer chaque défaut avant de le prendre.
 - **INS-04 n'a aucun conflit.** Elle se mesure sur la version qui suit la 0.2.0 : celle-ci a encore le défaut d'une station vide, dont le conducteur s'empilait.
@@ -476,6 +476,13 @@ M · dépend de rien · conflits : `engine/radiotomate/scheduler/alerts.py`, `de
   3. `docs/exploitation/` dit comment s'abonner.
 - **Tests** : un faux serveur SMTP et un faux ntfy.
 - **Accepté quand** : sur le banc, un silence envoie une alerte ntfy et un e-mail, puis une note quand le son revient.
+- **Résultat**, le 12 novembre 2026, par la PR 168 :
+  - Les alertes partent par ntfy et par e-mail, en TLS seulement. Le moteur envoie les incidents d'antenne et leur fin, le disque presque plein compris ; la commande `station`, une mise à jour annulée ou ratée, un retour arrière, une sauvegarde ratée, et en note une mise à jour faite ou une majeure qui attend. `alerts.log` les garde, et `station status` dit la dernière.
+  - `station install` propose ntfy.sh, avec un sujet tiré au hasard ; `station config` règle et change les canaux, chacun essayé avant que rien ne s'écrive, et `--alert-test` les essaie. Le moteur relit ses alertes sans redémarrer.
+  - Pris sans l'utilisateur, entre autres : ntfy.sh par défaut, avec un sujet de 96 bits qui ne se devine pas ; aucune alerte sans ses options hors d'un terminal ; l'e-mail en TLS exigé ; le disque presque plein sous 10 % et sous 10 Go, rappelé une fois par jour ; pas d'interrupteur.
+  - L'« Accepté quand » tient sur le banc, avec le vrai scheduler : un silence envoie ntfy et un e-mail en STARTTLS, puis « Le son est revenu ». Les vraies installations de la CI, sans alerte réglée, n'envoient rien.
+  - Pas vérifié : un vrai ntfy, un vrai SMTP, une station. Un mot de passe SMTP ne peut pas avoir d'apostrophe : `.env` ne la garde pas.
+  - Relevé en passant : SUR-04.
 
 ### DOC · Documenter
 
