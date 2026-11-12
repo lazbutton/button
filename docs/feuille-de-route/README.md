@@ -10,7 +10,7 @@ Ce qui reste à faire, rangé par priorité. Chaque tâche est une **fiche** : a
 
 ## Où on en est
 
-Relevé le 12 novembre 2026, sur `main` après la PR 151. La dernière version publiée est la 0.2.0, du 10 novembre. P1 a 25 fiches faites sur 29, P2 huit sur 53. En cours : SAV-01, en P1, et FON-32, FON-34 et TST-05, en P2. La personne qui fusionne tient cette partie à jour, comme les tableaux.
+Relevé le 12 novembre 2026, sur `main` après la PR 154. La dernière version publiée est la 0.2.0, du 10 novembre. P1 a 25 fiches faites sur 29, P2 dix sur 57. En cours : SAV-01, en P1, et FON-24, FON-32 et TST-09, en P2. La personne qui fusionne tient cette partie à jour, comme les tableaux.
 
 **D'abord** :
 
@@ -24,8 +24,8 @@ Relevé le 12 novembre 2026, sur `main` après la PR 151. La dernière version p
 
 - l'antenne, une fiche à la fois sur un même fichier : FON-17 puis FON-18 sur le pupitre (`desk.py`) ; FON-35 à FON-38 sur `clock.py` ; FON-32, en cours, puis FON-19 sur `execution.py`. FON-14, FON-39 et FON-33 viennent de changer ces fichiers : rejouer chaque défaut avant de coder ;
 - les bacs et la banque : FON-21, FON-31, et FON-20 et FON-40, ces deux-là l'une après l'autre, sur le script du pont Dropbox ;
-- les fiches de la bibliothèque : FON-24, et ARC-06 à côté. FON-25 à FON-30 les suivent ;
-- sans ordre, chacune avec ses conflits : FON-34, qui partage `alerts.py` avec SUR-01, puis FON-43 et FON-44, TST-04, TST-05 puis TST-11, TST-07 et FON-41, qui touchent le même parcours, TST-09 et DEV-05, l'une après l'autre sur `scheduler_api.py`, TST-10 après SAV-01, qui écrit aussi dans `station.yml`, DEV-01 à DEV-04, PUB-02, LEG-03, GEN-04, SEC-08, SEC-10, ARC-01, et MAJ-08, que MAJ-04 ne retient plus.
+- les fiches de la bibliothèque : FON-24, en cours, et ARC-06 à côté. FON-25 à FON-30 les suivent ;
+- sans ordre, chacune avec ses conflits : FON-43 et FON-44, ouvertes par FON-34, TST-04, TST-11, TST-07 et FON-41, qui touchent le même parcours, TST-09, en cours, puis DEV-05 sur `scheduler_api.py`, TST-10 après SAV-01, qui écrit aussi dans `station.yml`, DEV-01 à DEV-04, PUB-02, LEG-03, GEN-04, SEC-08, SEC-10, ARC-01, et MAJ-08, que MAJ-04 ne retient plus.
 
 Le reste de P2 attend P1 : MAJ-06 et SUR-03 écrivent dans la commande `station`, MAJ-07 suit MAJ-06, SUR-02 suit SUR-01, et SEC-09 relit le tout.
 
