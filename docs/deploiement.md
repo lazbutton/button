@@ -450,26 +450,30 @@ Une station installée par `station install` revient en arrière par sa commande
 `station update` se défait si les fichiers de la version ne se posent pas, si la station ne redémarre pas, ou si le contrôle échoue : une image qui ne démarre pas, une migration du schéma qui échoue à mi-chemin, un flux qui ne répond plus. La station revient à la version d'avant :
 
 - ses fichiers, tels qu'ils étaient dans le dossier, et `BUTTON_VERSION` dans `.env` ;
-- ses images, pour tous les services, recréés, les trois du moteur ensemble ;
+- ses images, pour tous les services, recréés, les trois du moteur ensemble. Un service venu avec la nouvelle version s'en va ;
 - la base d'avant la mise à jour, si le schéma a migré : la version d'avant ne lit pas un schéma plus récent. C'est la copie que le moteur fait avant de migrer, dans `RT_DATA/backups/`. Ce qui s'est écrit depuis est perdu, et `updates.log` le dit. La base de la nouvelle version reste à côté, dans `RT_DATA/backups/avant-restauration-….db`.
 
-Puis elle la contrôle, comme après une mise à jour. Avant de recréer les conteneurs de la nouvelle version, elle garde leurs journaux dans `updates-failed.log`, dans le dossier de la station, en droits 600 : de quoi voir pourquoi elle n'a pas démarré.
+Puis elle la contrôle, comme après une mise à jour, sur le mount que sert la version d'avant : `button.mp3` pour une 0.2.0. Avant de recréer les conteneurs de la nouvelle version, elle garde leurs journaux dans `updates-failed.log`, dans le dossier de la station, en droits 600 : de quoi voir pourquoi elle n'a pas démarré.
+
+Si la base d'avant ne peut pas revenir, parce que sa copie est abîmée ou que la place manque à côté de la base, rien ne se défait : la station reste à la nouvelle version, qui tourne peut-être encore, plutôt que de s'arrêter sur une base que la version d'avant ne lirait pas. La commande le dit.
 
 Elle pose ensuite `HOLD`, qui bloque les mises à jour suivantes jusqu'à ce qu'une personne le retire, la cause trouvée : `station unhold`. `updates.log` note la mise à jour « annulée », et `station status` la dit. L'alerte « mise à jour annulée » part dans le journal du système, `journalctl -t button` ; sur un téléphone et par e-mail, ce sera avec les alertes de SUR-01. La commande sort en erreur.
 
-Si le retour échoue lui aussi, la commande le dit, `updates.log` le note « échouée », et `HOLD` bloque de même. `station rollback` refait le retour ; `station install` répare la station sur la version de `.env`.
+Si le retour échoue lui aussi, la commande le dit, avec l'état où il laisse la station, `updates.log` le note « échouée », et `HOLD` bloque de même. Une fois la cause réglée, `station rollback` refait le retour.
 
-Revenue en 0.2.0, une station retrouve la commande `station` de la 0.2.0, qui n'a ni `status` ni `unhold` : `rm /opt/button/HOLD` débloque les mises à jour, et la commande de la version publiée fait le reste, comme pour la première mise à jour.
+Revenue en 0.2.0, une station retrouve la commande `station` de la 0.2.0, qui n'a que `install`. Les messages citent la commande lancée, `bash station` pour la première mise à jour, qui a le reste : `sudo bash station status`, `sudo bash station unhold`.
 
 ### Avec station rollback
 
-Une mise à jour passée peut décevoir ensuite. `sudo station rollback` défait la dernière, celle que note `updates.log`, et ramène la station à la version d'avant :
+Une mise à jour passée peut décevoir ensuite. `sudo station rollback` défait la dernière encore en place, d'après `updates.log`, et ramène la station à la version d'avant. Une mise à jour arrêtée, revenue seule ou échouée avant de toucher la station n'a rien laissé : `rollback` la passe, et défait celle d'avant. Il ramène :
 
 - ses fichiers, d'après l'archive de cette version, vérifiée par sa somme comme pour `station install`, ou celle de `--from`. Un fichier que la station avait changé reste à côté, en `.local-…` ;
 - ses images, pour tous les services. Celles qui manquent se tirent d'abord, pendant que l'antenne joue ;
 - la base d'avant la mise à jour, si le schéma a migré, comme quand une mise à jour échoue. La question au clavier dit de quand date cette base, et ce qui se perd : tout ce qui s'est écrit depuis, comptes, conducteur, Agenda et réglages compris. La base d'aujourd'hui reste à côté. Pour garder ces écritures, redescendre plutôt le schéma, à la main : voir plus bas.
 
-Puis le contrôle, une ligne « retour arrière » dans `updates.log`, `HOLD`, et l'alerte. Au clavier, elle demande une confirmation ; `--yes` répond pour un script. Une mise à jour revenue seule, ou déjà défaite, n'a plus rien à défaire.
+Puis le contrôle, une ligne « retour arrière » dans `updates.log`, `HOLD`, et l'alerte. Au clavier, elle demande une confirmation ; `--yes` répond pour un script. Une mise à jour déjà défaite n'a plus rien à défaire.
+
+Avant de rien changer, `rollback` vérifie ce qui l'arrêterait en route : la copie de la base et la place pour la remettre, les images, et le schéma que lit la version d'avant. Sans la copie, une base plus récente que la version d'avant le fait refuser : revenir alors à la main, en redescendant le schéma.
 
 ### À la main
 

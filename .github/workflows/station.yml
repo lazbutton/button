@@ -30,19 +30,22 @@ name: station
 # update: a real update, of a station installed by the highest published
 # version, with its own station command, to the folder of this checkout and
 # the :main images (scripts/version.py station main), by the station command
-# of this checkout. Before, the action that 1.0.0 asks: ICECAST_MOUNT keeps
-# the stream on the mount it was served on. Then two broken versions of this
-# checkout, which must come back by themselves to the published one (MAJ-05):
-# in the first, the console image exits at once (a busybox, built here, that
-# the update does not pull); in the second, the engine brings two more
-# migrations, the second of which fails, halfway. Each must leave the same
-# images on every service, the same data, the database of before included,
-# and the antenna back; HOLD set, updates.log and the system journal saying
-# so, and the logs of the broken version kept. Then the true update: during,
-# the stream is read every second, and the antenna must not be cut 30 s or
-# more (MAJ-04). After, the same accounts, clocks, weekly shows, Agenda and
-# settings, the backup of before, the line of updates.log and versions.json,
-# then status and the smoke check.
+# of this checkout. First, two broken versions of this checkout, which must
+# come back by themselves to the published one (MAJ-05). In the first, the
+# engine brings one more migration, which passes, then the console image
+# exits at once (a busybox, built here, that the update does not pull). In
+# the second, the engine brings two more migrations, the second of which
+# fails, halfway. Each must leave the same images on every service, the same
+# data, the database of before with its schema and tables, and the antenna
+# back; HOLD set, updates.log and the system journal saying so, and the logs
+# of the broken version kept. They go without ICECAST_MOUNT, as a station
+# that takes the new address of its stream: back on the published version,
+# the station is checked on the mount it serves. Then the true update, after
+# the action that 1.0.0 asks: ICECAST_MOUNT keeps the stream on the mount it
+# was served on. During, the stream is read every second, and the antenna
+# must not be cut 30 s or more (MAJ-04). After, the same accounts, clocks,
+# weekly shows, Agenda and settings, the backup of before, the line of
+# updates.log and versions.json, then status and the smoke check.
 
 on:
   push:
@@ -415,9 +418,11 @@ jobs:
       - name: Two broken versions of this checkout
         run: |
           # The folder of this checkout, broken twice, as a version can be,
-          # each packed like the true one. console: its console image exits at
-          # once. migration: its engine brings two more migrations, the second
-          # of which fails, halfway: radiotomate-init, a script of the folder,
+          # each packed like the true one. console: its engine brings one more
+          # migration, which passes, then its console image exits at once:
+          # the database of before must come back from under a running engine.
+          # migration: its engine brings two more migrations, the second of
+          # which fails, halfway. radiotomate-init, a script of the folder,
           # writes them into the image before migrating.
           for case in console migration; do
             mkdir -p "$RUNNER_TEMP/$case/files"
@@ -434,7 +439,7 @@ jobs:
           assert text.count(image) == 1, "the console image line has changed"
           compose.write_text(text.replace(image, "    image: button-ci/console-cassee:1\n    pull_policy: never\n"))
 
-          migrations = """# CI (MAJ-05) : deux migrations de plus, dans l'image ; la seconde échoue.
+          header = """# CI (MAJ-05) : des migrations de plus, dans l'image.
           ci_dir=$(python3 -c 'import radiotomate.commands.update as u; print(u.__path__[0])')
           ci_last=$(python3 -c 'import pkgutil, radiotomate.commands.update as u; print(max(int(m.name[1:]) for m in pkgutil.iter_modules(u.__path__) if m.name[1:].isdigit()))')
           cat >"$ci_dir/v$((ci_last + 1)).py" <<'EOF'
@@ -446,7 +451,8 @@ jobs:
           async def downgrade(conn):
               await conn.exec_driver_sql("drop table ci_migration")
           EOF
-          cat >"$ci_dir/v$((ci_last + 2)).py" <<'EOF'
+          """
+          failing = """cat >"$ci_dir/v$((ci_last + 2)).py" <<'EOF'
           async def upgrade(conn):
               raise RuntimeError("la migration de la CI échoue, exprès")
 
@@ -455,11 +461,12 @@ jobs:
               pass
           EOF
           """
-          init = root / "migration/files/scripts/init-radiotomate.sh"
-          text = init.read_text()
           update = 'radiotomate -c "$RTCONFIG" update\n'
-          assert text.count(update) == 1, "init-radiotomate.sh no longer migrates on its own line"
-          init.write_text(text.replace(update, migrations + update))
+          for case, migrations in (("console", header), ("migration", header + failing)):
+              init = root / case / "files/scripts/init-radiotomate.sh"
+              text = init.read_text()
+              assert text.count(update) == 1, "init-radiotomate.sh no longer migrates on its own line"
+              init.write_text(text.replace(update, migrations + update))
           PY
           for case in console migration; do
             tar -czf "$RUNNER_TEMP/$case/station.tar.gz" -C "$RUNNER_TEMP/$case/files" .
@@ -552,16 +559,14 @@ jobs:
           sudo docker compose exec -T radiotomate-interface python3 - <"$RUNNER_TEMP/schema.py" |
             tee "$out/schema-avant.txt"
           # The mount the station serves: button.mp3 before ICECAST_MOUNT came,
-          # radio.mp3 after, by default. The action that 1.0.0 asks of a
-          # station installed before it: keep that address, in .env.
+          # radio.mp3 after, by default. The broken versions go without it, as
+          # a station that takes the new address: back on the published one,
+          # the station must be checked on the mount it serves.
           mount=radio.mp3
           code=$(curl -s -m 2 -o /dev/null -w '%{http_code}' http://127.0.0.1:18000/button.mp3 || true)
           if [ "$code" = 200 ]; then mount=button.mp3; fi
           echo "Mount servi : /$mount"
           echo "$mount" >"$RUNNER_TEMP/mount"
-          if ! sudo grep -q '^ICECAST_MOUNT=' .env; then
-            echo "ICECAST_MOUNT=$mount" | sudo tee -a .env >/dev/null
-          fi
           # What the next steps share, from /opt/button.
           cat >"$RUNNER_TEMP/ci.sh" <<'SH'
           out=$RUNNER_TEMP/out
@@ -611,14 +616,16 @@ jobs:
 
           # An update to a broken version of this checkout: it must fail, then
           # come back by itself to the published version, with the same images
-          # on every service, the same data and the antenna; block the next
-          # updates (HOLD), say so in updates.log and the system journal, and
-          # keep the logs of the broken version. Then HOLD is lifted, by the
-          # station command of this checkout: the published one may not have
-          # unhold.
+          # on every service, the same data and the antenna, and the database
+          # of before, its schema and its tables, the migrated one kept aside;
+          # block the next updates (HOLD), say so in updates.log and the system
+          # journal, and keep the logs of the broken version. Then HOLD is
+          # lifted, by the station command of this checkout: the published one
+          # may not have unhold.
           broken_update() { # case, stage where it fails
-            local case=$1 stage=$2 probe status=0 cut line
+            local case=$1 stage=$2 probe status=0 cut line aside
             images >"$out/images-avant-$case.txt"
+            aside=$(sudo sh -c 'ls data/radiotomate/backups/avant-restauration-*.db 2>/dev/null' | wc -l)
             listen "$out/antenne-$case.txt" &
             probe=$!
             sudo bash "$RUNNER_TEMP/station/station" update --from "$RUNNER_TEMP/$case/station.tar.gz" --yes 2>&1 |
@@ -634,7 +641,7 @@ jobs:
               fail "Version" "la station n'est pas revenue en $published ($case)."
             line=$(sudo grep -v '^#' updates.log | tail -n 1)
             [ "$(cut -f2-4 <<<"$line")" = "$(printf '%s\tmain\tannulée' "$published")" ] &&
-              [[ $(cut -f6 <<<"$line") == "pendant le $stage ; revenue en $published"* ]] ||
+              [[ $(cut -f6 <<<"$line") == "pendant le $stage ; revenue en $published, avec la base d'avant la mise à jour"* ]] ||
               fail "updates.log" "la dernière ligne n'est pas celle d'une mise à jour annulée pendant le $stage ($case) : $line"
             sudo test -f HOLD || fail "HOLD" "le retour arrière n'a pas posé HOLD ($case)."
             sudo journalctl -t button --no-pager -o cat |
@@ -647,11 +654,16 @@ jobs:
             engine_python "$RUNNER_TEMP/empreinte.py" >"$out/empreinte-$case.txt"
             diff "$out/empreinte-avant.txt" "$out/empreinte-$case.txt" ||
               fail "Données" "le retour arrière a changé les comptes, les horloges, la grille, l'Agenda ou les réglages ($case)."
+            engine_python "$RUNNER_TEMP/schema.py" >"$out/schema-$case.txt"
+            diff "$out/schema-avant.txt" "$out/schema-$case.txt" ||
+              fail "Base" "la base n'est pas celle d'avant la mise à jour ($case) : voir le diff plus haut."
+            [ "$(sudo sh -c 'ls data/radiotomate/backups/avant-restauration-*.db 2>/dev/null' | wc -l)" -eq $((aside + 1)) ] ||
+              fail "Base" "la base de la version cassée n'est pas gardée à côté ($case)."
             sudo scripts/smoke.sh http://127.0.0.1:30126 "http://127.0.0.1:18000/$mount"
             sudo bash "$RUNNER_TEMP/station/station" unhold
           }
           SH
-      - name: A version whose console does not start comes back by itself
+      - name: A version whose console does not start, after its migration, comes back by itself
         timeout-minutes: 20
         working-directory: /opt/button
         run: |
@@ -667,15 +679,6 @@ jobs:
           # shellcheck disable=SC1091
           source "$RUNNER_TEMP/ci.sh"
           broken_update migration redémarrage
-          # The database of before: its schema, without the table of the first
-          # migration, and the migrated one kept aside.
-          engine_python "$RUNNER_TEMP/schema.py" >"$out/schema-migration.txt"
-          diff "$out/schema-avant.txt" "$out/schema-migration.txt" ||
-            fail "Base" "la base n'est pas celle d'avant la mise à jour : voir le diff plus haut."
-          sudo sh -c 'ls data/radiotomate/backups/avant-restauration-*.db' ||
-            fail "Base" "la base de la version cassée n'est pas gardée à côté."
-          sudo tail -n 1 updates.log | grep -q "avec la base d'avant la mise à jour" ||
-            fail "updates.log" "la ligne ne dit pas que la base d'avant est revenue."
           sudo grep -q "la migration de la CI échoue" updates-failed.log ||
             fail "Journaux" "les journaux gardés n'ont pas l'échec de la migration."
       - name: Update to this checkout, the antenna listened to
@@ -684,6 +687,11 @@ jobs:
         run: |
           # shellcheck disable=SC1091
           source "$RUNNER_TEMP/ci.sh"
+          # The action that 1.0.0 asks of a station installed before it: keep
+          # the address of its stream, in .env.
+          if ! sudo grep -q '^ICECAST_MOUNT=' .env; then
+            echo "ICECAST_MOUNT=$mount" | sudo tee -a .env >/dev/null
+          fi
           listen "$out/antenne.txt" &
           probe=$!
           sudo bash "$RUNNER_TEMP/station/station" update --from "$RUNNER_TEMP/station/station.tar.gz" --yes 2>&1 |

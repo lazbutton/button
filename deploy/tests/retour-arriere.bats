@@ -62,7 +62,9 @@ database() {
   assert_output --partial "Retour arrière : la station repart en 0.1.0."
   assert_output --partial "La station est revenue en 0.1.0 : le contrôle passe. La mise à jour vers 0.2.0 est annulée."
   assert_output --partial "  Les journaux de la 0.2.0, pour voir pourquoi : $DIR/updates-failed.log."
-  assert_output --partial "  Les mises à jour sont bloquées par $DIR/HOLD. Les débloquer, une fois la cause trouvée : station unhold, ou rm $DIR/HOLD."
+  # La commande lancée, qui a unhold : celle de la station, revenue, ne l'a
+  # peut-être pas, comme celle d'une 0.2.0.
+  assert_output --regexp "  Les mises à jour sont bloquées par $DIR/HOLD\. Les débloquer, une fois la cause trouvée : bash [^ ]*/station unhold\."
   # Les fichiers d'avant, .env compris, tels qu'ils étaient.
   [ "$(cat "$DIR/VERSION")" = 0.1.0 ]
   [ "$(env_of BUTTON_VERSION)" = 0.1.0 ]
@@ -186,8 +188,8 @@ EOF
   station update
   assert_failure
   assert_output --partial "Attention : le retour en 0.1.0 a échoué : Le moteur ne repart pas en 0.1.0 : voir le message de docker compose plus haut."
-  assert_output --partial "  La station est peut-être coupée. Voir son état : station status ; les journaux de la 0.2.0 : $DIR/updates-failed.log."
-  assert_output --partial "  Puis station rollback refait le retour en 0.1.0, ou station install répare la station sur la version de .env."
+  assert_output --regexp "  La station est peut-être coupée\. Voir son état : bash [^ ]*/station status ; les journaux de la 0\.2\.0 : $DIR/updates-failed\.log\."
+  assert_output --regexp "  Une fois la cause réglée, bash [^ ]*/station rollback refait le retour en 0\.1\.0\."
   refute_output --partial "le contrôle passe"
   [ "$(last_update | cut -f3)" = échouée ]
   [ "$(last_update | cut -f5)" = "pendant le redémarrage ; le retour en 0.1.0 a échoué : Le moteur ne repart pas en 0.1.0 : voir le message de docker compose plus haut." ]
@@ -263,6 +265,112 @@ EOF
   [ ! -e "$DIR/updates-failed.log" ]
 }
 
+@test "revenue à une version d'avant ICECAST_MOUNT, la station se contrôle sur button.mp3, qu'elle sert" {
+  # Comme la 0.2.0 : son compose.yml ne passe pas ICECAST_MOUNT, et le flux
+  # public est en dur, button.mp3.
+  mkdir -p "$BATS_TEST_TMPDIR/ancienne"
+  grep -v ICECAST_MOUNT "$DEPLOY/compose.yml" >"$BATS_TEST_TMPDIR/ancienne/compose.yml"
+  RELEASE_OVERLAY=$BATS_TEST_TMPDIR/ancienne make_release 0.1.0 "$FAKE_STATE/releases/v0.1.0"
+  installed_then 0.2.0
+  touch "$FAKE_STATE/smoke-fails"
+  station update
+  assert_failure
+  assert_output --partial "La station est revenue en 0.1.0 : le contrôle passe."
+  # Le contrôle de la 0.2.0, sur son mount ; puis celui de la 0.1.0, sur le sien.
+  [ "$(grep '^smoke ' "$FAKE_STATE/log" | head -n 1 | cut -d' ' -f3)" = https://radio.example/radio.mp3 ]
+  [ "$(grep '^smoke ' "$FAKE_STATE/log" | tail -n 1 | cut -d' ' -f3)" = https://radio.example/button.mp3 ]
+}
+
+@test "une copie de la base abîmée : rien ne se défait, la station reste à la nouvelle version, et le dit" {
+  echo 18 >"$FAKE_STATE/schema-0.1.0"
+  echo 20 >"$FAKE_STATE/schema-0.2.0"
+  installed_then 0.2.0
+  touch "$FAKE_STATE/smoke-fails" "$FAKE_STATE/copy-corrupt"
+  station update
+  assert_failure
+  assert_output --regexp "Attention : le retour en 0\.1\.0 a échoué : La copie de la base d'avant la mise à jour, avant-v19-[0-9]{8}T[0-9]{6}Z\.db, est abîmée : \*\*\* in database main \*\*\* .*\. La base ne peut pas revenir\."
+  assert_output --partial "  La station reste en 0.2.0, comme la mise à jour l'a laissée : elle tourne peut-être encore."
+  [ "$(cat "$DIR/VERSION")" = 0.2.0 ]
+  [ "$(env_of BUTTON_VERSION)" = 0.2.0 ]
+  run ! logged "restaurée : "
+  run ! logged " stop (dans $DIR)"
+  [ "$(last_update | cut -f3)" = échouée ]
+  [ -f "$DIR/HOLD" ]
+}
+
+@test "la place manque pour remettre la base d'avant : rien ne se défait" {
+  echo 18 >"$FAKE_STATE/schema-0.1.0"
+  echo 20 >"$FAKE_STATE/schema-0.2.0"
+  installed_then 0.2.0
+  touch "$FAKE_STATE/smoke-fails"
+  echo 1000 >"$FAKE_STATE/free-kb-data"
+  station update
+  assert_failure
+  assert_output --partial "Il manque de la place à côté de la base pour y remettre celle d'avant la mise à jour"
+  [ "$(cat "$DIR/VERSION")" = 0.2.0 ]
+  run ! logged "restaurée : "
+}
+
+@test "une base qui ne se remet pas laisse la station arrêtée, et le dit ; rollback la reprend, par un script qui se passe de sqlite3" {
+  # La 0.1.0, comme la 0.2.0 : son script de restauration demande sqlite3.
+  mkdir -p "$BATS_TEST_TMPDIR/ancienne/scripts"
+  cat >"$BATS_TEST_TMPDIR/ancienne/scripts/restore-radiotomate.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+command -v sqlite3 >/dev/null 2>&1 || {
+  echo "sqlite3 is required" >&2
+  exit 1
+}
+EOF
+  RELEASE_OVERLAY=$BATS_TEST_TMPDIR/ancienne make_release 0.1.0 "$FAKE_STATE/releases/v0.1.0"
+  echo 18 >"$FAKE_STATE/schema-0.1.0"
+  echo 20 >"$FAKE_STATE/schema-0.2.0"
+  installed_then 0.2.0
+  database >"$BATS_TEST_TMPDIR/base-avant"
+  touch "$FAKE_STATE/smoke-fails" "$FAKE_STATE/restore-fails"
+  station update
+  assert_failure
+  assert_output --partial "Attention : le retour en 0.1.0 a échoué : La base d'avant la mise à jour, avant-v19-"
+  assert_output --partial "  La station est arrêtée. Voir son état :"
+  # Les fichiers sont revenus : le dossier porte le script de la 0.1.0, que
+  # l'image du moteur refuse. La reprise prend celui de la version quittée.
+  [ "$(cat "$DIR/VERSION")" = 0.1.0 ]
+  station rollback --yes
+  assert_success
+  assert_output --partial "La station est revenue en 0.1.0, au lieu de 0.2.0 : le contrôle passe."
+  diff "$BATS_TEST_TMPDIR/base-avant" <(database)
+}
+
+@test "un service venu avec la mise à jour s'en va au retour arrière" {
+  installed_then 0.2.0
+  printf 'id-nouveau\n' >"$FAKE_STATE/containers"
+  printf 'id-nouveau|nouveau-service\n' >"$FAKE_STATE/inspect-services"
+  touch "$FAKE_STATE/smoke-fails"
+  station update
+  assert_failure
+  assert_output --partial "Retour arrière : retirés, venus avec la mise à jour : nouveau-service."
+  logged "docker rm -f id-nouveau"
+}
+
+@test "une connexion coupée en plein contrôle : la station revient quand même" {
+  installed_then 0.2.0
+  touch "$FAKE_STATE/smoke-hangs"
+  bash "$STATION" update >"$BATS_TEST_TMPDIR/sortie" 2>&1 &
+  local pid=$! status=0 tries=0
+  until logged "smoke https://"; do
+    ((tries++ < 300))
+    sleep 0.1
+  done
+  kill -HUP "$pid"
+  rm "$FAKE_STATE/smoke-hangs"
+  wait "$pid" || status=$?
+  [ "$status" -eq 129 ]
+  grep -qF "Attention : la mise à jour s'annule : la station revient en 0.1.0." "$BATS_TEST_TMPDIR/sortie"
+  [ "$(cat "$DIR/VERSION")" = 0.1.0 ]
+  [ "$(last_update | cut -f3,5)" = "$(printf 'annulée\tpendant le contrôle ; revenue en 0.1.0')" ]
+  [ -f "$DIR/HOLD" ]
+}
+
 # --- station rollback ---
 
 @test "rollback défait la dernière mise à jour, et bloque les suivantes" {
@@ -336,14 +444,14 @@ EOF
   installed_then 0.2.0
   station rollback --yes
   assert_success
-  assert_output "Rien à défaire : $DIR/updates.log ne note aucune mise à jour."
+  assert_output "Rien à défaire : $DIR/updates.log ne note aucune mise à jour en place."
   # Une mise à jour qui n'a rien touché.
   touch "$FAKE_STATE/pull-fails"
   station update
   assert_failure
   station rollback --yes
   assert_success
-  assert_output "Rien à défaire : la dernière mise à jour, de 0.1.0 à 0.2.0, a échoué avant de toucher la station, pendant les images."
+  assert_output "Rien à défaire : $DIR/updates.log ne note aucune mise à jour en place."
   # Une mise à jour revenue seule.
   rm "$FAKE_STATE/pull-fails"
   touch "$FAKE_STATE/smoke-fails"
@@ -351,7 +459,7 @@ EOF
   assert_failure
   station rollback --yes
   assert_success
-  assert_output "Rien à défaire : la dernière mise à jour, de 0.1.0 à 0.2.0, est déjà revenue seule en 0.1.0."
+  assert_output "Rien à défaire : $DIR/updates.log ne note aucune mise à jour en place."
   [ "$(cat "$DIR/VERSION")" = 0.1.0 ]
 }
 
@@ -411,6 +519,73 @@ EOF
   assert_success
   assert_output --partial "La station est revenue en 0.1.0, au lieu de 0.2.0 : le contrôle passe."
   [ "$(last_update | cut -f1-3)" = "$(printf '0.2.0\t0.1.0\tretour arrière')" ]
+}
+
+@test "rollback passe les mises à jour qui n'ont rien laissé, et défait la dernière en place" {
+  installed_then 0.2.0
+  station update
+  assert_success
+  make_release 0.3.0 "$FAKE_STATE/releases/v0.3.0"
+  echo 0.3.0 >"$FAKE_STATE/latest"
+  # Arrêtée par un direct, échouée sur ses images, puis revenue seule.
+  echo "occupée : QG, un direct, commence à 20:00, dans 29 min" >"$FAKE_STATE/window-later"
+  station update
+  assert_failure
+  touch "$FAKE_STATE/pull-fails"
+  station update
+  assert_failure
+  rm "$FAKE_STATE/pull-fails"
+  touch "$FAKE_STATE/smoke-fails"
+  station update
+  assert_failure
+  [ "$(grep -v '^#' "$DIR/updates.log" | cut -f4 | tr '\n' ' ')" = "faite arrêtée échouée annulée " ]
+  station rollback --yes
+  assert_success
+  assert_output --partial "La station est revenue en 0.1.0, au lieu de 0.2.0 : le contrôle passe."
+  [ "$(cat "$DIR/VERSION")" = 0.1.0 ]
+}
+
+@test "rollback refuse une base que la version d'avant ne lirait pas, quand la copie n'est plus là" {
+  echo 18 >"$FAKE_STATE/schema-0.1.0"
+  echo 20 >"$FAKE_STATE/schema-0.2.0"
+  installed_then 0.2.0
+  station update
+  assert_success
+  rm "$DIR"/data/radiotomate/backups/avant-v*.db
+  station rollback --yes
+  assert_failure
+  assert_output --partial "La base est au schéma v20, et la version 0.1.0 ne lit que jusqu'au v18 : la copie de la base d'avant la mise à jour n'est plus dans $DIR/data/radiotomate/backups. Rien n'est changé."
+  assert_output --partial "Revenir à la main, en redescendant le schéma avec l'image de la 0.2.0"
+  [ "$(cat "$DIR/VERSION")" = 0.2.0 ]
+  [ ! -e "$DIR/HOLD" ]
+}
+
+@test "rollback refuse un updates.log qu'il ne comprend pas, ou une station à une autre version" {
+  installed_then 0.2.0
+  station update
+  assert_success
+  printf '%s\t0.2.0\t0.3.0\tbizarre\t-\tun essai\n' "$(date +%s)" >>"$DIR/updates.log"
+  station rollback --yes
+  assert_failure
+  assert_output --partial "a une ligne au résultat inattendu, « bizarre ». Rien n'est changé."
+  sed -i '$d' "$DIR/updates.log"
+  sed -i 's/^BUTTON_VERSION=.*/BUTTON_VERSION=0.3.0/' "$DIR/.env"
+  station rollback --yes
+  assert_failure
+  assert_output --partial "La station est en 0.3.0, et la dernière mise à jour allait de 0.1.0 à 0.2.0 : rollback ne sait pas d'où revenir. Rien n'est changé."
+  [ "$(cat "$DIR/VERSION")" = 0.2.0 ]
+}
+
+@test "un avertissement de Compose n'est pas une image qui manque" {
+  installed_then 0.2.0
+  station update
+  assert_success
+  echo 'WARN[0000] The "X" variable is not set. Defaulting to a blank string.' >"$FAKE_STATE/compose-warning"
+  : >"$FAKE_STATE/log"
+  station rollback --yes
+  assert_success
+  refute_output --partial "qui manquent"
+  run ! logged "images : BUTTON_VERSION=0.1.0"
 }
 
 @test "l'aide de rollback, et ses options" {

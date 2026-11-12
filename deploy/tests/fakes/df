@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # Un faux df -Pk : la place libre, en Ko, de $FAKE_STATE/free-kb, 50 Go sinon.
+# Celle du dossier de la base, data/radiotomate : $FAKE_STATE/free-kb-data.
 set -euo pipefail
 free=$(cat "$FAKE_STATE/free-kb" 2>/dev/null || echo 52428800)
+if [[ ${*: -1} == */data/radiotomate && -f $FAKE_STATE/free-kb-data ]]; then
+  free=$(cat "$FAKE_STATE/free-kb-data")
+fi
 echo "Filesystem 1024-blocks Used Available Capacity Mounted on"
 echo "/dev/vda1 104857600 1048576 $free 2% /"

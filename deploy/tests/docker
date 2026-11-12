@@ -118,8 +118,13 @@ compose_run() {
         exit 1
       fi
       # Une copie de la base seule, à la place de la base en place, qui reste
-      # à côté : la station arrêtée.
+      # à côté : la station arrêtée. Une fois, elle échoue : $state/restore-fails.
       if [[ $2 == *.db ]]; then
+        if [[ -e $state/restore-fails ]]; then
+          rm "$state/restore-fails"
+          echo "No space left on device" >&2
+          exit 1
+        fi
         if [[ -e $state/caddy-running || -e $state/engine-running ]]; then
           echo "database in use or unreadable: /data/radiotomate.db" >&2
           exit 1
@@ -153,11 +158,23 @@ compose_run() {
           sed -n 's/^schema=//p' "$(host /data)/radiotomate.db" "$(host /cible)/radiotomate.db"
           ;;
         "# copie"*)
+          # Puis l'état de la copie : ok, sauf $state/copy-corrupt.
           local copy
           for spec in "${envs[@]}"; do
             [[ $spec != BUTTON_COPY=* ]] || copy=${spec#*=}
           done
           sed -n 's/^schema=//p' "$(host /data)/radiotomate.db" "$(host /data/backups)/$copy"
+          if [[ -e $state/copy-corrupt ]]; then
+            echo "*** in database main *** Page 2: btreeInitPage() returns error code 11"
+          else
+            echo ok
+          fi
+          ;;
+        "# version"*)
+          # L'image de la version de BUTTON_VERSION : le schéma qu'elle lit
+          # au plus, $state/schema-<version>, sinon 18.
+          sed -n 's/^schema=//p' "$(host /data)/radiotomate.db"
+          cat "$state/schema-${BUTTON_VERSION:-}" 2>/dev/null || echo 18
           ;;
         "# domaine"*)
           echo "réglages du domaine : ${envs[*]}" >>"$state/log"
@@ -192,10 +209,13 @@ case $1 in
   ps) cat "$state/containers" 2>/dev/null || true ;;
   # Leur service, leur image et leur version : $state/inspect ; ou leur
   # identifiant, leur service et les chemins qu'ils montent :
-  # $state/inspect-mounts.
+  # $state/inspect-mounts ; ou leur identifiant et leur service :
+  # $state/inspect-services.
   inspect)
     if [[ " $* " == *".Mounts"* ]]; then
       cat "$state/inspect-mounts" 2>/dev/null || true
+    elif [[ " $* " == *" {{.Id}}|"* ]]; then
+      cat "$state/inspect-services" 2>/dev/null || true
     else
       cat "$state/inspect" 2>/dev/null || true
     fi
@@ -262,6 +282,8 @@ case $1 in
         fi
         ;;
       config)
+        # Un avertissement de Compose, sur la sortie d'erreur : $state/compose-warning.
+        [[ ! -f $state/compose-warning ]] || cat "$state/compose-warning" >&2
         case " $* " in
           *" --services "*) printf '%s\n' "${SERVICES[@]}" ;;
           *" --profiles "*) printf 'cloud\nshare\nvps\n' ;;
