@@ -1,6 +1,8 @@
 import json
+import logging
 from datetime import datetime, time, timedelta
 from pathlib import Path
+from time import time as time_now
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -25,7 +27,13 @@ class _Spy:
 
 
 def _settings(**over) -> alerts.AlertSettings:
-    raw = {"enabled": True, "silence_seconds": 20, "heartbeat_max_age_seconds": 10}
+    raw = {
+        "enabled": True,
+        "silence_seconds": 20,
+        "heartbeat_max_age_seconds": 10,
+        # A target, that the spy stands for: without one, nothing goes out.
+        "webhook_url": "http://hook.local/alert",
+    }
     raw.update(over)
     return alerts.AlertSettings.from_config(raw)
 
@@ -59,13 +67,106 @@ async def test_playout_down_needs_consecutive_failures_and_heartbeat_alert():
     assert monitor.open == {}
 
 
-async def test_settings_disabled_without_section():
-    assert alerts.AlertSettings.from_config(None).enabled is False
-    assert alerts.AlertSettings.from_config({}).enabled is False
+async def test_the_watch_is_on_without_a_block_and_enabled_false_stops_it():
+    """SUR-04: without the block, or without a target, the monitor watches
+    the antenna for the Antenne page. ``enabled: false`` switches it off."""
+    for raw in (None, {}, {"silence_seconds": 30}, {"enabled": None}):
+        conf = alerts.AlertSettings.from_config(raw)
+        assert conf.enabled is True
+        assert conf.has_target is False
+    assert alerts.AlertSettings().enabled is True
     conf = alerts.AlertSettings.from_config({"webhook_url": "http://x/hook"})
     assert conf.enabled is True
     assert conf.has_target is True
     assert conf.interval == alerts.DEFAULT_INTERVAL
+    # Off as YAML 1.2 reads it: a boolean, or a word it keeps as text, as the
+    # switches of the settings read them.
+    for off in (False, 0, "false", "off", "no", "non", " Off ", ""):
+        assert alerts.AlertSettings.from_config({"enabled": off}).enabled is False
+    for on in (True, "true", "on", "yes", "oui"):
+        assert alerts.AlertSettings.from_config({"enabled": on}).enabled is True
+    # A word in place of the block says it as well.
+    for off in (False, "off", "no"):
+        assert alerts.AlertSettings.from_config(off).enabled is False
+    assert alerts.AlertSettings.from_config(True).enabled is True
+
+
+async def test_a_word_neither_on_nor_off_keeps_the_watch_on_and_says_so(
+    caplog, monkeypatch
+):
+    # tests.yaml, once a test has loaded it, stops the engine's records short
+    # of the root logger, where caplog listens.
+    monkeypatch.setattr(logging.getLogger("radiotomate"), "propagate", True)
+    with caplog.at_level("WARNING", logger="radiotomate.scheduler.alerts"):
+        assert alerts.AlertSettings.from_config({"enabled": "disabled"}).enabled
+    assert "'disabled' is neither on nor off" in caplog.text
+
+
+async def test_a_target_hears_of_an_incident_once_and_of_its_end_only_after(
+    tmp_path: Path,
+):
+    """SUR-04: an incident that went to the log only, with no target, goes to
+    the first target set while it is open, on the next turn, even after a
+    restart; then its end. A target that never heard of it never gets its end
+    alone, even after a restart. Before SUR-04, incidents saved went to a
+    target: they are not sent again."""
+    posts: list[dict] = []
+
+    def hook(request: httpx.Request) -> httpx.Response:
+        posts.append(json.loads(request.content))
+        return httpx.Response(200, json={})
+
+    alone = _settings(webhook_url="")
+    told = _settings()
+    state = tmp_path / "alerts.json"
+    silent = {"silence_s": "30", "source": "autodj"}
+    sound = {"silence_s": "0", "source": "autodj"}
+
+    def monitor(settings) -> alerts.AlertMonitor:
+        client = httpx.AsyncClient(transport=httpx.MockTransport(hook))
+        notifier = alerts.Notifier(settings, client)
+        watch = alerts.AlertMonitor(settings, notifier, state_path=state)
+        watch.load_state()
+        return watch
+
+    def set_targets(watch: alerts.AlertMonitor, settings) -> None:
+        # As the loop takes a new alerts: block.
+        watch.settings = watch.notifier.settings = settings
+
+    # No target: the silence goes to the log, and is saved.
+    first = monitor(alone)
+    assert await first.step(silent, 1.0) == ["open:silence"]
+    assert json.loads(state.read_text())["open"]["silence"]["told"] is False
+    # A target set on the turn the sound returns: nothing goes to it, and
+    # the silence is gone from the file.
+    set_targets(first, told)
+    assert await first.step(sound, 1.0) == ["resolved:silence"]
+    assert posts == []
+    assert json.loads(state.read_text())["open"] == {}
+    # A restart with the target: nothing to tell.
+    assert await monitor(told).step(sound, 1.0) == []
+    assert posts == []
+
+    # No target, a silence saved; the scheduler restarts with a target set.
+    assert await monitor(alone).step(silent, 1.0) == ["open:silence"]
+    again = monitor(told)
+    assert await again.step(silent, 1.0) == ["open:silence"]
+    assert await again.step(silent, 1.0) == []
+    assert await again.step(sound, 1.0) == ["resolved:silence"]
+    assert [(post["kind"], post["resolved"]) for post in posts] == [
+        ("silence", False),
+        ("silence", True),
+    ]
+
+    # Saved before SUR-04, without "told": sent already, not again.
+    posts.clear()
+    stamp = time_now() - 60
+    entry = {"detail": "30 s de silence", "opened_at": stamp, "notified_at": stamp}
+    state.write_text(json.dumps({"open": {"silence": entry}}))
+    old = monitor(told)
+    assert await old.step(silent, 1.0) == []
+    assert await old.step(sound, 1.0) == ["resolved:silence"]
+    assert [(post["kind"], post["resolved"]) for post in posts] == [("silence", True)]
 
 
 async def test_notifier_posts_webhook_and_vikunja_task():

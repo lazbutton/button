@@ -3,6 +3,7 @@ and a fake SMTP server on this machine (``fake_targets.py``); the disk almost
 full; and the ``alerts:`` block read again when radiotomate.yaml changes."""
 
 import asyncio
+import json
 import os
 import shutil
 import time
@@ -12,7 +13,7 @@ from typing import NamedTuple
 import httpx
 import pytest
 
-from radiotomate.scheduler import alerts
+from radiotomate.scheduler import alerts, antenne
 from radiotomate.scheduler.metrics import runtime_metrics
 from tests.scheduler.fake_targets import (
     FakeNtfy,
@@ -24,6 +25,7 @@ from tests.scheduler.fake_targets import (
 GB = alerts.GIB
 USER = "alertes@radio.example"
 PASSWORD = "mot-de-passe-de-test"
+HOOK = "http://hook.radio.example/alerte"
 
 
 @pytest.fixture(scope="module")
@@ -231,7 +233,8 @@ async def test_a_disk_almost_full_opens_then_resolves_with_a_margin(
         async def send(self, **payload):
             spy.append(payload)
 
-    monitor = alerts.AlertMonitor(_settings(), Spy())
+    # A target, that the spy stands for: without one, nothing goes out.
+    monitor = alerts.AlertMonitor(_settings(webhook_url=HOOK), Spy())
     monitor.disk_paths = [
         ("la banque de sons", str(tmp_path / "media")),
         ("les données du moteur", str(tmp_path / "data")),
@@ -265,7 +268,9 @@ async def test_a_disk_almost_full_reminds_once_a_day_not_every_quarter(
             spy.append(payload["kind"])
 
     # A reminder at every turn for the other incidents, as a test.
-    monitor = alerts.AlertMonitor(_settings(cooldown_seconds=0.001), Spy())
+    monitor = alerts.AlertMonitor(
+        _settings(cooldown_seconds=0.001, webhook_url=HOOK), Spy()
+    )
     monitor.disk_paths = [("la banque de sons", str(tmp_path))]
     silence = {"silence_s": "30", "source": "autodj"}
     assert sorted(await monitor.step(silence, 1.0)) == ["open:disk", "open:silence"]
@@ -330,6 +335,10 @@ def test_a_change_is_read_once_the_file_settles(tmp_path: Path):
     _write(config, "data:\n  root: /data\n")
     watch.changed()
     assert watch.changed() == {}
+    # A word in place of the block (SUR-04): off, as the block would say.
+    _write(config, "alerts: off\n")
+    watch.changed()
+    assert alerts.AlertSettings.from_config(watch.changed()).enabled is False
     # No file: nothing to read.
     assert alerts.ConfigWatch(tmp_path / "absent.yaml").changed() is None
 
@@ -421,17 +430,24 @@ async def test_a_silence_sends_ntfy_and_an_email_then_a_note_when_the_sound_retu
     assert len(smtp.mails) == 2
 
 
+def _on_the_page(app) -> list[str]:
+    """The incidents /antenne/state.json gives the Antenne page."""
+    return [row["kind"] for row in antenne.incidents_state(app)]
+
+
 async def test_the_loop_takes_new_targets_without_a_restart(quick_loop, tmp_path: Path):
-    """No alerts: block at start. station config sets ntfy, radiotomate-init
-    writes it: the loop takes it on, then drops it, without a restart."""
+    """SUR-04: no alerts: block, as radiotomate install leaves it. The silence
+    shows on the Antenne page, and goes nowhere else. station config sets ntfy,
+    radiotomate-init writes it: the silence still open goes out on the next
+    turn, without a restart. ntfy gone, the end of the silence goes nowhere."""
     config = tmp_path / "radiotomate.yaml"
     _write(config, "data:\n  root: /data\n")
     with FakeNtfy() as ntfy:
         app = _App(tmp_path, {}, {"silence_s": "30.0", "source": "autodj"})
         task = asyncio.create_task(alerts.loop(app))
         try:
+            await _until(lambda: _on_the_page(app) == ["silence"])
             await asyncio.sleep(0.3)
-            assert "alert_monitor" not in app.extensions
             assert ntfy.messages == []
             enabled = (
                 "data:\n  root: /data\nalerts:\n  interval_seconds: 0.05\n"
@@ -440,18 +456,43 @@ async def test_the_loop_takes_new_targets_without_a_restart(quick_loop, tmp_path
             _write(config, enabled)
             await _until(lambda: ntfy.messages)
             assert ntfy.messages[0]["title"] == "Silence à l'antenne"
-            assert "alert_monitor" in app.extensions
-            # Switched off: the monitor goes, and nothing more is sent, not
-            # even the end of the silence.
+            # ntfy gone: the monitor stays, and the end of the silence, seen
+            # on the page, goes nowhere.
+            monitor = app.extensions["alert_monitor"]
             _write(config, "data:\n  root: /data\n")
-            await _until(lambda: "alert_monitor" not in app.extensions)
+            await _until(lambda: not monitor.settings.has_target)
             app.health = {"silence_s": "0.0", "source": "autodj"}
-            await asyncio.sleep(0.3)
-            # On again, the sound back: the silence of before is forgotten.
-            _write(config, enabled)
-            await _until(lambda: "alert_monitor" in app.extensions)
+            await _until(lambda: _on_the_page(app) == [])
+            assert app.extensions["alert_monitor"] is monitor
             await asyncio.sleep(0.3)
         finally:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
     assert len(ntfy.messages) == 1
+
+
+async def test_enabled_false_switches_the_watch_off_and_on_without_a_restart(
+    quick_loop, tmp_path: Path
+):
+    """ADR 0009: ``alerts.enabled: false`` switches the monitor off, the
+    incidents of the Antenne page with it, and none comes back with a restart;
+    the line gone, it watches again, without a restart."""
+    config = tmp_path / "radiotomate.yaml"
+    off = "data:\n  root: /data\nalerts:\n  enabled: false\n"
+    _write(config, off)
+    app = _App(tmp_path, {"enabled": False}, {"silence_s": "30.0", "source": "autodj"})
+    task = asyncio.create_task(alerts.loop(app))
+    try:
+        await asyncio.sleep(0.3)
+        assert "alert_monitor" not in app.extensions
+        assert _on_the_page(app) == []
+        _write(config, "data:\n  root: /data\n")
+        await _until(lambda: _on_the_page(app) == ["silence"])
+        _write(config, off)
+        await _until(lambda: "alert_monitor" not in app.extensions)
+        assert _on_the_page(app) == []
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+    state = json.loads((tmp_path / "alerts.json").read_text())
+    assert state["open"] == {}

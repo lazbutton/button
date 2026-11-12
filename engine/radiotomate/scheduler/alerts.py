@@ -16,6 +16,12 @@ A target that fails never stops the others. On a station, ``station config``
 sets ntfy and the e-mail in ``.env``, and ``radiotomate-init`` writes them
 here: the loop reads this block again when the file changes, without a restart.
 
+The monitor runs without a target, and without the block: its incidents go to
+the Antenne page and to the log, nowhere else. A target set later hears of an
+incident still open on its next turn, then of its end; never of the end alone.
+``enabled: false``, or ``alerts: false`` in place of the block, switches the
+monitor off, the page's incidents with it.
+
 Configuration (``radiotomate.yaml``)::
 
     alerts:
@@ -200,9 +206,37 @@ def _float(raw, default: float) -> float:
     return value if value > 0 else default
 
 
+# A switch of the YAML, as the settings' switches read it, and in words: YAML
+# 1.2 reads ``off`` or ``no`` as text.
+SWITCH_OFF = {"0", "false", "off", "", "no", "non"}
+SWITCH_ON = {"1", "true", "on", "yes", "oui"}
+
+
+def _switch(raw, default: bool) -> bool:
+    if raw is None:
+        return default
+    if not isinstance(raw, str):
+        return bool(raw)
+    word = raw.strip().lower()
+    if word in SWITCH_OFF or word in SWITCH_ON:
+        return word in SWITCH_ON
+    _log.warning("alerts: enabled: %r is neither on nor off, kept on", raw)
+    return default
+
+
+def _block(raw) -> dict:
+    """The ``alerts:`` block. A word in its place, like ``alerts: false``,
+    says whether the watch is on."""
+    if isinstance(raw, dict):
+        return dict(raw)
+    return {} if raw is None else {"enabled": raw}
+
+
 @dataclass
 class AlertSettings:
-    enabled: bool = False
+    # On without the block: the monitor watches the antenna for the Antenne
+    # page, even with no target to tell. ``enabled: false`` switches it off.
+    enabled: bool = True
     interval: float = DEFAULT_INTERVAL
     silence_seconds: float = DEFAULT_SILENCE_SECONDS
     heartbeat_max_age: float = DEFAULT_HEARTBEAT_MAX_AGE
@@ -221,14 +255,14 @@ class AlertSettings:
 
     @classmethod
     def from_config(cls, raw) -> AlertSettings:
-        raw = raw if isinstance(raw, dict) else {}
+        raw = _block(raw)
 
         def section(name: str) -> dict:
             value = raw.get(name)
             return dict(value) if isinstance(value, dict) else {}
 
         return cls(
-            enabled=bool(raw.get("enabled", bool(raw))),
+            enabled=_switch(raw.get("enabled"), True),
             interval=max(
                 MIN_INTERVAL, _float(raw.get("interval_seconds"), DEFAULT_INTERVAL)
             ),
@@ -294,10 +328,14 @@ class AlertSettings:
 
 @dataclass
 class Incident:
+    """An open incident. ``told``: it went to a target, not only to the log;
+    a target set later hears of it, and only then of its end."""
+
     kind: str
     detail: str
     opened_at: float
     notified_at: float | None = None
+    told: bool = False
 
 
 @dataclass(frozen=True)
@@ -459,6 +497,8 @@ class AlertMonitor:
                         if raw.get("notified_at") is not None
                         else None
                     ),
+                    # Saved before SUR-04, by a watch on with its targets.
+                    told=bool(raw.get("told", True)),
                 )
             except (TypeError, ValueError, AttributeError):
                 continue
@@ -480,6 +520,7 @@ class AlertMonitor:
                     "detail": inc.detail,
                     "opened_at": inc.opened_at,
                     "notified_at": inc.notified_at,
+                    "told": inc.told,
                 }
                 for kind, inc in self.open.items()
             },
@@ -551,6 +592,9 @@ class AlertMonitor:
         """Update incidents; returns the notifications emitted (for tests/logs)."""
         active = self.evaluate(health, heartbeat_age, now)
         now = time()
+        before = set(self.open)
+        # Without a target, an incident goes to the log only.
+        tells = self.notifier is not None and self.settings.has_target
         emitted: list[str] = []
         for kind, detail in active.items():
             incident = self.open.get(kind)
@@ -563,24 +607,31 @@ class AlertMonitor:
                 if kind == "disk"
                 else self.settings.cooldown
             )
-            due = incident.notified_at is None or now - incident.notified_at >= cooldown
+            due = (
+                incident.notified_at is None
+                or (tells and not incident.told)
+                or now - incident.notified_at >= cooldown
+            )
             if due:
                 incident.notified_at = now
+                incident.told = incident.told or tells
                 runtime_metrics.record_alert(kind)
-                await self._notify(incident, resolved=False)
+                await self._notify(incident, resolved=False, send=tells)
                 emitted.append(f"open:{kind}")
         for kind in list(self.open):
             if kind in active:
                 continue
             incident = self.open.pop(kind)
             if incident.notified_at is not None:
-                await self._notify(incident, resolved=True)
+                # Its end goes where its start went: a target never told of
+                # it does not hear of its end.
+                await self._notify(incident, resolved=True, send=incident.told)
                 emitted.append(f"resolved:{kind}")
-        if emitted:
+        if emitted or set(self.open) != before:
             self.save_state()
         return emitted
 
-    async def _notify(self, incident: Incident, *, resolved: bool) -> None:
+    async def _notify(self, incident: Incident, *, resolved: bool, send: bool) -> None:
         state = "RÉTABLI" if resolved else "ALERTE"
         title = f"[{state}] antenne {incident.kind} — {self.host}"
         lasted = time() - incident.opened_at
@@ -590,7 +641,7 @@ class AlertMonitor:
             else (f"{incident.detail}\nDurée : {duration_label(lasted)}")
         )
         _log.warning("%s: %s", title, body.replace("\n", " | "))
-        if self.notifier is None:
+        if self.notifier is None or not send:
             return
         try:
             await self.notifier.send(
@@ -916,8 +967,7 @@ class ConfigWatch:
         if not isinstance(data, dict):
             _log.warning("alerts: %s does not read, settings kept", self.path)
             return None
-        raw = data.get("alerts")
-        return dict(raw) if isinstance(raw, dict) else {}
+        return _block(data.get("alerts"))
 
 
 def config_path(app) -> Path:
