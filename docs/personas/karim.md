@@ -45,7 +45,7 @@ Karim n'est presque jamais au local. Il connaît la station par ses journaux et 
 
 Dimanche, 23 h. Karim met la station à jour. `radiotomate-init` s'arrête : une migration du schéma a échoué, et le journal dit « rolled back ». Le moteur ne démarre pas, et l'antenne est coupée. C'était la première migration due : la base n'a pas bougé. Karim remet la version d'avant, relance la station, puis le contrôle. Onze minutes sans antenne.
 
-Il aurait voulu que la mise à jour revienne seule en arrière, et le lui dise : c'est MAJ-05. Et qu'elle refuse de partir si un direct commençait dans la demi-heure : c'est MAJ-04.
+Il aurait voulu que la mise à jour revienne seule en arrière, et le lui dise, et qu'elle refuse de partir si un direct commençait dans la demi-heure. C'est ce que fait `station update` depuis MAJ-04 et MAJ-05.
 
 ## Ce que BUTTON fait déjà pour lui
 
@@ -62,13 +62,13 @@ Il aurait voulu que la mise à jour revienne seule en arrière, et le lui dise :
   - elle la contrôle, puis donne une fois le mot de passe admin ;
   - relancée, elle répare sans rien écraser.
 - La même commande l'exploite : `station status` dit en une fois la version, les services, la place, le prochain direct et la dernière sauvegarde. `station backup` sauvegarde sans couper l'antenne, et `station restore` remet la station sur une machine neuve. `config`, `hold`, `logs`, `cli` et `uninstall` font le reste.
+- `station update` met la station à jour en une commande : elle sauvegarde d'abord, refuse de partir si un direct commence dans la demi-heure, et revient seule à la version d'avant si la nouvelle ne repart pas. `station rollback` défait la dernière à la main.
 - Chaque nuit, la sauvegarde part hors de la machine, chiffrée, chez un autre fournisseur, et un test la restaure chaque mois : `station config --backup-remote` la règle, et `station restore --remote` la remet sur une machine neuve.
 
 ## Ce qui coince encore
 
 Toute la priorité [P1](../feuille-de-route/P1-mise-en-prod.md) est écrite pour lui. Tant qu'une fiche P1 reste ouverte, une installation sur un VPS est un essai, pas une production :
 
-- **Une commande de mise à jour** : MAJ-04. **Un retour arrière automatique** : MAJ-05.
 - **Des alertes sur le téléphone et par e-mail** : SUR-01.
 - **Un guide d'installation sur VPS** : DOC-01.
 
