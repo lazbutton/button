@@ -786,7 +786,8 @@
   gap: 0.5rem;
 }
 
-.prog-source.is-missing {
+.prog-source.is-missing,
+.prog-fallback.is-missing {
   box-shadow: inset 0 0 0 1px var(--app-danger);
   color: var(--app-danger-ink);
 }
@@ -818,6 +819,11 @@
   color: var(--app-text-muted);
   font-size: 0.68rem;
   text-overflow: ellipsis;
+}
+
+.prog-step-fallback.is-relay {
+  box-shadow: inset 0 0 0 1px var(--app-danger);
+  color: var(--app-danger-ink);
 }
 
 .prog-quick {

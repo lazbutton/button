@@ -291,3 +291,54 @@ export function defaultSource(
     null;
   return { cart: cart?.title ?? null, cart_id: cart?.id ?? null, category: null };
 }
+
+type NamedCart = { id: number; title: string; mode?: string };
+
+/** A relais plays a stream: an heure type never launches one, and the engine refuses to save it so. */
+export function isRelay(cart: { mode?: string } | null | undefined): boolean {
+  return cart?.mode === "relay";
+}
+
+/** The bac a step names, by its id, else by its title, as the engine looks it up. */
+function namedCart(carts: NamedCart[], id: number | null | undefined, title: string | null | undefined) {
+  const name = (title || "").trim().toLowerCase();
+  return (
+    carts.find((cart) => id != null && cart.id === id) ??
+    (name ? carts.find((cart) => cart.title.trim().toLowerCase() === name) : undefined) ??
+    null
+  );
+}
+
+/** Whether the secours of a step or a cut is a relais. */
+export function fallbackIsRelay(step: ClockPosition, carts: NamedCart[]): boolean {
+  return isRelay(namedCart(carts, step.fallback_cart_id, step.fallback_cart));
+}
+
+/** Whether a step or a cut has a relais for secours. The editor shows no secours of a cut. */
+export function hasRelayFallback(clock: Pick<Clock, "motif" | "anchors">, carts: NamedCart[]): boolean {
+  return [...clock.motif, ...clock.anchors].some((step) => fallbackIsRelay(step, carts));
+}
+
+/** The heure type without the relais its steps and cuts have for secours: its own secours plays instead. */
+export function withoutRelayFallbacks<T extends Pick<Clock, "motif" | "anchors">>(clock: T, carts: NamedCart[]): T {
+  const clear = (step: ClockPosition): ClockPosition =>
+    fallbackIsRelay(step, carts) ? { ...step, fallback_cart: null, fallback_cart_id: null } : step;
+  return { ...clock, motif: clock.motif.map(clear), anchors: clock.anchors.map(clear) };
+}
+
+/**
+ * The relais an heure type names, for a step, a cut, their secours or its own,
+ * once each. Saved before the engine refused them, or turned relais since: the
+ * antenna plays none of them, and the engine saves the heure type once they are replaced.
+ */
+export function relaysNamed(
+  clock: Pick<Clock, "motif" | "anchors" | "fallback_cart" | "fallback_cart_id">,
+  carts: NamedCart[],
+): string[] {
+  const named = [...clock.motif, ...clock.anchors].flatMap((step) => [
+    namedCart(carts, step.cart_id, step.cart),
+    namedCart(carts, step.fallback_cart_id, step.fallback_cart),
+  ]);
+  named.push(namedCart(carts, clock.fallback_cart_id, clock.fallback_cart));
+  return [...new Set(named.filter(isRelay).map((cart) => cart?.title ?? ""))];
+}

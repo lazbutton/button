@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { defaultSource, STEP_KINDS, stepKindLabel, usesSelection } from "../../api/programmationView";
+import { defaultSource, fallbackIsRelay, STEP_KINDS, stepKindLabel, usesSelection } from "../../api/programmationView";
 import type { Cart, Category, Clock, ClockPosition, PositionKind } from "../../api/types";
 import { KindSelect, SourceSelect, sourceOf } from "./StepFields";
 
@@ -101,6 +101,7 @@ export function ClockSteps({
           const source = sourceOf(step, carts, categories);
           const only = steps.length === 1;
           const fallback = step.fallback_cart?.trim() || "";
+          const fallbackRelay = fallbackIsRelay(step, carts);
           return (
             <li
               key={`${step.id ?? "new"}-${index}`}
@@ -163,11 +164,11 @@ export function ClockSteps({
                       </Button>
                     ) : null}
                   </>
+                ) : source.relay ? (
+                  <span className="prog-warn">Relais : à remplacer</span>
                 ) : source.cart ? (
                   <Link to={`/sons?id=${source.cart.id}`} className="prog-link">
-                    {source.cart.mode === "relay"
-                      ? "Relais"
-                      : `${source.cart.sounds.length} son${source.cart.sounds.length === 1 ? "" : "s"}`}
+                    {`${source.cart.sounds.length} son${source.cart.sounds.length === 1 ? "" : "s"}`}
                   </Link>
                 ) : source.selection ? (
                   <Link to="/programmation?onglet=categories" className="prog-link">
@@ -177,8 +178,14 @@ export function ClockSteps({
                   <span className="prog-warn">À choisir</span>
                 )}
                 {fallback ? (
-                  <Tooltip content={`Si l'étape n'a rien à passer : ${fallback}`}>
-                    <span className="prog-step-fallback">
+                  <Tooltip
+                    content={
+                      fallbackRelay
+                        ? `Secours en relais, à remplacer dans le menu de l'étape : ${fallback}`
+                        : `Si l'étape n'a rien à passer : ${fallback}`
+                    }
+                  >
+                    <span className={`prog-step-fallback${fallbackRelay ? " is-relay" : ""}`}>
                       <LifeBuoy size={12} aria-hidden="true" />
                       {fallback}
                     </span>
