@@ -123,7 +123,7 @@ Les échecs de connexion se comptent par adresse, jamais par compte (`domain/log
 
 ## Exploitation
 
-Le scheduler surveille l’antenne (`scheduler/alerts.py`) : silence, playout injoignable, heartbeat perdu, sortie Icecast coupée, créneau live sans encodeur. Une alerte part une fois, puis une note de retour, vers un webhook JSON ou une tâche Vikunja. Le bloc YAML est `alerts:`.
+Le scheduler surveille l’antenne (`scheduler/alerts.py`) : silence, playout injoignable, heartbeat perdu, sortie Icecast coupée, créneau live sans encodeur, disque presque plein. Une alerte part une fois, puis une note de retour, vers un webhook JSON, une tâche Vikunja, ntfy ou un e-mail en TLS ; une cible en panne n’arrête pas les autres. Le bloc YAML est `alerts:`, que la boucle relit quand `radiotomate.yaml` change, sans redémarrer : sur une station, `radiotomate-init` y écrit ntfy et l’e-mail de `.env`.
 
 `/metrics` est écrit dans `data/metrics.json`, et une ligne par heure dans `data/exports/metrics.jsonl`.
 

@@ -226,6 +226,55 @@ else:
             file=sys.stderr,
         )
 ppc["outputs"] = outputs
+# Les alertes sur un téléphone, par ntfy, et par e-mail, que station config
+# règle dans .env : le scheduler relit ce bloc quand le fichier change. Le
+# reste du bloc alerts:, seuils, webhook ou Vikunja, reste à la station. Sans
+# ntfy ni e-mail, ce que ce script y a mis s'en va.
+# Les secrets tels quels, comme station les envoie ; le reste sans les espaces
+# autour.
+secrets = ("BUTTON_ALERT_NTFY_TOKEN", "BUTTON_ALERT_SMTP_PASSWORD")
+env = {key: os.environ.get(key, "") if key in secrets else os.environ.get(key, "").strip() for key in (
+    "DOMAIN", "BUTTON_ALERT_NTFY", "BUTTON_ALERT_NTFY_TOKEN", "BUTTON_ALERT_EMAIL",
+    "BUTTON_ALERT_FROM", "BUTTON_ALERT_SMTP", "BUTTON_ALERT_SMTP_USER",
+    "BUTTON_ALERT_SMTP_PASSWORD",
+)}
+targets = {}
+if env["BUTTON_ALERT_NTFY"]:
+    targets["ntfy"] = {"url": env["BUTTON_ALERT_NTFY"]}
+    if env["BUTTON_ALERT_NTFY_TOKEN"]:
+        targets["ntfy"]["token"] = env["BUTTON_ALERT_NTFY_TOKEN"]
+if env["BUTTON_ALERT_EMAIL"]:
+    user = env["BUTTON_ALERT_SMTP_USER"]
+    # L'expéditeur, comme station le choisit : celui de .env, sinon le compte
+    # s'il est une adresse, sinon button@ le domaine.
+    sender = env["BUTTON_ALERT_FROM"] or (
+        user if "@" in user else "button@" + (env["DOMAIN"] or "localhost")
+    )
+    targets["email"] = {
+        "to": [a.strip() for a in env["BUTTON_ALERT_EMAIL"].split(",") if a.strip()],
+        "from": sender,
+        "server": env["BUTTON_ALERT_SMTP"],
+    }
+    if user:
+        targets["email"]["user"] = user
+        targets["email"]["password"] = env["BUTTON_ALERT_SMTP_PASSWORD"]
+alerts = data.get("alerts")
+if not isinstance(alerts, dict):
+    alerts = None
+if targets:
+    if alerts is None:
+        alerts = data["alerts"] = {}
+    for key, value in (("station", env["DOMAIN"]), ("ntfy", None), ("email", None)):
+        value = targets.get(key, value)
+        if value:
+            alerts[key] = value
+        else:
+            alerts.pop(key, None)
+elif alerts is not None:
+    for key in ("station", "ntfy", "email"):
+        alerts.pop(key, None)
+    if not alerts:
+        del data["alerts"]
 ml = data.setdefault("metadata_log", {})
 ml["relay_to"] = [
     {
@@ -245,7 +294,8 @@ if path.read_text() != new_text:
     print("patched", path)
 else:
     print("unchanged", path)
-# Contains Icecast passwords and the Vikunja bot password: owner + group only.
+# Contains Icecast passwords, the Vikunja bot password, and the SMTP password
+# and the ntfy token of the alerts: owner + group only.
 os.chmod(path, 0o640)
 PY
 

@@ -72,6 +72,20 @@ class ComposeTest(unittest.TestCase):
                 condition = services[name].get("depends_on", {}).get(INIT, {}).get("condition")
                 self.assertEqual(condition, "service_completed_successfully")
 
+    def test_init_gets_the_alerts_of_env(self) -> None:
+        # station config règle ntfy et l'e-mail dans .env : radiotomate-init les
+        # reçoit, avec le domaine qui nomme la station, et les écrit dans
+        # radiotomate.yaml, que le scheduler relit. .env.example les dit.
+        environment = compose_config()["services"][INIT]["environment"]
+        script = (DEPLOY / "scripts" / "init-radiotomate.sh").read_text()
+        example = (DEPLOY / ".env.example").read_text()
+        suffixes = ("NTFY", "NTFY_TOKEN", "EMAIL", "FROM", "SMTP", "SMTP_USER", "SMTP_PASSWORD")
+        for name in ["DOMAIN", *(f"BUTTON_ALERT_{suffix}" for suffix in suffixes)]:
+            with self.subTest(variable=name):
+                self.assertIn(name, environment)
+                self.assertIn(f'"{name}"', script)
+                self.assertIn(f"# {name}=", example)
+
     def test_the_catalog_hands_the_uploads_volume_to_tusd(self) -> None:
         # Le volume naît à root, et tusd ne tourne pas en root : le catalogue,
         # en root, le donne à tusd au démarrage. Sinon, chaque envoi échoue.

@@ -38,7 +38,8 @@ La commande procède dans l'ordre :
    - l'e-mail du compte Let's Encrypt ;
    - le fuseau ;
    - l'identifiant du compte admin ;
-   - si les mises à jour seront automatiques. Elles se feront seules quand `station update` saura se lancer seule ; d'ici là, `station update` les fait à la main.
+   - si les mises à jour seront automatiques. Elles se feront seules quand `station update` saura se lancer seule ; d'ici là, `station update` les fait à la main ;
+   - les alertes : sur un téléphone, par ntfy.sh, proposées, et par e-mail, avec le serveur SMTP qui les envoie. Chaque canal reçoit un essai, avant que rien ne s'écrive : voir [les alertes](exploitation/alertes.md).
 3. **Elle vérifie que chaque adresse du domaine mène à la machine**, sur le port 80. Elle le fait avant que Caddy demande un certificat : Let's Encrypt refuse un domaine un moment après quelques échecs.
 4. **Elle pose la station dans `/opt/button`** :
    - les fichiers de la plus haute version publiée, vérifiés par leur somme : `compose.yml`, le `Caddyfile`, les scripts ;
@@ -66,7 +67,7 @@ Elle ne change jamais une valeur de `.env`, ni la version : changer de version, 
 
 ### Les options
 
-Chaque réponse a son option, pour installer sans question, en CI par exemple : `--name`, `--domain`, `--email`, `--timezone`, `--admin`, `--updates auto` ou `--updates manual`. Les autres options :
+Chaque réponse a son option, pour installer sans question, en CI par exemple : `--name`, `--domain`, `--email`, `--timezone`, `--admin`, `--updates auto` ou `--updates manual`, et pour les alertes, `--alert-ntfy https://ntfy.sh` et `--alert-email`, avec `--alert-smtp`, `--alert-smtp-user` et `--alert-smtp-password-file`. Sans terminal, aucune alerte ne se règle sans elles. Les autres options :
 
 | Option | Pour |
 |---|---|
@@ -105,11 +106,11 @@ Une fois installée, la station s'exploite par la même commande, en root : `sud
 |---|---|
 | `update` | la mettre à jour, vers la plus haute version publiée : voir [mettre à jour](#avec-la-commande-station) |
 | `rollback` | défaire la dernière mise à jour : voir [revenir en arrière](#avec-station-rollback) |
-| `status` | l'état de la station : sa version et la plus haute publiée, ses services, la place sur le disque, le prochain direct, la dernière sauvegarde, et les mises à jour, bloquées ou non. Elle sort en erreur quand un service ne va pas |
+| `status` | l'état de la station : sa version et la plus haute publiée, ses services, la place sur le disque, le prochain direct, la dernière sauvegarde, les mises à jour, bloquées ou non, et où partent les alertes. Elle sort en erreur quand un service ne va pas |
 | `logs [service]` | les journaux, les 200 dernières lignes. `-f` les suit |
 | `backup [archive]` | une sauvegarde, sans couper l'antenne. `--with-media` y met la banque de sons. `--remote` l'envoie hors de la machine, chiffrée, comme chaque nuit |
 | `restore <archive>` | remettre une sauvegarde, sur la même machine ou sur une autre. `--without-media` garde la banque de sons en place. `--remote` la prend hors de la machine ; `--remote --list` montre les sauvegardes du dépôt, `--remote --test` en vérifie une |
-| `config` | voir ou changer le domaine, l'e-mail du compte Let's Encrypt, les mises à jour et leur heure, et la sauvegarde hors de la machine |
+| `config` | voir ou changer le domaine, l'e-mail du compte Let's Encrypt, les mises à jour et leur heure, la sauvegarde hors de la machine, et les alertes |
 | `hold [raison]`, `unhold` | bloquer, puis débloquer les mises à jour |
 | `cli <commande>` | une commande du moteur, par exemple `station cli users add studio --admin` |
 | `uninstall` | désinstaller, en gardant les données |
@@ -117,6 +118,8 @@ Une fois installée, la station s'exploite par la même commande, en root : `sud
 Sauvegarder et restaurer : voir [`exploitation/sauvegarde.md`](exploitation/sauvegarde.md#avec-la-commande-station).
 
 **La sauvegarde hors de la machine.** Une sauvegarde sur la machine disparaît avec elle. `sudo station config --backup-remote <dépôt>` en envoie une chaque nuit, chiffrée par restic, chez un autre fournisseur que celui du VPS, sur un stockage S3 ou SFTP. Un minuteur de systemd la lance, et un autre la vérifie le 1er de chaque mois. Sur une machine neuve, `station restore --remote` la remet. Le mot de passe du dépôt est à noter hors de la machine : voir [`exploitation/sauvegarde.md`](exploitation/sauvegarde.md#hors-de-la-machine).
+
+**Les alertes.** Un silence, un disque presque plein, une mise à jour annulée ou une sauvegarde ratée arrivent sur un téléphone, par ntfy, et par e-mail. `sudo station config --alert-ntfy https://ntfy.sh` tire un sujet au hasard, où s'abonner dans l'application ntfy ; `--alert-email` les envoie aussi par e-mail, avec le serveur SMTP qui les envoie. Chaque canal reçoit un essai avant que rien ne change, et `--alert-test` en refait un. Voir [`exploitation/alertes.md`](exploitation/alertes.md).
 
 **Changer le domaine.** D'abord, faire mener le nouveau domaine à la machine, dans le DNS. Puis `sudo station config --domain nouveau.example` :
 
@@ -303,11 +306,11 @@ Derrière un reverse proxy, le journal de `radiotomate-interface` peut afficher 
 
 ## Avant d'exposer une station à Internet
 
-Une installation sur une machine exposée reste un essai tant que les fiches [P1](feuille-de-route/P1-mise-en-prod.md) ne sont pas toutes faites. Celles de sécurité le sont : catalogue protégé, essais de connexion limités, identifiants d'encodeur, en-têtes. Restent surtout la commande de mise à jour, son retour arrière, les sauvegardes hors de la machine et les alertes. Sur une telle machine, fermer aussi les ports avec `BIND_ADDRESS=127.0.0.1`, derrière Caddy : voir [HTTPS](#https).
+Une installation sur une machine exposée reste un essai tant que les fiches [P1](feuille-de-route/P1-mise-en-prod.md) ne sont pas toutes faites. Celles de sécurité le sont : catalogue protégé, essais de connexion limités, identifiants d'encodeur, en-têtes. La commande de mise à jour, son retour arrière, la sauvegarde hors de la machine et les alertes le sont aussi. Restent surtout la mesure d'une station sur un petit VPS et le guide d'installation. Sur une telle machine, fermer aussi les ports avec `BIND_ADDRESS=127.0.0.1`, derrière Caddy : voir [HTTPS](#https).
 
 ## Régler le moteur
 
-`RT_DATA/radiotomate.yaml` porte les réglages fins : sorties audio, alertes (`alerts:`, webhook ou Vikunja), rétention (`retention:`), métriques (`metrics:`), relais des métadonnées (`metadata_log:`). Après un changement, recréer les trois services du moteur ensemble :
+`RT_DATA/radiotomate.yaml` porte les réglages fins : sorties audio, alertes (`alerts:`, leurs seuils, un webhook ou Vikunja), rétention (`retention:`), métriques (`metrics:`), relais des métadonnées (`metadata_log:`). ntfy et l'e-mail des alertes viennent de `.env`, que `station config` règle : `radiotomate-init` les y écrit. Le scheduler relit seul le bloc `alerts:`, en moins d'une minute. Après un autre changement, recréer les trois services du moteur ensemble :
 
 ```bash
 docker compose up -d --force-recreate radiotomate-playout radiotomate-interface radiotomate-scheduler
@@ -459,7 +462,7 @@ Puis elle la contrôle, comme après une mise à jour, sur le mount que sert la 
 
 Si la base d'avant ne peut pas revenir, parce que sa copie est abîmée ou que la place manque à côté de la base, rien ne se défait : la station reste à la nouvelle version, qui tourne peut-être encore, plutôt que de s'arrêter sur une base que la version d'avant ne lirait pas. La commande le dit.
 
-Elle pose ensuite `HOLD`, qui bloque les mises à jour suivantes jusqu'à ce qu'une personne le retire, la cause trouvée : `station unhold`. `updates.log` note la mise à jour « annulée », et `station status` la dit. L'alerte « mise à jour annulée » part dans le journal du système, `journalctl -t button` ; sur un téléphone et par e-mail, ce sera avec les alertes de SUR-01. La commande sort en erreur.
+Elle pose ensuite `HOLD`, qui bloque les mises à jour suivantes jusqu'à ce qu'une personne le retire, la cause trouvée : `station unhold`. `updates.log` note la mise à jour « annulée », et `station status` la dit. L'alerte « mise à jour annulée » part dans le journal du système, `journalctl -t button`, et sur un téléphone et par e-mail, si la station a réglé ses alertes : voir [les alertes](exploitation/alertes.md). La commande sort en erreur.
 
 Si le retour échoue lui aussi, la commande le dit, avec l'état où il laisse la station, `updates.log` le note « échouée », et `HOLD` bloque de même. Une fois la cause réglée, `station rollback` refait le retour.
 

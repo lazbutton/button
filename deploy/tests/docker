@@ -190,6 +190,16 @@ compose_run() {
           ;;
       esac
       ;;
+    " ")
+      # radiotomate-init lui-même, que station config relance pour que
+      # radiotomate.yaml suive les alertes de .env : il note celles qu'il lit.
+      # Il échoue avec $state/init-fails.
+      if [[ -e $state/init-fails ]]; then
+        echo "radiotomate-init : échec" >&2
+        exit 1
+      fi
+      echo "radiotomate-init relancé : $(grep -E '^BUTTON_ALERT_(NTFY|EMAIL)=' .env | tr '\n' ' ')" >>"$state/log"
+      ;;
     *)
       echo "docker : docker compose run inattendu, $entrypoint $*" >&2
       exit 2

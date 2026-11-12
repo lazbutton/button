@@ -1,8 +1,8 @@
 """
 A full run of `deploy/scripts/init-radiotomate.sh` with the real CLI: at every
 start, it warns while the admin account still has the example password (SEC-06),
-a new installation refuses the account password at the harbor, and the Icecast
-outputs take the mounts of `.env`.
+a new installation refuses the account password at the harbor, the Icecast
+outputs take the mounts of `.env`, and so do the alerts, by ntfy and e-mail.
 The secrets and mounts checks themselves are tested in
 `services/catalog/test_init_secrets.py`.
 """
@@ -152,3 +152,96 @@ def test_the_outputs_take_the_mounts_of_the_env(tmp_path: Path):
     again = _init(tmp_path, "admin", "", ICECAST_MOUNT="antenne.mp3")
     assert again.returncode == 0, again.stderr
     assert "le flux public passe" not in again.stderr
+
+
+ALERTS_ENV = {
+    "DOMAIN": "radio.example",
+    "BUTTON_ALERT_NTFY": "https://ntfy.sh/button-0123456789abcdef01234567",
+    "BUTTON_ALERT_NTFY_TOKEN": "tk_jeton-de-test",
+    "BUTTON_ALERT_EMAIL": "technique@radio.example, direction@radio.example",
+    "BUTTON_ALERT_FROM": "alertes@radio.example",
+    "BUTTON_ALERT_SMTP": "smtp.radio.example:587",
+    "BUTTON_ALERT_SMTP_USER": "alertes@radio.example",
+    "BUTTON_ALERT_SMTP_PASSWORD": "mot de passe $de test",
+}
+
+
+def _alerts(tmp_path: Path):
+    return YAML().load(tmp_path / "data" / "radiotomate.yaml").get("alerts")
+
+
+def test_the_alerts_of_the_env_go_to_the_yaml_and_leave_the_rest(tmp_path: Path):
+    from radiotomate.scheduler.alerts import AlertSettings
+
+    first = _init(tmp_path, "admin", "un mot de passe")
+    assert first.returncode == 0, first.stderr
+    # No ntfy, no e-mail: no alerts block, the loop stays off.
+    assert _alerts(tmp_path) is None
+
+    on = _init(tmp_path, "admin", "", **ALERTS_ENV)
+    assert on.returncode == 0, on.stderr
+    assert _alerts(tmp_path) == {
+        "station": "radio.example",
+        "ntfy": {
+            "url": "https://ntfy.sh/button-0123456789abcdef01234567",
+            "token": "tk_jeton-de-test",
+        },
+        "email": {
+            "to": ["technique@radio.example", "direction@radio.example"],
+            "from": "alertes@radio.example",
+            "server": "smtp.radio.example:587",
+            "user": "alertes@radio.example",
+            "password": "mot de passe $de test",
+        },
+    }
+    config = tmp_path / "data" / "radiotomate.yaml"
+    assert config.stat().st_mode & 0o777 == 0o640
+    # As the scheduler reads it: on, with both targets.
+    settings = AlertSettings.from_config(dict(_alerts(tmp_path)))
+    assert settings.enabled
+    assert settings.targets == ["ntfy", "e-mail"]
+
+    # A threshold set by the station stays; ntfy off keeps the e-mail.
+    data = YAML().load(config)
+    data["alerts"]["silence_seconds"] = 30
+    YAML().dump(data, config)
+    email_only = {k: v for k, v in ALERTS_ENV.items() if "NTFY" not in k}
+    again = _init(tmp_path, "admin", "", **email_only)
+    assert again.returncode == 0, again.stderr
+    alerts = _alerts(tmp_path)
+    assert set(alerts) == {"silence_seconds", "station", "email"}
+    assert alerts["silence_seconds"] == 30
+
+    # Both off: what the script wrote goes, the station's threshold stays.
+    off = _init(tmp_path, "admin", "")
+    assert off.returncode == 0, off.stderr
+    assert _alerts(tmp_path) == {"silence_seconds": 30}
+
+
+def test_the_sender_follows_the_account_unless_given(tmp_path: Path):
+    """Without BUTTON_ALERT_FROM, the sender is the SMTP account when it is an
+    address, else button@ the domain, as the station command chooses it. A
+    password keeps its spaces, as the station sends it."""
+    base = {k: v for k, v in ALERTS_ENV.items() if k != "BUTTON_ALERT_FROM"}
+    base["BUTTON_ALERT_SMTP_PASSWORD"] = " espaces autour "
+    run = _init(tmp_path, "admin", "un mot de passe", **base)
+    assert run.returncode == 0, run.stderr
+    email = _alerts(tmp_path)["email"]
+    assert email["from"] == "alertes@radio.example"
+    assert email["password"] == " espaces autour "
+
+    no_account = {k: v for k, v in base.items() if "SMTP_USER" not in k}
+    again = _init(tmp_path, "admin", "", **no_account)
+    assert again.returncode == 0, again.stderr
+    email = _alerts(tmp_path)["email"]
+    assert email["from"] == "button@radio.example"
+    assert "user" not in email
+    assert "password" not in email
+
+
+def test_alerts_turned_off_leave_no_empty_block(tmp_path: Path):
+    assert _init(tmp_path, "admin", "un mot de passe", **ALERTS_ENV).returncode == 0
+    assert _alerts(tmp_path)["ntfy"]
+    off = _init(tmp_path, "admin", "")
+    assert off.returncode == 0, off.stderr
+    assert _alerts(tmp_path) is None
