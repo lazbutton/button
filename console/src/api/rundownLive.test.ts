@@ -7,6 +7,8 @@ import {
   antennaRundownItem,
   clockCoveringItem,
   clockElapsedSec,
+  clockLineRemoval,
+  clockLineReplacement,
   clockNextFileItem,
   clockPlayableItem,
   isDeskPin,
@@ -160,6 +162,19 @@ test("a line already sent to the playout is locked: it no longer leaves the file
   const anchor = fileItem({ id: "l-anchor", at, resource: "Pub", when: "anchored", status_code: "planned" });
   assert.equal(queueItemSent(anchor), false);
   assert.equal(queueItemLocked(anchor), true);
+});
+
+test("a removal sends the id of its clock line with its time", () => {
+  const at = "2026-09-20T14:02:00.123456";
+  const line = fileItem({ id: "ri-d", at, resource: "nowave — Agave", origin: "clock" });
+  assert.deepEqual(clockLineRemoval(line), { suppress_at: at, suppress_id: "ri-d" });
+  assert.deepEqual(clockLineReplacement(line), { replace_at: at, replace_id: "ri-d" });
+  // Une ligne sans identifiant du moteur, comme une prévision : l'heure seule, comme avant.
+  for (const id of [undefined, "", `clock|${at}|nowave`]) {
+    const preview = fileItem({ id, at, resource: "nowave — Agave", origin: "clock" });
+    assert.deepEqual(clockLineRemoval(preview), { suppress_at: at }, String(id));
+    assert.deepEqual(clockLineReplacement(preview), { replace_at: at }, String(id));
+  }
 });
 
 test("harbor live wins over the clock covering slot", () => {

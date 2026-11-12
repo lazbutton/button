@@ -30,6 +30,8 @@ import { airSourceLabel } from "../api/topbar";
 import { SessionGate } from "../api/SessionGate";
 import {
   CONDUCTEUR_JSON,
+  clockLineRemoval,
+  clockLineReplacement,
   isDeskPin,
   itemNamedLikeLive,
   nextAnchoredItem,
@@ -314,9 +316,10 @@ function AntenneDesk({
               }
             : null;
         } else {
-          const payload = await apiPostJson<DeskMutation>("/autodj/conducteur/items.json", {
-            suppress_at: item.at,
-          });
+          const payload = await apiPostJson<DeskMutation>(
+            "/autodj/conducteur/items.json",
+            clockLineRemoval(item),
+          );
           applyRundown(payload);
           const pinId = payload.desk_item?.id;
           undoRef.current = pinId
@@ -331,7 +334,7 @@ function AntenneDesk({
               ? async () => {
                   const next = await apiPostJson<Rundown>(
                     "/autodj/conducteur/items.json",
-                    hitPayload(restored, { replace_at: item.at }),
+                    hitPayload(restored, clockLineReplacement(item)),
                   );
                   applyRundown(next);
                   show("Annulé.");
@@ -352,10 +355,13 @@ function AntenneDesk({
             : undefined,
         });
       } catch (caught) {
+        // Refusé, la ligne a bougé ou est déjà partie : la file se relit tout de
+        // suite, sans attendre sa lecture suivante, pour qu'un nouvel essai la vise.
+        if (caught instanceof ApiRequestError && caught.status === 409) onLiveReload();
         fail(caught, "Retrait impossible. Réessaie.");
       }
     },
-    [fail, setRundown, show, undoFailed],
+    [fail, onLiveReload, setRundown, show, undoFailed],
   );
 
   const reorder = useCallback(

@@ -14,8 +14,10 @@ from radiotomate.scheduler.execution import (
     DESK_ORIGIN,
     attach_desk_pins,
     delete_desk_item,
+    expire_past_desk_items,
     insert_desk_item,
     item_to_payload,
+    removed_clock_ids,
     reorder_desk_items,
     replace_forecast_items,
 )
@@ -427,44 +429,110 @@ async def test_removal_without_ids_still_hides_by_time(dbsession: ormSession):
     assert await _shown_clock_ids(dbsession) == ["ri-kept"]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="FON-17: a removal names its line by time alone, and hides every clock "
-    "line planned at that time",
-)
+async def _shared_time_file(dbsession: ormSession, version_id: str) -> str:
+    """A B D C, where B and D start at the same time, to the microsecond: a reorder
+    put D at the start of a removed B, then the undo brought B back. The time of
+    D, as the console reads it."""
+    await _reorder_version(dbsession, version_id)
+    start = datetime.now() + timedelta(minutes=5)
+    shared = start + timedelta(seconds=30)
+    later = shared + timedelta(seconds=30)
+    dbsession.add_all(
+        [
+            _reorder_row("ri-a", version_id, start, 30, origin="clock"),
+            _reorder_row("ri-b", version_id, shared, 30, origin="clock"),
+            _reorder_row("ri-d", version_id, shared, 30, origin="clock"),
+            _reorder_row("ri-c", version_id, later, 30, origin="clock"),
+        ]
+    )
+    await dbsession.commit()
+    return item_to_payload(await dbsession.get(RundownItem, "ri-d"))["at"]
+
+
+async def _remove_at(
+    dbsession: ormSession, removal: str, at: str, named: str | None
+) -> None:
+    """Take the clock line at ``at`` off the file, as the console does: a removal,
+    or a desk line in its place, the undo of an older engine. ``named``: the id of
+    the line, sent with its time; None from an older console, which sends none."""
+    if removal == "suppress_at":
+        data = {"suppress_at": at}
+        name = "suppress_id"
+    else:
+        data = {"path": "/media/10-rotation/ri-d.mp3", "replace_at": at}
+        name = "replace_id"
+    if named is not None:
+        data[name] = named
+    await insert_desk_item(dbsession, data)
+
+
 @pytest.mark.parametrize("removal", ["suppress_at", "replace_at"])
 async def test_removal_at_a_shared_time_hides_the_removed_line_only(
     dbsession: ormSession, removal: str
 ):
-    """B and D start at the same time, to the microsecond: a reorder put D at the
-    start of a removed B, then the undo brought B back. Removing D leaves B."""
-    await _reorder_version(dbsession, "pv-hidden-shared")
-    start = datetime.now() + timedelta(minutes=5)
-    shared = start + timedelta(seconds=30)
-    dbsession.add_all(
-        [
-            _reorder_row("ri-a", "pv-hidden-shared", start, 30, origin="clock"),
-            _reorder_row("ri-b", "pv-hidden-shared", shared, 30, origin="clock"),
-            _reorder_row("ri-d", "pv-hidden-shared", shared, 30, origin="clock"),
-            _reorder_row(
-                "ri-c",
-                "pv-hidden-shared",
-                shared + timedelta(seconds=30),
-                30,
-                origin="clock",
-            ),
-        ]
-    )
-    await dbsession.commit()
-    removed_at = item_to_payload(await dbsession.get(RundownItem, "ri-d"))["at"]
-    if removal == "suppress_at":
-        await insert_desk_item(dbsession, {"suppress_at": removed_at})
-    else:
-        await insert_desk_item(
-            dbsession,
-            {"path": "/media/10-rotation/ri-d.mp3", "replace_at": removed_at},
-        )
+    """Removing D, named by its id, leaves B in the file, to the clock, and still to
+    come once the removal is over: only D is then skipped."""
+    removed_at = await _shared_time_file(dbsession, "pv-hidden-shared")
+    await _remove_at(dbsession, removal, removed_at, "ri-d")
     assert await _shown_clock_ids(dbsession) == ["ri-a", "ri-b", "ri-c"]
+    assert await removed_clock_ids(dbsession) == {"ri-d"}
+
+    over = datetime.fromisoformat(removed_at) + timedelta(seconds=31)
+    await expire_past_desk_items(dbsession, now=over)
+    kept = await dbsession.get(RundownItem, "ri-b")
+    removed = await dbsession.get(RundownItem, "ri-d")
+    assert (kept.status, removed.status) == (
+        RundownStatus.PLANNED.value,
+        RundownStatus.SKIPPED.value,
+    )
+
+
+@pytest.mark.parametrize("removal", ["suppress_at", "replace_at"])
+async def test_a_line_sent_at_the_same_time_leaves_the_named_removal(
+    dbsession: ormSession, removal: str
+):
+    """B, at the same time as D, is already sent to the playout. Named, the removal
+    of D only looks at D: it goes, and B airs. By time alone, it would hide B too:
+    it is refused, as before."""
+    removed_at = await _shared_time_file(dbsession, "pv-hidden-sent")
+    sent = await dbsession.get(RundownItem, "ri-b")
+    sent.status = RundownStatus.IN_QUEUE.value
+    await dbsession.commit()
+    with pytest.raises(DomainConflict, match="déjà partie"):
+        await _remove_at(dbsession, removal, removed_at, None)
+    await _remove_at(dbsession, removal, removed_at, "ri-d")
+    assert await removed_clock_ids(dbsession) == {"ri-d"}
+
+
+@pytest.mark.parametrize("removal", ["suppress_at", "replace_at"])
+async def test_removal_without_an_id_hides_every_line_at_its_time(
+    dbsession: ormSession, removal: str
+):
+    """An older console names the line by its time alone: the removal hides every
+    clock line planned at that time, as before."""
+    removed_at = await _shared_time_file(dbsession, "pv-hidden-unnamed")
+    await _remove_at(dbsession, removal, removed_at, None)
+    assert await _shown_clock_ids(dbsession) == ["ri-a", "ri-c"]
+    assert await removed_clock_ids(dbsession) == {"ri-b", "ri-d"}
+
+
+@pytest.mark.parametrize("named", ["ri-c", "ri-gone"])
+@pytest.mark.parametrize("removal", ["suppress_at", "replace_at"])
+async def test_removal_naming_no_clock_line_at_its_time_is_refused(
+    dbsession: ormSession, removal: str, named: str
+):
+    """The id names no clock line planned at that time: C is planned later, the
+    other one is gone. The file changed in the meantime: the removal is refused,
+    and hides nothing."""
+    removed_at = await _shared_time_file(dbsession, "pv-hidden-moved")
+    with pytest.raises(DomainConflict, match="La file a changé") as caught:
+        await _remove_at(dbsession, removal, removed_at, named)
+    assert caught.value.status_code == 409
+    desk_rows = select(func.count(RundownItem.id)).where(
+        RundownItem.origin == DESK_ORIGIN
+    )
+    assert await dbsession.scalar(desk_rows) == 0
+    assert sorted(await _shown_clock_ids(dbsession)) == ["ri-a", "ri-b", "ri-c", "ri-d"]
 
 
 # Handed to the playout, not yet on air.
@@ -475,19 +543,25 @@ async def _desk_gesture(
     dbsession: ormSession, gesture: str, line: RundownItem, other: RundownItem
 ) -> None:
     at = item_to_payload(line)["at"]
+    replacement = {"path": "/media/10-rotation/autre.mp3", "replace_at": at}
     if gesture == "suppress_at":
         await insert_desk_item(dbsession, {"suppress_at": at})
+    elif gesture == "suppress_id":
+        await insert_desk_item(dbsession, {"suppress_at": at, "suppress_id": line.id})
     elif gesture == "replace_at":
-        await insert_desk_item(
-            dbsession, {"path": "/media/10-rotation/autre.mp3", "replace_at": at}
-        )
+        await insert_desk_item(dbsession, replacement)
+    elif gesture == "replace_id":
+        await insert_desk_item(dbsession, {**replacement, "replace_id": line.id})
     elif gesture == "delete":
         await delete_desk_item(dbsession, line.id)
     else:
         await reorder_desk_items(dbsession, [other.id, line.id])
 
 
-@pytest.mark.parametrize("gesture", ["suppress_at", "replace_at", "delete", "ranks"])
+@pytest.mark.parametrize(
+    "gesture",
+    ["suppress_at", "suppress_id", "replace_at", "replace_id", "delete", "ranks"],
+)
 @pytest.mark.parametrize("status", _SENT)
 async def test_a_line_already_sent_is_neither_removed_nor_moved(
     dbsession: ormSession, status: str, gesture: str
@@ -715,6 +789,43 @@ async def test_desk_sent_line_json_409(
     )
     assert moved.status_code == 409
     assert "ne se déplace plus" in (await moved.get_json())["error"]
+
+
+async def test_desk_removal_names_its_line_json(
+    raw_app,
+    app_configration: dict,
+    beets_integration: BeetsIntegration,
+    dbsession: ormSession,
+    users_password: str,
+):
+    """The console sends the id of the line with its time: the removal hides that
+    line alone. An id that names no clock line at that time is refused, and the
+    refusal says why, in French."""
+    client = await _admin_client(
+        app_configration,
+        beets_integration,
+        dbsession,
+        users_password,
+        "desk-named-admin",
+    )
+    removed_at = await _shared_time_file(dbsession, "pv-desk-http-named")
+    url = "/autodj/conducteur/items.json"
+
+    moved = await client.post(
+        url, json={"suppress_at": removed_at, "suppress_id": "ri-c"}
+    )
+    assert moved.status_code == 409
+    body = await moved.get_json()
+    assert body["code"] == "conflict"
+    assert body["error"].startswith("La file a changé entre-temps")
+
+    removed = await client.post(
+        url, json={"suppress_at": removed_at, "suppress_id": "ri-d"}
+    )
+    assert removed.status_code == 200, await removed.get_data(as_text=True)
+    shown = {item["id"] for item in (await removed.get_json())["items"]}
+    assert "ri-b" in shown
+    assert "ri-d" not in shown
 
 
 async def test_skip_keeps_following_desk_pins(

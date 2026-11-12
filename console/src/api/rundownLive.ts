@@ -193,9 +193,33 @@ export type PartitionedRundown = {
 export const CONDUCTEUR_JSON = "/autodj/conducteur.json?horizon=360";
 export const DESK_FILE_AHEAD = 10;
 
+/** L'identifiant d'une ligne du moteur. Celui d'une prévision, `clock|…`, n'en désigne aucune. */
+function engineLineId(item: RundownItem): string | undefined {
+  return item.id && !item.id.startsWith("clock|") ? item.id : undefined;
+}
+
 export function isDeskPin(item: RundownItem): boolean {
-  if (item.origin !== "desk" || !item.id) return false;
-  return !item.id.startsWith("clock|");
+  return item.origin === "desk" && engineLineId(item) !== undefined;
+}
+
+/**
+ * Le retrait d'une ligne de l'horloge : son heure, et son identifiant. Deux lignes
+ * de l'horloge peuvent avoir la même heure exacte après des réordres : nommée, la
+ * ligne retirée est la seule que le moteur cache. Un moteur plus ancien ignore
+ * l'identifiant, et cache toutes les lignes de l'horloge à cette heure.
+ */
+export function clockLineRemoval(item: RundownItem): { suppress_at: string; suppress_id?: string } {
+  const id = engineLineId(item);
+  return id ? { suppress_at: item.at, suppress_id: id } : { suppress_at: item.at };
+}
+
+/**
+ * « Annuler » face à un moteur qui ne rend pas le retrait posé : la ligne revient
+ * en ligne du pupitre, à la place de la ligne de l'horloge retirée, nommée de même.
+ */
+export function clockLineReplacement(item: RundownItem): { replace_at: string; replace_id?: string } {
+  const id = engineLineId(item);
+  return id ? { replace_at: item.at, replace_id: id } : { replace_at: item.at };
 }
 
 export function queueItemKey(item: RundownItem, index = 0): string {
