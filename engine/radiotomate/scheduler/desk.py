@@ -54,6 +54,10 @@ _SENT_REMOVE = (
 )
 _SENT_MOVE = "Cette ligne est déjà partie vers l'antenne : elle ne se déplace plus."
 _SENT_EDIT = "Cette ligne est déjà partie vers l'antenne : elle ne se modifie plus."
+# The desk neither changes nor erases a clock line: erased, nothing would put it
+# back in its place, as the conducteur only adds lines after its last one. A
+# removal takes it off the file, and its undo gives it back.
+_FROM_CLOCK = "Ce passage vient de l'horloge."
 _MOVED_REMOVE = (
     "La file a changé entre-temps : cette ligne n'est plus prévue à cette heure. "
     "Réessaie."
@@ -574,7 +578,7 @@ def _require_mutable_desk(item: RundownItem) -> None:
             "Impossible de modifier un passage à l'antenne ou une ancre dure."
         )
     if item.origin != DESK_ORIGIN:
-        raise DomainConflict("Ce passage vient de l'horloge.")
+        raise DomainConflict(_FROM_CLOCK)
     if item_is_sent(item):
         raise DomainConflict(_SENT_EDIT)
 
@@ -617,6 +621,12 @@ async def patch_desk_item(session: ormSession, item_id: str, data: dict) -> Rund
 
 
 async def delete_desk_item(session: ormSession, item_id: str) -> None:
+    """Erase a desk line, or a removal: « Annuler » then gives its line back.
+
+    A clock line is refused, as ``patch_desk_item`` refuses it: a removal takes it
+    off the file. A line already sent says so first, as its removal would: it
+    airs all the same.
+    """
     item = await RundownItem.from_id(session, item_id)
     if item is None:
         raise DomainNotFound("Passage introuvable.")
@@ -626,6 +636,8 @@ async def delete_desk_item(session: ormSession, item_id: str) -> None:
         )
     if item_is_sent(item):
         raise DomainConflict(_SENT_REMOVE)
+    if item.origin != DESK_ORIGIN:
+        raise DomainConflict(_FROM_CLOCK)
     # A line the playout refused: its command points at it.
     await _detach_commands(session, [item])
     await session.delete(item)

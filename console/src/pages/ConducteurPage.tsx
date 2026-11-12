@@ -13,10 +13,11 @@ import {
   ApiRequestError,
   ApiUnavailableError,
   apiDeleteJson,
+  apiPostJson,
 } from "../api/client";
 import { SessionGate } from "../api/SessionGate";
 import { withoutClosedTwins } from "../api/conducteurView";
-import { CONDUCTEUR_JSON, partitionRundown } from "../api/rundownLive";
+import { CONDUCTEUR_JSON, clockLineRemoval, isDeskPin, partitionRundown } from "../api/rundownLive";
 import type {
   CartsResponse,
   ClocksResponse,
@@ -30,6 +31,11 @@ import { PageHeader } from "../ui/PageHeader";
 import "../styles/pages/conducteur.css";
 
 const POLL_MS = 3_000;
+
+/** Le retrait posé revient avec la file : « Annuler » l'efface. */
+type DeskMutation = Rundown & { desk_item?: RundownItem };
+
+const lineUrl = (id: string) => `/autodj/conducteur/items/${encodeURIComponent(id)}.json`;
 
 /**
  * Le geste fini, le focus revient où il était : le bouton qui a ouvert la
@@ -115,21 +121,65 @@ export function ConducteurPage() {
     else say(fallback, "error");
   }, []);
 
-  const removeItem = useCallback(
-    async (item: RundownItem) => {
-      if (!item.id) return;
+  // « Annuler » efface le retrait, et la ligne de l'horloge revient à sa place.
+  // Il part avec son message et ne revient pas : son échec dit que la ligne reste
+  // retirée, et comment la remettre, plutôt que de faire réessayer.
+  const undoRemoval = useCallback(
+    async (removalId: string) => {
       try {
-        const payload = await apiDeleteJson<Rundown>(
-          `/autodj/conducteur/items/${encodeURIComponent(item.id)}.json`,
-        );
-        setData(payload);
-        showRef.current("Retiré du conducteur.", "success");
-        refocus(null);
+        setData(await apiDeleteJson<Rundown>(lineUrl(removalId)));
+        showRef.current("Annulé.", "success");
       } catch (caught) {
-        fail(caught, "Retrait impossible. Réessaie.");
+        const back = "La ligne reste retirée : remets-la au pupitre, depuis la bibliothèque.";
+        if (caught instanceof ApiUnavailableError) showRef.current(`L’automate ne répond pas. ${back}`, "error");
+        else fail(caught, `Annulation impossible. ${back}`);
+      } finally {
+        // Le message et son bouton sont partis : le focus revient au déroulé.
+        refocus(null);
       }
     },
     [fail, setData],
+  );
+
+  // Un double clic ne pose qu'un retrait : « Annuler » n'en lèverait qu'un, et la
+  // ligne resterait cachée sans que rien ne le dise.
+  const removingRef = useRef(new Set<string>());
+
+  // Une ligne du pupitre s'efface. Une ligne de l'horloge se retire par un retrait,
+  // comme au pupitre : le moteur refuse de l'effacer, rien ne la remettrait à sa place.
+  const removeItem = useCallback(
+    async (item: RundownItem) => {
+      const id = item.id;
+      if (!id || removingRef.current.has(id)) return;
+      removingRef.current.add(id);
+      try {
+        if (isDeskPin(item)) {
+          setData(await apiDeleteJson<Rundown>(lineUrl(id)));
+          showRef.current("Retiré du conducteur.", "success");
+        } else {
+          const payload = await apiPostJson<DeskMutation>("/autodj/conducteur/items.json", clockLineRemoval(item));
+          setData(payload);
+          const removalId = payload.desk_item?.id;
+          showRef.current(
+            "Retiré du conducteur.",
+            "success",
+            removalId
+              ? { duration: 8000, action: { label: "Annuler", onClick: () => void undoRemoval(removalId) } }
+              : undefined,
+          );
+        }
+        refocus(null);
+      } catch (caught) {
+        // Refusé, la ligne a bougé ou est déjà partie : le conducteur se relit tout
+        // de suite, sans attendre sa lecture suivante, pour qu'un nouvel essai la vise.
+        // Relue, la ligne peut perdre son bouton : le focus revient alors au déroulé.
+        if (caught instanceof ApiRequestError && caught.status === 409) void reload().then(() => refocus(null));
+        fail(caught, "Retrait impossible. Réessaie.");
+      } finally {
+        removingRef.current.delete(id);
+      }
+    },
+    [fail, reload, setData, undoRemoval],
   );
 
   const onRemove = useCallback((item: RundownItem) => void removeItem(item), [removeItem]);

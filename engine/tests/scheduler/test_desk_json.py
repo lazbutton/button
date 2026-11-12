@@ -71,17 +71,21 @@ async def test_replace_forecast_keeps_desk_pins(dbsession: ormSession):
 
 
 async def test_delete_clock_planned_item(dbsession: ormSession):
-    """The desk erases a planned clock line. FON-18 asks whether it should."""
+    """The desk does not erase a clock line, as it does not change it: erased,
+    nothing would put it back in its place, as the conducteur only adds lines
+    after its last one. A removal takes it off the file, and its undo gives it
+    back."""
     dbsession.add(
         ProgrammingVersion(id="pv-clock-delete", source="test", description="del")
     )
     await dbsession.flush()
+    planned_at = datetime.now() + timedelta(minutes=12)
     dbsession.add(
         RundownItem(
             id="ri-clock-delete",
             programming_version_id="pv-clock-delete",
             sequence=0,
-            planned_at=datetime.now() + timedelta(minutes=12),
+            planned_at=planned_at,
             duration=180,
             kind="musique",
             when_mode="sequential",
@@ -93,8 +97,20 @@ async def test_delete_clock_planned_item(dbsession: ormSession):
         )
     )
     await dbsession.commit()
-    await delete_desk_item(dbsession, "ri-clock-delete")
-    assert await dbsession.get(RundownItem, "ri-clock-delete") is None
+    with pytest.raises(DomainConflict, match="vient de l'horloge") as caught:
+        await delete_desk_item(dbsession, "ri-clock-delete")
+    assert caught.value.status_code == 409
+    kept = await dbsession.get(RundownItem, "ri-clock-delete")
+    assert (kept.status, kept.planned_at) == (RundownStatus.PLANNED.value, planned_at)
+
+    line = item_to_payload(kept)
+    removal = await insert_desk_item(
+        dbsession, {"suppress_at": line["at"], "suppress_id": kept.id}
+    )
+    assert await removed_clock_ids(dbsession) == {"ri-clock-delete"}
+    await delete_desk_item(dbsession, removal.id)
+    assert await removed_clock_ids(dbsession) == set()
+    assert await dbsession.get(RundownItem, "ri-clock-delete") is not None
 
 
 async def test_delete_hard_anchor_conflicts(dbsession: ormSession):
@@ -674,20 +690,7 @@ async def test_desk_delete_anchor_json_409(
     assert response.status_code == 409
 
 
-@pytest.mark.parametrize(
-    "method",
-    [
-        "patch",
-        pytest.param(
-            "delete",
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="FON-18: DELETE erases a clock line that PATCH refuses; "
-                "test_delete_clock_planned_item still expects the erasure",
-            ),
-        ),
-    ],
-)
+@pytest.mark.parametrize("method", ["patch", "delete"])
 async def test_desk_clock_line_json_409(  # noqa: PLR0913
     raw_app,
     app_configration: dict,
@@ -696,8 +699,9 @@ async def test_desk_clock_line_json_409(  # noqa: PLR0913
     users_password: str,
     method: str,
 ):
-    """The desk refuses to change a clock line, and the line stays: the console
-    takes one out of the antenna file with a removal, that the undo lifts."""
+    """The desk neither changes nor erases a clock line, and the line stays: the
+    console takes one out of the antenna file with a removal, that the undo lifts.
+    The refusal says why, in French: an older console that erases shows it."""
     client = await _admin_client(
         app_configration,
         beets_integration,
@@ -732,10 +736,15 @@ async def test_desk_clock_line_json_409(  # noqa: PLR0913
     else:
         response = await client.delete(url)
     assert response.status_code == 409
-    kept = await dbsession.scalar(
-        select(RundownItem.id).where(RundownItem.id == "ri-http-clock")
+    body = await response.get_json()
+    assert body["code"] == "conflict"
+    assert body["error"] == "Ce passage vient de l'horloge."
+    kept = await dbsession.execute(
+        select(RundownItem.status, RundownItem.resource).where(
+            RundownItem.id == "ri-http-clock"
+        )
     )
-    assert kept == "ri-http-clock"
+    assert kept.all() == [(RundownStatus.PLANNED.value, "Titre de l'horloge")]
 
 
 async def test_desk_sent_line_json_409(
