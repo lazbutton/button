@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
-import { airBanner, derivePillars, formatDuration, worstTone } from "./antenneState.ts";
+import { airBanner, derivePillars, formatDuration, incidentLabel, worstTone } from "./antenneState.ts";
 import type { AntenneState } from "./types";
+
+/** Les incidents qu'ouvre le moteur : chaque `active["…"]` de sa surveillance. */
+function engineIncidentKinds(): string[] {
+  const alerts = readFileSync(new URL("../../../engine/radiotomate/scheduler/alerts.py", import.meta.url), "utf8");
+  return [...new Set([...alerts.matchAll(/\bactive\["([a-z_]+)"\]/g)].map((match) => match[1]))];
+}
 
 function state(over: Partial<AntenneState> = {}): AntenneState {
   return {
@@ -169,6 +176,23 @@ test("a disk almost full is named in the alerts", () => {
   const alertes = pillars.find((pillar) => pillar.key === "alertes");
   assert.equal(alertes?.tone, "alert");
   assert.deepEqual(alertes?.detail, ["Disque presque plein — 1,8 Go libres sur 40 Go (depuis 2 min)"]);
+});
+
+test("each incident the engine opens has a name, the Agenda's too", () => {
+  const kinds = engineIncidentKinds();
+  // Sept aujourd'hui : si le moteur les ouvre autrement, relire ce test.
+  assert.ok(kinds.length >= 7, `incidents du moteur introuvables : ${kinds.join(", ")}`);
+  for (const kind of kinds) {
+    const label = incidentLabel({ kind, detail: "", since_s: 0, notified: false });
+    assert.notEqual(label, kind, `l’incident « ${kind} » n’a pas de nom dans la console`);
+  }
+  const agenda = derivePillars(
+    state({
+      incidents: [{ kind: "agenda", detail: "Set attendu pour 20:30 : Nuit blanche", since_s: 300, notified: false }],
+    }),
+    false,
+  ).find((pillar) => pillar.key === "alertes");
+  assert.deepEqual(agenda?.detail, ["Diffusion de l’Agenda — Set attendu pour 20:30 : Nuit blanche (depuis 5 min)"]);
 });
 
 test("formatDuration", () => {

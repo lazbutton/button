@@ -33,6 +33,12 @@ queue_cleaner:
   max_age_seconds: 600
   interval_seconds: 60
 
+# A station watches its antenna without this block. Here the watch stays off:
+# it would poll the playout and the base in the middle of every test. The tests
+# of the alerts start it themselves.
+alerts:
+  enabled: false
+
 ############# Logging configuration ##########
 logging:
   version: 1

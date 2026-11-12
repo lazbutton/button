@@ -14,6 +14,9 @@ on:
     paths:
       - "console/**"
       - "!console/**/*.md"
+      # The console names each incident this file opens (antenneState.test.ts):
+      # checked on a pull request, without building an image on main.
+      - "engine/radiotomate/scheduler/alerts.py"
       - ".github/workflows/console.yml"
   workflow_dispatch:
   workflow_call:

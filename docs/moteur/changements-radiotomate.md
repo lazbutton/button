@@ -127,7 +127,7 @@ Les échecs de connexion se comptent par adresse, jamais par compte (`domain/log
 
 ## Exploitation
 
-Le scheduler surveille l’antenne (`scheduler/alerts.py`) : silence, playout injoignable, heartbeat perdu, sortie Icecast coupée, créneau live sans encodeur, disque presque plein. Une alerte part une fois, puis une note de retour, vers un webhook JSON, une tâche Vikunja, ntfy ou un e-mail en TLS ; une cible en panne n’arrête pas les autres. Le bloc YAML est `alerts:`, que la boucle relit quand `radiotomate.yaml` change, sans redémarrer : sur une station, `radiotomate-init` y écrit ntfy et l’e-mail de `.env`.
+Le scheduler surveille l’antenne (`scheduler/alerts.py`) : silence, playout injoignable, heartbeat perdu, sortie Icecast coupée, créneau live sans encodeur, diffusion de l’Agenda qui ne peut pas passer, disque presque plein. Une alerte part une fois, puis une note de retour, vers un webhook JSON, une tâche Vikunja, ntfy ou un e-mail en TLS ; une cible en panne n’arrête pas les autres. Le bloc YAML est `alerts:`, que la boucle relit quand `radiotomate.yaml` change, sans redémarrer : sur une station, `radiotomate-init` y écrit ntfy et l’e-mail de `.env`. La surveillance tourne aussi sans ce bloc ni cible, pour la console ; `enabled: false` la coupe. Un incident resté au journal, faute de cible, part vers la première cible réglée tant qu’il est ouvert, puis sa fin, jamais une fin seule : `alerts.json` garde pour cela s’il est parti (`told`). Un incident compte depuis son début quand le moteur le mesure : la première seconde d’un silence, le dernier battement.
 
 `/metrics` est écrit dans `data/metrics.json`, et une ligne par heure dans `data/exports/metrics.jsonl`.
 
