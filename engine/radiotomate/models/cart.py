@@ -17,6 +17,7 @@ from sqlalchemy.orm import (
     selectinload,
     with_expression,
 )
+from sqlalchemy.orm.attributes import set_committed_value
 
 from radiotomate.db import Base
 from radiotomate.enums import CartMode, ScheduleMode
@@ -87,8 +88,10 @@ class Cart(Base):
         order_by="Sound.rank",
         cascade="save-update, merge, expunge, delete",
     )
-    sounds_count: Mapped[int] = query_expression()
-    inactive_sounds_count: Mapped[int] = query_expression()
+    # Counted from the sounds when the cart is loaded. A flush of the cart, after
+    # an edit, keeps them, as it kept them when they were set as attributes.
+    sounds_count: Mapped[int] = query_expression(expire_on_flush=False)
+    inactive_sounds_count: Mapped[int] = query_expression(expire_on_flush=False)
 
     __mapper_args__: ClassVar[dict] = {"version_id_col": version}
 
@@ -119,9 +122,13 @@ class Cart(Base):
 
     def postfill_query_expressions(self) -> None:
         """
-        Compute query-expression fields when Cart.sounds is fully loaded
+        Compute query-expression fields when Cart.sounds is fully loaded.
+
+        They are set as if loaded with the cart. Set as attributes, they made
+        the cart modified: the next commit bumped its version and its modified
+        date at each draw, an edit sent with the version read before was
+        refused, and two sessions writing the same cart at once could fail.
         """
-        self.sounds_count = len(self.sounds)
 
         def inactive(sound: Sound) -> int:
             if not sound.available:
@@ -129,7 +136,10 @@ class Cart(Base):
             else:
                 return 0
 
-        self.inactive_sounds_count = sum(map(inactive, self.sounds))
+        set_committed_value(self, "sounds_count", len(self.sounds))
+        set_committed_value(
+            self, "inactive_sounds_count", sum(map(inactive, self.sounds))
+        )
 
     @classmethod
     async def all(

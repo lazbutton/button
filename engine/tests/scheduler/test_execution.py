@@ -1114,8 +1114,8 @@ async def test_a_title_added_to_beets_is_planned_at_the_next_tick(
 async def test_a_sound_ready_in_a_cart_ends_the_wait(raw_app, dbsession, empty_beets):
     """The cart of the clock is there, its sound not analysed yet: the forecast
     holds, a session a call as on a station, though each draw loads the cart
-    and bumps its version. The analyser gives the sound its gain: the jingle is
-    planned at the next call."""
+    with its sounds, which bumped its version before FON-45. The analyser gives
+    the sound its gain: the jingle is planned at the next call."""
     cartpath = raw_app.config["DATA_ROOT"] / "jingles"
     cart = Cart(
         title="Jingles",
