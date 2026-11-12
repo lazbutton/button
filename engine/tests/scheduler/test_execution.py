@@ -1,6 +1,8 @@
+import copy
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timedelta
 from time import monotonic
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
@@ -22,7 +24,9 @@ from radiotomate.models import (
     Sound,
 )
 from radiotomate.scheduler import live as sched_live
+from radiotomate.scheduler import timing
 from radiotomate.scheduler.clock import PARIS, reset_state, tick
+from radiotomate.scheduler.clock import _state as clock_state
 from radiotomate.scheduler.execution import (
     MISSING_FORECAST_HOLD,
     SETTING_FIRED_ANCHORS,
@@ -35,6 +39,13 @@ from radiotomate.scheduler.execution import (
 from radiotomate.scheduler.outbox import dispatch_command, enqueue_command
 from radiotomate.scheduler.playout import PlayoutGateway
 from radiotomate.services.carts import sync_cart_display_titles
+from tests.scheduler.test_cart_draw import (
+    MONDAY,
+    _clock_at,
+    _music_on_air,
+    _pub_break,
+    _spots,
+)
 from tests.scheduler.test_clock import (
     JOURNEE_20,
     NIGHT,
@@ -874,6 +885,155 @@ async def test_reset_conducteur_rebuilds_when_on_air_is_hours_ahead(
     deltas = [(at - wall).total_seconds() for at in planned]
     assert any(abs(delta) < 30 * 60 for delta in deltas)
     assert all(delta < 2 * 3600 for delta in deltas)
+
+
+@contextmanager
+def _in_the_interface():
+    """
+    « Reconstruire le conducteur » runs in the interface's process, whose memory
+    has never ticked. The scheduler keeps its own, and reads the base again at
+    its next tick, once it sees that the epoch has changed.
+    """
+    scheduler = copy.deepcopy(vars(clock_state))
+    reset_state()
+    try:
+        yield
+    finally:
+        for name, value in scheduler.items():
+            setattr(clock_state, name, value)
+
+
+async def _rebuild(
+    dbsession: ormSession,
+    beets_integration: BeetsIntegration,
+    time: str,
+    *,
+    elsewhere: bool = True,
+) -> None:
+    """« Reconstruire le conducteur » at ``time``."""
+    moment = datetime.fromisoformat(time)
+
+    def at(now=None):
+        return timing.now_paris(moment if now is None else now)
+
+    with (
+        patch("radiotomate.scheduler.clock.now_paris", side_effect=at),
+        patch("radiotomate.scheduler.execution.now_paris", side_effect=at),
+        _in_the_interface() if elsewhere else nullcontext(),
+    ):
+        await reset_conducteur(dbsession, beets_integration)
+
+
+def _carts_pushed(client: AsyncMock) -> list[str]:
+    return [
+        call.kwargs["json"]["path"]
+        for call in client.post.call_args_list
+        if call.args[0] == "/queue/carts"
+    ]
+
+
+@pytest.mark.parametrize("elsewhere", [True, False], ids=["interface", "scheduler"])
+async def test_a_rebuild_does_not_play_a_break_gone_again(
+    dbsession: ormSession,
+    jingles_cart,
+    pubs_cart,
+    beets_integration: BeetsIntegration,
+    elsewhere: bool,
+):
+    """
+    The break of 10:20 goes with the first spot, and the conducteur is rebuilt
+    in that same minute: the tick of 10:20:35 does not draw it again, with the
+    second spot. The break of 10:40 has it.
+    """
+    spots = await _spots(dbsession, pubs_cart, 3)
+    pubs_cart.mode = CartMode.PLAYLIST_LOOP
+    await dbsession.commit()
+    aired = [await _pub_break(dbsession, beets_integration, f"{MONDAY}T10:20:05+02:00")]
+    await _rebuild(
+        dbsession, beets_integration, f"{MONDAY}T10:20:30+02:00", elsewhere=elsewhere
+    )
+    client = _client()
+    time = f"{MONDAY}T10:20:35+02:00"
+    with _clock_at(time):
+        actions = await tick(dbsession, _music_on_air(time), client, beets_integration)
+    assert "anchor:20" not in actions
+    assert _carts_pushed(client) == []
+    aired.append(
+        await _pub_break(dbsession, beets_integration, f"{MONDAY}T10:40:05+02:00")
+    )
+    assert aired == [spots[0].title, spots[1].title]
+
+
+@pytest.mark.parametrize(
+    ("first_at", "source", "due", "first_action"),
+    [
+        ("10:22:15", "autodj", "molle", "soft:20"),
+        ("10:22:15", "stream", "molle", "anchor:20:hold"),
+        ("10:40:05", "autodj", "dure", "soft-skip:20"),
+    ],
+    ids=["partie", "retenue-par-un-direct", "sautee-apres-une-dure"],
+)
+async def test_a_rebuild_does_not_bring_back_a_soft_break_of_the_hour(  # noqa: PLR0913
+    dbsession: ormSession,
+    jingles_cart,
+    pubs_cart,
+    beets_integration: BeetsIntegration,
+    first_at: str,
+    source: str,
+    due: str,
+    first_action: str,
+):
+    """
+    The soft break of 10:20 went at the end of the title astride it, or a live
+    held it, or it still waited for a long title when the hard break of 10:40
+    went, which skipped it. The conducteur is rebuilt at 10:45: the title that
+    ends at 10:48 does not bring the break back.
+    """
+    await _pub_anchor(dbsession, "molle")
+    await ensure_forecast(dbsession, beets_integration, now=MONDAY_1010, cursor=0)
+    client = _client()
+    time = f"{MONDAY}T{first_at}+02:00"
+    first = {**_anchor_due(time, due), "source": source}
+    with _clock_at(time):
+        assert first_action in await tick(dbsession, first, client, beets_integration)
+    pushed = _carts_pushed(client)
+    await _rebuild(dbsession, beets_integration, f"{MONDAY}T10:45:00+02:00")
+    time = f"{MONDAY}T10:48:00+02:00"
+    with _clock_at(time):
+        actions = await tick(
+            dbsession, _anchor_due(time, "molle"), client, beets_integration
+        )
+    assert "soft:20" not in actions
+    assert _carts_pushed(client) == pushed
+
+
+async def test_a_soft_break_still_owed_goes_once_after_a_rebuild(
+    dbsession: ormSession,
+    jingles_cart,
+    pubs_cart,
+    beets_integration: BeetsIntegration,
+):
+    """
+    The soft break of 10:20 still waits for the end of a long title when the
+    conducteur is rebuilt, at 10:21: it is owed all the same, and goes once,
+    when the title ends.
+    """
+    await _pub_anchor(dbsession, "molle")
+    await ensure_forecast(dbsession, beets_integration, now=MONDAY_1010, cursor=0)
+    client = _client()
+    waiting = {**_anchor_due(f"{MONDAY}T10:20:40+02:00", "molle"), "remaining": "106"}
+    assert "soft:20" not in await tick(dbsession, waiting, client, beets_integration)
+    await _rebuild(dbsession, beets_integration, f"{MONDAY}T10:21:00+02:00")
+    fired = []
+    for second in ("22:30", "22:40"):
+        time = f"{MONDAY}T10:{second}+02:00"
+        with _clock_at(time):
+            actions = await tick(
+                dbsession, _anchor_due(time, "molle"), client, beets_integration
+            )
+        fired.append("soft:20" in actions)
+    assert fired == [True, False]
+    assert len(_carts_pushed(client)) == 1
 
 
 def test_now_from_live_keeps_the_paris_wall_clock():
