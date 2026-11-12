@@ -25,7 +25,7 @@ Le format des fiches, les tailles et la façon de prendre une fiche sont dans le
 | [MAJ-02](#maj-02--copie-de-la-base-avant-chaque-migration) | Copie de la base avant chaque migration | S | — | fait, `26f0fcc` |
 | [MAJ-03](#maj-03--contrôle-après-déploiement) | Contrôle après déploiement | S | SEC-01 | fait, `bd65070` |
 | [MAJ-04](#maj-04--commande-de-mise-à-jour) | Commande de mise à jour | L | MAJ-01, MAJ-02, MAJ-03, INS-03 | fait, `5df65e5` |
-| [MAJ-05](#maj-05--retour-arrière-automatique) | Retour arrière automatique | M | MAJ-04 | à faire |
+| [MAJ-05](#maj-05--retour-arrière-automatique) | Retour arrière automatique | M | MAJ-04 | fait, `de9278a` |
 | [INS-01](#ins-01--https-par-un-reverse-proxy) | HTTPS par un reverse proxy | M | SEC-01, SEC-02, SEC-05, SEC-07 | fait, `eaeb106` |
 | [INS-02](#ins-02--installer-en-une-commande) | Installer en une commande | L | INS-01, GEN-01, MAJ-01, SEC-06 | fait, `f37f425` |
 | [INS-03](#ins-03--commandes-dexploitation) | Commandes d'exploitation | M | INS-02 | fait, `a5b2eb7` |
@@ -38,7 +38,7 @@ Le format des fiches, les tailles et la façon de prendre une fiche sont dans le
 | [FON-14](#fon-14--les-lignes-mises-à-la-suite-passent-à-lantenne) | Les lignes mises à la suite passent à l'antenne | M | — | fait, `d4a2dd9` |
 | [FON-39](#fon-39--les-jingles-du-motif-passent-à-leur-tour) | Les jingles du motif passent à leur tour | M | FON-14 | fait, `7a497fd` |
 
-En tout : 29 fiches, 12 de taille S, 14 de taille M et 3 de taille L. Au 12 novembre 2026, 24 sont faites. Il en reste 5 : 1 de taille S et 4 de taille M.
+En tout : 29 fiches, 12 de taille S, 14 de taille M et 3 de taille L. Au 12 novembre 2026, 25 sont faites. Il en reste 4 : 1 de taille S et 3 de taille M.
 
 ## L'ordre
 
@@ -46,12 +46,12 @@ Ce qui reste, relevé le 12 novembre 2026. Les fiches de deux files différentes
 
 | File | Fiches, dans l'ordre | Fichier partagé |
 |---|---|---|
-| commande `station` | MAJ-05, SAV-01, SUR-01 | `deploy/station` |
+| commande `station` | SAV-01, SUR-01 | `deploy/station` |
 | mesure | INS-04 | aucun |
 | guide | DOC-01, en dernier | `docs/` |
 
-- **MAJ-04 est fusionnée**, par la PR 141 : MAJ-05 passe en tête de sa file, puis SAV-01. Leurs « Accepté quand » demandent une machine jetable en x86-64 : la vraie installation de la CI (`.github/workflows/station.yml`) en est une, et son job `update` y fait maintenant une vraie mise à jour.
-- **SUR-01** pose ses réglages à l'installation, qui est maintenant `station install` : elle est donc dans la file de la commande `station`. Elle peut y passer plus tôt : MAJ-05 se sert de ses alertes.
+- **MAJ-05 est fusionnée**, par la PR 149 : SAV-01 passe en tête de sa file, et elle est en cours depuis le 12 novembre. Son « Accepté quand » demande une machine jetable en x86-64 : la vraie installation de la CI (`.github/workflows/station.yml`) en est une, et son job `update` y essaie maintenant deux mises à jour cassées avant la vraie.
+- **SUR-01** pose ses réglages à l'installation, qui est `station install` : elle suit SAV-01 dans la file de la commande `station`. MAJ-05 lui a fait sa place : une seule fonction, `station_alert`, envoie au journal du système l'alerte d'une mise à jour annulée. SUR-01 y branche ntfy et l'e-mail.
 - **LEG-02 est fusionnée**, par la PR 146. Il reste à l'essayer sur une station d'essai : un animateur y télécharge le code de la version, et sans session la même adresse répond 401.
 - **FON-14 et FON-39 sont fusionnées**, par les PR 139 et 142 : la file du scheduler n'a plus de fiche en P1. Leurs « Accepté quand » restent à vérifier sur une station de test, fondu allumé : leur banc tournait sans. Pour FON-39, c'est une heure d'antenne. FON-33 et FON-35 à FON-38, en P2, touchent les fichiers qu'elles viennent de changer : rejouer chaque défaut avant de le prendre.
 - **INS-04 n'a aucun conflit.** Elle se mesure sur la version qui suit la 0.2.0 : celle-ci a encore le défaut d'une station vide, dont le conducteur s'empilait.
@@ -355,6 +355,13 @@ M · dépend de MAJ-04 · conflits : le script d'exploitation
   `rollback` fait la même chose à la main.
 - **Tests** : sur une machine jetable, trois cas : une mise à jour normale, une image qui ne démarre pas, une migration qui échoue à mi-chemin.
 - **Accepté quand** : les deux mises à jour cassées reviennent seules à l'état d'avant, base comprise, posent `HOLD` et alertent.
+- **Résultat**, le 12 novembre 2026, par la PR 149 :
+  - Une mise à jour qui échoue, une fois ses fichiers touchés, revient seule à la version d'avant : ses fichiers, les images de tous les services, et la copie de la base faite avant la migration, si le schéma a migré. Puis une ligne dans `updates.log`, `HOLD`, et l'alerte « mise à jour annulée ». Les journaux de la version ratée restent dans `updates-failed.log`.
+  - `station rollback` défait de même, à la main, la dernière mise à jour encore en place, même des jours après. La base revient à sa copie une fois confirmé : la question dit sa date, et ce qui se perd.
+  - Décidé avec l'utilisateur : la copie de la base plutôt qu'une descente du schéma, les journaux gardés, et pas d'interrupteur (ADR 0009), car c'est le retour arrière qui protège l'antenne. Pris sans lui : une copie abîmée, ou la place qui manque pour la remettre, et rien ne se défait ; le retour couvre aussi l'étape des fichiers ; l'alerte écrit dans le journal du système (`journalctl -t button`), en attendant SUR-01.
+  - L'« Accepté quand » est porté par la CI. Avant la vraie mise à jour, le job `update` de `station.yml` essaie une console qui ne démarre pas, après une migration qui passe, puis une migration qui échoue à mi-chemin. Chacune revient seule à la version publiée, base comprise, avec `HOLD` et l'alerte. Son premier passage a trouvé un défaut que les tests bats ne voyaient pas, sous le bash 5.2 des stations : c'est TST-10, en P2.
+  - Pas encore essayé sur une station.
+  - Limites connues : un redémarrage de la machine, ou un `kill -9`, en pleine mise à jour ne laisse rien dans `updates.log`, et rien ne sait ensuite d'où reprendre (MAJ-06). Seule la base du moteur revient : une version qui migrerait la bibliothèque de Beets (ARC-06) ou les données de Meilisearch ne serait pas défaite.
 
 ### INS · Installer
 
@@ -419,7 +426,7 @@ S · dépend de INS-02 · conflits : aucun
 M · dépend de INS-03 · conflits : le script d'exploitation
 
 - **Pourquoi** : une sauvegarde sur la machine disparaît avec elle.
-- **Aujourd'hui** : `station backup` écrit son archive dans `backups/`, sur la machine. `backup_stage` (`deploy/station`) prépare le dossier de la sauvegarde, qu'un envoi hors de la machine peut reprendre tel quel, et `backup_pack` en fait l'archive. Depuis MAJ-04, `update` y écrit aussi la sienne, et n'y garde que les cinq dernières (`backup_rotate`).
+- **Aujourd'hui** : `station backup` écrit son archive dans `backups/`, sur la machine. `backup_stage` (`deploy/station`) prépare le dossier de la sauvegarde, qu'un envoi hors de la machine peut reprendre tel quel, et `backup_pack` en fait l'archive. Depuis MAJ-04, `update` y écrit aussi la sienne, et n'y garde que les cinq dernières (`backup_rotate`). Depuis MAJ-05, `station_alert` envoie une alerte au journal du système : une sauvegarde de la nuit qui échoue peut s'en servir.
 - **À faire** :
   1. `backup --remote` avec restic, vers un stockage S3 ou SFTP réglé par `config`. Chaque nuit par un minuteur systemd, chiffré avant l'envoi, avec une rotation : 7 quotidiennes, 4 hebdomadaires, 6 mensuelles.
   2. La doc dit la règle : un autre fournisseur que celui du VPS, pour qu'une panne ou une erreur de compte ne touche pas les deux.
@@ -434,7 +441,7 @@ M · dépend de INS-03 · conflits : le script d'exploitation
 M · dépend de rien · conflits : `engine/radiotomate/scheduler/alerts.py`, `deploy/scripts/init-radiotomate.sh`, `deploy/station`
 
 - **Pourquoi** : sur un VPS, personne ne regarde l'antenne. Un silence ou un disque plein doit arriver sur un téléphone.
-- **Aujourd'hui** : `scheduler/alerts.py` envoie les alertes vers un webhook JSON ou une tâche Vikunja, réglés dans le bloc `alerts:` du YAML. Depuis INS-02, l'installation est `station install` (`deploy/station`) : c'est là que se posent les réglages du point 1.
+- **Aujourd'hui** : `scheduler/alerts.py` envoie les alertes vers un webhook JSON ou une tâche Vikunja, réglés dans le bloc `alerts:` du YAML. Depuis INS-02, l'installation est `station install` (`deploy/station`) : c'est là que se posent les réglages du point 1. Depuis MAJ-05, la commande `station` envoie ses propres alertes (mise à jour annulée, retour raté, `rollback`) par une seule fonction, `station_alert`, qui écrit dans le journal du système (`journalctl -t button`) : c'est là que se branchent ntfy et l'e-mail.
 - **À faire** :
   1. L'e-mail par SMTP, et ntfy, une notification gratuite sur le téléphone, réglés à l'installation.
   2. Ils servent aux incidents d'antenne, aux mises à jour (faite, annulée, majeure en attente) et au disque presque plein, que `/system/disk.json` sait déjà mesurer.
@@ -448,7 +455,7 @@ M · dépend de rien · conflits : `engine/radiotomate/scheduler/alerts.py`, `de
 
 M · dépend de INS-04, MAJ-05, SAV-01 · conflits : `docs/`
 
-- **Aujourd'hui** : `docs/deploiement.md` porte déjà « Installer sur un VPS », avec « Exploiter la station », puis « Mettre à jour » et « Revenir en arrière ». `docs/exploitation/sauvegarde.md` porte la sauvegarde et la restauration. Les trois pages de la fiche se taillent dans ces parties, une fois `rollback` et `backup --remote` écrites : `update` l'est, depuis MAJ-04.
+- **Aujourd'hui** : `docs/deploiement.md` porte déjà « Installer sur un VPS », avec « Exploiter la station », puis « Mettre à jour » et « Revenir en arrière ». `docs/exploitation/sauvegarde.md` porte la sauvegarde et la restauration. Les trois pages de la fiche se taillent dans ces parties, une fois `backup --remote` écrite : `update` et `rollback` le sont, depuis MAJ-04 et MAJ-05.
 - **À faire** :
   1. `docs/installer.md` remplace la partie « Installer » de `docs/deploiement.md` : choisir un VPS, avec la taille mesurée par INS-04, un processeur x86-64 et le trafic compté ; le DNS ; l'installation ; le premier réglage dans la console ; brancher un encodeur ; la sécurité de la machine, c'est-à-dire SSH par clé, `unattended-upgrades` et le pare-feu du fournisseur.
   2. `docs/mettre-a-jour.md` et `docs/sauvegarder.md`.
