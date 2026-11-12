@@ -67,7 +67,7 @@ Elle ne change jamais une valeur de `.env`, ni la version : changer de version, 
 
 ### Les options
 
-Chaque réponse a son option, pour installer sans question, en CI par exemple : `--name`, `--domain`, `--email`, `--timezone`, `--admin`, `--updates auto` ou `--updates manual`, et pour les alertes, `--alert-ntfy https://ntfy.sh` et `--alert-email`, avec `--alert-smtp`, `--alert-smtp-user` et `--alert-smtp-password-file`. Sans elles, ni terminal, aucune alerte ne se règle. Les autres options :
+Chaque réponse a son option, pour installer sans question, en CI par exemple : `--name`, `--domain`, `--email`, `--timezone`, `--admin`, `--updates auto` ou `--updates manual`, et pour les alertes, `--alert-ntfy https://ntfy.sh` et `--alert-email`, avec `--alert-smtp`, `--alert-smtp-user` et `--alert-smtp-password-file`. Sans terminal, aucune alerte ne se règle sans elles. Les autres options :
 
 | Option | Pour |
 |---|---|
@@ -462,7 +462,7 @@ Puis elle la contrôle, comme après une mise à jour, sur le mount que sert la 
 
 Si la base d'avant ne peut pas revenir, parce que sa copie est abîmée ou que la place manque à côté de la base, rien ne se défait : la station reste à la nouvelle version, qui tourne peut-être encore, plutôt que de s'arrêter sur une base que la version d'avant ne lirait pas. La commande le dit.
 
-Elle pose ensuite `HOLD`, qui bloque les mises à jour suivantes jusqu'à ce qu'une personne le retire, la cause trouvée : `station unhold`. `updates.log` note la mise à jour « annulée », et `station status` la dit. L'alerte « mise à jour annulée » part dans le journal du système, `journalctl -t button`, et sur un téléphone et par e-mail, si la station les a réglés : voir [les alertes](exploitation/alertes.md). La commande sort en erreur.
+Elle pose ensuite `HOLD`, qui bloque les mises à jour suivantes jusqu'à ce qu'une personne le retire, la cause trouvée : `station unhold`. `updates.log` note la mise à jour « annulée », et `station status` la dit. L'alerte « mise à jour annulée » part dans le journal du système, `journalctl -t button`, et sur un téléphone et par e-mail, si la station a réglé ses alertes : voir [les alertes](exploitation/alertes.md). La commande sort en erreur.
 
 Si le retour échoue lui aussi, la commande le dit, avec l'état où il laisse la station, `updates.log` le note « échouée », et `HOLD` bloque de même. Une fois la cause réglée, `station rollback` refait le retour.
 
