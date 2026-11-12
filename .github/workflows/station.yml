@@ -398,8 +398,7 @@ jobs:
             echo "::error title=Sauvegarde hors de la machine::la sauvegarde de la nuit n'est pas faite : $line"
             exit 1
           fi
-          # Its ID, for the restore on a new machine: a timer of the new
-          # station, at night, could add a later one.
+          # Its ID: the restore on a new machine must bring back this one.
           cut -f4 <<<"$line" >"$storage/sauvegarde"
           line=$(sudo grep -v '^#' backups-remote.log | awk -F '\t' '$2 == "test"' | tail -n 1)
           if [ "$(cut -f3 <<<"$line")" != réussi ]; then
@@ -514,13 +513,26 @@ jobs:
             echo "::error title=Installation neuve::la station neuve a déjà les comptes de la sauvegarde : la restauration ne prouverait rien."
             exit 1
           fi
-          # The same repository, with the password noted off the machine.
+          # The same repository, with the password noted off the machine. The
+          # new station, empty, has never backed up: its timers wait, or the
+          # night would make it the last backup of the repository.
           CASE=${{ matrix.docker }} remote_config "$out/config-sauvegarde-2.log" --backup-password-file "$storage/mot-de-passe"
-          if ! grep -q "ouvert avec son mot de passe" "$out/config-sauvegarde-2.log"; then
-            echo "::error title=Dépôt::la station neuve n'a pas rouvert le dépôt de la sauvegarde."
+          if ! grep -q "ouvert avec son mot de passe" "$out/config-sauvegarde-2.log" ||
+            ! grep -q "La sauvegarde de la nuit attend" "$out/config-sauvegarde-2.log"; then
+            echo "::error title=Dépôt::la station neuve n'a pas rouvert le dépôt, ou sa sauvegarde de la nuit n'attend pas."
             exit 1
           fi
-          sudo station restore --remote "$(cat "$storage/sauvegarde")" --yes 2>&1 | tee "$out/restauration-distante.log"
+          if systemctl is-enabled --quiet button-sauvegarde.timer; then
+            echo "::error title=Minuteurs::les minuteurs de la station neuve tournent avant sa restauration."
+            exit 1
+          fi
+          # The last backup of the repository, without an ID, as after the loss
+          # of a machine: the one of the night, noted above.
+          sudo station restore --remote --yes 2>&1 | tee "$out/restauration-distante.log"
+          if ! grep -qF ": $(cat "$storage/sauvegarde"), dans le dépôt." "$out/restauration-distante.log"; then
+            echo "::error title=Restauration hors de la machine::la dernière sauvegarde du dépôt n'est pas celle de la nuit, $(cat "$storage/sauvegarde")."
+            exit 1
+          fi
           # shellcheck disable=SC2024
           sudo docker compose exec -T radiotomate-interface python3 - <"$RUNNER_TEMP/empreinte.py" >"$out/empreinte-distante.txt"
           if ! diff "$out/empreinte-avant.txt" "$out/empreinte-distante.txt"; then
@@ -543,7 +555,9 @@ jobs:
             echo "::error title=.env::/opt/button/.env n'est pas en 600, à root, après la restauration."
             exit 1
           fi
+          # Restored, the station takes the night back.
           systemctl is-enabled button-sauvegarde.timer button-test-restauration.timer
+          systemctl is-active button-sauvegarde.timer button-test-restauration.timer
           sudo station status 2>&1 | tee "$out/status-apres-2.log"
           sudo scripts/smoke.sh http://127.0.0.1:30126 http://127.0.0.1:18000/radio.mp3
           if grep -rqF -e "$(cat "$RUNNER_TEMP/admin-avant")" -e "$(cat "$storage/mot-de-passe")" "$out"; then
