@@ -1,12 +1,20 @@
 """Antenna alerts: silence, playout unreachable, heartbeat lost, live slot empty,
-Icecast output (local or public relay) disconnected.
+Icecast output (local or public relay) disconnected, disk almost full.
 
 Runs inside the scheduler process, polls Liquidsoap ``/health`` and the runtime
 metrics, and notifies once per incident (plus a recovery note) through:
 
 * a generic JSON webhook (``alerts.webhook_url``),
 * a Vikunja task (``alerts.vikunja``: url, project_id, label_id, token *or*
-  username/password).
+  username/password),
+* ntfy, a notification on a phone (``alerts.ntfy``: the topic's url, and a
+  token for a protected topic),
+* an e-mail (``alerts.email``: recipients, sender, SMTP server and account),
+  over TLS only: implicit on port 465, STARTTLS, required, on any other.
+
+A target that fails never stops the others. On a station, ``station config``
+sets ntfy and the e-mail in ``.env``, and ``radiotomate-init`` writes them
+here: the loop reads this block again when the file changes, without a restart.
 
 Configuration (``radiotomate.yaml``)::
 
@@ -17,12 +25,24 @@ Configuration (``radiotomate.yaml``)::
       heartbeat_max_age_seconds: 10
       cooldown_seconds: 900
       live_grace_seconds: 90
+      disk_min_free_percent: 10
+      disk_min_free_gb: 10
       webhook_url: ""
       vikunja:
         url: "http://127.0.0.1:3456"
         project_id: 1
         label_id: 0
         username: "radio-bot"
+        password: "…"
+      station: "radio.example"
+      ntfy:
+        url: "https://ntfy.sh/button-0123456789abcdef01234567"
+        token: ""
+      email:
+        to: ["technique@radio.example"]
+        from: "alertes@radio.example"
+        server: "smtp.radio.example:587"
+        user: "alertes@radio.example"
         password: "…"
 
 EF-01 (``live_absent``): a weekly live slot (``Emission`` scope ``weekly``) is
@@ -31,6 +51,11 @@ and the antenna is held by the safety net — the daypart clock (or its
 fallback cart). The incident names the slot and what is actually playing, and
 resolves when the encoder connects or the slot ends. Nothing is pushed: the
 net is the clock, by construction, never silence.
+
+``disk``: the disk of the sound bank, or of the engine's data, has less than
+``disk_min_free_percent`` of its size free, and less than
+``disk_min_free_gb`` gigabytes, as ``/system/disk.json`` measures it. It
+resolves once a tenth more is free again.
 """
 
 from __future__ import annotations
@@ -38,9 +63,15 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+import shutil
+import smtplib
 import socket
+import ssl
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
+from email.message import EmailMessage
+from email.utils import formatdate, make_msgid
 from pathlib import Path
 from time import time
 
@@ -65,6 +96,96 @@ DEFAULT_HEARTBEAT_MAX_AGE = 10.0
 DEFAULT_COOLDOWN = 900.0
 DEFAULT_LIVE_GRACE = 90.0
 PLAYOUT_DOWN_AFTER = 3  # consecutive failed /health polls
+# Disk almost full: less than this share of the disk free, and less than this
+# many gigabytes. Both, so that neither a small VPS nor a big disk alerts too
+# early. Once open, the incident waits for a tenth more room to resolve.
+DEFAULT_DISK_FREE_PERCENT = 10.0
+DEFAULT_DISK_FREE_GB = 10.0
+DISK_RESOLVE_MARGIN = 1.1
+GIB = 1024**3
+# SMTP: implicit TLS on this port, STARTTLS (required) on any other.
+SMTPS_PORT = 465
+DEFAULT_SMTP_PORT = 587
+SEND_TIMEOUT = 20.0
+
+# What a phone or an inbox shows: the incident, then its end.
+HEADLINES = {
+    "silence": ("Silence à l'antenne", "Le son est revenu"),
+    "playout_down": ("Le playout ne répond plus", "Le playout répond de nouveau"),
+    "heartbeat": ("Battement de Liquidsoap perdu", "Battement de Liquidsoap retrouvé"),
+    "icecast_down": (
+        "Le flux ne part plus vers Icecast",
+        "Le flux repart vers Icecast",
+    ),
+    "live_absent": ("Direct sans encodeur", "Fin de l'alerte : direct sans encodeur"),
+    "agenda": (
+        "Une diffusion de l'Agenda ne peut pas passer",
+        "Fin de l'alerte de l'Agenda",
+    ),
+    "disk": ("Disque presque plein", "Le disque a de nouveau de la place"),
+}
+
+
+def headline(kind: str, resolved: bool, station: str = "") -> str:
+    """The title of an incident on a phone, or of its e-mail."""
+    opened, closed = HEADLINES.get(kind, (kind, f"Fin de l'alerte : {kind}"))
+    text = closed if resolved else opened
+    return f"{text} · {station}" if station else text
+
+
+def duration_label(seconds: float) -> str:
+    total = max(0, int(round(seconds)))
+    if total < 60:
+        return f"{total} s"
+    minutes, rest = divmod(total, 60)
+    if minutes < 60:
+        return f"{minutes} min {rest:02d} s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours} h {minutes:02d} min"
+
+
+def gib_label(size: float) -> str:
+    """Bytes in gigabytes, the French way, like ``station status``: 1,8 Go."""
+    value = size / GIB
+    text = f"{value:.1f}" if value < 10 else f"{value:.0f}"
+    return text.replace(".", ",") + " Go"
+
+
+def _addresses(raw) -> list[str]:
+    if isinstance(raw, str):
+        items = raw.split(",")
+    elif isinstance(raw, (list, tuple)):
+        items = list(raw)
+    else:
+        return []
+    return [str(item).strip() for item in items if str(item).strip()]
+
+
+def _smtp_server(raw) -> tuple[str, int] | None:
+    """``HOST`` or ``HOST:PORT``, 587 by default."""
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    host, colon, port = text.rpartition(":")
+    if not colon or "]" in port:
+        host, port = text, str(DEFAULT_SMTP_PORT)
+    host = host.strip("[]")
+    try:
+        number = int(port)
+    except ValueError:
+        return None
+    if not host or not 0 < number < 65536:
+        return None
+    return host, number
+
+
+def _ntfy_topic(raw) -> tuple[str, str] | None:
+    """The server and the topic of ``https://ntfy.sh/topic``."""
+    url = str(raw or "").strip().rstrip("/")
+    server, slash, topic = url.rpartition("/")
+    if not slash or not topic or not server.partition("://")[2]:
+        return None
+    return server, topic
 
 
 def _float(raw, default: float) -> float:
@@ -83,13 +204,24 @@ class AlertSettings:
     heartbeat_max_age: float = DEFAULT_HEARTBEAT_MAX_AGE
     cooldown: float = DEFAULT_COOLDOWN
     live_grace: float = DEFAULT_LIVE_GRACE
+    disk_free_percent: float = DEFAULT_DISK_FREE_PERCENT
+    disk_free_gb: float = DEFAULT_DISK_FREE_GB
     webhook_url: str = ""
     vikunja: dict = field(default_factory=dict)
+    # The station's name in the title of a notification or an e-mail: its
+    # domain, on a station.
+    station: str = ""
+    ntfy: dict = field(default_factory=dict)
+    email: dict = field(default_factory=dict)
 
     @classmethod
     def from_config(cls, raw) -> AlertSettings:
         raw = raw if isinstance(raw, dict) else {}
-        vikunja = raw.get("vikunja") if isinstance(raw.get("vikunja"), dict) else {}
+
+        def section(name: str) -> dict:
+            value = raw.get(name)
+            return dict(value) if isinstance(value, dict) else {}
+
         return cls(
             enabled=bool(raw.get("enabled", bool(raw))),
             interval=max(
@@ -101,13 +233,55 @@ class AlertSettings:
             ),
             cooldown=_float(raw.get("cooldown_seconds"), DEFAULT_COOLDOWN),
             live_grace=_float(raw.get("live_grace_seconds"), DEFAULT_LIVE_GRACE),
+            disk_free_percent=_float(
+                raw.get("disk_min_free_percent"), DEFAULT_DISK_FREE_PERCENT
+            ),
+            disk_free_gb=_float(raw.get("disk_min_free_gb"), DEFAULT_DISK_FREE_GB),
             webhook_url=str(raw.get("webhook_url") or "").strip(),
-            vikunja=dict(vikunja),
+            vikunja=section("vikunja"),
+            station=str(raw.get("station") or "").strip(),
+            ntfy=section("ntfy"),
+            email=section("email"),
         )
 
     @property
+    def ntfy_target(self) -> tuple[str, str] | None:
+        """The ntfy server and topic, when set."""
+        return _ntfy_topic(self.ntfy.get("url"))
+
+    @property
+    def email_target(self) -> dict | None:
+        """The e-mail, when complete: recipients, sender and SMTP server."""
+        recipients = _addresses(self.email.get("to"))
+        server = _smtp_server(self.email.get("server"))
+        sender = str(self.email.get("from") or "").strip()
+        if not recipients or server is None or not sender:
+            return None
+        return {
+            "to": recipients,
+            "from": sender,
+            "host": server[0],
+            "port": server[1],
+            "user": str(self.email.get("user") or ""),
+            "password": str(self.email.get("password") or ""),
+        }
+
+    @property
+    def targets(self) -> list[str]:
+        names = []
+        if self.webhook_url:
+            names.append("webhook")
+        if self.vikunja.get("url"):
+            names.append("vikunja")
+        if self.ntfy_target:
+            names.append("ntfy")
+        if self.email_target:
+            names.append("e-mail")
+        return names
+
+    @property
     def has_target(self) -> bool:
-        return bool(self.webhook_url) or bool(self.vikunja.get("url"))
+        return bool(self.targets)
 
 
 @dataclass
@@ -196,6 +370,45 @@ def live_slot_without_encoder(
     return None
 
 
+def disk_paths(data_root: Path | str) -> list[tuple[str, str]]:
+    """The disks to watch: the sound bank, as ``/system/disk.json`` reads it,
+    and the engine's data."""
+    media = os.environ.get("MEDIA_ROOT", "/media").strip() or "/media"
+    return [("la banque de sons", media), ("les données du moteur", str(data_root))]
+
+
+def disk_almost_full(
+    paths: list[tuple[str, str]],
+    free_percent: float,
+    free_gb: float,
+    already_open: bool = False,
+) -> str | None:
+    """The incident detail when one of these disks is almost full: less than
+    ``free_percent`` of it free, and less than ``free_gb`` gigabytes. An open
+    incident waits for a tenth more room. A disk is read once, and a path that
+    does not read is skipped."""
+    margin = DISK_RESOLVE_MARGIN if already_open else 1.0
+    seen: set[int] = set()
+    for label, path in paths:
+        try:
+            device = Path(path).stat().st_dev
+            usage = shutil.disk_usage(path)
+        except OSError:
+            continue
+        if device in seen or usage.total <= 0:
+            continue
+        seen.add(device)
+        if (
+            usage.free < usage.total * free_percent / 100 * margin
+            and usage.free < free_gb * GIB * margin
+        ):
+            return (
+                f"{gib_label(usage.free)} libres sur {gib_label(usage.total)},"
+                f" sur le disque de {label} ({path})"
+            )
+    return None
+
+
 class AlertMonitor:
     """Evaluate the antenna state and keep one open incident per kind."""
 
@@ -213,6 +426,8 @@ class AlertMonitor:
         self.live_slots: list[LiveSlot | DatedLiveSlot] = []
         # Agenda: sets due soon that cannot play, recent misses.
         self.agenda_issues: list[str] = []
+        # The disks to watch, with their label: none, unless the loop sets them.
+        self.disk_paths: list[tuple[str, str]] = []
         # Open incidents (and their Vikunja tasks) survive a scheduler restart
         # so the recovery closes the right task instead of leaving it open.
         self.state_path = state_path
@@ -309,6 +524,14 @@ class AlertMonitor:
         if heartbeat_age is None or heartbeat_age > self.settings.heartbeat_max_age:
             age = "jamais" if heartbeat_age is None else f"{heartbeat_age:.0f} s"
             active["heartbeat"] = f"Dernier battement Liquidsoap : {age}"
+        disk = disk_almost_full(
+            self.disk_paths,
+            self.settings.disk_free_percent,
+            self.settings.disk_free_gb,
+            already_open="disk" in self.open,
+        )
+        if disk:
+            active["disk"] = disk
         return active
 
     async def step(
@@ -354,7 +577,7 @@ class AlertMonitor:
         body = (
             incident.detail
             if not resolved
-            else (f"{incident.detail}\nDurée : {lasted:.0f} s")
+            else (f"{incident.detail}\nDurée : {duration_label(lasted)}")
         )
         _log.warning("%s: %s", title, body.replace("\n", " | "))
         if self.notifier is None:
@@ -372,13 +595,19 @@ class AlertMonitor:
 
 
 class Notifier:
-    """Fan-out to the webhook and/or Vikunja."""
+    """Fan-out to the webhook, Vikunja, ntfy and the e-mail. Its settings may
+    change between two alerts: the loop reloads them."""
 
     def __init__(
-        self, settings: AlertSettings, client: httpx.AsyncClient | None = None
+        self,
+        settings: AlertSettings,
+        client: httpx.AsyncClient | None = None,
+        ssl_context: ssl.SSLContext | None = None,
     ):
         self.settings = settings
         self.client = client or httpx.AsyncClient(timeout=10.0)
+        # The certificates the SMTP server is checked against: the system's.
+        self.ssl_context = ssl_context
         self._vikunja_jwt: str | None = None
         # kind -> open Vikunja task id, so the recovery closes it instead of
         # piling a second "[RÉTABLI]" task next to the alert.
@@ -386,7 +615,9 @@ class Notifier:
 
     async def send(
         self, *, kind: str, resolved: bool, title: str, body: str, host: str
-    ) -> None:
+    ) -> list[str]:
+        """Sends to every target, each on its own: one that fails, logged,
+        never stops the others. Returns the targets that failed."""
         payload = {
             "kind": kind,
             "resolved": resolved,
@@ -395,14 +626,86 @@ class Notifier:
             "host": host,
             "at": datetime.now().isoformat(timespec="seconds"),
         }
-        if self.settings.webhook_url:
-            await self._webhook(payload)
-        if self.settings.vikunja.get("url"):
-            await self._vikunja(payload)
+        senders = {
+            "webhook": self._webhook,
+            "vikunja": self._vikunja,
+            "ntfy": self._ntfy,
+            "e-mail": self._email,
+        }
+        failed = []
+        for name in self.settings.targets:
+            try:
+                await senders[name](payload)
+            except Exception as error:
+                failed.append(name)
+                _log.warning(
+                    "alerts: %s not sent through %s: %s",
+                    kind,
+                    name,
+                    str(error) or type(error).__name__,
+                )
+        return failed
+
+    def _headline(self, payload: dict) -> str:
+        return headline(payload["kind"], payload["resolved"], self.settings.station)
 
     async def _webhook(self, payload: dict) -> None:
         response = await self.client.post(self.settings.webhook_url, json=payload)
         response.raise_for_status()
+
+    async def _ntfy(self, payload: dict) -> None:
+        """A notification on a phone: ntfy's JSON, posted to the server's root,
+        carries the French title whole, where a header would not."""
+        server, topic = self.settings.ntfy_target or ("", "")
+        token = str(self.settings.ntfy.get("token") or "").strip()
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+        message = {
+            "topic": topic,
+            "title": self._headline(payload),
+            "message": payload["body"],
+            "priority": 3 if payload["resolved"] else 4,
+            "tags": ["white_check_mark" if payload["resolved"] else "warning"],
+        }
+        response = await self.client.post(
+            f"{server}/", json=message, headers=headers, timeout=SEND_TIMEOUT
+        )
+        response.raise_for_status()
+
+    async def _email(self, payload: dict) -> None:
+        target = self.settings.email_target
+        if target is None:
+            return
+        station = self.settings.station
+        message = EmailMessage()
+        message["Subject"] = self._headline(payload)
+        message["From"] = target["from"]
+        message["To"] = ", ".join(target["to"])
+        message["Date"] = formatdate(localtime=True)
+        message["Message-ID"] = make_msgid(domain=station or None)
+        message.set_content(
+            f"{payload['body']}\n\n"
+            f"Une alerte de la station{' ' + station if station else ''}, envoyée"
+            " par BUTTON. Pour ne plus la recevoir, sur la machine de la station :"
+            ' station config --alert-email ""\n'
+        )
+        await asyncio.to_thread(self._smtp_send, target, message)
+
+    def _smtp_send(self, target: dict, message: EmailMessage) -> None:
+        context = self.ssl_context or ssl.create_default_context()
+        host, port = target["host"], target["port"]
+        if port == SMTPS_PORT:
+            client = smtplib.SMTP_SSL(host, port, timeout=SEND_TIMEOUT, context=context)
+        else:
+            client = smtplib.SMTP(host, port, timeout=SEND_TIMEOUT)
+        with client:
+            if port != SMTPS_PORT:
+                # Required: a server without it fails, nothing goes in clear.
+                client.starttls(context=context)
+            if target["user"]:
+                client.login(target["user"], target["password"])
+            client.send_message(
+                message, from_addr=target["from"], to_addrs=target["to"]
+            )
 
     async def _vikunja_headers(self, *, force_login: bool = False) -> dict:
         conf = self.settings.vikunja
@@ -558,24 +861,102 @@ async def load_agenda_issues(app) -> list[str]:
         return await agenda.agenda_issues(session, now_paris())
 
 
-async def loop(app) -> None:
-    settings = AlertSettings.from_config(app.config.get("ALERTS"))
+class ConfigWatch:
+    """The ``alerts:`` block of ``radiotomate.yaml``, read again when the file
+    changes: ``station config`` sets ntfy and the e-mail through
+    ``radiotomate-init``, without restarting the scheduler.
+
+    radiotomate-init writes the file in place, since nowplaying and the
+    catalogue mount it alone: a write could be read half done. A change is
+    read once the file has stayed the same for a whole turn of the loop."""
+
+    def __init__(self, path: Path | None):
+        self.path = path
+        self.seen = self._stamp()
+        self.pending: int | None = None
+
+    def _stamp(self) -> int | None:
+        if self.path is None:
+            return None
+        try:
+            return self.path.stat().st_mtime_ns
+        except OSError:
+            return None
+
+    def changed(self) -> dict | None:
+        """The new ``alerts:`` block, ``{}`` without one, or ``None`` when the
+        file has not changed, or not settled yet."""
+        stamp = self._stamp()
+        if stamp is None or stamp == self.seen:
+            self.pending = None
+            return None
+        if stamp != self.pending:
+            self.pending = stamp
+            return None
+        self.seen = stamp
+        self.pending = None
+        from ruamel.yaml import YAML
+
+        try:
+            data = YAML(typ="safe").load(self.path.read_text())
+        except Exception:
+            _log.warning("alerts: %s does not read, settings kept", self.path)
+            return None
+        if not isinstance(data, dict):
+            _log.warning("alerts: %s does not read, settings kept", self.path)
+            return None
+        raw = data.get("alerts")
+        return dict(raw) if isinstance(raw, dict) else {}
+
+
+def config_path(app) -> Path:
+    """The engine's configuration: ``RTCONFIG``, or the one of its data."""
+    raw = os.environ.get("RTCONFIG", "").strip()
+    return Path(raw) if raw else Path(app.config["DATA_ROOT"]) / "radiotomate.yaml"
+
+
+def _announce(settings: AlertSettings, *, reloaded: bool = False) -> None:
     if not settings.enabled:
+        _log.info("alerts off%s", " (reloaded)" if reloaded else "")
         return
-    notifier = Notifier(settings) if settings.has_target else None
-    state_path = Path(app.config["DATA_ROOT"]) / "alerts.json"
-    monitor = AlertMonitor(settings, notifier, state_path=state_path)
-    monitor.load_state()
-    app.extensions["alert_monitor"] = monitor
     _log.info(
-        "alerts on: silence>=%.0fs heartbeat>%.0fs targets=%s",
+        "alerts on%s: silence>=%.0fs heartbeat>%.0fs targets=%s",
+        " (reloaded)" if reloaded else "",
         settings.silence_seconds,
         settings.heartbeat_max_age,
-        "webhook,vikunja" if notifier else "log",
+        ",".join(settings.targets) or "log",
     )
+
+
+async def loop(app) -> None:
+    settings = AlertSettings.from_config(app.config.get("ALERTS"))
+    notifier = Notifier(settings)
+    state_path = Path(app.config["DATA_ROOT"]) / "alerts.json"
+    monitor = AlertMonitor(settings, notifier, state_path=state_path)
+    monitor.disk_paths = disk_paths(app.config["DATA_ROOT"])
+    if settings.enabled:
+        monitor.load_state()
+    watch = ConfigWatch(config_path(app))
+    _announce(settings)
     while True:
         try:
             await or_shutdown(asyncio.sleep(settings.interval))
+            raw = watch.changed()
+            if raw is not None:
+                fresh = AlertSettings.from_config(raw)
+                if fresh != settings:
+                    if fresh.enabled != settings.enabled:
+                        # Switched on or off: nothing open survives, and a
+                        # recovery never goes out for an incident of before.
+                        monitor.open.clear()
+                        monitor.playout_failures = 0
+                        monitor.save_state()
+                    settings = monitor.settings = notifier.settings = fresh
+                    _announce(settings, reloaded=True)
+            if not settings.enabled:
+                app.extensions.pop("alert_monitor", None)
+                continue
+            app.extensions["alert_monitor"] = monitor
             try:
                 monitor.live_slots = await load_live_slots(app)
             except Exception:
