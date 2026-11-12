@@ -119,7 +119,7 @@ Il faut Docker, rien d'autre. Le banc monte le script dans le Liquidsoap de l'im
 
 Les sons du banc sont des balayages, fabriqués par `sounds.py` : aucune trame n'y ressemble à la suivante. Une trame répétée ne peut donc venir que d'une file figée, comme celle que laissait le fondu de l'auto-DJ : l'antenne bourdonnait, sans rien au journal de Liquidsoap ([les changements du moteur](moteur/changements-radiotomate.md#conducteur-et-vérité-dantenne)).
 
-Le banc prend des ports libres, et se défait à la fin, volumes compris. La CI le lance avant de construire les images du moteur ([`engine.yml`](../.github/workflows/engine.yml)) : un script qui ne joue pas n'atteint pas le registre.
+Le banc prend des ports libres, et se défait à la fin, avec son volume et les deux images qu'il a construites. La CI le lance avant de construire les images du moteur ([`engine.yml`](../.github/workflows/engine.yml)) : un script qui ne joue pas n'atteint pas le registre.
 
 ## Aucune donnée de station
 

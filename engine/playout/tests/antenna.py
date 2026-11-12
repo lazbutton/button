@@ -120,13 +120,17 @@ class Bench:
         return done.stdout
 
     def address(self, service: str, port: int) -> str:
-        return "http://" + self.compose("port", service, str(port)).strip()
+        # The last line: Compose may warn before it.
+        lines = self.compose("port", service, str(port)).strip().splitlines()
+        return "http://" + lines[-1].strip()
 
     def up(self) -> None:
         self.compose("up", "-d", "--build", "--quiet-pull")
 
     def down(self) -> None:
-        self.compose("down", "-v", "--remove-orphans", check=False)
+        # With the volume of the sounds, and the two images built under the name
+        # of this run: nothing of it stays on the machine.
+        self.compose("down", "-v", "--rmi", "local", "--remove-orphans", check=False)
 
     def log(self, service: str) -> str:
         return self.compose("logs", "--no-color", "--tail", "60", service, check=False)
@@ -205,6 +209,7 @@ def scenario(playout: Playout) -> None:
     """Pushes the titles as the scheduler does, and a jingle on the second one."""
     pushed: list[str] = []
     jingle_at: float | None = None
+    jingle_sent = False
     ending: float | None = None
     deadline = time.monotonic() + LIMIT_SECONDS
     while time.monotonic() < deadline:
@@ -218,11 +223,9 @@ def scenario(playout: Playout) -> None:
         if jingle_at is None and TITLES[1] in aired:
             jingle_at = time.monotonic() + 2
         elif (
-            jingle_at is not None
-            and JINGLE not in pushed
-            and time.monotonic() >= jingle_at
+            jingle_at is not None and not jingle_sent and time.monotonic() >= jingle_at
         ):
-            pushed.append(JINGLE)
+            jingle_sent = True
             playout.push("jingles", JINGLE)
         # The last title has started: leave it the time to end.
         if ending is None and TITLES[-1] in aired and JINGLE in aired:
@@ -289,8 +292,8 @@ def verdict(pcm: bytes, aired: list[str], beats: list[dict]) -> list[str]:
         for at, length in stalls
     ]
     failures += [
-        f"le temps restant de « {title} » n'a pas bougé pendant {beats} s"
-        for title, beats in stuck(beats)
+        f"le temps restant de « {title} » n'a pas bougé pendant {still} s"
+        for title, still in stuck(beats)
     ]
     failures += [
         f"« {name} » n'est jamais passé à l'antenne"
