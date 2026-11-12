@@ -10,10 +10,12 @@ name: version
 #      rebuilt: they refuse it;
 #   3. once all of them are in the registry, the release page, with the notes
 #      and the files of a station: station, the script, and station.tar.gz,
-#      the station's folder at this version, with their SHA256SUMS. Then X.Y
-#      and stable on the same images. stable never moves back to an older
-#      version (scripts/version.py), and station install takes the files of
-#      the version marked Latest, the one that takes stable;
+#      the station's folder at this version, with their SHA256SUMS; and
+#      button-X.Y.Z-source.tar.gz, the code of the version, which the
+#      console's image serves too (AGPL). Then X.Y and stable on the same
+#      images. stable never moves back to an older version
+#      (scripts/version.py), and station install takes the files of the
+#      version marked Latest, the one that takes stable;
 #   4. Trivy on the images: after the publication, never before.
 # A run whose tag was moved since publishes nothing. "Re-run all jobs" on a
 # published version rebuilds nothing, and only finishes the publication. How
@@ -214,16 +216,20 @@ jobs:
           # they point to the files of the version.
           python3 scripts/version.py notes "$VERSION" \
             --liens "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/" > "$RUNNER_TEMP/notes.md"
-          # The files of a station go on the page while it is a draft: a
-          # version is never public, nor Latest, without them. A re-run
-          # replaces them with the same bytes.
+          # The files of a station, and the code of the version, go on the
+          # page while it is a draft: a version is never public, nor Latest,
+          # without them. A re-run replaces them with the same bytes. The
+          # code comes from the same commit, by the same command, as the
+          # archive console.yml put in the console's image.
           python3 scripts/version.py station "$VERSION" "$RUNNER_TEMP/station"
+          python3 scripts/version.py source "$VERSION" "$RUNNER_TEMP/source"
           if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release create "$GITHUB_REF_NAME" --verify-tag --draft --title "BUTTON $VERSION" \
               --notes-file "$RUNNER_TEMP/notes.md"
           fi
           gh release upload "$GITHUB_REF_NAME" --clobber \
-            "$RUNNER_TEMP/station/station" "$RUNNER_TEMP/station/station.tar.gz" "$RUNNER_TEMP/station/SHA256SUMS"
+            "$RUNNER_TEMP/station/station" "$RUNNER_TEMP/station/station.tar.gz" "$RUNNER_TEMP/station/SHA256SUMS" \
+            "$RUNNER_TEMP/source/button-$VERSION-source.tar.gz"
           gh release edit "$GITHUB_REF_NAME" --draft=false --title "BUTTON $VERSION" \
             --notes-file "$RUNNER_TEMP/notes.md" --latest="$latest"
           echo "extra=$extra" >> "$GITHUB_OUTPUT"

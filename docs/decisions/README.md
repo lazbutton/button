@@ -23,6 +23,7 @@ Une décision s'écrit quand un choix coûte cher à défaire, ou quand quelqu'u
 | [0015](0015-le-flux-passe-par-caddy.md) | Le flux passe par Caddy, sur le domaine de la console |
 | [0016](0016-le-dossier-vient-de-sa-version.md) | Le dossier d'une station vient des fichiers joints à sa version |
 | [0017](0017-une-fiche-ne-s-ecrit-qu-acceptee.md) | Une fiche se propose, et ne s'écrit qu'acceptée |
+| [0018](0018-la-station-sert-son-code-source.md) | La station sert le code source de sa version |
 
 ## Le gabarit
 

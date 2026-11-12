@@ -3,6 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { SOURCE_ARCHIVE, SOURCE_PATH } from "./sourceCode.ts";
 import { isTooManyAttempts } from "./tooManyAttempts.ts";
 
 // En prod, nginx ne relaie vers le moteur qu'une liste de chemins. Une route
@@ -83,6 +84,30 @@ test("le catalogue et les envois demandent une session à nginx", () => {
   assert.ok(paths.includes("/library/") && paths.includes("/tus/"), `blocs trouvés : ${paths.join(", ")}`);
   const open = blocks.filter(([, body]) => !/^\s*auth_request\s+\/\S*;/m.test(body)).map(([path]) => path);
   assert.deepEqual(open, [], "auth_request manquant dans console/docker/nginx.conf.template");
+});
+
+// Le code de la version en service : la console le lit sous SOURCE_PATH, et nginx
+// le sert là, depuis le dossier où le Dockerfile le pose, à une session seulement.
+test("nginx sert le code de la version à une session, depuis le dossier de l'image", () => {
+  const block = locationBlocks().find(([path]) => path === SOURCE_PATH);
+  assert.ok(block, `bloc ${SOURCE_PATH} introuvable dans console/docker/nginx.conf.template`);
+  const [, body, modifier] = block;
+  // Sans ^~, un bloc regex l'emporterait sur le nom qu'il reconnaît, comme un .js ou
+  // un .svg posé là : servi sans session.
+  assert.equal(modifier, "^~", `^~ manquant devant ${SOURCE_PATH} dans console/docker/nginx.conf.template`);
+  assert.match(body, /^\s*auth_request \/_session;$/m);
+  const folder = body.match(/^\s*alias (\S+\/);$/m)?.[1];
+  assert.ok(folder, `alias manquant dans le bloc ${SOURCE_PATH}`);
+  // Sous la racine du site, le bloc / le servirait aussi, sans session.
+  const root = readFileSync(TEMPLATE, "utf8").match(/^\s*root (\S+);$/m)?.[1];
+  assert.ok(root && !folder.startsWith(`${root}/`), `${folder} : hors de ${root}`);
+  const dockerfile = readFileSync(DOCKERFILE, "utf8");
+  const image = dockerfile.match(/^COPY --from=source \/ (\S+)$/m)?.[1];
+  assert.equal(image, folder, "le Dockerfile ne pose pas le code de la version où nginx le sert");
+  // Le nom fixe que vise la console : le Dockerfile le donne à l'archive, dans ce dossier.
+  const link = dockerfile.match(/^RUN cd (\S+) \\\n[\s\S]*?\bln -s "\$archive" (\S+);/m);
+  assert.ok(link, "le Dockerfile ne donne pas son nom fixe à l'archive");
+  assert.equal(`${link[1].replace(/\/?$/, "/")}${link[2]}`, `${folder}${SOURCE_ARCHIVE.slice(SOURCE_PATH.length)}`);
 });
 
 test("nginx freine la connexion par adresse, et passe l'adresse du client au moteur", () => {

@@ -1,7 +1,8 @@
 import type { Page, Route } from "@playwright/test";
+import { DEFAULT_SOURCE_URL } from "../src/api/sourceCode.ts";
 import { withStation } from "../src/api/station.ts";
 import type { PublicStation } from "../src/api/types.ts";
-import { DEFAULT_SOURCE_URL, type Brand } from "../src/lib/brand.ts";
+import type { Brand } from "../src/lib/brand.ts";
 import { monitorSources, sourceById } from "../src/lib/monitorSource.ts";
 import { antenne, expect, seConnecter, tenirLAntenne, test } from "./banc.ts";
 import { engineRoutes } from "./routes.ts";
@@ -374,14 +375,89 @@ test("le menu du compte : qui est connecté, « Mon compte », puis la déconnex
   await expect(page.getByRole("button", { name: "Se connecter" })).toBeVisible();
 });
 
-test("le lien « Code source » ouvre les sources dans un nouvel onglet", async ({ page, context }) => {
+// L'image de la console sert le code de sa version sous /code-source/, à une
+// session : source.json, qui nomme l'archive, et l'archive, sous un nom fixe
+// (Dockerfile, docker/nginx.conf.template). vite preview n'en sert pas : le
+// parcours joue l'image, en version 1.0.0, ou celle que donne `version`.
+async function servirLeCode(page: Page, version = () => "1.0.0"): Promise<void> {
+  await page.route("**/code-source/source.json", (route) =>
+    route.fulfill({
+      json: { version: version(), commit: "da35feba8b2719e51c974ac444a7e336b8db3b98", file: `button-${version()}-source.tar.gz` },
+    }),
+  );
+  await page.route("**/code-source/source.tar.gz", (route) =>
+    route.fulfill({ contentType: "application/octet-stream", body: Buffer.from(`le code de la version ${version()}`) }),
+  );
+}
+
+test("le lien « Code source » télécharge le code de la version en service, pour un animateur", async ({ page }) => {
+  await servirLeCode(page);
   await seConnecter(page, "animateur");
   await barre(page).getByRole("button", { name: "AN, compte animateur : menu" }).click();
   const lien = page.getByRole("menuitem", { name: "Code source AGPL" });
-  // L'adresse vient de la marque, sinon du dépôt de BUTTON.
+  await expect(lien).toHaveAttribute("href", "/code-source/source.tar.gz");
+  await expect(lien).toHaveAttribute("download", "button-1.0.0-source.tar.gz");
+
+  // Au clavier : Entrée sur le lien du menu.
+  const telechargement = page.waitForEvent("download", { timeout: 5_000 });
+  await lien.focus();
+  await page.keyboard.press("Enter");
+  const archive = await telechargement;
+  expect(archive.suggestedFilename()).toBe("button-1.0.0-source.tar.gz");
+  expect(new URL(archive.url()).pathname).toBe("/code-source/source.tar.gz");
+  // La console reste là.
+  await expect(antenne(page)).toBeVisible();
+});
+
+test("après une mise à jour de la station, le lien d'une page restée ouverte suit la version en service", async ({
+  page,
+}) => {
+  let version = "1.0.0";
+  await servirLeCode(page, () => version);
+  await seConnecter(page, "animateur");
+  const compte = barre(page).getByRole("button", { name: "AN, compte animateur : menu" });
+  const lien = page.getByRole("menuitem", { name: "Code source AGPL" });
+  await compte.click();
+  await expect(lien).toHaveAttribute("download", "button-1.0.0-source.tar.gz");
+  await page.keyboard.press("Escape");
+  // Le menu se ferme. Rouvert avant la fin de sa fermeture, il se refermerait aussitôt.
+  await expect(page.getByRole("menu")).toBeHidden();
+
+  // La station passe en 1.1.0, sans que la page se recharge.
+  version = "1.1.0";
+  await compte.click();
+  await expect(lien).toHaveAttribute("download", "button-1.1.0-source.tar.gz");
+  await expect(lien).toHaveAttribute("href", "/code-source/source.tar.gz");
+});
+
+test("une version modifiée mène à son propre code, réglé dans Réglages → Station", async ({ page, context }) => {
+  const code = "https://code.radio.example/button";
+  await servirLeCode(page);
+  await page.route("**/public/station.json", (route) => route.fulfill({ json: { ...SANS_REGLAGE, source_url: code } }));
+  await seConnecter(page, "animateur");
+  await barre(page).getByRole("button", { name: "AN, compte animateur : menu" }).click();
+  const lien = page.getByRole("menuitem", { name: "Code source AGPL" });
+  // Le réglage passe devant l'archive de l'image, qui n'est pas ce code-là.
+  await expect(lien).toHaveAttribute("href", code);
+  await expect(lien).not.toHaveAttribute("download");
+
+  const onglet = context.waitForEvent("page", { timeout: 5_000 });
+  await lien.click();
+  const sources = await onglet;
+  await expect(sources).toHaveURL(code);
+  await expect(antenne(page)).toBeVisible();
+  await sources.close();
+});
+
+test("sans archive servie, le lien « Code source » ouvre le dépôt dans un nouvel onglet", async ({ page, context }) => {
+  await seConnecter(page, "animateur");
+  await barre(page).getByRole("button", { name: "AN, compte animateur : menu" }).click();
+  const lien = page.getByRole("menuitem", { name: "Code source AGPL" });
+  // Le banc ne sert pas d'archive : l'adresse vient de la marque, sinon du dépôt de BUTTON.
   const marque = (await (await page.request.get("/brand.json")).json()) as { suite?: { sourceUrl?: string } };
   const adresse = marque.suite?.sourceUrl || DEFAULT_SOURCE_URL;
   await expect(lien).toHaveAttribute("href", adresse);
+  await expect(lien).not.toHaveAttribute("download");
 
   const onglet = context.waitForEvent("page", { timeout: 5_000 });
   await lien.click();

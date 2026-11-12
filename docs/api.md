@@ -225,3 +225,12 @@ Un envoi, de la Banque ou d'un invité de l'Agenda, arrive d'abord dans le dossi
 
 `POST /volume-password.json` (via `/library/volume-password.json`), admin seulement, corps `{username, password}` ou `{username, clear: true}`. Pose ou retire le mot de passe du dossier d'un programmateur ou d'un admin. Le mot de passe n'est pas renvoyé. `503` si le partage n'est pas publié, `400` si le compte est un animateur.
 
+### Code source (servi par nginx)
+
+Le lien « Code source » du menu du compte mène au code de la version en service, que l'AGPL doit à chaque personne qui se sert de la console. Ce n'est pas une route du moteur : l'image de la console porte ce code, et son nginx le sert sous `/code-source/`, à une session seulement, comme `/library/` : sans session, `401`, et `500` si le moteur ne répond pas ([ADR 0018](decisions/0018-la-station-sert-son-code-source.md)).
+
+- `GET /code-source/source.json` → `{version, commit, file}` : la version, `X.Y.Z` ou `main`, le commit, et le nom de l'archive, comme `button-1.0.0-source.tar.gz`. `scripts/version.py source` l'écrit à côté de l'archive.
+- `GET /code-source/source.tar.gz` → l'archive, ce que `git archive` fait du commit, sous un nom qui ne change pas d'une version à l'autre : le Dockerfile le lui donne. Elle répond aussi sous son nom, `GET /code-source/{file}`. La version joint le même code à sa page, fait par la même commande, depuis le même commit.
+
+Une image construite sans le code, par `docker compose build` par exemple, répond `404`. La console lit `source.json` une fois connectée, puis à chaque ouverture du menu du compte (`console/src/api/sourceCode.ts`) : une mise à jour de la station change l'archive sous une page restée ouverte. Sans réponse sûre, elle garde ce qu'elle savait. Le lien télécharge `source.tar.gz`, enregistré sous le nom `file` ; sans archive, il mène au dépôt de BUTTON. Le réglage `source_url` de la station passe devant les deux : une station qui sert une version modifiée y donne l'adresse de son code.
+

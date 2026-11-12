@@ -63,6 +63,6 @@ Les contributions sont bienvenues : signalements, corrections, traductions, docu
 
 ## Licence et crédits
 
-BUTTON est distribué sous licence [GNU Affero General Public License v3.0 ou ultérieure](LICENSE). Si vous faites tourner une version modifiée pour d'autres personnes, par exemple en hébergeant une station, vous devez leur donner accès à son code source.
+BUTTON est distribué sous licence [GNU Affero General Public License v3.0 ou ultérieure](LICENSE). Si vous faites tourner une version modifiée pour d'autres personnes, par exemple en hébergeant une station, vous devez leur donner accès à son code source. La console le propose à chaque compte : son lien « Code source » télécharge le code de la version en service, que la station sert elle-même. Pour une version modifiée, donner l'adresse de son code dans **Réglages → Station**.
 
 Le moteur dérive de [Radiotomate](https://git.sr.ht/~martink/radiotomate), écrit par Martin Kirchgessner. Auteurs et ressources incluses : [AUTHORS.md](AUTHORS.md).
