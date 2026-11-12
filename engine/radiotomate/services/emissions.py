@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import logging
+from datetime import date, datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
+from radiotomate.domain.agenda import paris
 from radiotomate.domain.autodj import require_expected_version
 from radiotomate.domain.emission import (
     SCOPE_SESSION,
@@ -12,6 +14,7 @@ from radiotomate.domain.emission import (
     STATE_ON_AIR,
     STATE_WAITING,
     is_harbor_source,
+    minute_of_day,
     now_paris,
     reject_weekly_overlap,
     validate_title_artist,
@@ -25,6 +28,14 @@ from radiotomate.models.emission import Emission
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session as ormSession
+
+    from radiotomate.models import AgendaDiffusion
+
+_log = logging.getLogger(__name__)
+
+# How far the next live is looked for: the week ahead, as on the Antenne page
+# (next_live_slot, scheduler/antenne.py).
+NEXT_LIVE_DAYS = 7
 
 _on_air_cache: dict[str, dict | None] = {"payload": None}
 
@@ -184,40 +195,99 @@ def _session_current(row: Emission, source: object) -> dict | None:
     }
 
 
-def _next_weekly(rows: list[Emission], now: datetime) -> dict | None:
-    upcoming: list[tuple[datetime, Emission]] = []
-    for row in rows:
-        if (
-            row.day_of_week is None
-            or row.start_minute is None
-            or row.end_minute is None
-        ):
-            continue
-        start_at = weekly_start_at(now, row.day_of_week, row.start_minute)
-        upcoming.append((start_at, row))
-    if not upcoming:
+def _weekly_next_start(
+    row: Emission, now: datetime, blocked: set[tuple[int, date]]
+) -> datetime | None:
+    """When ``row`` starts next after ``now``, but not on a day the Agenda takes
+    from it, within the week ahead."""
+    if row.day_of_week is None or row.start_minute is None or row.end_minute is None:
         return None
-    start_at, row = min(upcoming, key=lambda item: item[0])
-    until = weekly_end_at(start_at, row.end_minute or 0)
+    start = weekly_start_at(now, row.day_of_week, row.start_minute)
+    while (row.id, start.date()) in blocked:
+        start += timedelta(days=7)
+    if start.date() > now_paris(now).date() + timedelta(days=NEXT_LIVE_DAYS):
+        return None
+    return start
+
+
+def _weekly_next(row: Emission, start: datetime) -> dict:
     return {
         "id": row.id,
         "title": row.title,
         "artist": row.artist,
         "scope": SCOPE_WEEKLY,
-        "at": start_at.isoformat(),
-        "until": until.isoformat(),
+        "at": start.isoformat(),
+        "until": weekly_end_at(start, row.end_minute or 0).isoformat(),
         "day_of_week": row.day_of_week,
         "start_minute": row.start_minute,
         "end_minute": row.end_minute,
     }
 
 
+def _dated_next(row: AgendaDiffusion, start: datetime) -> dict:
+    """A dated live, named as when it is on air (``current_dated``). Its Paris
+    day and minute too: a console that does not date it still says when."""
+    return {
+        "id": row.id,
+        "title": row.title,
+        "artist": row.host_username or row.title,
+        "scope": "dated",
+        "kind": row.kind,
+        "at": start.isoformat(),
+        "until": paris(row.ends_at).isoformat(),
+        "day_of_week": start.weekday(),
+        "start_minute": minute_of_day(start),
+    }
+
+
+async def next_live(session: ormSession, now: datetime | None = None) -> dict | None:
+    """The next live to start, the one the Antenne page tells (``next_live_slot``):
+    a weekly show, but not on a day the Agenda cancels it or replaces it with a
+    dated broadcast (``blocked_weekly_days``), or a dated live of the Agenda.
+    Within the week ahead, as there: ``None`` beyond. The live on air is
+    ``current``, not this.
+
+    It reads the Agenda over the week, for the console's list only:
+    ``resolve_emissions``, which runs on each title, reads today's alone.
+    """
+    from radiotomate.services import agenda
+
+    local = now_paris(now)
+    today = local.date()
+    blocked: set[tuple[int, date]] = set()
+    dated: list[AgendaDiffusion] = []
+    if await agenda.agenda_enabled(session):
+        blocked = await agenda.blocked_weekly_days(
+            session, today, today + timedelta(days=NEXT_LIVE_DAYS)
+        )
+        # A day further, as the Antenne page: the dated live that replaces next
+        # week's show, skipped, is the one to tell.
+        dated = await agenda.dated_live_windows(session, local, days=NEXT_LIVE_DAYS + 1)
+    upcoming: list[tuple[datetime, dict]] = []
+    for row in await Emission.all_weekly(session):
+        start = _weekly_next_start(row, local, blocked)
+        if start is not None:
+            upcoming.append((start, _weekly_next(row, start)))
+    for row in dated:
+        start = paris(row.starts_at)
+        if start.timestamp() > local.timestamp():
+            upcoming.append((start, _dated_next(row, start)))
+    if not upcoming:
+        return None
+    # The instant, not the wall clock, across a change of time.
+    return min(upcoming, key=lambda item: item[0].timestamp())[1]
+
+
 async def resolve_emissions(
     session: ormSession,
     source: object,
     now: datetime | None = None,
-) -> tuple[dict | None, dict | None]:
-    """What names the antenna: the live session, a dated broadcast, a weekly show."""
+) -> dict | None:
+    """What names the antenna: the live session, a dated broadcast, a weekly show.
+
+    It runs on each title, and reads the Agenda for today only: the next live,
+    which reads it over the week, is ``next_live``.
+    """
     from radiotomate.services import agenda
 
     local = now_paris(now)
@@ -239,14 +309,13 @@ async def resolve_emissions(
             if found is not None:
                 current = found
                 break
-    nxt = _next_weekly(weeklies, local)
-    return current, nxt
+    return current
 
 
 async def attach_live_emission(session: ormSession, snapshot: dict) -> bool:
     source = snapshot.get("source") or ""
     dirty = await expire_idle_sessions(session, source)
-    current, _nxt = await resolve_emissions(session, source)
+    current = await resolve_emissions(session, source)
     if current and current["state"] == STATE_ON_AIR:
         snapshot["title"] = current["title"]
         snapshot["artist"] = current["artist"]
@@ -260,7 +329,7 @@ async def attach_live_emission(session: ormSession, snapshot: dict) -> bool:
 async def overlay_metadata_if_on_air(session: ormSession, raw_md: dict) -> None:
     source = raw_md.get("source") or ""
     await expire_idle_sessions(session, source)
-    current, _nxt = await resolve_emissions(session, source)
+    current = await resolve_emissions(session, source)
     if current and current["state"] == STATE_ON_AIR:
         raw_md["title"] = current["title"]
         raw_md["artist"] = current["artist"]
@@ -272,7 +341,15 @@ async def overlay_metadata_if_on_air(session: ormSession, raw_md: dict) -> None:
 async def list_emissions_payload(session: ormSession, source: object) -> dict:
     dirty = await expire_idle_sessions(session, source)
     weeklies = await Emission.all_weekly(session)
-    current, nxt = await resolve_emissions(session, source)
+    local = now_paris()
+    current = await resolve_emissions(session, source, local)
+    try:
+        nxt = await next_live(session, local)
+    except Exception:
+        # As the Antenne page does with the same reads (build_state): the list
+        # and the show on air still answer.
+        _log.exception("emissions: next live unavailable")
+        nxt = None
     return {
         "emissions": [emission_payload(row) for row in weeklies],
         "current": live_emission_payload(current) if current else None,

@@ -266,14 +266,23 @@ export type LiveEmission = {
   day_of_week?: number | null;
 };
 
+/** Le prochain direct, celui que la page Antenne annonce : une émission hebdo, hors d'un jour où l'Agenda l'annule ou la remplace, ou un direct de l'Agenda. */
 export type EmissionNext = {
+  /** L'émission hebdo, ou la diffusion de l'Agenda. */
   id: number;
   title: string;
   artist: string;
+  /** "weekly", ou "dated" pour un direct de l'Agenda. */
+  scope?: string;
+  /** Agenda seulement : "live". */
+  kind?: string;
+  /** Le début, heure de Paris avec son décalage : la date de cette occurrence. */
   at: string;
   until?: string;
+  /** Le jour (0 = lundi) et la minute du début : ceux de l'émission hebdo, ou du direct daté. */
   day_of_week?: number;
   start_minute?: number;
+  /** Émission hebdo seulement. */
   end_minute?: number;
 };
 

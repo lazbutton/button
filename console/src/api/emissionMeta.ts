@@ -1,4 +1,5 @@
-import { formatDayMinute } from "./clockCss";
+import { parisWall, weekdayOf } from "./agendaView.ts";
+import { formatDayMinute } from "./clockCss.ts";
 import type { Emission, EmissionNext, LiveSnapshot } from "./types";
 
 export function isHarborSource(source: string | undefined): boolean {
@@ -32,15 +33,25 @@ export function emissionWindowLabel(row: Pick<Emission, "start_minute" | "end_mi
   return `${minuteToClock(start)} → ${minuteToClock(end)}`;
 }
 
-export function nextEmissionLabel(next: EmissionNext, dayNames: readonly string[]): string {
-  const when =
-    next.start_minute != null
-      ? minuteToClock(next.start_minute)
-      : next.at.includes("T")
-        ? next.at.split("T")[1]?.slice(0, 5)
-        : next.at;
+/**
+ * « Lun 16 · 20:00 » : le jour, sa date et l'heure de Paris où commence le prochain direct,
+ * émission hebdo ou direct de l'Agenda. La date dit aussi qu'une émission annulée ce soir
+ * laisse la place à celle de la semaine d'après.
+ */
+export function nextEmissionWhen(next: EmissionNext, dayNames: readonly string[]): string {
+  const at = Date.parse(next.at);
+  if (Number.isFinite(at)) {
+    const wall = parisWall(new Date(at));
+    return `${dayNames[weekdayOf(wall.day)]} ${Number(wall.day.slice(8, 10))} · ${minuteToClock(wall.minute)}`;
+  }
+  // Sans heure lisible : le jour et l'heure de l'émission hebdo, sans date.
   const day = next.day_of_week != null ? dayNames[next.day_of_week] : null;
-  return [day, when, next.title].filter(Boolean).join(" · ");
+  const time = next.start_minute != null ? minuteToClock(next.start_minute) : null;
+  return [day, time].filter(Boolean).join(" · ");
+}
+
+export function nextEmissionLabel(next: EmissionNext, dayNames: readonly string[]): string {
+  return [nextEmissionWhen(next, dayNames), next.title].filter(Boolean).join(" · ");
 }
 
 export function emissionPillLabel(

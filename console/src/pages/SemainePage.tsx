@@ -6,6 +6,7 @@ import { ChangeDialog, type ChangeTarget } from "../components/programmation/Cha
 import { EmissionDialog, type EmissionTarget } from "../components/programmation/EmissionDialog";
 import { ProtoToast, useProtoToast } from "../components/ProtoToast";
 import { apiDelete } from "../api/client";
+import { nextEmissionWhen } from "../api/emissionMeta";
 import { errorText } from "../api/programmationErrors";
 import {
   clockTints,
@@ -68,6 +69,8 @@ export function SemainePage() {
   const upcoming = nextRun(runs, today, minuteOfDay);
   const dates = weekDates(now, today);
   const nextShow = emissionsRes.data?.next ?? null;
+  // Daté, comme au conducteur : annulée ce soir, une émission laisse la place à la suivante, et le texte change.
+  const nextShowWhen = nextShow ? nextEmissionWhen(nextShow, DAY_SHORT) : "";
   const liveShow = emissionsRes.data?.current ?? null;
   const usedClocks = clocks.filter((clock) => runs.some((run) => run.clockId === clock.id));
   const mergeLock = useRef(false);
@@ -186,8 +189,7 @@ export function SemainePage() {
                 <span className="prog-now-item">
                   <span className="prog-now-label">Prochain direct</span>
                   <span>
-                    {nextShow.day_of_week != null ? `${DAY_SHORT[nextShow.day_of_week]} ` : ""}
-                    {nextShow.start_minute != null ? `${hhmm(nextShow.start_minute)} ` : ""}
+                    {nextShowWhen ? `${nextShowWhen} ` : ""}
                     <strong>{nextShow.title}</strong>
                   </span>
                 </span>
