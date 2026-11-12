@@ -1,5 +1,4 @@
 import type { Page, Route } from "@playwright/test";
-import { CONDUCTEUR_JSON } from "../src/api/rundownLive.ts";
 import type { Rundown, RundownItem } from "../src/api/types.ts";
 import { alerte, antenne, avis, expect, seConnecter, test } from "./banc.ts";
 
@@ -10,6 +9,8 @@ import { alerte, antenne, avis, expect, seConnecter, test } from "./banc.ts";
 // que les autres parcours partagent.
 
 const CONDUCTEUR = "**/autodj/conducteur.json*";
+// Un retrait se pose sur la file, une ligne du pupitre et un retrait s'effacent.
+const RETRAIT = "**/autodj/conducteur/items.json";
 const LIGNE = "**/autodj/conducteur/items/*.json";
 const deroule = (page: Page) => page.getByRole("list", { name: "Déroulé du conducteur" });
 const lignes = (page: Page) => deroule(page).getByRole("listitem");
@@ -95,41 +96,88 @@ test("l’animateur voit la ligne à réparer, et qui peut la réparer", async (
   await expect(lignes(page).filter({ hasText: "Bac fantôme" })).toBeFocused();
 });
 
-test("retirer une ligne au clavier : elle quitte le déroulé, et le focus reste dans la page", async ({ page }) => {
-  // Le retrait ne va pas jusqu'au moteur : la page répond comme lui, sans la ligne.
-  const retirees = new Set<string>();
-  const sansLesRetirees = (conducteur: Rundown): Rundown => ({
-    ...conducteur,
-    items: conducteur.items.filter((item) => !item.id || !retirees.has(item.id)),
-  });
+test("retirer une ligne de l’horloge au clavier : un retrait, qu’« Annuler » lève", async ({ page }) => {
+  // Le retrait ne va pas jusqu'au moteur : la page répond comme lui. Elle sert la
+  // file lue la première fois, figée, pour que les heures ne glissent pas pendant
+  // le geste. Le retrait posé cache sa ligne, et son effacement, « Annuler », la rend.
+  const RETRAIT_POSE = "retrait-du-parcours";
+  let figee: Rundown | undefined;
+  let masquee: string | undefined;
+  const effaces: string[] = [];
+  const servie = (): Rundown => {
+    if (!figee) throw new Error("La file n'a pas encore été lue.");
+    return { ...figee, items: figee.items.filter((item) => !masquee || item.id !== masquee) };
+  };
   await page.route(CONDUCTEUR, async (route) => {
     const reponse = await route.fetch();
-    await route.fulfill({ response: reponse, json: sansLesRetirees((await reponse.json()) as Rundown) });
+    if (!reponse.ok()) return route.fulfill({ response: reponse });
+    figee ??= (await reponse.json()) as Rundown;
+    await route.fulfill({ response: reponse, json: servie() });
+  });
+  await page.route(RETRAIT, async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    masquee = (route.request().postDataJSON() as { suppress_id?: string }).suppress_id;
+    await route.fulfill({ json: { ...servie(), desk_item: { id: RETRAIT_POSE, origin: "desk" } } });
   });
   await page.route(LIGNE, async (route) => {
     if (route.request().method() !== "DELETE") return route.fallback();
     const nom = new URL(route.request().url()).pathname.split("/").pop() ?? "";
-    retirees.add(decodeURIComponent(nom.replace(/\.json$/, "")));
-    const reponse = await route.fetch({ method: "GET", url: new URL(CONDUCTEUR_JSON, route.request().url()).toString() });
-    await route.fulfill({ response: reponse, json: sansLesRetirees((await reponse.json()) as Rundown) });
+    const efface = decodeURIComponent(nom.replace(/\.json$/, ""));
+    effaces.push(efface);
+    if (efface === RETRAIT_POSE) masquee = undefined;
+    await route.fulfill({ json: servie() });
   });
   await ouvrir(page, "programmateur");
 
-  const ligne = lignes(page).filter({ has: retraits(page) }).first();
-  const heure = await ligne.locator("time").getAttribute("datetime");
+  // La première ligne de l'horloge à retirer à plus d'une minute, qui reste à venir
+  // pendant le geste, et que son heure exacte désigne seule. La page ne dit pas
+  // d'où vient une ligne : le parcours le lit dans la file servie. Les boutons
+  // « Retirer » n'arrivent qu'avec le rôle du compte, lu après la file.
+  await expect(retraits(page).first()).toBeVisible();
+  const apres = Date.now() + 60_000;
+  const heures = await lignes(page)
+    .filter({ has: retraits(page) })
+    .getByRole("time")
+    .evaluateAll((balises) => balises.map((balise) => balise.getAttribute("datetime") ?? ""));
+  const visee = heures
+    .filter((at) => Date.parse(at) > apres)
+    .map((at) => servie().items.filter((item) => item.at === at))
+    .find((memes) => memes.length === 1 && memes[0].origin === "clock" && memes[0].id)?.[0];
+  if (!visee?.id) throw new Error(`Aucune ligne de l'horloge à retirer parmi : ${heures.join(", ")}.`);
+  const heure = deroule(page).locator(`time[datetime="${visee.at}"]`);
+  // Le localisateur de `has` se cherche dans chaque ligne : il part de la page, pas du déroulé.
+  const ligne = lignes(page).filter({ has: page.locator(`time[datetime="${visee.at}"]`) });
+
+  // Le moteur refuse d'effacer une ligne de l'horloge : la page pose un retrait,
+  // qui nomme la ligne et son heure.
+  const envoi = page.waitForRequest(
+    (request) => request.method() === "POST" && new URL(request.url()).pathname === "/autodj/conducteur/items.json",
+    { timeout: 5_000 },
+  );
   await ligne.getByRole("button", { name: /^Retirer / }).focus();
   await page.keyboard.press("Enter");
+  expect((await envoi).postDataJSON()).toEqual({ suppress_at: visee.at, suppress_id: visee.id });
 
-  await expect(avis(page, "Retiré du conducteur.")).toBeVisible();
-  await expect(deroule(page).locator(`time[datetime="${heure}"]`)).toHaveCount(0);
+  const retrait = avis(page, "Retiré du conducteur.");
+  await expect(retrait).toBeVisible();
+  await expect(heure).toHaveCount(0);
   // Sa ligne partie, le bouton aussi : le focus revient au déroulé.
+  await expect(deroule(page)).toBeFocused();
+  expect(effaces, "aucune ligne effacée").toEqual([]);
+
+  await retrait.getByRole("button", { name: "Annuler" }).click();
+  await expect(avis(page, "Annulé.")).toBeVisible();
+  await expect(heure).toHaveCount(1);
+  expect(effaces, "seul le retrait est effacé").toEqual([RETRAIT_POSE]);
   await expect(deroule(page)).toBeFocused();
 });
 
 test("un retrait sans réponse le dit en alerte, et la ligne reste", async ({ page }) => {
-  await page.route(LIGNE, (route) =>
-    route.request().method() === "DELETE" ? route.abort("connectionrefused") : route.fallback(),
-  );
+  // Une ligne de l'horloge pose un retrait, une ligne du pupitre s'efface : sans réponse, l'un comme l'autre.
+  const sansReponse = (route: Route) =>
+    ["POST", "DELETE"].includes(route.request().method()) ? route.abort("connectionrefused") : route.fallback();
+  await page.route(RETRAIT, sansReponse);
+  await page.route(LIGNE, sansReponse);
   await ouvrir(page, "programmateur");
 
   const ligne = lignes(page).filter({ has: retraits(page) }).first();
