@@ -107,14 +107,16 @@ Une fois installée, la station s'exploite par la même commande, en root : `sud
 | `rollback` | défaire la dernière mise à jour : voir [revenir en arrière](#avec-station-rollback) |
 | `status` | l'état de la station : sa version et la plus haute publiée, ses services, la place sur le disque, le prochain direct, la dernière sauvegarde, et les mises à jour, bloquées ou non. Elle sort en erreur quand un service ne va pas |
 | `logs [service]` | les journaux, les 200 dernières lignes. `-f` les suit |
-| `backup [archive]` | une sauvegarde, sans couper l'antenne. `--with-media` y met la banque de sons |
-| `restore <archive>` | remettre une sauvegarde, sur la même machine ou sur une autre. `--without-media` garde la banque de sons en place |
-| `config` | voir ou changer le domaine, l'e-mail du compte Let's Encrypt, les mises à jour et leur heure |
+| `backup [archive]` | une sauvegarde, sans couper l'antenne. `--with-media` y met la banque de sons. `--remote` l'envoie hors de la machine, chiffrée, comme chaque nuit |
+| `restore <archive>` | remettre une sauvegarde, sur la même machine ou sur une autre. `--without-media` garde la banque de sons en place. `--remote` la prend hors de la machine ; `--remote --list` montre les sauvegardes du dépôt, `--remote --test` en vérifie une |
+| `config` | voir ou changer le domaine, l'e-mail du compte Let's Encrypt, les mises à jour et leur heure, et la sauvegarde hors de la machine |
 | `hold [raison]`, `unhold` | bloquer, puis débloquer les mises à jour |
 | `cli <commande>` | une commande du moteur, par exemple `station cli users add studio --admin` |
 | `uninstall` | désinstaller, en gardant les données |
 
 Sauvegarder et restaurer : voir [`exploitation/sauvegarde.md`](exploitation/sauvegarde.md#avec-la-commande-station).
+
+**La sauvegarde hors de la machine.** Une sauvegarde sur la machine disparaît avec elle. `sudo station config --backup-remote <dépôt>` en envoie une chaque nuit, chiffrée par restic, chez un autre fournisseur que celui du VPS, sur un stockage S3 ou SFTP. Un minuteur de systemd la lance, et un autre la vérifie le 1er de chaque mois. Sur une machine neuve, `station restore --remote` la remet. Le mot de passe du dépôt est à noter hors de la machine : voir [`exploitation/sauvegarde.md`](exploitation/sauvegarde.md#hors-de-la-machine).
 
 **Changer le domaine.** D'abord, faire mener le nouveau domaine à la machine, dans le DNS. Puis `sudo station config --domain nouveau.example` :
 
@@ -125,7 +127,7 @@ Sauvegarder et restaurer : voir [`exploitation/sauvegarde.md`](exploitation/sauv
 
 **Les mises à jour.** `station update` les fait, à la main : voir [mettre à jour](#avec-la-commande-station). Réglées en automatique, le défaut, elles se feront seules quand la commande saura se lancer seule. `station config --updates manual` les passe à la main, `--update-time 03:30` change leur heure, à celle de la station, 04:00 par défaut. `station hold la grille de Noël` les bloque : elle pose le fichier `HOLD` dans le dossier de la station, avec la date et la raison. `station unhold` le retire. Un retour arrière le pose aussi : voir [revenir en arrière](#revenir-en-arrière).
 
-**Désinstaller.** `sudo station uninstall` arrête la station, et retire ses conteneurs, ses images, les fichiers de sa version et la commande `station`. Restent `.env`, `data/`, `media/` et `backups/` : le script d'une version publiée, `sudo bash station install`, reprend la même station. `sudo station uninstall --purge` efface tout le dossier, données et sauvegardes comprises, une fois le mot `effacer` tapé. Ce qui vit hors du dossier, comme une banque de sons ailleurs (`BUTTON_MEDIA`), reste, et la commande le dit. Docker reste installé, avec le jeton du registre s'il y en a un : `docker logout ghcr.io` le retire.
+**Désinstaller.** `sudo station uninstall` arrête la station, et retire ses conteneurs, ses images, les fichiers de sa version, la commande `station` et les minuteurs de la sauvegarde hors de la machine. Restent `.env`, `data/`, `media/` et `backups/` : le script d'une version publiée, `sudo bash station install`, reprend la même station, minuteurs compris. `sudo station uninstall --purge` efface tout le dossier, données et sauvegardes comprises, une fois le mot `effacer` tapé. Ce qui vit hors du dossier, comme une banque de sons ailleurs (`BUTTON_MEDIA`), reste, et la commande le dit. Docker reste installé, avec le jeton du registre s'il y en a un : `docker logout ghcr.io` le retire.
 
 ## Installer
 
