@@ -20,7 +20,6 @@ services:
       RT_NOWPLAYING_SECRET: button-dev-secret
       RT_NOWPLAYING_FILE: /data/now.json
       RT_PLAYOUT_URL: http://radiotomate-playout:6833
-      RT_PLAYOUT_PCM: radiotomate-playout:6802
     volumes:
       - ../../services/nowplaying/nowplaying.py:/app/nowplaying.py:ro
       - ./data:/data

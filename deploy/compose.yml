@@ -104,13 +104,14 @@ services:
       RT_NOWPLAYING_PORT: "6820"
       RT_NOWPLAYING_SECRET: ${RT_NOWPLAYING_SECRET:?RT_NOWPLAYING_SECRET manquant dans .env}
       RT_NOWPLAYING_FILE: /data/now.json
-      # Probes Hub (voiceover, PCM) : nowplaying parle au playout, jamais exposé.
+      # La sonde /machine.json : GET /health du playout, sans jeton. nowplaying
+      # n'a pas d'autre route vers le playout, ni vers son antenne.
       RT_PLAYOUT_URL: http://radiotomate-playout:6833
-      RT_PLAYOUT_PCM: radiotomate-playout:6802
       BUTTON_MEDIA_ROOT: /media
     volumes:
       - ${NOWPLAYING_DATA:-./data/nowplaying}:/data
-      # Lecture seule : yaml Radiotomate (token playout) et banque pour le PCM.
+      # Lecture seule, pour /machine.json : radiotomate.yaml pour les tampons du
+      # harbor, la banque pour la place sur le disque.
       - ${RT_DATA:-./data/radiotomate}/radiotomate.yaml:/config/radiotomate.yaml:ro
       - ${BUTTON_MEDIA:-./media}:/media:ro
     ports:

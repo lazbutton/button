@@ -22,19 +22,21 @@ La console joint le catalogue sous `/library/` : voir [docs/api.md](../docs/api.
 
 Variables : `MEDIA_ROOT`, `MEILI_URL`, `MEILI_MASTER_KEY`, `MEILI_INDEX`, `CATALOG_PORT`, `AUTOMATE_URL`, `TUSD_DIR`, `TUSD_USER`, `INBOX_QUOTA_BYTES`, `STATION_NAME`, `SMB_HOST`, `SHARE_PRIVATE`.
 
-Tests : `./scripts/verifier.sh services` lance les treize fichiers de test de la CI. Un seul : `cd services/catalog && .venv/bin/python test_inbox_api.py`. Ils couvrent aussi les scripts du dossier partagé, rangés dans `deploy/`.
+Tests : `./scripts/verifier.sh services` lance les quinze fichiers de test de la CI. Un seul : `cd services/catalog && .venv/bin/python test_inbox_api.py`. Ils couvrent aussi nowplaying, et les scripts du dossier partagé, rangés dans `deploy/`.
 
 ## nowplaying
 
-Reçoit les métadonnées du moteur et publie le titre en cours pour les sites et les players. Relaie aussi quelques sondes du playout vers la console.
+Reçoit les métadonnées du moteur et publie le titre en cours pour les sites et les players. Relaie aussi une sonde du playout.
 
 | Route | Rôle |
 |---|---|
 | `POST /hook` | Métadonnées envoyées par le moteur (`metadata_log.relay_to`), avec `Authorization: Bearer <RT_NOWPLAYING_SECRET>` |
 | `GET /now.json` | Titre en cours, avec CORS |
-| `GET /machine.json`, `/voiceover` | Sondes du playout |
+| `GET /machine.json` | Sonde du playout, d'après son `GET /health`, sans jeton : son état, le processeur, la mémoire, et la place sur le disque de la banque |
 
-Variables : `RT_NOWPLAYING_PORT`, `RT_NOWPLAYING_SECRET`, `RT_NOWPLAYING_FILE`, `RT_PLAYOUT_URL`, `RT_PLAYOUT_PCM`, `RT_PLAYOUT_YAML`, `RT_PLAYOUT_TOKEN`, `BUTTON_MEDIA_ROOT`.
+nowplaying ne relaie au playout rien d'autre : son port se joint sans session. Il n'a plus les routes d'un micro par-dessus l'antenne, `/voiceover` et `/voiceover/pcm`, que rien dans BUTTON n'appelait.
+
+Variables : `RT_NOWPLAYING_PORT`, `RT_NOWPLAYING_SECRET`, `RT_NOWPLAYING_FILE`, `RT_PLAYOUT_URL`, `RT_PLAYOUT_YAML`, `BUTTON_MEDIA_ROOT`.
 
 ## icecast
 

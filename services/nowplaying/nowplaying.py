@@ -3,11 +3,8 @@
 
 from __future__ import annotations
 
-import base64
-import hashlib
 import json
 import os
-import socket
 import threading
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -20,7 +17,6 @@ PORT = int(os.environ.get("RT_NOWPLAYING_PORT", "6820"))
 SECRET = os.environ.get("RT_NOWPLAYING_SECRET", "button-dev-secret")
 STATE = Path(os.environ.get("RT_NOWPLAYING_FILE", str(Path(__file__).resolve().parent / "now.json")))
 PLAYOUT_URL = os.environ.get("RT_PLAYOUT_URL", "http://radiotomate-playout:6833").rstrip("/")
-PLAYOUT_PCM = os.environ.get("RT_PLAYOUT_PCM", "radiotomate-playout:6802")
 PLAYOUT_YAML = Path(os.environ.get("RT_PLAYOUT_YAML", "/config/radiotomate.yaml"))
 MEDIA_CANDIDATES = (
     os.environ.get("BUTTON_MEDIA_ROOT", "").strip(),
@@ -30,7 +26,6 @@ LOCK = threading.Lock()
 NEXT_KEYS = ("next_autodj", "next_jingle", "next_cart")
 CLOCK_KEYS = ("remaining", "elapsed", "duration")
 WAITING_TITLE = "En attente de métadonnées"
-WS_GUID = "258EAFA5-E914-47DA-8CCB-90CA6C34424D"
 
 MOCK = {
     "artist": "BUTTON",
@@ -229,28 +224,6 @@ def save_state(data: dict) -> None:
     STATE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def playout_token() -> str:
-    env = os.environ.get("RT_PLAYOUT_TOKEN", "").strip()
-    if env:
-        return env
-    if not PLAYOUT_YAML.exists():
-        return ""
-    in_block = False
-    for raw in PLAYOUT_YAML.read_text(encoding="utf-8").splitlines():
-        line = raw.split("#", 1)[0]
-        stripped = line.strip()
-        if stripped.startswith("playout_process_config"):
-            in_block = True
-            continue
-        if in_block:
-            if stripped and not line[:1].isspace() and stripped.endswith(":") and not stripped.startswith("token"):
-                in_block = False
-                continue
-            if stripped.startswith("token:"):
-                return stripped.split(":", 1)[1].strip().strip("\"'")
-    return ""
-
-
 def _as_float(value: object) -> float | None:
     try:
         parsed = float(value)  # type: ignore[arg-type]
@@ -275,44 +248,28 @@ def _as_bool(value: object) -> bool | None:
     return None
 
 
-def _coerce_playout(data: dict, path: str) -> dict:
-    bools = ("on", "mic") if path == "/voiceover" else ("on",)
-    floats = (
-        ("fade", "remaining", "gain")
-        if path == "/voiceover"
-        else (
-            "silence_s",
-            "rms_db",
-            "rms",
-            "gain",
-            "harbor_min",
-            "harbor_max",
-            "harbor_s",
-            "rss_mb",
-            "cpu_pct",
-        )
-    )
-    for key in bools:
-        parsed = _as_bool(data.get(key))
-        if parsed is not None:
-            data[key] = parsed
-    for key in floats:
+def _coerce_playout(data: dict) -> dict:
+    """GET /health du playout dit ses nombres et ses booléens en texte."""
+    parsed = _as_bool(data.get("on"))
+    if parsed is not None:
+        data["on"] = parsed
+    for key in (
+        "silence_s",
+        "rms_db",
+        "rms",
+        "gain",
+        "harbor_min",
+        "harbor_max",
+        "harbor_s",
+        "rss_mb",
+        "cpu_pct",
+    ):
         if key not in data:
             continue
         parsed = _as_float(data.get(key))
         if parsed is not None:
             data[key] = parsed
     return data
-
-
-def _playout_json(raw: bytes, path: str) -> bytes:
-    try:
-        data = json.loads(raw.decode("utf-8") or "{}")
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        return raw
-    if not isinstance(data, dict):
-        return raw
-    return json.dumps(_coerce_playout(data, path), ensure_ascii=False).encode("utf-8")
 
 
 def yaml_harbor() -> tuple[float, float]:
@@ -366,12 +323,12 @@ def disk_pct(path: Path) -> float | None:
 
 
 def machine_payload() -> tuple[int, bytes]:
-    status, raw = playout_http("GET", "/health", require_token=False)
+    status, raw = playout_health()
     health: dict = {}
     try:
         parsed = json.loads(raw.decode("utf-8") or "{}")
         if isinstance(parsed, dict):
-            health = _coerce_playout(parsed, "/health")
+            health = _coerce_playout(parsed)
     except (UnicodeDecodeError, json.JSONDecodeError):
         health = {"error": "playout"}
     min_s, max_s = yaml_harbor()
@@ -387,77 +344,19 @@ def machine_payload() -> tuple[int, bytes]:
     return (200 if status < 500 else status), json.dumps(health, ensure_ascii=False).encode("utf-8")
 
 
-def playout_http(
-    method: str, path: str, body: bytes | None = None, require_token: bool = True
-) -> tuple[int, bytes]:
-    token = playout_token()
-    if require_token and not token:
-        return 503, b'{"error":"playout token"}'
-    headers = {"Content-Type": "application/json"}
-    if token:
-        headers["X-Auth-Token"] = token
-    req = Request(f"{PLAYOUT_URL}{path}", data=body, method=method, headers=headers)
+def playout_health() -> tuple[int, bytes]:
+    """GET /health du playout, qui ne demande pas de jeton.
+
+    nowplaying ne porte pas celui du playout : son port se joint sans session,
+    et le prêterait à qui le joint.
+    """
     try:
-        with urlopen(req, timeout=4) as res:
-            raw = res.read()
-            return res.status, _playout_json(raw, path) if path in ("/voiceover", "/health") else raw
+        with urlopen(Request(f"{PLAYOUT_URL}/health"), timeout=4) as res:
+            return res.status, res.read()
     except HTTPError as exc:
-        raw = exc.read()
-        return int(exc.code), _playout_json(raw, path) if path in ("/voiceover", "/health") else raw
+        return int(exc.code), exc.read()
     except URLError as exc:
         return 502, json.dumps({"error": str(exc.reason)}).encode()
-
-
-def _pcm_host_port() -> tuple[str, int]:
-    raw = PLAYOUT_PCM
-    if "://" in raw:
-        raw = raw.split("://", 1)[1]
-    host, _, port = raw.partition(":")
-    return host or "radiotomate-playout", int(port or "6802")
-
-
-def _ws_accept(key: str) -> str:
-    digest = hashlib.sha1((key + WS_GUID).encode("utf-8")).digest()
-    return base64.b64encode(digest).decode("ascii")
-
-
-def _ws_send(wfile, opcode: int, data: bytes = b"") -> None:
-    header = bytes([0x80 | opcode])
-    n = len(data)
-    if n < 126:
-        header += bytes([n])
-    elif n < 65536:
-        header += bytes([126]) + n.to_bytes(2, "big")
-    else:
-        header += bytes([127]) + n.to_bytes(8, "big")
-    wfile.write(header + data)
-    wfile.flush()
-
-
-def _ws_recv(rfile) -> tuple[int, bytes] | None:
-    hdr = rfile.read(2)
-    if len(hdr) < 2:
-        return None
-    opcode = hdr[0] & 0x0F
-    masked = (hdr[1] & 0x80) != 0
-    length = hdr[1] & 0x7F
-    if length == 126:
-        ext = rfile.read(2)
-        if len(ext) < 2:
-            return None
-        length = int.from_bytes(ext, "big")
-    elif length == 127:
-        ext = rfile.read(8)
-        if len(ext) < 8:
-            return None
-        length = int.from_bytes(ext, "big")
-    mask = rfile.read(4) if masked else b""
-    data = rfile.read(length) if length else b""
-    if len(data) < length:
-        return None
-    if masked and mask:
-        data = bytes(b ^ mask[i % 4] for i, b in enumerate(data))
-    return opcode, data
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -473,19 +372,6 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
-        if path == "/voiceover/pcm":
-            self._voiceover_pcm()
-            return
-        if path == "/voiceover":
-            status, body = playout_http("GET", "/voiceover")
-            self.send_response(status)
-            self._cors()
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-            return
         if path == "/machine.json":
             status, body = machine_payload()
             self.send_response(status)
@@ -511,17 +397,6 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
-        if path == "/voiceover":
-            length = int(self.headers.get("Content-Length", "0"))
-            raw = self.rfile.read(length) if length else b"{}"
-            status, body = playout_http("POST", "/voiceover", raw)
-            self.send_response(status)
-            self._cors()
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-            return
         if path != "/hook":
             self.send_error(404)
             return
@@ -549,49 +424,6 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(204)
         self._cors()
         self.end_headers()
-
-    def _voiceover_pcm(self) -> None:
-        if (self.headers.get("Upgrade") or "").lower() != "websocket":
-            self.send_error(426)
-            return
-        key = self.headers.get("Sec-WebSocket-Key", "")
-        if not key:
-            self.send_error(400)
-            return
-        self.send_response(101, "Switching Protocols")
-        self.send_header("Upgrade", "websocket")
-        self.send_header("Connection", "Upgrade")
-        self.send_header("Sec-WebSocket-Accept", _ws_accept(key))
-        self.end_headers()
-        sock: socket.socket | None = None
-        host, port = _pcm_host_port()
-        try:
-            while True:
-                frame = _ws_recv(self.rfile)
-                if frame is None:
-                    break
-                opcode, data = frame
-                if opcode == 8:
-                    break
-                if opcode == 9:
-                    _ws_send(self.wfile, 10, data)
-                    continue
-                if opcode not in (1, 2) or not data:
-                    continue
-                if sock is None:
-                    sock = socket.create_connection((host, port), timeout=2)
-                    sock.settimeout(None)
-                    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-                sock.sendall(data)
-        except Exception as exc:
-            print(f"[nowplaying] voiceover pcm: {exc}")
-        finally:
-            if sock is not None:
-                try:
-                    sock.shutdown(socket.SHUT_RDWR)
-                except OSError:
-                    pass
-                sock.close()
 
     def log_message(self, fmt: str, *args) -> None:
         print(f"[nowplaying] {self.address_string()} {fmt % args}")
