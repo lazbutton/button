@@ -2,8 +2,8 @@
 # Les vérifications de la CI, sur cette machine.
 #   ./scripts/verifier.sh                  tout ce qui peut tourner ici
 #   ./scripts/verifier.sh moteur console   seulement ces parties
-# Parties : donnees, licences, moteur, liquidsoap, console, services, nginx,
-# deploy, version, e2e.
+# Parties : donnees, licences, moteur, liquidsoap, antenne, console, services,
+# nginx, deploy, version, e2e.
 # Sans argument, une partie qui manque d'un outil (Docker…) est sautée.
 # Nommée, elle échoue.
 set -euo pipefail
@@ -12,7 +12,7 @@ root=$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd)
 # Homebrew (macOS) : Poetry, Node et Docker y sont souvent installés.
 [ -d /opt/homebrew/bin ] && export PATH="/opt/homebrew/bin:$PATH"
 
-all=(donnees licences moteur liquidsoap console services nginx deploy version e2e)
+all=(donnees licences moteur liquidsoap antenne console services nginx deploy version e2e)
 # Code de sortie d'une partie à qui il manque un outil.
 absent=75
 
@@ -179,6 +179,14 @@ metadata_log:
 YAML
 }
 
+check_antenne() {
+  need_docker || return
+  command -v python3 >/dev/null 2>&1 || missing "Python 3 absent : l'installer." || return
+  # Le script du playout joué pour de bon, dans le Liquidsoap de son image, et
+  # écouté à la sortie : le job antenna de la CI. Il prend des ports libres.
+  python3 "$root/engine/playout/tests/antenna.py"
+}
+
 check_console() {
   command -v npm >/dev/null 2>&1 || missing "Node absent : installer Node 22." || return
   cd "$root/console"
@@ -341,7 +349,7 @@ skipped=""
 failed=""
 for part in "${parts[@]}"; do
   case $part in
-    donnees | licences | moteur | liquidsoap | console | services | nginx | deploy | version | e2e) ;;
+    donnees | licences | moteur | liquidsoap | antenne | console | services | nginx | deploy | version | e2e) ;;
     *)
       echo "Partie inconnue : $part. Parties : ${all[*]}." >&2
       exit 64

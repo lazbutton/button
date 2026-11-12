@@ -84,9 +84,21 @@ jobs:
           RTCONFIG: /tmp/rtconfig.yaml
         run: liquidsoap --check engine/playout/radiotomate.liq
 
+  # The type-checker reads the script, this plays it: titles pushed as the
+  # scheduler pushes them, in the Liquidsoap of the playout image, and the
+  # sound that comes out. A music queue that stalls airs a buzz, with nothing
+  # in the logs.
+  antenna:
+    name: the playout plays what it is given
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Play the script and listen
+        run: python3 engine/playout/tests/antenna.py
+
   docker:
     name: build & push images
-    needs: [tests, liquidsoap-check]
+    needs: [tests, liquidsoap-check, antenna]
     # From main, or for a version, through version.yml. "Run workflow" has no
     # version input: it never builds one.
     if: >-

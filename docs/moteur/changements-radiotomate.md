@@ -26,7 +26,9 @@ Le scheduler ne pousse plus un son au moment où le cron sonne. Il prévoit une 
 
 Les statuts d’une ligne vont de `planned` à `played`, en passant par `on_air`, `skipped`, `rescue` ou `failed`. Une commande est `pending`, `acknowledged` ou `expired`.
 
-Liquidsoap 2.4.5 annote chaque push avec `radiotomate_queue`. Le journal d’antenne s’appuie sur cette annotation. Les transitions `fallback` restent en coupe (bug [savonet/liquidsoap#4179](https://github.com/savonet/liquidsoap/issues/4179)) : `current_source_id` seul marquait à tort un cart comme de l’auto-DJ. Le fondu de trois secondes est sur la file auto-DJ, avant le `fallback`.
+Liquidsoap 2.4.5 annote chaque push avec `radiotomate_queue`. Le journal d’antenne s’appuie sur cette annotation. Les transitions `fallback` restent en coupe (bug [savonet/liquidsoap#4179](https://github.com/savonet/liquidsoap/issues/4179)) : `current_source_id` seul marquait à tort un cart comme de l’auto-DJ.
+
+La file auto-DJ enchaîne aussi ses titres en coupe. Le fork y avait posé un fondu de trois secondes, `crossfade`, avant le `fallback`. Avec Liquidsoap 2.4.5 comme 2.4.6, ce fondu cessait de tirer la file quelques secondes après le début d’un titre : l’antenne rejouait alors la même trame de 20 ms, un bourdonnement fort, le temps restant du titre ne bougeait plus, et le journal de Liquidsoap ne disait rien. Au début de chaque titre, le playout annonçait aussi le reste du fondu, 3 s, à la place de celui du titre. Le fondu est retiré. `engine/playout/tests/antenna.py` joue le script dans le Liquidsoap de l’image et écoute ce qui sort : voir [docs/developpement.md](../developpement.md#vérifier-avant-de-proposer-un-changement).
 
 `/queue/flush` accepte un corps optionnel `{"queues": […]}`, et rend, file par file, `item_ids` : les lignes du conducteur des titres qu’il a retirés, lues dans leur annotation `radiotomate_item_id`. L’URL de relais vient de `playout_process_config.relay_url`. Le script expose aussi `/health`, un gain ReplayGain, et des mesures de charge.
 

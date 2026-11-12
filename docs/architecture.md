@@ -63,7 +63,7 @@ L'interface et le scheduler partagent le réseau du playout (`network_mode: serv
 4. **La décision devient une ligne de conducteur** (`RundownItem`) et une commande (`PlayoutCommand`), envoyée à Liquidsoap par une *outbox* qui sait réessayer.
 5. **Ce qui passe vraiment remonte** dans `metadata_log`, et le conducteur est réconcilié avec ce journal d'antenne.
 
-Liquidsoap choisit la source dans cet ordre : **direct (harbor) > relais > carts > jingles > auto-DJ**. Les titres de l'auto-DJ s'enchaînent avec un fondu de 3 s. Les autres transitions se font en coupe franche ([savonet/liquidsoap#4179](https://github.com/savonet/liquidsoap/issues/4179)).
+Liquidsoap choisit la source dans cet ordre : **direct (harbor) > relais > carts > jingles > auto-DJ**. Toutes les transitions se font en coupe franche, d'une source à l'autre comme entre deux titres de l'auto-DJ. Les transitions de `fallback` sont cassées dans Liquidsoap 2.4 ([savonet/liquidsoap#4179](https://github.com/savonet/liquidsoap/issues/4179)), et son fondu enchaîné, `crossfade`, fige la file de l'auto-DJ : voir [les changements du moteur](moteur/changements-radiotomate.md#conducteur-et-vérité-dantenne).
 
 L'**Agenda** ajoute des diffusions à une date précise : un set déposé passe à son heure (`scheduler/agenda.py`), et un direct daté ouvre le harbor au compte prévu. Un invité dépose son set par un lien privé, sans compte : le fichier passe par tusd, puis le catalogue le range dans `40-emissions` et le déclare au moteur. L'interrupteur `agenda_enabled` coupe tout l'Agenda.
 
