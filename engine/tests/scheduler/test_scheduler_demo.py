@@ -8,6 +8,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session as ormSession
 
 from radiotomate.beets import BeetsIntegration
+from radiotomate.db import QuartAlchemy
 from radiotomate.enums import CartMode, ScheduleMode
 from radiotomate.interface import live as live_mod
 from radiotomate.interface_app import app_factory as interface_factory
@@ -399,5 +400,214 @@ async def test_demo_play_now_when_the_line_cannot_close(  # noqa: PLR0913
                 "/media/Grande distance.wav": "in_queue",
                 "/media/Bande large.wav": "in_queue",
             }
+    finally:
+        Scheduler.reset_instance()
+
+
+def _clock_at(moment: datetime) -> type[datetime]:
+    """The clock the demo reads, still: the test moves it."""
+
+    class Clock(datetime):
+        at = moment
+
+        @classmethod
+        def now(cls, tz=None):
+            return cls.at if tz is None else cls.at.astimezone(tz)
+
+    return Clock
+
+
+@pytest.mark.parametrize("apart", [1, 0], ids=["a second apart", "same second"])
+async def test_demo_never_gives_back_a_line_it_left(  # noqa: PLR0913
+    raw_app,
+    app_configration: dict,
+    beets_integration: BeetsIntegration,
+    dbsession: ormSession,
+    users_password: str,
+    jingles_cart,
+    pubs_cart,
+    apart: int,
+):
+    """
+    Nothing reconciles the demo's rundown with what airs: the base keeps planned
+    the lines the demo has left. It used to give them back planned, at their
+    planned time: aired ahead of it, after « Suivant », a line of the title on
+    air was taken by the console for that title, and the line the demo plays fell
+    to the head of the antenna file, locked. Its queue, reloaded from the base,
+    also took back a line its log did not keep: aired more than twelve titles
+    ago, or started in the same second as the title logged before it.
+    """
+    user = User(username="demo-left")
+    user.update_password(users_password)
+    user.update_permissions({"can_live": "true"})
+    dbsession.add(user)
+    await dbsession.commit()
+
+    iface = _demo_app(app_configration, beets_integration)
+    try:
+        async with iface.test_app():
+            client = iface.test_client()
+            await _login(client, "demo-left", users_password)
+            await _wait_simulating(client)
+            # Six hours of lines, as the console asks.
+            await client.get("/autodj/conducteur.json?horizon=360")
+            demo = Scheduler.get()
+            # A second after the title on air started: each title then starts a
+            # second after the one before, or all in that same second.
+            clock = _clock_at(demo._on_air + timedelta(seconds=1))
+            left = []
+            with patch("radiotomate.scheduler_api.datetime", clock):
+                # One more than the twelve titles of its log.
+                for _ in range(13):
+                    left.append(demo._items[0]["id"])
+                    skipped = await client.delete("/live.json")
+                    assert skipped.status_code == 200
+                    clock.at += timedelta(seconds=apart)
+                rundown = await (await client.get("/autodj/conducteur.json")).get_json()
+                # Its queue reloaded from the base, as the demo does when it holds
+                # fewer than twenty-four lines.
+                async with (
+                    iface.app_context(),
+                    demo._lock,
+                    QuartAlchemy.get().session() as session,
+                ):
+                    await demo._load_items(session)
+
+            assert len(set(left)) == 13
+            assert [
+                (item["id"], item["status_code"])
+                for item in rundown["items"]
+                if item["id"] in left and item["status_code"] != "played"
+            ] == []
+            assert [item["id"] for item in demo._items if item["id"] in left] == []
+    finally:
+        Scheduler.reset_instance()
+
+
+async def _hold_the_antenna(client) -> None:
+    """Passes to a title that holds the antenna a minute at least: the demo does
+    not pass to the next one by itself meanwhile."""
+    for _ in range(5):
+        live = await (await client.get("/live.json")).get_json()
+        if float(live["remaining"]) >= 60:
+            return
+        skipped = await client.delete("/live.json")
+        assert skipped.status_code == 200
+    raise AssertionError("no title holds the antenna")
+
+
+@pytest.mark.parametrize("fired", ["path", "sound"])
+async def test_demo_airs_no_line_of_the_clock_during_a_title_fired(  # noqa: PLR0913
+    raw_app,
+    app_configration: dict,
+    beets_integration: BeetsIntegration,
+    dbsession: ormSession,
+    users_password: str,
+    jingles_cart,
+    pubs_cart,
+    fired: str,
+):
+    """
+    A title fired from the desk, from the bank or from a cart, cuts the line on
+    air, which the demo leaves: the next line waits for the end of that title,
+    and no line of the clock is on air meanwhile. The demo used to mark the first
+    line of its base: not over, the console took it for the title on air, and
+    the line of a title of the bank fell to the head of the antenna file, locked.
+    Once the lines it left are out of the base, that first line is the next one,
+    still to come, when no line of the desk comes before it: so with a sound of
+    a cart, which has none.
+    """
+    user = User(username=f"demo-fired-{fired}")
+    user.update_password(users_password)
+    user.update_permissions({"can_live": "true"})
+    dbsession.add(user)
+    spot = await dbsession.scalar(select(Sound).where(Sound.cart_id == pubs_cart.id))
+    await dbsession.commit()
+
+    iface = _demo_app(app_configration, beets_integration)
+    try:
+        async with iface.test_app():
+            client = iface.test_client()
+            await _login(client, f"demo-fired-{fired}", users_password)
+            await _wait_simulating(client)
+            await _hold_the_antenna(client)
+            following = Scheduler.get()._items[1]["id"]
+            if fired == "path":
+                answer = await _play_now(client, "Grande distance")
+            else:
+                # The spot lasts twenty seconds: the demo does not pass on by
+                # itself before the test is over.
+                answer = await client.post(
+                    f"/carts/{pubs_cart.id}/sounds/{spot.id}/now.json"
+                )
+            assert answer.status_code == 200, await answer.get_data(as_text=True)
+            rundown = await (await client.get("/autodj/conducteur.json")).get_json()
+            assert [
+                item["resource"]
+                for item in rundown["items"]
+                if item["status_code"] == "on_air"
+            ] == []
+
+            # The title over, the line after the one it cut airs.
+            skipped = await client.delete("/live.json")
+            assert skipped.status_code == 200
+            rundown = await (await client.get("/autodj/conducteur.json")).get_json()
+            assert [
+                item["id"]
+                for item in rundown["items"]
+                if item["status_code"] == "on_air"
+            ] == [following]
+    finally:
+        Scheduler.reset_instance()
+
+
+async def test_demo_queues_only_lines_still_to_air(  # noqa: PLR0913
+    raw_app,
+    app_configration: dict,
+    beets_integration: BeetsIntegration,
+    dbsession: ormSession,
+    users_password: str,
+    jingles_cart,
+    pubs_cart,
+):
+    """
+    When the base draws more lines, it gives back every line it shows: played,
+    as the line of a title fired from the desk, closed once the demo passes on,
+    or sent, or failed. The demo used to queue them at the end of its queue, and
+    would have aired them again, as lines of the clock.
+    """
+    user = User(username="demo-to-air")
+    user.update_password(users_password)
+    user.update_permissions({"can_live": "true"})
+    dbsession.add(user)
+    await dbsession.commit()
+
+    iface = _demo_app(app_configration, beets_integration)
+    try:
+        async with iface.test_app():
+            client = iface.test_client()
+            await _login(client, "demo-to-air", users_password)
+            await _wait_simulating(client)
+            fired = await _play_now(client, "Grande distance")
+            assert fired.status_code == 200, await fired.get_data(as_text=True)
+            skipped = await client.delete("/live.json")
+            assert skipped.status_code == 200
+            assert await _desk_lines(dbsession) == {
+                "/media/Grande distance.wav": "played"
+            }
+
+            demo = Scheduler.get()
+            # Further than the base holds: it draws more lines.
+            async with (
+                iface.app_context(),
+                demo._lock,
+                QuartAlchemy.get().session() as session,
+            ):
+                await demo._load_items(session, horizon_min=400)
+            assert [
+                (item["resource"], item["status_code"])
+                for item in demo._items
+                if item["status_code"] not in ("planned", "rescue")
+            ] == []
     finally:
         Scheduler.reset_instance()

@@ -45,9 +45,8 @@ async function voisines(page: Page): Promise<{ rang: number; haut: string; bas: 
  * La dernière ligne de la file que « Annuler » remet à sa place : une ligne de
  * l'horloge, qu'un retrait masque. Une ligne du pupitre retirée est effacée, et
  * « Annuler » la remet à la suite, à une autre heure. La file ne dit pas d'où
- * vient une ligne : le parcours le lit au moteur. Une ligne verrouillée n'a pas
- * de bouton « Retirer » : le moteur de démo verrouille aussi la ligne de son
- * titre en cours, parfois loin dans la file.
+ * vient une ligne : le parcours le lit au moteur. Une ligne verrouillée, comme
+ * une ligne déjà partie vers l'antenne, n'a pas de bouton « Retirer ».
  *
  * L'heure de passage exacte de la ligne, l'attribut `datetime` de son heure, la
  * désigne : aucune autre ligne du moteur ne l'a. Le masque d'un retrait vaut
