@@ -127,8 +127,9 @@ PLAYOUT_DOWN_AFTER = 3  # consecutive failed /health polls
 # this many seconds of antenna.
 DEFAULT_STALL_SECONDS = 15.0
 # Then the level of /health is read again this long after the turn's reading:
-# the same to the last digit, the same sound airs in a loop.
-LEVEL_GAP_SECONDS = 1.0
+# the same to the last digit, the same sound airs in a loop. Long enough for a
+# heartbeat to come in between, which says the antenna went on meanwhile.
+LEVEL_GAP_SECONDS = 1.5
 # An open stall holds this long through an antenna whose level moves, a jingle
 # or a cart that cuts the stalled queue: its end would be false good news.
 STALL_HOLD_SECONDS = 300.0
@@ -1080,14 +1081,27 @@ async def read_stall(
     """The two signs of a stalled playout. The heartbeats first: a queue whose
     remaining time has not moved. Only then the level of the antenna, read
     again a moment after the turn's ``health``: whether it stands still (None,
-    not read)."""
-    stall = stall_watch.stalled(
-        settings.stall_seconds, max_age=settings.heartbeat_max_age
-    )
-    if stall is None or health is None:
-        return stall, None
+    not read). A level that stands counts only if a heartbeat in between said
+    the antenna went on: a Liquidsoap held up for a second reads the same
+    level twice too."""
+
+    def read() -> Stall | None:
+        return stall_watch.stalled(
+            settings.stall_seconds, max_age=settings.heartbeat_max_age
+        )
+
+    before = read()
+    if before is None or health is None:
+        return before, None
     await or_shutdown(asyncio.sleep(LEVEL_GAP_SECONDS))
-    return stall, level_stands_still(health, await _poll_health(app))
+    again = await _poll_health(app)
+    stall = read()
+    if stall is None:
+        return None, None
+    level_still = level_stands_still(health, again)
+    if level_still and not stall.still > before.still:
+        return stall, None
+    return stall, level_still
 
 
 class ConfigWatch:

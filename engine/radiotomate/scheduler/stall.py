@@ -25,7 +25,7 @@ both hold.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from time import monotonic
 
 from radiotomate.scheduler.timing import remaining_seconds, source_id
@@ -34,18 +34,26 @@ from radiotomate.scheduler.timing import remaining_seconds, source_id
 UNWATCHED = {"stream", "relay"}
 # Without a heartbeat for this long, nothing says the queue still stands.
 DEFAULT_MAX_AGE = 10.0
+# Two heartbeats further apart than this count for this much: a scheduler that
+# was held up has two readings, not a minute of them.
+MAX_BEAT_GAP = 5.0
+# A queue that no heartbeat has read for this long is no longer told stalled:
+# another one holds the antenna, and nothing says what became of it.
+QUEUE_MAX_AGE = 300.0
 
 
 @dataclass(frozen=True)
 class Stall:
     """A queue whose remaining time has stopped moving while the antenna went
     on. ``seconds``: since it last moved. ``title``: empty when the title
-    announced was not the one of this queue."""
+    announced was not the one of this queue. ``still``: the seconds of antenna
+    counted so far, which grow only while heartbeats say the antenna goes on."""
 
     source: str
     title: str
     remaining: float
     seconds: float
+    still: float = field(default=0.0, compare=False)
 
 
 @dataclass
@@ -57,6 +65,8 @@ class _Queue:
     title: str
     since: float
     still: float = 0.0
+    # The last heartbeat that read this queue.
+    seen: float = 0.0
 
 
 def _seconds(raw) -> float:
@@ -107,12 +117,14 @@ class StallWatch:
             return
         queue = self._queues.get(source)
         if queue is None or queue.remaining != remaining:
-            self._queues[source] = _Queue(remaining, _title(live_data, source), now)
+            title = _title(live_data, source)
+            self._queues[source] = _Queue(remaining, title, now, seen=now)
             return
+        queue.seen = now
         # The same remaining time as at the heartbeat before, of the same
         # queue: it counts while the antenna goes on.
         if previous is not None and previous[1] == source and elapsed != previous[2]:
-            queue.still += now - previous[0]
+            queue.still += min(now - previous[0], MAX_BEAT_GAP)
 
     def stalled(
         self,
@@ -129,14 +141,16 @@ class StallWatch:
             return None
         found: tuple[str, _Queue] | None = None
         for source, queue in self._queues.items():
-            if queue.still < seconds:
+            if queue.still < seconds or now - queue.seen > QUEUE_MAX_AGE:
                 continue
             if found is None or queue.since < found[1].since:
                 found = (source, queue)
         if found is None:
             return None
         source, queue = found
-        return Stall(source, queue.title, queue.remaining, now - queue.since)
+        return Stall(
+            source, queue.title, queue.remaining, now - queue.since, queue.still
+        )
 
 
 def _level(health: dict | None) -> float | None:

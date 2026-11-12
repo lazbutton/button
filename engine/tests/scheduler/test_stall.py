@@ -167,6 +167,30 @@ def test_heartbeats_that_stop_say_nothing_of_the_queue():
     assert watch.stalled(15.0, now=101.0).seconds == 101.0
 
 
+def test_a_gap_between_two_heartbeats_counts_for_five_seconds_at_most():
+    """A scheduler held up for a minute has two readings of the remaining
+    time, not a minute of them."""
+    watch = StallWatch()
+    _stuck(watch, 0, 1)
+    _stuck(watch, 61, 61)
+    assert watch.stalled(15.0, now=61.0) is None
+    _stuck(watch, 62, 70)
+    assert watch.stalled(15.0, now=70.0).seconds == 70.0
+
+
+def test_a_queue_no_heartbeat_reads_any_more_is_no_longer_told_stalled():
+    watch = StallWatch()
+    _stuck(watch, 0, 30)
+    # Five minutes of a live: nothing says what became of the queue under it.
+    _stuck(watch, 31, 330, source="stream")
+    assert watch.stalled(15.0, now=330.0) is not None
+    _stuck(watch, 331, 340, source="stream")
+    assert watch.stalled(15.0, now=340.0) is None
+    # It airs again, its remaining time as it was: stalled, at once.
+    _stuck(watch, 341, 341)
+    assert watch.stalled(15.0, now=341.0).seconds == 341.0
+
+
 def test_the_title_is_named_only_when_it_is_the_one_of_the_queue():
     """A cart that cuts the Auto-DJ is announced while the heartbeat still
     reads the queue of the Auto-DJ: its title is not the one that waits."""
@@ -420,9 +444,13 @@ class _App:
     def __init__(self, health: dict | None):
         self.health = health
         self.readings = 0
+        # Whether Liquidsoap beats on between two readings of its level.
+        self.beats = True
 
         def playout(request: httpx.Request) -> httpx.Response:
             self.readings += 1
+            if self.beats:
+                stall_watch.beat(_beat(33.115, 100.0 + self.readings))
             if self.health is None:
                 return httpx.Response(503)
             return httpx.Response(200, json=self.health)
@@ -455,6 +483,14 @@ async def test_the_level_is_read_again_only_when_the_remaining_time_stands(
     app.health = dict(HEALTH, rms="0.276502731501")
     assert (await alerts.read_stall(app, settings, HEALTH))[1] is False
     assert app.readings == 2
+    # The same level twice, and no heartbeat in between to say the antenna
+    # went on: a Liquidsoap held up for a second. Not read.
+    app.health = HEALTH
+    app.beats = False
+    stall, level_still = await alerts.read_stall(app, settings, HEALTH)
+    assert (stall.source, level_still) == ("autodj", None)
+    app.beats = True
+    assert app.readings == 3
     # A playout that stops answering: not read, which is not "it moves".
     app.health = None
     assert (await alerts.read_stall(app, settings, HEALTH))[1] is None
@@ -527,7 +563,7 @@ async def station(app_configration: dict, beets_integration, auth: dict, monkeyp
     playout that stalls after 0.3 s of a remaining time put."""
     monkeypatch.setattr(alerts, "MIN_INTERVAL", 0.05)
     monkeypatch.setattr(alerts, "DEFAULT_INTERVAL", 0.05)
-    monkeypatch.setattr(alerts, "LEVEL_GAP_SECONDS", 0.01)
+    monkeypatch.setattr(alerts, "LEVEL_GAP_SECONDS", 0.12)
     # Not the disks of this machine: one could be almost full.
     monkeypatch.setattr(alerts, "disk_paths", lambda data_root: [])
     monkeypatch.delenv("RTCONFIG", raising=False)
