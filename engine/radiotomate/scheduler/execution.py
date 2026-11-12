@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import datetime, timedelta
+from time import monotonic
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from sqlalchemy import and_, delete, or_, select
+from sqlalchemy import and_, delete, func, or_, select
 
 from radiotomate.domain.execution import (
     ENGAGED_STATUSES,
@@ -22,12 +24,15 @@ from radiotomate.domain.execution import (
 from radiotomate.enums import CommandStatus, PositionKind, RundownStatus, WhenMode
 from radiotomate.models import (
     AutoDJSlot,
+    Cart,
     Clock,
+    ClockPosition,
     MetadataLog,
     PlayoutCommand,
     ProgrammingVersion,
     RundownItem,
     Setting,
+    Sound,
 )
 from radiotomate.scheduler.clock import (
     motif_jingles_air,
@@ -44,6 +49,15 @@ _log = logging.getLogger(__name__)
 
 SETTING_FIRED_ANCHORS = "clock_fired_anchors"
 SETTING_PROGRAMMING_VERSION = "clock_programming_version"
+SETTING_MISSING_FORECAST = "clock_missing_forecast"
+# A forecast made only of lines it knew missing (« manquant »: no title in Beets,
+# no sound in the cart) holds that long, unless what it is drawn from changes
+# first. Drawn anew at each call, it cost a station with nothing to play a draw
+# at every tick, a second apart, and six hours of it at each call of the console.
+MISSING_FORECAST_HOLD = timedelta(minutes=1)
+# The last reading of the forecast in this process: when (monotonic), and whether
+# it was made only of missing lines. The scheduler's tick gate asks (live.py).
+_last_reading: dict = {"at": 0.0, "nothing_to_play": False}
 DESK_ORIGIN = "desk"
 DESK_KINDS = {
     PositionKind.MUSIQUE.value,
@@ -281,7 +295,7 @@ async def replace_forecast_items(
                 # no title, no cart) is a forecast too, never sent: this draw
                 # replaces it, even just past. Kept, it piled up at every tick of
                 # a station with nothing to play, where nothing counts as runway
-                # and each tick draws anew: 17 lines a second, 7 days kept.
+                # and each tick drew anew: 17 lines a second, 7 days kept.
                 and_(
                     RundownItem.status == RundownStatus.FAILED.value,
                     RundownItem.sent_at.is_(None),
@@ -427,6 +441,144 @@ def _coverage_rows(rows: list[RundownItem]) -> list[RundownItem]:
     return [row for row in rows if row.status not in ignored]
 
 
+def _is_missing_line(row: RundownItem) -> bool:
+    """A line the forecast knew it could not play (« manquant »), never sent."""
+    return (
+        row.status == RundownStatus.FAILED.value
+        and row.sent_at is None
+        and row.closed_at is None
+        and row.origin != DESK_ORIGIN
+    )
+
+
+async def _beets_titles(beets: BeetsIntegration) -> tuple:
+    """How many titles Beets has, and its highest id."""
+
+    def count() -> tuple:
+        with beets.lib.transaction() as tx:
+            return tuple(tx.query("SELECT COUNT(*), MAX(id) FROM items")[0])
+
+    return await asyncio.get_running_loop().run_in_executor(None, count)
+
+
+async def _forecast_inputs(
+    session: ormSession,
+    beets: BeetsIntegration,
+    version: ProgrammingVersion,
+) -> str:
+    """
+    One fingerprint of what the forecast is drawn from: the programming, the
+    positions of the clocks, the carts, the sounds they can play and the titles
+    of Beets. A change there may give a missing line something to play.
+    """
+    positions = await session.execute(
+        select(ClockPosition.__table__).order_by(ClockPosition.id)
+    )
+    # Not its version: loading a cart with its sounds bumps it, at every draw.
+    carts = await session.execute(
+        select(Cart.id, Cart.title, Cart.mode).order_by(Cart.id)
+    )
+    # The sum too: a sound ready as another drops keeps the count, often the max.
+    playable = await session.execute(
+        select(func.count(Sound.id), func.max(Sound.id), func.sum(Sound.id)).where(
+            Sound.active.is_(True),
+            Sound.gain.is_not(None),
+        )
+    )
+    return programming_fingerprint(
+        [
+            version.id,
+            repr(positions.all()),
+            repr(carts.all()),
+            repr(playable.one()),
+            repr(await _beets_titles(beets)),
+        ]
+    )
+
+
+def _read_missing_mark(mark: Setting | None) -> tuple[datetime, int, str] | None:
+    """When a forecast of missing lines was drawn, for how many minutes, and
+    from what."""
+    if mark is None or not mark.value:
+        return None
+    try:
+        raw = json.loads(mark.value)
+        at = datetime.fromisoformat(str(raw["at"]))
+        horizon = int(raw["horizon"])
+        inputs = str(raw["inputs"])
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+        return None
+    if at.tzinfo is None:
+        return None
+    return at, horizon, inputs
+
+
+def _missing_forecast_holds(
+    mark: Setting | None,
+    rows: list[RundownItem],
+    *,
+    now: datetime,
+    inputs: str,
+    horizon_min: int,
+) -> bool:
+    """
+    Whether the forecast in place, made only of missing lines, still holds: drawn
+    less than ``MISSING_FORECAST_HOLD`` ago, from what is there now, for
+    ``horizon_min`` at least, and its lines still there. A reset takes them away,
+    and the other process may have drawn shorter: it is drawn again. Where the
+    lines end is not asked: hours without a slot, or carts of 8 s that fill the
+    800 lines of a draw, end them short of the horizon for good.
+    """
+    drawn = _read_missing_mark(mark)
+    if drawn is None:
+        return False
+    at, horizon, drawn_from = drawn
+    # Either way round: the scheduler dates a draw by the clock of Liquidsoap,
+    # the interface by its own, a second or so apart.
+    if abs(now - at) >= MISSING_FORECAST_HOLD:
+        return False
+    if drawn_from != inputs or horizon < horizon_min:
+        return False
+    return any(_is_missing_line(row) for row in rows)
+
+
+async def _mark_missing_forecast(  # noqa: PLR0913
+    session: ormSession,
+    mark: Setting | None,
+    items: list[dict],
+    *,
+    now: datetime,
+    horizon_min: int,
+    inputs: str,
+) -> bool:
+    """Mark the forecast just drawn when it is made only of missing lines, so
+    that it holds; clear the mark otherwise. Says whether it is."""
+    missing = bool(items) and all(
+        _status_from_forecast(item) == RundownStatus.FAILED.value for item in items
+    )
+    value = ""
+    if missing:
+        value = json.dumps(
+            {"at": now.isoformat(), "horizon": horizon_min, "inputs": inputs}
+        )
+    if value != ((mark.value if mark is not None else "") or ""):
+        await Setting.upsert(session, SETTING_MISSING_FORECAST, value)
+    return missing
+
+
+def _note_reading(*, nothing_to_play: bool) -> None:
+    _last_reading["at"] = monotonic()
+    _last_reading["nothing_to_play"] = nothing_to_play
+
+
+def nothing_to_play(*, since: float) -> bool:
+    """
+    Whether this process read the forecast since ``since`` (monotonic), and found
+    it made only of missing lines: the clock has nothing to push.
+    """
+    return _last_reading["at"] >= since and _last_reading["nothing_to_play"]
+
+
 async def ensure_forecast(  # noqa: PLR0913
     session: ormSession,
     beets: BeetsIntegration,
@@ -441,8 +593,10 @@ async def ensure_forecast(  # noqa: PLR0913
 
     now = now_paris(now)
     version = await ensure_programming_version(session)
-    rows = _coverage_rows(await _visible_items(session, now, horizon_min=horizon_min))
+    visible = await _visible_items(session, now, horizon_min=horizon_min)
+    rows = _coverage_rows(visible)
     target_ahead = max(15, int(horizon_min))
+    _note_reading(nothing_to_play=False)
     if rows and forecast_still_covers(
         {"items": [item_to_payload(row) for row in rows]},
         now,
@@ -457,6 +611,25 @@ async def ensure_forecast(  # noqa: PLR0913
         )
 
     if not rows:
+        mark = await Setting.from_key(session, SETTING_MISSING_FORECAST)
+        # Read before the draw: a title Beets takes while it runs changes the
+        # next reading, which draws again.
+        inputs = await _forecast_inputs(session, beets, version)
+        if _missing_forecast_holds(
+            mark,
+            visible,
+            now=now,
+            inputs=inputs,
+            horizon_min=horizon_min,
+        ):
+            _note_reading(nothing_to_play=True)
+            return await _payload_from_visible(
+                session,
+                visible,
+                now=now,
+                horizon_min=horizon_min,
+                version=version,
+            )
         forecast = await build_rundown(
             session,
             beets,
@@ -482,12 +655,12 @@ async def ensure_forecast(  # noqa: PLR0913
             if commit:
                 await session.commit()
             return payload
-        await replace_forecast_items(
-            session,
-            version,
-            list(forecast.get("items") or []),
-            now=now,
+        items = list(forecast.get("items") or [])
+        await replace_forecast_items(session, version, items, now=now)
+        missing = await _mark_missing_forecast(
+            session, mark, items, now=now, horizon_min=horizon_min, inputs=inputs
         )
+        _note_reading(nothing_to_play=missing)
     else:
         last_end = _horizon_end(rows, now)
         start_from = last_end if last_end > now else now

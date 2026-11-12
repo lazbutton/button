@@ -22,9 +22,11 @@ from radiotomate.auth import token_required
 from radiotomate.beets import BeetsIntegration
 from radiotomate.db import QuartAlchemy
 from radiotomate.domain.emission import is_harbor_source
+from radiotomate.models import Setting
 from radiotomate.quart import ShutdownError, or_shutdown
 from radiotomate.scheduler.clock import overlay_rundown_next, source_id
 from radiotomate.scheduler.clock import tick as clock_tick
+from radiotomate.scheduler.execution import nothing_to_play
 from radiotomate.scheduler.metrics import runtime_metrics
 
 blueprint = Blueprint("live", __name__)
@@ -206,7 +208,11 @@ async def _run_sequencer(live_data: dict):
             db = QuartAlchemy.get()
             client = current_app.config["PLAYOUT_CLIENT"]
             async with db.session() as session:
+                # A tick that fails says nothing: the gate watches as before.
+                _tick_gate["nothing_to_play"] = False
+                read_from = monotonic()
                 await clock_tick(session, live_data, client, beets)
+                await note_nothing_to_play(session, since=read_from)
     finally:
         runtime_metrics.tick_duration_seconds = perf_counter() - started
 
@@ -245,12 +251,32 @@ async def _on_playout_source(live_data: dict) -> None:
 # changed (source, title, queue depths, minute) or near the end of a track.
 TICK_HOT_REMAINING_SECONDS = 10.0
 TICK_MAX_IDLE_SECONDS = 5.0
-_tick_gate: dict = {"signature": None, "last_run": 0.0}
+SETTING_QUIET_TICK = "features.quiet_tick_when_empty"
+_SETTING_OFF = {"0", "false", "off", ""}
+_tick_gate: dict = {"signature": None, "last_run": 0.0, "nothing_to_play": False}
 
 
 def reset_tick_gate() -> None:
     _tick_gate["signature"] = None
     _tick_gate["last_run"] = 0.0
+    _tick_gate["nothing_to_play"] = False
+
+
+async def quiet_tick_when_empty(session) -> bool:
+    """Whether the tick of a station with nothing to play stops watching for the end
+    of a title it has not. A missing key says it does."""
+    row = await Setting.from_key(session, SETTING_QUIET_TICK)
+    return row is None or str(row.value).strip().lower() not in _SETTING_OFF
+
+
+async def note_nothing_to_play(session, *, since: float) -> None:
+    """
+    After a tick: whether the forecast it read was made only of missing lines
+    (FON-32). A tick that did not read it, held by a live for instance, says no.
+    """
+    _tick_gate["nothing_to_play"] = nothing_to_play(
+        since=since
+    ) and await quiet_tick_when_empty(session)
 
 
 def _rid(value) -> int:
@@ -286,6 +312,10 @@ def should_run_tick(live_data: dict, *, now: float | None = None) -> bool:
         remaining = 0.0
     signature = tick_signature(live_data)
     hot = remaining <= TICK_HOT_REMAINING_SECONDS
+    if remaining <= 0 and _tick_gate["nothing_to_play"]:
+        # Nothing plays, and the clock has nothing to push: no end to watch for.
+        # A change of the antenna, or the idle interval, still runs the tick.
+        hot = False
     changed = signature != _tick_gate["signature"]
     idle = now - _tick_gate["last_run"] >= TICK_MAX_IDLE_SECONDS
     if hot or changed or idle:
