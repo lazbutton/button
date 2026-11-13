@@ -111,7 +111,12 @@ export function CartInspector({
     let cancelled = false;
     void fetchBankFolders()
       .then((payload) => {
-        if (cancelled || !payload.available) return;
+        if (cancelled) return;
+        // The engine says the folders of habillage even with no bank mounted.
+        if (!payload.available) {
+          setBankPaths(habillageFoldersOf(payload));
+          return;
+        }
         const extra = payload.folders.map((folder) => folder.path);
         setBankPaths([...new Set([...habillageFoldersOf(payload), ...extra])].sort());
       })
