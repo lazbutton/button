@@ -91,6 +91,15 @@ HABILLAGE_TITLES = {
 }
 
 
+def rotation_query() -> str:
+    """The Beets query of the rotation, as the Rotation selection has it since v9.
+
+    The pages of the auto-DJ give it as an example. The bank is at /media in the
+    station's containers.
+    """
+    return f"path:/media/{ROTATION_TOP}"
+
+
 def habillage_folders() -> list[str]:
     """The folders of habillage, as the bank_folder of a cart names them."""
     return [habillage_rel(kind) for kind in HABILLAGE_TYPES]
