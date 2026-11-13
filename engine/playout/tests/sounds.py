@@ -34,6 +34,9 @@ SOUNDS = {
     "title-6": (20.0, 610.0, 5.0, 2300.0, -6.0),
     "jingle": (2.5, 2500.0, 40.0, 4000.0, -30.0),
     "cart": (5.0, 1700.0, 25.0, 3300.0, -20.0),
+    # Pushed to wait for the end of a title: a jingle, and a sound of a cart.
+    "jingle-fin": (2.5, 3100.0, 35.0, 4600.0, -25.0),
+    "cart-fin": (5.0, 1300.0, 18.0, 2900.0, -14.0),
 }
 # The start sound of a station is a WAV: this one stays so.
 MP3 = [name for name in SOUNDS if name != "start"]
