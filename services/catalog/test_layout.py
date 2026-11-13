@@ -1,14 +1,19 @@
-"""python test_layout.py — le rangement de la banque, tel que le catalogue le lit.
+"""python test_layout.py — le rangement de la banque, à un seul endroit par composant.
 
-Le catalogue nomme les dossiers de la banque dans layout.py, et nulle part
-ailleurs (docs/decisions/0019-le-rangement-de-la-banque.md). Ce test fige ce
-qu'il tire d'un chemin : le genre d'un fichier, son regroupement, sa zone, où va
-un dépôt de l'inbox, ce que la recherche garde.
+Le catalogue (layout.py), le moteur (engine/radiotomate/services/media_bank.py)
+et chaque script de la station nomment les dossiers de la banque à un seul
+endroit, en tête de fichier. Ce test compare ces endroits entre eux, et refuse
+un nom écrit ailleurs : changer le rangement ne change qu'eux
+(docs/decisions/0019-le-rangement-de-la-banque.md). Il fige aussi ce que le
+catalogue tire d'un chemin : le genre d'un fichier, son regroupement, sa zone,
+où va un dépôt de l'inbox, ce que la recherche garde.
 """
 
 from __future__ import annotations
 
+import ast
 import re
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -19,6 +24,13 @@ import inbox_api
 import layout
 
 HERE = Path(__file__).resolve().parent
+REPO = HERE.parents[1]
+SCRIPTS = REPO / "deploy" / "scripts"
+SHARE = REPO / "deploy" / "share"
+MEDIA_BANK = REPO / "engine" / "radiotomate" / "services" / "media_bank.py"
+sys.path.insert(0, str(SCRIPTS))
+
+import refresh_volume  # noqa: E402
 
 
 class CatalogueReadsTheBankTest(unittest.TestCase):
@@ -270,6 +282,168 @@ class OneListOfNamesTest(unittest.TestCase):
             text = path.read_text(encoding="utf-8")
             for name in names:
                 self.assertNotIn(name, text, f"{path.name} nomme {name} : le lire dans layout.py")
+
+
+# The names every component must agree on, from the catalogue's list.
+CANON = {
+    "INBOX": layout.INBOX,
+    "ROTATION": layout.ROTATION,
+    "COLLECTIONS": layout.COLLECTIONS,
+    "HABILLAGE": layout.HABILLAGE,
+    "EMISSIONS": layout.EMISSIONS,
+    "CARTS": layout.CARTS,
+    "CART_LINKS": layout.CART_LINKS,
+    "TRASH": layout.TRASH,
+    "VOLUME": layout.VOLUME,
+    "HABILLAGE_TYPES": " ".join(layout.HABILLAGE_TYPES),
+    "EMISSION_SLOTS": " ".join(layout.EMISSION_SLOTS),
+    "INBOX_ROTATION": layout.INBOX_ROTATION,
+    "INBOX_COLLECTIONS": layout.INBOX_COLLECTIONS,
+    "INBOX_HABILLAGE": layout.INBOX_HABILLAGE,
+    "INBOX_EMISSIONS": layout.INBOX_EMISSIONS,
+    "INBOX_SOURCES": layout.INBOX_SOURCES,
+    "ROTATION_NAME": layout.ROTATION_NAME,
+}
+# The folders whose name no file may write outside its list.
+FOLDERS = (
+    layout.INBOX,
+    layout.ROTATION,
+    layout.COLLECTIONS,
+    layout.HABILLAGE,
+    layout.EMISSIONS,
+    layout.CARTS,
+    layout.CART_LINKS,
+    layout.TRASH,
+    layout.VOLUME,
+)
+# Each shell script, and the names it takes from the list, under its own name.
+SHELL_SCRIPTS = {
+    "setup-media-tree.sh": {
+        name: name
+        for name in (
+            "INBOX",
+            "ROTATION",
+            "COLLECTIONS",
+            "HABILLAGE",
+            "EMISSIONS",
+            "CARTS",
+            "CART_LINKS",
+            "TRASH",
+            "VOLUME",
+            "HABILLAGE_TYPES",
+            "EMISSION_SLOTS",
+            "INBOX_ROTATION",
+            "INBOX_COLLECTIONS",
+            "INBOX_HABILLAGE",
+            "INBOX_EMISSIONS",
+        )
+    },
+    "promote-inbox.sh": {
+        name: name
+        for name in ("INBOX", "ROTATION", "COLLECTIONS", "INBOX_ROTATION", "INBOX_COLLECTIONS", "INBOX_SOURCES")
+    },
+    "beets-import-loop.sh": {name: name for name in ("ROTATION", "COLLECTIONS", "ROTATION_NAME")},
+    "cloud-sync.sh": {"CART_LINKS": "CART_LINKS"},
+}
+SHELL_DEFINITION = re.compile(r'^([A-Z_]+)=("[^"]*"|\S*)$')
+
+
+def shell_names(path: Path) -> dict[str, str]:
+    """The variables a shell script sets at the top level, $NAME expanded."""
+    names: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        match = SHELL_DEFINITION.match(line)
+        if not match:
+            continue
+        value = match.group(2).strip('"')
+        names[match.group(1)] = re.sub(
+            r"\$(\w+)|\$\{(\w+)\}",
+            lambda found: names.get(found.group(1) or found.group(2), found.group(0)),
+            value,
+        )
+    return names
+
+
+def module_constants(path: Path) -> dict[str, object]:
+    """The constants a Python module sets to a literal, read without importing it."""
+    found: dict[str, object] = {}
+    for node in ast.parse(path.read_text(encoding="utf-8")).body:
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            try:
+                found[node.targets[0].id] = ast.literal_eval(node.value)
+            except ValueError:
+                continue
+    return found
+
+
+def stray_names(path: Path) -> list[str]:
+    """The lines of a file that write a folder's name, other than its definition."""
+    strays = []
+    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        for folder in FOLDERS:
+            if not re.search(rf"(?<![\w.-]){re.escape(folder)}(?![\w-])", line):
+                continue
+            if re.fullmatch(rf'\s*[A-Z_]+\s*=\s*"?{re.escape(folder)}"?\s*', line):
+                continue
+            strays.append(f"{path.relative_to(REPO)}:{number}: {line.strip()}")
+    return strays
+
+
+class OneLayoutForAllTest(unittest.TestCase):
+    """The catalogue, the engine and the station's scripts name the same folders."""
+
+    def test_each_shell_script_names_the_folders_of_the_catalogue(self) -> None:
+        for script, taken in SHELL_SCRIPTS.items():
+            names = shell_names(SCRIPTS / script)
+            for own, canon in taken.items():
+                self.assertEqual(names.get(own), CANON[canon], f"{script} : {own}")
+
+    def test_the_finder_view_names_the_folders_of_the_catalogue(self) -> None:
+        # apply_share.py, in the same image of the share, reads them there.
+        for own, canon in {
+            "ROTATION": "ROTATION",
+            "COLLECTIONS": "COLLECTIONS",
+            "HABILLAGE_TOP": "HABILLAGE",
+            "EMISSIONS": "EMISSIONS",
+            "CARTS": "CARTS",
+            "CART_LINKS": "CART_LINKS",
+            "VOLUME": "VOLUME",
+            "ROTATION_NAME": "ROTATION_NAME",
+        }.items():
+            self.assertEqual(getattr(refresh_volume, own), CANON[canon], f"refresh_volume.py : {own}")
+        self.assertEqual(refresh_volume.EMISSION_SLOTS, layout.EMISSION_SLOTS)
+        self.assertEqual(tuple(slug for slug, _title in refresh_volume.HABILLAGE), layout.HABILLAGE_TYPES)
+
+    def test_the_engine_names_the_folders_of_the_catalogue(self) -> None:
+        engine = module_constants(MEDIA_BANK)
+        for own, canon in {
+            "INBOX_TOP": "INBOX",
+            "ROTATION_TOP": "ROTATION",
+            "HABILLAGE_TOP": "HABILLAGE",
+            "EMISSIONS_TOP": "EMISSIONS",
+            "CART_DROP_TOP": "CARTS",
+            "TRASH_TOP": "TRASH",
+            "FINDER_CARTS": "CART_LINKS",
+        }.items():
+            self.assertEqual(engine.get(own), CANON[canon], f"media_bank.py : {own}")
+        self.assertEqual(engine.get("HABILLAGE_TYPES"), layout.HABILLAGE_TYPES)
+        self.assertEqual(engine.get("EMISSION_FULL"), layout.EMISSION_SLOTS[0])
+
+    def test_no_script_names_a_folder_outside_its_list(self) -> None:
+        files = [path for path in sorted(SCRIPTS.iterdir()) if path.is_file() and path.suffix in {"", ".sh", ".py"}]
+        files += [path for path in sorted(SHARE.iterdir()) if path.is_file() and path.name != "Dockerfile"]
+        files += [REPO / "deploy" / "station", REPO / "deploy" / "compose.yml", MEDIA_BANK, HERE / "layout.py"]
+        strays = [stray for path in files for stray in stray_names(path)]
+        self.assertEqual(strays, [], "un nom de dossier hors de la liste du fichier, en tête")
+
+    def test_a_stray_name_is_seen(self) -> None:
+        with tempfile.TemporaryDirectory(dir=REPO) as raw:
+            path = Path(raw) / "essai.sh"
+            path.write_text('ROTATION=10-rotation\nls "$MEDIA/10-rotation"\nls "$MEDIA/Carts/1"\n', encoding="utf-8")
+            self.assertEqual(
+                [line.split(": ", 1)[1] for line in stray_names(path)],
+                ['ls "$MEDIA/10-rotation"', 'ls "$MEDIA/Carts/1"'],
+            )
 
 
 if __name__ == "__main__":
