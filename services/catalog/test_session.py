@@ -44,6 +44,7 @@ class Meili(BaseHTTPRequestHandler):
     """Un faux Meilisearch, qui ne connaît qu'un titre."""
 
     calls: list[str] = []
+    searches: list[dict] = []
 
     def do_GET(self) -> None:  # noqa: N802
         Meili.calls.append(self.path)
@@ -51,7 +52,7 @@ class Meili(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         Meili.calls.append(self.path)
-        self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        Meili.searches.append(json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}"))
         _send_json(self, {"hits": [{"id": "ada", "path": SONG}], "estimatedTotalHits": 1})
 
     def log_message(self, fmt: str, *args) -> None:
@@ -83,6 +84,7 @@ class CatalogSessionTest(unittest.TestCase):
         Engine.cookies.clear()
         Engine.down = False
         Meili.calls.clear()
+        Meili.searches.clear()
 
     def test_the_engine_says_401_then_200(self) -> None:
         for cookie in (None, "session=fermee"):
@@ -100,6 +102,22 @@ class CatalogSessionTest(unittest.TestCase):
             self.base + "/media/ada", cookie="session=ouverte", headers={"Range": "bytes=0-2"}
         )
         self.assertEqual((status, body), (206, b"ID3"))
+
+    def test_a_search_says_which_filters_it_applied(self) -> None:
+        # La console filtre sans nommer de dossier. Un catalogue plus ancien ne rend
+        # pas cette liste : elle le lit, et redemande avec les filtres d'avant.
+        status, body = _call(
+            self.base + "/search?q=a&zone=collections&habillage=beds,sfx", cookie="session=ouverte"
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["filters"], ["zone", "habillage"])
+        self.assertEqual(
+            Meili.searches[-1]["filter"],
+            'zone = "collections" AND (habillage = "beds" OR habillage = "sfx")',
+        )
+        status, body = _call(self.base + "/search?q=a", cookie="session=ouverte")
+        self.assertEqual(json.loads(body)["filters"], [])
+        self.assertNotIn("filter", Meili.searches[-1])
 
     def test_probes_answer_without_a_session(self) -> None:
         for path in ("/health", "/health/live"):

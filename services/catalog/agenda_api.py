@@ -2,7 +2,7 @@
 
 The engine owns the guests and their dates; the catalog owns the files. The
 tus hooks ask the engine (internal routes, X-Auth-Token) whether a deposit is
-allowed, place the finished file in the broadcast's folder of 40-emissions,
+allowed, place the finished file in the broadcast's folder, among the shows,
 then declare it. The guest's token only travels as a request header.
 """
 
@@ -17,10 +17,11 @@ from pathlib import Path
 from typing import Callable
 
 import inbox_api
+import layout
 
 TOKEN_HEADER = "X-Invite-Token"
-EMISSIONS_TOP = "40-emissions"
-TRASH_TOP = "90-trash"
+EMISSIONS_TOP = layout.EMISSIONS
+TRASH_TOP = layout.TRASH
 PLAYOUT_YAML = Path(os.environ.get("RT_PLAYOUT_YAML", "/config/radiotomate.yaml"))
 
 Engine = Callable[[str, dict], "dict | None"]

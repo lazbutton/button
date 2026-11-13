@@ -16,6 +16,7 @@ import urllib.request
 
 import agenda_api
 import inbox_api
+import layout
 import volume_api
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -40,23 +41,18 @@ TUSD_USER = os.environ.get("TUSD_USER", "1000:1000")
 # où radiotomate-init le fait aussi, la reçoit ainsi.
 MEDIA_OWNER = os.environ.get("MEDIA_OWNER", "1000:1000")
 AUDIO_EXT = {".mp3", ".wav", ".flac", ".ogg", ".m4a", ".aac", ".aiff", ".aif", ".webm"}
-SKIP_TOP = {"00-inbox", "90-trash"}
+SKIP_TOP = {layout.INBOX, layout.TRASH}
 CARTS_ONLY_FLAG = ".library-carts-only"
 CART_PATHS_FILE = ".library-cart-paths"
-EMISSION_SLOTS = ("entiere", "podcasts")
+EMISSION_SLOTS = layout.EMISSION_SLOTS
 
 PROMOTE = (
-    ("00-inbox/rotation", "10-rotation", "music"),
-    ("00-inbox/habillage/jingles", "30-habillage/jingles", "file"),
-    ("00-inbox/habillage/ids", "30-habillage/ids", "file"),
-    ("00-inbox/habillage/pubs", "30-habillage/pubs", "file"),
-    ("00-inbox/habillage/beds", "30-habillage/beds", "file"),
-    ("00-inbox/habillage/stings", "30-habillage/stings", "file"),
-    ("00-inbox/habillage/sfx", "30-habillage/sfx", "file"),
+    (layout.INBOX_ROTATION, layout.ROTATION, "music"),
+    *((layout.inbox_habillage(kind), layout.habillage(kind), "file") for kind in layout.HABILLAGE_TYPES),
 )
 
 def promote_rules() -> list[tuple[str, str, str]]:
-    """The fixed rules, then one per archive bank: a folder of 20-archives."""
+    """The fixed rules, then one per collection."""
     archives = [
         (inbox, bank, "music")
         for key, (inbox, bank) in inbox_api.destinations(MEDIA_ROOT).items()
@@ -66,13 +62,13 @@ def promote_rules() -> list[tuple[str, str, str]]:
 
 
 KIND_FOLDERS = {
-    "30-habillage/jingles": "jingle",
-    "30-habillage/ids": "jingle",
-    "30-habillage/stings": "jingle",
-    "30-habillage/pubs": "pub",
-    "30-habillage/beds": "son",
-    "30-habillage/sfx": "son",
-    "10-rotation": "son",
+    layout.habillage("jingles"): "jingle",
+    layout.habillage("ids"): "jingle",
+    layout.habillage("stings"): "jingle",
+    layout.habillage("pubs"): "pub",
+    layout.habillage("beds"): "son",
+    layout.habillage("sfx"): "son",
+    layout.ROTATION: "son",
 }
 
 
@@ -97,7 +93,7 @@ def in_library(rel: str) -> bool:
         return False
     if not carts_only():
         return True
-    if rel.startswith("50-carts/"):
+    if rel.startswith(layout.CARTS + "/"):
         return True
     return rel in kept_cart_paths()
 
@@ -127,11 +123,11 @@ def wait_stable(path: Path, rounds: int = 8) -> bool:
 
 def grouping_of(rel: str) -> str:
     parts = rel.split("/")
-    if parts[:1] == ["10-rotation"]:
-        return "rotation"
-    if len(parts) >= 2 and parts[0] == "20-archives":
+    if parts[:1] == [layout.ROTATION]:
+        return layout.ROTATION_NAME
+    if len(parts) >= 2 and parts[0] == layout.COLLECTIONS:
         return parts[1]
-    if len(parts) >= 2 and parts[0] == "40-emissions":
+    if len(parts) >= 2 and parts[0] == layout.EMISSIONS:
         return parts[1]
     return ""
 
@@ -141,12 +137,11 @@ def kind_of(rel: str) -> str:
         if rel == prefix or rel.startswith(prefix + "/"):
             return kind
     parts = rel.split("/")
-    if len(parts) >= 3 and parts[0] == "40-emissions" and parts[2] == "podcasts":
+    full, podcasts = EMISSION_SLOTS
+    if len(parts) >= 3 and parts[0] == layout.EMISSIONS and parts[2] == podcasts:
         return "podcast"
-    if len(parts) >= 3 and parts[0] == "40-emissions" and parts[2] == "entiere":
+    if len(parts) >= 3 and parts[0] == layout.EMISSIONS and parts[2] == full:
         return "emission"
-    if rel.startswith("20-archives/") or rel.startswith("40-emissions/"):
-        return "son"
     return "son"
 
 
@@ -224,6 +219,9 @@ def document_for(path: Path) -> dict | None:
         "grouping": grouping_of(rel),
         "folder": str(Path(rel).parent.as_posix()),
         "top": top,
+        # What the console filters on: it names no folder of the bank.
+        "zone": layout.zone_of(rel),
+        "habillage": layout.habillage_of(rel),
         "duration": round(duration, 3),
         "bytes": path.stat().st_size,
         "mime": mime,
@@ -269,7 +267,7 @@ def ensure_index() -> None:
         f"{MEILI_URL}/indexes/{INDEX}/settings",
         {
             "searchableAttributes": ["title", "artist", "filename", "path", "folder"],
-            "filterableAttributes": ["kind", "grouping", "folder", "top"],
+            "filterableAttributes": ["kind", "grouping", "folder", "top", "zone", "habillage"],
             "sortableAttributes": ["path", "title", "duration"],
         },
     )
@@ -321,15 +319,14 @@ def promote_file(path: Path) -> Path | None:
     parts = rel.split("/")
     if (
         len(parts) >= 5
-        and parts[0] == "00-inbox"
-        and parts[1] == "emissions"
+        and "/".join(parts[:2]) == layout.INBOX_EMISSIONS
         and parts[3] in EMISSION_SLOTS
         and is_safe_show(parts[2])
     ):
         name = parts[-1]
         if not name or name in {".", ".."}:
             return None
-        dest = Path("40-emissions") / parts[2] / parts[3]
+        dest = Path(layout.EMISSIONS) / parts[2] / parts[3]
         target = MEDIA_ROOT / dest / name
         target.parent.mkdir(parents=True, exist_ok=True)
         if target.exists():
@@ -360,7 +357,7 @@ def index_path(path: Path) -> None:
     promoted = None
     try:
         rel = rel_of(path)
-        if rel.startswith("00-inbox/"):
+        if rel.startswith(layout.INBOX + "/"):
             if not wait_stable(path):
                 return
             promoted = promote_file(path)
@@ -392,7 +389,7 @@ def full_scan() -> None:
         except ValueError:
             continue
         if rel.split("/", 1)[0] in SKIP_TOP:
-            if rel.startswith("00-inbox/"):
+            if rel.startswith(layout.INBOX + "/"):
                 index_path(path)
             continue
         if not in_library(rel):
@@ -501,6 +498,36 @@ def any_of(field: str, raw: str) -> str:
     return clauses[0] if clauses else ""
 
 
+# zone and habillage name no folder of the bank: the console asks with them.
+# folder and top stay for a console older than this catalogue.
+SEARCH_FIELDS = ("grouping", "folder", "top", "zone", "habillage")
+
+
+def search_filter(qs: dict[str, list[str]]) -> tuple[list[str], list[str]]:
+    """The clauses of a search, and the parameters they were read from.
+
+    The parameters go back with the answer. A console that asks for a filter
+    this catalogue does not know reads that it was not applied, and asks again
+    in the words of an older catalogue.
+    """
+    clauses: list[str] = []
+    applied: list[str] = []
+    kind = (qs.get("kind") or [""])[0]
+    token = "".join(c for c in kind if c.isalnum() or c in "-_")
+    if token == "son":
+        clauses.append('(kind = "son" OR kind = "emission" OR kind = "podcast")')
+    elif token:
+        clauses.append(f'kind = "{token}"')
+    if token:
+        applied.append("kind")
+    for field in SEARCH_FIELDS:
+        clause = any_of(field, (qs.get(field) or [""])[0])
+        if clause:
+            clauses.append(clause)
+            applied.append(field)
+    return clauses, applied
+
+
 def json_response(handler: BaseHTTPRequestHandler, payload: dict, status: int = 200) -> None:
     body = json.dumps(payload).encode()
     handler.send_response(status)
@@ -600,22 +627,8 @@ class CatalogHandler(BaseHTTPRequestHandler):
             return
         if path == "/search":
             query = (qs.get("q") or [""])[0]
-            kind = (qs.get("kind") or [""])[0]
-            grouping = (qs.get("grouping") or [""])[0]
-            folder = (qs.get("folder") or [""])[0]
-            top = (qs.get("top") or [""])[0]
             limit = min(int((qs.get("limit") or ["80"])[0] or 80), 200)
-            filters = []
-            if kind:
-                token = "".join(c for c in kind if c.isalnum() or c in "-_")
-                if token == "son":
-                    filters.append('(kind = "son" OR kind = "emission" OR kind = "podcast")')
-                elif token:
-                    filters.append(f'kind = "{token}"')
-            for field, raw in (("grouping", grouping), ("folder", folder), ("top", top)):
-                clause = any_of(field, raw)
-                if clause:
-                    filters.append(clause)
+            filters, applied = search_filter(qs)
             body = {
                 "q": query,
                 "limit": limit,
@@ -635,6 +648,7 @@ class CatalogHandler(BaseHTTPRequestHandler):
                     "estimatedTotalHits": result.get("estimatedTotalHits", 0)
                     if isinstance(result, dict)
                     else 0,
+                    "filters": applied,
                 },
             )
             return
@@ -944,7 +958,7 @@ def prune_outside_carts(cookie: str) -> dict:
 
 def inbox_dirs() -> list[Path]:
     folders = [MEDIA_ROOT / src for src, _dest, _mode in promote_rules()]
-    shows = MEDIA_ROOT / "00-inbox" / "emissions"
+    shows = MEDIA_ROOT / layout.INBOX_EMISSIONS
     if shows.is_dir():
         for show_dir in shows.iterdir():
             if not show_dir.is_dir() or not is_safe_show(show_dir.name):
