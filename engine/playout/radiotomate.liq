@@ -301,18 +301,52 @@ def finite_seconds(x) =
   if x > 100000. then 0. else max(0., x) end
 end
 
+# The exact length of a title the scheduler pushes, 0. when unknown. ffmpeg,
+# which decodes the files, estimates the length of an MP3 from the bitrate of
+# its first frames when the file has no VBR header (Xing or VBRI). With a quiet
+# start, a title of 20 s is announced for 102 s. With a busy start, for 13 s:
+# it plays on while its remaining time says 0. The scheduler waits for the last
+# seconds of a title to push a jingle or a cut, and pushed them in the middle
+# of such a title. libmad counts the frames: the exact length, in a few
+# milliseconds. A local MP3 only: the decoder knows the length of the other
+# formats. playout/tests/antenna.py plays these two titles.
+def exact_duration(sound) =
+  if string.contains(prefix="/", sound) and r/\.mp3$/i.test(sound) then
+    d = request.duration(resolvers=["mad"], resolve_metadata=false, sound) ?? 0.
+    if d > 0. and d < 100000. then d else 0. end
+  else
+    0.
+  end
+end
+
+# The exact length a request got at its push, 0. without one.
+def pushed_duration(r) =
+  md = request.metadata(r)
+  float_of_string(default=0., md["radiotomate_duration"])
+end
+
+# What is left of the title a queue plays: its exact length less what the queue
+# has played of it. Else the decoder's estimate. `current()` is the title that
+# plays, the next one only once it has started; no test on `request.status`,
+# which stays "ready" for a title on air in Liquidsoap 2.4.
+def queue_remaining(q, estimate) =
+  playing = q.current()
+  exact = if null.defined(playing) then pushed_duration(null.get(playing)) else 0. end
+  if exact > 0. then max(0., exact - max(0., q.elapsed())) else finite_seconds(estimate) end
+end
+
 def track_remaining() =
   sid = current_source_id()
   if sid == "jingles" then
-    finite_seconds(jingles.remaining())
+    queue_remaining(jingles_queue, jingles.remaining())
   elsif sid == "carts" then
-    finite_seconds(carts.remaining())
+    queue_remaining(carts_queue, carts.remaining())
   elsif sid == "stream" then
     finite_seconds(stream.remaining())
   elsif sid == "relay" then
     finite_seconds(relay.remaining())
   else
-    r = finite_seconds(autodj.remaining())
+    r = queue_remaining(autodj_queue, autodj.remaining())
     if r > 0. then r else finite_seconds(programs.remaining()) end
   end
 end
@@ -618,7 +652,8 @@ def cue_duration_uri(uri) =
 end
 
 def cue_duration(r) =
-  cue_duration_uri(request.uri(r))
+  exact = pushed_duration(r)
+  if exact > 0. then exact else cue_duration_uri(request.uri(r)) end
 end
 
 def fill_next(data, field, q, cached)
@@ -829,6 +864,7 @@ def queue_POST(req, res) =
   }) = req.body()
 
   pushed = time()
+  exact = exact_duration(posted.path)
   annotated = "annotate:pushed=\"#{pushed}\",radiotomate_queue=\"#{queue_name}\"" ^
     if null.defined(posted.radiotomate_sound_id) then
       ",radiotomate_sound_id=\"#{null.get(posted.radiotomate_sound_id)}\""
@@ -861,6 +897,9 @@ def queue_POST(req, res) =
     else
       ""
     end
+    ^
+    # Read by track_remaining and by the cues of the queues: see exact_duration.
+    if exact > 0. then ",radiotomate_duration=\"#{exact}\"" else "" end
     ^ ":" ^ posted.path
 
   try

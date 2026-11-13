@@ -14,6 +14,9 @@ encoder. It fails when:
 - the playout airs the same 20 ms frame again and again: the music queue has
   stalled, and the antenna buzzes;
 - the remaining time of a title stays put while it plays;
+- the length a title is announced with, what it has played plus what is left,
+  is not its own: the scheduler cuts it in the middle, or waits for its end
+  long after it;
 - the antenna stays silent.
 
 It needs Docker and Compose, and nothing else: standard library only. Its
@@ -46,13 +49,15 @@ WINDOW = BYTES_PER_SECOND // 10
 STALL_SECONDS = 0.3
 # Heartbeats in a row, one a second, with the same remaining time.
 STUCK_BEATS = 5
+# Seconds between the length a title is announced with and its own.
+LENGTH_SLACK = 1.5
 
-TITLES = ["title-1", "title-2", "title-3", "title-4"]
+TITLES = ["title-1", "title-2", "title-3", "title-4", "title-5", "title-6"]
 JINGLE = "jingle"
 # The start sound has aired, and the music queue has been empty for a while: a
 # first title pushed then is what used to stall.
 EMPTY_QUEUE_SECONDS = 5.0
-LIMIT_SECONDS = 120.0
+LIMIT_SECONDS = 180.0
 
 
 def say(text: str, *, error: bool = False) -> None:
@@ -280,11 +285,34 @@ def stuck(beats: list[dict]) -> list[tuple[str, int]]:
     return sorted(found.items())
 
 
+def announced(beats: list[dict]) -> dict[str, float]:
+    """The length each title is announced with: what it has played plus what is
+    left, the median of its heartbeats. Not the title the jingle cuts: what it
+    has played starts again after the jingle."""
+    found: dict[str, float] = {}
+    for name in TITLES:
+        if name == TITLES[1]:
+            continue
+        lengths = sorted(
+            beat["elapsed"] + beat["remaining"]
+            for beat in beats
+            if beat["title"] == name and beat["remaining"] > 0
+        )
+        if lengths:
+            found[name] = lengths[len(lengths) // 2]
+    return found
+
+
 def verdict(pcm: bytes, aired: list[str], beats: list[dict]) -> list[str]:
     """What went wrong, in the words shown to whoever runs the bench."""
     seconds, stalls = listen(pcm)
     say(f"  à l'antenne : {', '.join(aired) or 'rien'}")
     say(f"  capture : {len(pcm) / BYTES_PER_SECOND:.1f} s, dont {seconds:.1f} s de son")
+    lengths = announced(beats)
+    say(
+        "  durées annoncées : "
+        + ", ".join(f"{name} {length:.1f} s" for name, length in lengths.items())
+    )
 
     failures = [
         f"la même trame de 20 ms passe en boucle pendant {length:.1f} s, à partir"
@@ -296,6 +324,18 @@ def verdict(pcm: bytes, aired: list[str], beats: list[dict]) -> list[str]:
         for title, still in stuck(beats)
     ]
     failures += [
+        f"« {name} » est annoncé pour {length:.1f} s, il en dure"
+        f" {sounds.SOUNDS[name][0]:.1f} : le scheduler le couperait, ou"
+        " attendrait sa fin bien après elle"
+        for name, length in lengths.items()
+        if abs(length - sounds.SOUNDS[name][0]) > LENGTH_SLACK
+    ]
+    failures += [
+        f"« {name} » est passé à l'antenne sans temps restant"
+        for name in TITLES
+        if name in aired and name != TITLES[1] and name not in lengths
+    ]
+    failures += [
         f"« {name} » n'est jamais passé à l'antenne"
         for name in [*TITLES, JINGLE]
         if name not in aired
@@ -303,7 +343,7 @@ def verdict(pcm: bytes, aired: list[str], beats: list[dict]) -> list[str]:
     order = [name for name in dict.fromkeys(aired) if name in TITLES]
     if order != [name for name in TITLES if name in order]:
         failures.append(f"les titres sont passés dans le désordre : {', '.join(order)}")
-    expected = sum(sounds.SOUNDS[name][0] for name in [*TITLES, JINGLE])
+    expected = sum(sounds.audible(name) for name in [*TITLES, JINGLE])
     if seconds < 0.75 * expected:
         failures.append(
             f"{seconds:.1f} s de son seulement, sur {expected:.1f} s de sons poussés"
@@ -339,7 +379,10 @@ def main() -> int:
                 say(f"  - {failure}", error=True)
             say("\nLa fin du journal du playout :\n" + bench.log("playout"), error=True)
             return 1
-        say("Bon : chaque titre passe à son tour, sans trame répétée ni reste figé.")
+        say(
+            "Bon : chaque titre passe à son tour, annoncé pour sa durée, sans trame"
+            " répétée ni reste figé."
+        )
         return 0
     finally:
         bench.down()

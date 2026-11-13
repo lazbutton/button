@@ -12,6 +12,7 @@ encodes them. Standard library only otherwise.
 from __future__ import annotations
 
 import math
+import random
 import subprocess
 import sys
 import wave
@@ -29,10 +30,22 @@ SOUNDS = {
     "title-2": (7.0, 520.0, 11.0, 1500.0, -9.0),
     "title-3": (7.0, 760.0, 13.0, 2100.0, -11.0),
     "title-4": (7.0, 1010.0, 6.0, 2600.0, -5.0),
+    "title-5": (20.0, 420.0, 7.0, 1800.0, -8.0),
+    "title-6": (20.0, 610.0, 5.0, 2300.0, -6.0),
     "jingle": (2.5, 2500.0, 40.0, 4000.0, -30.0),
 }
 # The start sound of a station is a WAV: this one stays so.
 MP3 = [name for name in SOUNDS if name != "start"]
+# Titles 5 and 6 are VBR, without the Xing header that gives the length of the
+# file, as some files a station receives: ffmpeg then estimates the length from
+# the bitrate of the first frames. Their parts, as (seconds, level of the tones,
+# level of a noise the encoder spends its bits on): loud then silent, announced
+# too short; silent then loud, announced too long. Silent for less than the
+# 10 s the music queue lets pass.
+SHAPES = {
+    "title-5": [(12.0, 1.0, 0.3), (8.0, 0.0, 0.0)],
+    "title-6": [(8.0, 0.0, 0.0), (12.0, 1.0, 0.3)],
+}
 
 RTCONFIG = """\
 ---
@@ -68,25 +81,55 @@ metadata_log:
 TOKEN = "jeton-du-banc"
 
 
-def sweep(seconds: float, f1: float, k1: float, f2: float, k2: float) -> array:
-    """Stereo, 16 bits: the right channel a little off the left one."""
+def sweep(  # noqa: PLR0913
+    seconds: float,
+    f1: float,
+    k1: float,
+    f2: float,
+    k2: float,
+    shape: list[tuple[float, float, float]] | None = None,
+) -> array:
+    """Stereo, 16 bits: the right channel a little off the left one. A shape
+    sets the level of each part, and adds its noise."""
     samples = array("h")
     two_pi = 2.0 * math.pi
-    for index in range(int(seconds * RATE)):
-        t = index / RATE
-        low = two_pi * (f1 + k1 * t) * t
-        high = two_pi * (f2 + k2 * t) * t
-        left = 0.35 * math.sin(low) + 0.2 * math.sin(high)
-        right = 0.35 * math.sin(low * 1.07) + 0.2 * math.sin(high * 0.95)
-        samples.append(int(left * 32767))
-        samples.append(int(right * 32767))
+    noise = random.Random(int(f1))
+    index = 0
+    for part, tone, hiss in shape or [(seconds, 1.0, 0.0)]:
+        for _ in range(int(part * RATE)):
+            t = index / RATE
+            low = two_pi * (f1 + k1 * t) * t
+            high = two_pi * (f2 + k2 * t) * t
+            left = tone * (0.35 * math.sin(low) + 0.2 * math.sin(high))
+            right = tone * (0.35 * math.sin(low * 1.07) + 0.2 * math.sin(high * 0.95))
+            if hiss:
+                left += hiss * (2.0 * noise.random() - 1.0)
+                right += hiss * (2.0 * noise.random() - 1.0)
+            samples.append(int(left * 32767))
+            samples.append(int(right * 32767))
+            index += 1
     return samples
+
+
+def audible(name: str) -> float:
+    """The seconds of a sound that are not silence."""
+    shape = SHAPES.get(name)
+    if not shape:
+        return SOUNDS[name][0]
+    return sum(part for part, tone, hiss in shape if tone or hiss)
+
+
+def lame_options(name: str) -> list[str]:
+    if name in SHAPES:
+        # VBR, and -t: no Xing header.
+        return ["-V", "0", "-t"]
+    return ["--cbr", "-b", "192"]
 
 
 def write(folder: Path) -> None:
     folder.mkdir(parents=True, exist_ok=True)
-    for name, shape in SOUNDS.items():
-        samples = sweep(*shape)
+    for name, tones in SOUNDS.items():
+        samples = sweep(*tones, shape=SHAPES.get(name))
         if sys.byteorder == "big":
             samples.byteswap()
         wav = folder / f"{name}.wav"
@@ -100,9 +143,7 @@ def write(folder: Path) -> None:
                 [
                     "lame",
                     "--quiet",
-                    "--cbr",
-                    "-b",
-                    "192",
+                    *lame_options(name),
                     str(wav),
                     str(folder / f"{name}.mp3"),
                 ],
