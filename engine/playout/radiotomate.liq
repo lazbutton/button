@@ -26,6 +26,8 @@ BLANK_THRESHOLD = -45.
 AUTODJ_BLANK_MAX = 10.
 AUTODJ_BLANK_THRESHOLD = -60.
 CARTS_BLANK_MAX = 10.
+# Under this, a title of the Auto-DJ has not played: see `DELETE /live`.
+AUTODJ_PLAYED_S = 0.5
 
 ############################ CONFIGURATION LOADING #############################
 
@@ -220,6 +222,39 @@ carts = blank.eat(id="carts",
   )
 )
 
+########################### SOUNDS THAT WAIT ###################################
+
+# A sound pushed with `wait` goes at the end of the title on air, instead of
+# cutting it: a jingle of the motif, the sound of a cut on the minute that waits
+# for the end, a line of the desk at its turn. The scheduler pushes them in the
+# last seconds of the title: in `jingles_queue` or `carts_queue`, they cut these
+# seconds, which came back after them. Each kind has its own queue, which a
+# fallback below only looks at when a track ends (`track_sensitive=true`).
+# Never ask these two sources whether they are ready (`source.is_ready`): that
+# loads their next request, which a flush can then no longer take back.
+# playout/tests/antenna.py pushes a jingle and a sound of a cart that wait.
+jingles_wait_queue = request.queue(id="jingles_wait_queue")
+
+jingles_wait = blank.eat(id="jingles_wait",
+  start_blank=true,
+  max_blank=BLANK_MAX_DURATION,
+  threshold=BLANK_THRESHOLD,
+  stereo( # If there's a mono file
+    jingles_wait_queue
+  )
+)
+
+carts_wait_queue = request.queue(id="carts_wait_queue")
+
+carts_wait = blank.eat(id="carts_wait",
+  start_blank=true,
+  max_blank=CARTS_BLANK_MAX,
+  threshold=BLANK_THRESHOLD,
+  stereo( # If there's a mono file
+    carts_wait_queue
+  )
+)
+
 ########################### COMBINING SOURCES ##################################
 
 current_source_id = ref("starting")
@@ -258,39 +293,75 @@ def mark_autodj_on_air(_, b)
   b
 end
 
+# A jingle that waits goes when the title of the Auto-DJ ends.
+title_end_jingles = fallback([jingles_wait, autodj],
+  track_sensitive=true,
+  replay_metadata=true,
+  id="title_end_jingles")
+
 # Jingles still cut Auto-DJ, never live / relay / a cart already on air.
-jingles_then_autodj = fallback([jingles, autodj],
+jingles_then_autodj = fallback([jingles, title_end_jingles],
   transitions=[mark_jingles_on_air, mark_autodj_on_air],
   track_sensitive=false,
   replay_metadata=true,
   id="jingles_then_autodj")
 
+# A sound of a cart that waits goes when the title, or the jingle, on air ends.
+title_end_carts = fallback([carts_wait, jingles_then_autodj],
+  track_sensitive=true,
+  replay_metadata=true,
+  id="title_end_carts")
+
 # Live takes the antenna as soon as the harbor buffer is ready.
 # The final `blank()` keeps `programs` a safe source.
-programs = fallback([stream, relay, carts, jingles_then_autodj, blank()],
+programs = fallback([stream, relay, carts, title_end_carts, blank()],
   transitions=[crossfade_3s, crossfade_3s, crossfade_3s, crossfade_3s, crossfade_3s],
   track_sensitive=false,
   replay_metadata=true,
   id="programs")
 
-# The source on air, for the heartbeat, its remaining time and `/health`. Both
-# fallbacks cut (`track_sensitive=false`): the first child that is ready is the
-# one that plays. `current_source_id` does not tell it: on a switch, Liquidsoap
-# 2.4 hands the transitions of `programs` a wrapper, `insert_initial_track_mark.N`,
-# and a cart, a live and a relay were all announced as "autodj", with the
-# remaining time of the title they had cut, which waits.
+# The child a fallback plays, by its id: "" when it plays none.
+def selected_id(f) =
+  s = f.selected()
+  if null.defined(s) then source.id(null.get(s)) else "" end
+end
+
+# The queue on air: stream | relay | carts | carts_wait | jingles | jingles_wait
+# | autodj, read in what each fallback has selected. `current_source_id` does
+# not tell it: on a switch, Liquidsoap 2.4 hands the transitions of `programs` a
+# wrapper, `insert_initial_track_mark.N`, and a cart, a live and a relay were
+# all announced as "autodj", with the remaining time of the title they had cut,
+# which waits. Nor does `source.is_ready`: a sound that waits is ready long
+# before it plays.
 # playout/tests/antenna.py cuts a title with a sound of the carts queue.
-def on_air_source() =
-  if source.is_ready(stream) then
-    "stream"
-  elsif source.is_ready(relay) then
-    "relay"
-  elsif source.is_ready(carts) then
-    "carts"
-  elsif source.is_ready(jingles) then
+def on_air_queue() =
+  top = selected_id(programs)
+  if top == "stream" or top == "relay" or top == "carts" then
+    top
+  elsif top != "title_end_carts" then
+    # Nothing plays.
+    "autodj"
+  elsif selected_id(title_end_carts) == "carts_wait" then
+    "carts_wait"
+  elsif selected_id(jingles_then_autodj) == "jingles" then
     "jingles"
+  elsif selected_id(title_end_jingles) == "jingles_wait" then
+    "jingles_wait"
   else
     "autodj"
+  end
+end
+
+# The source on air, for the heartbeat and `/health`: a sound that waited is a
+# jingle or a sound of a cart as any other.
+def on_air_source() =
+  on_air = on_air_queue()
+  if on_air == "carts_wait" then
+    "carts"
+  elsif on_air == "jingles_wait" then
+    "jingles"
+  else
+    on_air
   end
 end
 
@@ -357,11 +428,15 @@ def queue_remaining(q, estimate) =
 end
 
 def track_remaining() =
-  sid = on_air_source()
+  sid = on_air_queue()
   if sid == "jingles" then
     queue_remaining(jingles_queue, jingles.remaining())
+  elsif sid == "jingles_wait" then
+    queue_remaining(jingles_wait_queue, jingles_wait.remaining())
   elsif sid == "carts" then
     queue_remaining(carts_queue, carts.remaining())
+  elsif sid == "carts_wait" then
+    queue_remaining(carts_wait_queue, carts_wait.remaining())
   elsif sid == "stream" then
     finite_seconds(stream.remaining())
   elsif sid == "relay" then
@@ -719,6 +794,16 @@ def fill_next(data, field, q, cached)
   end
 end
 
+# The next sound of a queue, or of the one where its sounds wait for the end of
+# a title. What `q` holds goes first: it cuts in, or follows what cut in.
+def fill_next_two(data, field, q, q_wait, cached)
+  cached = true ? cached : ref({title="", artist="", rid=-1, initial_uri="", duration=0.}) # FIXME the workaround of fill_next
+  fill_next(data, field, q, cached)
+  if cached().rid == -1 then
+    fill_next(data, field, q_wait, cached)
+  end
+end
+
 def post_to_live()
   data = current_md()
   data.add("source", on_air_source())
@@ -728,12 +813,13 @@ def post_to_live()
   data.add("elapsed", string.float(finite_seconds(bed.elapsed())))
   data.add("time", time.string('%Y-%m-%dT%H:%M:%S%z'))
 
-  fill_next(data, "next_jingle", jingles_queue, next_jingle)
+  # A sound that waits counts in its queue: the scheduler pushed it there.
+  fill_next_two(data, "next_jingle", jingles_queue, jingles_wait_queue, next_jingle)
   fill_next(data, "next_autodj", autodj_queue, next_autodj)
-  fill_next(data, "next_cart", carts_queue, next_cart)
-  data.add("jingles_queued", jingles_queue.length())
+  fill_next_two(data, "next_cart", carts_queue, carts_wait_queue, next_cart)
+  data.add("jingles_queued", jingles_queue.length() + jingles_wait_queue.length())
   data.add("autodj_queued", autodj_queue.length())
-  data.add("carts_queued", carts_queue.length())
+  data.add("carts_queued", carts_queue.length() + carts_wait_queue.length())
 
   _ = post_to_radiotomate("/live", data)
 end
@@ -834,16 +920,19 @@ def live_DELETE(req, res) =
   elsif string.length(radiotomate_sound_id) > 0 then
     # this implements carts' max duration - when we don't need to skip, return 204 No Content
     res.status_code(204)
-    playing_maybe = carts_queue.current()
+    # A sound that waited for the end of a title plays from its own queue.
+    waited = on_air_queue() == "carts_wait"
+    playing_maybe = if waited then carts_wait_queue.current() else carts_queue.current() end
     if null.defined(playing_maybe) then
       playing = null.get(playing_maybe)
       md = request.metadata(playing)
+      left = if waited then carts_wait_queue.remaining() else carts_queue.remaining() end
       if md["radiotomate_sound_id"] == radiotomate_sound_id and
-        carts_queue.remaining() > 1.
+        left > 1.
         then
           rid = request.id(playing)
           log("Forcing max duration for sound_id##{radiotomate_sound_id} (was RID#{rid})")
-          carts_queue.skip()
+          if waited then carts_wait_queue.skip() else carts_queue.skip() end
           res.status_code(200)
       end
     end
@@ -851,14 +940,19 @@ def live_DELETE(req, res) =
     # Hard-sync: drop the cut Auto-DJ track without skipping the output bed
     # (bed.skip would start the next Auto-DJ request before the cart is ready).
     if queue_name == "autodj" then
-      autodj_queue.skip()
-      log("Skipping autodj queue")
+      # Only a title that has played: the one a sound has cut. Behind a sound
+      # that waited for the end of a title, the queue holds the next one, of
+      # which it has played one frame: a skip would drop it whole.
+      if null.defined(autodj_queue.current()) and autodj_queue.elapsed() >= AUTODJ_PLAYED_S then
+        autodj_queue.skip()
+        log("Skipping autodj queue")
+      end
       res.status_code(200)
     elsif queue_name == "jingles" then
-      jingles_queue.skip()
+      if on_air_queue() == "jingles_wait" then jingles_wait_queue.skip() else jingles_queue.skip() end
       res.status_code(200)
     elsif queue_name == "carts" then
-      carts_queue.skip()
+      if on_air_queue() == "carts_wait" then carts_wait_queue.skip() else carts_queue.skip() end
       res.status_code(200)
     else
       res.status_code(400)
@@ -873,6 +967,42 @@ harbor.http.register(port=API_PORT, method="DELETE", "/live", live_DELETE)
 
 #### push content
 
+# Where a sound pushed to the jingles or to the carts goes, once resolved.
+# - Told to wait, it goes at the end of the title on air; a sound of a cart,
+#   at the end of the jingle on air too. Behind a sound of a cart or a live, a
+#   jingle follows them as it always did: from the queue that cuts, which
+#   waits behind them.
+# - While a sound that waited is on air, one of its kind follows it, told to
+#   wait or not: it does not cut it.
+# - While a sound waits for the end of the title on air, a jingle waits with it,
+#   told to or not, as a pad: cutting in, it would leave the end of the title
+#   to come back after it, and start at once a sound of a cart that waits.
+# - Else it cuts what plays: a gesture, a cut on the minute.
+def push_where_it_goes(queue_name, wait, r) =
+  on_air = on_air_queue()
+  a_sound_waits = jingles_wait_queue.length() > 0 or carts_wait_queue.length() > 0
+  if queue_name == "jingles" then
+    if on_air == "jingles_wait" or
+      (wait and (on_air == "autodj" or on_air == "jingles")) or
+      (on_air == "autodj" and a_sound_waits)
+    then
+      jingles_wait_queue.push(r)
+    else
+      jingles_queue.push(r)
+    end
+  elsif queue_name == "carts" then
+    if on_air == "carts_wait" or
+      (wait and (on_air == "autodj" or on_air == "jingles" or on_air == "jingles_wait"))
+    then
+      carts_wait_queue.push(r)
+    else
+      carts_queue.push(r)
+    end
+  else
+    autodj_queue.push(r)
+  end
+end
+
 def queue_POST(req, res) =
   queue_name = req.query["queue"]
   let json.parse (posted:{
@@ -882,6 +1012,7 @@ def queue_POST(req, res) =
     radiotomate_sound_id: int?,
     radiotomate_item_id: string?,
     rg_track_gain: float?,
+    wait: bool?,
   }) = req.body()
 
   pushed = time()
@@ -937,7 +1068,8 @@ def queue_POST(req, res) =
 
     r = request.create(annotated)
     if (request.resolve(r, content_type=q)) then
-      q.push(r)
+      # Once resolved: what is on air may have changed meanwhile.
+      push_where_it_goes(queue_name, posted.wait ?? false, r)
       res.status_code(200)
       res.json({ok=request.id(r)})
     else
@@ -1011,11 +1143,17 @@ def queue_clean_POST(req, res) =
     else
       age
     end
+  # A queue, and the one where its sounds wait for the end of a title.
+  def both(q, q_wait)
+    cut = _queue_clean_result(q, clamped)
+    waiting = _queue_clean_result(q_wait, clamped)
+    {removed=cut.removed + waiting.removed, kept=cut.kept + waiting.kept}
+  end
   res.status_code(200)
   res.json({
     autodj=_queue_clean_result(autodj_queue, clamped),
-    jingles=_queue_clean_result(jingles_queue, clamped),
-    carts=_queue_clean_result(carts_queue, clamped)
+    jingles=both(jingles_queue, jingles_wait_queue),
+    carts=both(carts_queue, carts_wait_queue)
   })
 end
 
@@ -1078,11 +1216,22 @@ def queue_flush_POST(req, res) =
       {removed=0, kept=q.length(), item_ids=[]}
     end
   end
+  # A queue, and the one where its sounds wait for the end of a title: a sound
+  # that still waits is not loaded, and leaves with the others.
+  def both(name, q, q_wait)
+    cut = maybe(name, q)
+    waiting = maybe(name, q_wait)
+    {
+      removed=cut.removed + waiting.removed,
+      kept=cut.kept + waiting.kept,
+      item_ids=[...cut.item_ids, ...waiting.item_ids]
+    }
+  end
   res.status_code(200)
   res.json({
     autodj=maybe("autodj", autodj_queue),
-    jingles=maybe("jingles", jingles_queue),
-    carts=maybe("carts", carts_queue)
+    jingles=both("jingles", jingles_queue, jingles_wait_queue),
+    carts=both("carts", carts_queue, carts_wait_queue)
   })
 end
 

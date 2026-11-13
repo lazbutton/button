@@ -3,7 +3,9 @@ Clock sequencer: motif + hard anchors → existing Liquidsoap queues.
 
 Jingles cut Auto-DJ, never live / relay / a cart on air. Sequential jingles are
 only pushed when the track before them is nearly over, or behind a jingle or cart
-on air, ahead of the music queued after them. Hard anchors still cut — except
+on air, ahead of the music queued after them. Pushed at its turn, a jingle, a soft
+anchor or a line of the desk tells the playout to wait for the end of that track
+(``wait``): it does not cut its last seconds. Hard anchors still cut — except
 while the harbor is on air: the clock pauses, skips nothing, and drops due
 anchors so they are not dumped after the live.
 
@@ -103,6 +105,10 @@ SETTING_MOTIF_JINGLES_AIR = "features.motif_jingles_air"
 # when the clock draws an anchor of that cart itself, as before: the next one
 # may replay the sound drawn.
 SETTING_ORDERED_FOLLOW = "features.ordered_lines_follow_clock"
+# ADR 0009: turned off, a sound pushed at its turn cuts the last seconds of the
+# title on air, as before, and they come back after it. On, the playout is told
+# to wait for the end of that title.
+SETTING_WAIT_TITLE_END = "features.sounds_wait_for_title_end"
 _SETTING_OFF = {"0", "false", "off", ""}
 # Why an anchor line closes without going, as the conducteur shows it.
 HELD_BY_LIVE = "retenue pendant le direct"
@@ -866,7 +872,11 @@ async def _push_existing_rundown_item(  # noqa: PLR0912
     item: RundownItem,
     *,
     queue: str | None = None,
+    wait: bool = False,
 ) -> bool:
+    """``wait``: the sound goes at the end of the title on air, where a push to
+    the jingles or to the carts cuts it at once. The playout queues it apart:
+    see ``push_where_it_goes`` in ``playout/radiotomate.liq``."""
     target = queue or item.queue or "autodj"
     path = (item.path or "").strip()
     if not path:
@@ -880,6 +890,8 @@ async def _push_existing_rundown_item(  # noqa: PLR0912
         return False
     artist, title = _meta_from_item(item)
     payload: dict = {"path": path, "radiotomate_item_id": item.id}
+    if wait and target != "autodj":
+        payload["wait"] = True
     if artist:
         payload["artist"] = artist
     if title:
@@ -945,6 +957,8 @@ async def _push_desk_line(
     gateway: PlayoutGateway,
     line: RundownItem,
     now: datetime,
+    *,
+    wait: bool = False,
 ) -> bool:
     """Push a desk line to its queue. The tick commits when the cursor of the motif
     moves, and a desk line does not move it: its push, refused or not, is
@@ -952,7 +966,9 @@ async def _push_desk_line(
     push the line again."""
     from radiotomate.scheduler.execution import close_replaced
 
-    pushed = await _push_existing_rundown_item(session, gateway, line, queue=line.queue)
+    pushed = await _push_existing_rundown_item(
+        session, gateway, line, queue=line.queue, wait=wait
+    )
     if pushed:
         await close_replaced(session, line, now)
     await session.commit()
@@ -993,6 +1009,9 @@ async def _fill_sequential_from_rundown(  # noqa: PLR0912, PLR0913, PLR0915
 ) -> tuple[dict, int, int]:
     hold = False
     jingles_air = await motif_jingles_air(session)
+    # At its turn a sound goes in the last seconds of the title on air: the
+    # playout is told to wait for its end.
+    wait = await sounds_wait_for_title_end(session)
     for _ in range(8):
         if hold:
             break
@@ -1027,7 +1046,7 @@ async def _fill_sequential_from_rundown(  # noqa: PLR0912, PLR0913, PLR0915
                 if not turn:
                     desk_waits = True
                     continue
-                if not await _push_desk_line(session, gateway, item, now):
+                if not await _push_desk_line(session, gateway, item, now, wait=wait):
                     continue
                 actions.append("desk")
                 if item.queue == "jingles":
@@ -1064,7 +1083,7 @@ async def _fill_sequential_from_rundown(  # noqa: PLR0912, PLR0913, PLR0915
                 ):
                     continue
                 if not await _push_existing_rundown_item(
-                    session, gateway, item, queue="jingles"
+                    session, gateway, item, queue="jingles", wait=wait
                 ):
                     continue
                 actions.append("jingle")
@@ -1287,6 +1306,14 @@ async def motif_jingles_air(session: ormSession) -> bool:
     return row is None or str(row.value).strip().lower() not in _SETTING_OFF
 
 
+async def sounds_wait_for_title_end(session: ormSession) -> bool:
+    """Whether a sound pushed at its turn, in the last seconds of the title on
+    air, tells the playout to wait for the end of that title: a jingle of the
+    motif, a soft anchor, a line of the desk. A missing key says so."""
+    row = await Setting.from_key(session, SETTING_WAIT_TITLE_END)
+    return row is None or str(row.value).strip().lower() not in _SETTING_OFF
+
+
 async def ordered_lines_follow_clock(session: ormSession) -> bool:
     """Whether the lines planned of a cart in order follow the sound the clock
     draws itself for an anchor of that cart. A missing key says they do."""
@@ -1392,13 +1419,14 @@ def _skip_overtaken(
     _close_line(line, OVERTAKEN, now)
 
 
-async def _fire_soft_anchors_astride_the_hour(
+async def _fire_soft_anchors_astride_the_hour(  # noqa: PLR0913
     session: ormSession,
     gateway: PlayoutGateway,
     now: datetime,
     actions: list[str],
     *,
     overtaken,
+    wait: bool,
 ) -> None:
     """The title astride the hour ends: the soft anchors it held go, with their line."""
     for key, line in await _soft_lines_astride_the_hour(session, now):
@@ -1409,7 +1437,9 @@ async def _fire_soft_anchors_astride_the_hour(
         if await overtaken(occurrence):
             _skip_overtaken(key, line, now, actions)
             continue
-        if not await _push_existing_rundown_item(session, gateway, line, queue="carts"):
+        if not await _push_existing_rundown_item(
+            session, gateway, line, queue="carts", wait=wait
+        ):
             continue
         _state.fired_anchors.add(key)
         actions.append(f"soft:{key[2]}")
@@ -1442,10 +1472,13 @@ async def _fire_due_soft_anchors(  # noqa: PLR0913
             switch.append(await skip_overtaken_soft(session))
         return switch[0]
 
+    # A soft anchor goes in the last seconds of the title on air: the playout is
+    # told to wait for its end.
+    wait = title_ends and await sounds_wait_for_title_end(session)
     if title_ends:
         # The hour before goes first.
         await _fire_soft_anchors_astride_the_hour(
-            session, gateway, now, actions, overtaken=overtaken
+            session, gateway, now, actions, overtaken=overtaken, wait=wait
         )
     for pos in anchored:
         if pos.minute is None or not pos.is_soft_sync:
@@ -1471,6 +1504,7 @@ async def _fire_due_soft_anchors(  # noqa: PLR0913
                 gateway,
                 planned,
                 queue="carts",
+                wait=wait,
             )
         else:
             pushed = await _push_cart_to_queue(
@@ -1481,6 +1515,7 @@ async def _fire_due_soft_anchors(  # noqa: PLR0913
                 "carts",
                 reason="glissement" if now > occurrence else None,
                 now=now,
+                wait=wait,
             )
         if not pushed:
             continue
@@ -1497,7 +1532,9 @@ async def _push_cart_to_queue(  # noqa: PLR0913
     reason: str | None = None,
     *,
     now: datetime,
+    wait: bool = False,
 ) -> bool:
+    """``wait``: as for ``_push_existing_rundown_item``."""
     references = [
         (pos.cart_id, pos.cart_title),
         (pos.fallback_cart_id, pos.fallback_cart_title),
@@ -1540,6 +1577,8 @@ async def _push_cart_to_queue(  # noqa: PLR0913
         "radiotomate_sound_id": sound.id,
         "rg_track_gain": str(sound.gain),
     }
+    if wait:
+        payload["wait"] = True
     item = await _record_push_item(
         session,
         kind=pos.kind,
