@@ -6,6 +6,8 @@ Le détail des changements du moteur par rapport à l'amont : [docs/moteur/chang
 
 ## Non publié
 
+- Le banc de la mise à jour, en CI, ne rougit plus sans défaut quand les images de `main` changent pendant qu'il tourne, comme à la fusion d'une branche qui touche à la fois le moteur et le dossier de la station. Il fige les images au début, par leur empreinte, et vérifie après chaque demande de la console que la base et les images sont celles de la mise à jour : la migration qu'il glisse dans une version cassée survivait au retour arrière d'une demande, sans qu'il le voie. Rien à faire sur une station : la commande `station` ne change pas.
+
 ## 1.3.0
 
 Une mineure : rien d'autre que la mise à jour habituelle, voir [docs/deploiement.md](docs/deploiement.md#mettre-à-jour). Le schéma de la base reste en v18 : aucune migration.

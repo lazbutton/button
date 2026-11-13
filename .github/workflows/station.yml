@@ -37,29 +37,35 @@ name: station
 # update: a real update, of a station installed by the highest published
 # version, with its own station command, to the folder of this checkout and
 # the :main images (scripts/version.py station main), by the station command
-# of this checkout. First, two broken versions of this checkout, which must
-# come back by themselves to the published one (MAJ-05). In the first, the
-# engine brings one more migration, which passes, then the console image
-# exits at once (a busybox, built here, that the update does not pull). In
-# the second, the engine brings two more migrations, the second of which
-# fails, halfway. Each must leave the same images on every service, the same
-# data, the database of before with its schema and tables, and the antenna
-# back; HOLD set, updates.log and the system journal saying so, and the logs
-# of the broken version kept. They go without ICECAST_MOUNT, as a station
-# that takes the new address of its stream: back on the published version,
-# the station is checked on the mount it serves. Then the true update, after
-# the action that 1.0.0 asks: ICECAST_MOUNT keeps the stream on the mount it
-# was served on. During, the stream is read every second, and the antenna
-# must not be cut 30 s or more (MAJ-04). After, the same accounts, clocks,
-# weekly shows, Agenda and settings, the backup of before, the line of
-# updates.log and versions.json, then status and the smoke check. Last, the
-# requests of the console (MAJ-07), written in the engine as the button writes
-# them, taken by the timer of the host, button-demandes, which writes their
-# result in the engine: the first broken version, which must come back by
-# itself, rolled_back; then a request refused by the HOLD it left; then,
-# HOLD lifted, the folder of this checkout again, done. The engine of :main
-# has the command of the requests once this branch is merged: before, only
-# the timer and its service are checked.
+# of this checkout. The :main images are those of the start of the job,
+# pinned by their digest in the folder: the engine workflow may publish the
+# next ones while the job runs (TST-15). First, two broken versions of this
+# checkout, which must come back by themselves to the published one (MAJ-05).
+# In the first, the engine brings one more migration, which passes, then the
+# console image exits at once (a busybox, built here, that the update does
+# not pull). In the second, the engine brings two more migrations, the second
+# of which fails, halfway. Their radiotomate-init writes the migrations into
+# its container: a label of theirs recreates it on the way in and on the way
+# back, as an image bringing them would. Each must leave the same images on
+# every service, the same data, the database of before with its schema and
+# tables, and the antenna back; HOLD set, updates.log and the system journal
+# saying so, and the logs of the broken version kept. They go without
+# ICECAST_MOUNT, as a station that takes the new address of its stream: back
+# on the published version, the station is checked on the mount it serves.
+# Then the true update, after the action that 1.0.0 asks: ICECAST_MOUNT keeps
+# the stream on the mount it was served on. During, the stream is read every
+# second, and the antenna must not be cut 30 s or more (MAJ-04). After, the
+# same accounts, clocks, weekly shows, Agenda and settings, the backup of
+# before, the line of updates.log and versions.json, then status and the
+# smoke check. Last, the requests of the console (MAJ-07), written in the
+# engine as the button writes them, taken by the timer of the host,
+# button-demandes, which writes their result in the engine: the first broken
+# version, which must come back by itself, rolled_back; then a request
+# refused by the HOLD it left; then, HOLD lifted, the folder of this checkout
+# again, done. After each, the schema of the database and the images of the
+# services are those of the true update. The engine of :main has the command
+# of the requests once this branch is merged: before, only the timer and its
+# service are checked.
 
 on:
   push:
@@ -628,8 +634,43 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v7
-      - name: Files of a station, from this checkout
-        run: python3 scripts/version.py station main "$RUNNER_TEMP/station"
+      - name: Files of a station, from this checkout, with the :main images of now
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # The images of BUTTON, pinned in the folder by the digest that :main
+          # has now, for every update of the job, the broken ones too. The
+          # merge of a branch that changes engine/ and deploy/ also starts the
+          # engine workflow, which publishes the next :main images while this
+          # job runs: an update would pull them halfway, and the job test two
+          # mains against each other (TST-15). The station only reads its
+          # images in compose.yml. The token reads them if they are private,
+          # as in install.
+          printf '%s\n' "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          python3 - <<'PY'
+          import json
+          import re
+          import subprocess
+          from pathlib import Path
+
+          compose = Path("deploy/compose.yml")
+          digests = {}
+
+
+          def pin(match):
+              image = f"{match.group(2)}/{match.group(3)}"
+              if image not in digests:
+                  inspect = ["docker", "buildx", "imagetools", "inspect", f"{image}:main", "--format", "{{json .Manifest}}"]
+                  digests[image] = json.loads(subprocess.run(inspect, check=True, stdout=subprocess.PIPE).stdout)["digest"]
+                  print(f"{image}:main = {digests[image]}")
+              return f"{match.group(1)}@{digests[image]}"
+
+
+          text = re.sub(r"(\$\{BUTTON_IMAGES:-([^}]+)\}/(button-[a-z0-9-]+)):\$\{BUTTON_VERSION:-stable\}", pin, compose.read_text())
+          assert digests and "${BUTTON_VERSION" not in text, "an image of BUTTON is no longer named as this step expects"
+          compose.write_text(text)
+          PY
+          python3 scripts/version.py station main "$RUNNER_TEMP/station"
       - name: Two broken versions of this checkout
         run: |
           # The folder of this checkout, broken twice, as a version can be,
@@ -638,21 +679,39 @@ jobs:
           # the database of before must come back from under a running engine.
           # migration: its engine brings two more migrations, the second of
           # which fails, halfway. radiotomate-init, a script of the folder,
-          # writes them into the image before migrating.
+          # writes them into its container before migrating.
           for case in console migration; do
             mkdir -p "$RUNNER_TEMP/$case/files"
             tar -xzf "$RUNNER_TEMP/station/station.tar.gz" -C "$RUNNER_TEMP/$case/files"
           done
           python3 - "$RUNNER_TEMP" <<'PY'
           import pathlib
+          import re
           import sys
 
           root = pathlib.Path(sys.argv[1])
           compose = root / "console/files/compose.yml"
-          text = compose.read_text()
-          image = "    image: ${BUTTON_IMAGES:-ghcr.io/lazbutton}/button-console:${BUTTON_VERSION:-stable}\n"
-          assert text.count(image) == 1, "the console image line has changed"
-          compose.write_text(text.replace(image, "    image: button-ci/console-cassee:1\n    pull_policy: never\n"))
+          # The console line, its image pinned by the step before.
+          image = re.compile(r"^    image: \S+/button-console@sha256:[0-9a-f]{64}\n", re.M)
+          text, count = image.subn("    image: button-ci/console-cassee:1\n    pull_policy: never\n", compose.read_text())
+          assert count == 1, "the console image line has changed"
+          compose.write_text(text)
+
+          # A label of their own on radiotomate-init, which writes the
+          # migrations into its container (below): Compose recreates the
+          # container on the way in, and on the way back, as for an image that
+          # brings them. Started again on the way back from main to main, the
+          # same container would migrate the database of before once more
+          # (TST-15).
+          service = "\n  radiotomate-init:\n"
+          for case in ("console", "migration"):
+              compose = root / case / "files/compose.yml"
+              text = compose.read_text()
+              assert text.count(service) == 1, "radiotomate-init is no longer a service of compose.yml"
+              start = text.index(service) + len(service)
+              end = re.compile(r"^ {0,2}\S", re.M).search(text, start)
+              assert "\n    labels:" not in text[start - 1 : end.start() if end else None], "radiotomate-init has labels: add the CI's to them"
+              compose.write_text(text.replace(service, f"{service}    labels:\n      ci.button.version-cassee: {case}\n"))
 
           # Once per container: a second docker compose up starts the same
           # radiotomate-init again, with the migrations already written.
@@ -948,6 +1007,10 @@ jobs:
             data/radiotomate/versions.json
           sudo station status 2>&1 | tee "$out/status.log"
           sudo scripts/smoke.sh http://127.0.0.1:30126 "http://127.0.0.1:18000/$mount"
+          # The database and the images of main, that each request of the
+          # console must give back (TST-15).
+          engine_python "$RUNNER_TEMP/schema.py" >"$out/schema-main.txt"
+          images >"$out/images-main.txt"
       - name: Requests of the console, taken by the timer of the host
         timeout-minutes: 25
         working-directory: /opt/button
@@ -997,6 +1060,19 @@ jobs:
             echo "Demande $id : $result"
           }
 
+          # After a request, the schema of the database and the images of the
+          # services are those of the update to this checkout: the migration of
+          # a broken version does not survive the way back, and the job keeps
+          # its images (TST-15).
+          as_main() { # name of the files, the request in words
+            engine_python "$RUNNER_TEMP/schema.py" >"$out/schema-$1.txt"
+            diff "$out/schema-main.txt" "$out/schema-$1.txt" ||
+              fail "Base" "après $2, la base n'est plus celle de main : voir le diff plus haut."
+            images >"$out/images-$1.txt"
+            diff "$out/images-main.txt" "$out/images-$1.txt" ||
+              fail "Images" "après $2, les services n'ont plus les images de main : voir le diff plus haut."
+          }
+
           # The first broken version: its console does not start, and the
           # station comes back by itself; the engine is told so, and HOLD.
           ask "$RUNNER_TEMP/console/station.tar.gz"
@@ -1009,6 +1085,7 @@ jobs:
           import json
           assert json.load(open("/data/updates/host.json"))["hold"], "HOLD manque au moteur"' ||
             fail "Demandes" "le moteur ne sait pas que HOLD bloque les mises à jour."
+          as_main annulee "la demande annulée"
 
           # HOLD refuses the next one, without updating.
           lines=$(sudo sh -c 'wc -l < updates.log')
@@ -1025,6 +1102,7 @@ jobs:
             fail "Demandes" "updates.log n'a pas la mise à jour de la demande."
           sudo journalctl -u button-demandes --no-pager -o cat | grep -qF "Demande de la console : faite." ||
             fail "Demandes" "le journal du service n'a pas le résultat de la demande."
+          as_main faite "la demande faite"
           sudo rm -r /etc/systemd/system/button-demandes.service.d
           sudo systemctl daemon-reload
           sudo scripts/smoke.sh http://127.0.0.1:30126 "http://127.0.0.1:18000/$mount"
