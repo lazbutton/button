@@ -78,8 +78,20 @@ def destination_row(media: Path, destination: str) -> dict:
     return {"id": destination, "label": inbox_api.humanize(destination), "group": "archives", "folder": ""}
 
 
+def _inside(folder: Path, path: Path) -> bool:
+    try:
+        path.resolve().relative_to(folder.resolve())
+    except (OSError, RuntimeError, ValueError):
+        return False
+    return True
+
+
 def scan(folder: Path) -> list[Entry]:
-    """Every file below the folder, hidden ones aside, as Beets walks it."""
+    """Every file below the folder, hidden ones aside, as Beets walks it.
+
+    A link that leads out of the folder is not one of its files, as for a bac
+    (media_bank.iter_bank_audio): its target is neither read nor touched.
+    """
     entries: list[Entry] = []
     if not folder.is_dir():
         return entries
@@ -94,6 +106,9 @@ def scan(folder: Path) -> list[Entry]:
             except OSError:
                 continue
             if not stat.S_ISREG(info.st_mode):
+                continue
+            # os.walk does not follow a linked folder: only the file can be a link.
+            if path.is_symlink() and not _inside(folder, path):
                 continue
             entries.append(Entry(path.relative_to(folder).as_posix(), path, info.st_size, info.st_mtime_ns))
     return entries
@@ -252,7 +267,8 @@ def summary(media: Path) -> dict:
 
 
 def _file_in(folder: Path, name: object) -> Path | None:
-    """The file a list named, or None: a name that leaves the folder, a hidden file, a file gone."""
+    """The file a list named, or None: a name that leaves the folder, a hidden
+    file, a file gone, or a link that leads out of the folder."""
     text = name if isinstance(name, str) else ""
     if not text or "\x00" in text or text.startswith("/"):
         return None
@@ -262,23 +278,18 @@ def _file_in(folder: Path, name: object) -> Path | None:
     path = folder.joinpath(*parts)
     try:
         path.parent.resolve().relative_to(folder.resolve())
-        return path if path.is_file() else None
+        if not path.is_file():
+            return None
     except (OSError, ValueError):
         return None
+    return path if _inside(folder, path) else None
 
 
 def file_path(media: Path, destination: str, name: str) -> Path | None:
-    """A file to play. A link that leads out of the bank is not served."""
+    """A file to play, as the list shows it."""
     folder = folder_of(media, destination)
     path = _file_in(folder, name) if folder is not None else None
-    if path is None:
-        return None
-    try:
-        resolved = path.resolve()
-        resolved.relative_to(media.resolve())
-    except (OSError, ValueError):
-        return None
-    return resolved
+    return path.resolve() if path is not None else None
 
 
 def _names(raw: object) -> tuple[list[str] | None, str]:
@@ -292,11 +303,12 @@ def _names(raw: object) -> tuple[list[str] | None, str]:
 def _move(source: Path, target: Path) -> str | None:
     """Move a file without ever replacing one. Returns why it could not."""
     try:
-        # A hard link fails on a name already taken, where rename would replace it.
-        os.link(source, target)
+        # A hard link fails on a name already taken, where rename would replace
+        # it. A link inside the folder moves as a link: its target stays put.
+        os.link(source, target, follow_symlinks=False)
     except FileExistsError:
         return "déjà là"
-    except OSError:
+    except (OSError, NotImplementedError):
         # Another disk, or a file system without hard links: a copy, then.
         if os.path.lexists(target):
             return "déjà là"

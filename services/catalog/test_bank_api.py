@@ -170,19 +170,41 @@ class ListTest(Bank):
         self.assertEqual([(row["id"], row["label"], row["count"]) for row in rows], [("rotation", "Rotation", 1), ("jazz", "Jazz d'été", 2)])
         self.assertEqual(rows[1]["bytes"], (self.jazz / "b.wav").stat().st_size * 2)
 
-    def test_only_a_file_of_the_bank_is_played(self) -> None:
+    def test_only_a_file_of_the_collection_is_listed_and_played(self) -> None:
         inside = sound(self.rotation / "Ada - Song.wav")
-        outside = sound(self.media.parent / "ailleurs.wav")
+        outside = sound(self.media.parent / "ailleurs.wav", artist="Secret")
         (self.rotation / "lien.wav").symlink_to(outside)
         (self.rotation / "voisin.wav").symlink_to(sound(self.jazz / "Bea - Live.wav"))
+        (self.rotation / "copie.wav").symlink_to(inside)
 
+        # A link that stays in the collection is one of its titles; the others are not read.
+        self.assertEqual(self.names(), ["Ada - Song.wav", "copie.wav"])
         self.assertEqual(bank_api.file_path(self.media, "rotation", "Ada - Song.wav"), inside)
-        # A link to another collection plays; a link out of the bank does not.
-        self.assertEqual(bank_api.file_path(self.media, "rotation", "voisin.wav"), self.jazz / "Bea - Live.wav")
-        self.assertIsNone(bank_api.file_path(self.media, "rotation", "lien.wav"))
-        for name in ("", "../20-archives/jazz/Bea - Live.wav", "/etc/passwd", ".banque.json", "absent.wav", "a\x00b"):
+        self.assertEqual(bank_api.file_path(self.media, "rotation", "copie.wav"), inside)
+        for name in ("lien.wav", "voisin.wav", "", "../20-archives/jazz/Bea - Live.wav", "/etc/passwd", ".banque.json"):
+            self.assertIsNone(bank_api.file_path(self.media, "rotation", name), name)
+        for name in ("absent.wav", "a\x00b"):
             self.assertIsNone(bank_api.file_path(self.media, "rotation", name), name)
         self.assertIsNone(bank_api.file_path(self.media, "inconnue", "Ada - Song.wav"))
+
+    def test_a_link_out_of_the_collection_is_never_touched(self) -> None:
+        outside = sound(self.media.parent / "ailleurs.wav")
+        (self.rotation / "lien.wav").symlink_to(outside)
+        self.assertEqual(
+            bank_api.remove_files(self.media, "rotation", ["lien.wav"]),
+            (200, {"removed": [], "failed": [{"name": "lien.wav", "reason": "fichier introuvable"}]}),
+        )
+        self.assertEqual(bank_api.move_files(self.media, "rotation", "jazz", ["lien.wav"])[1]["moved"], [])
+        self.assertTrue((self.rotation / "lien.wav").is_symlink() and outside.is_file())
+        self.assertFalse(self.trash.exists() and any(self.trash.iterdir()))
+
+    def test_a_link_in_the_collection_goes_to_the_trash_as_a_link(self) -> None:
+        inside = sound(self.rotation / "Ada - Song.wav")
+        (self.rotation / "copie.wav").symlink_to(inside.name)
+        self.assertEqual(bank_api.remove_files(self.media, "rotation", ["copie.wav"])[1]["removed"], ["copie.wav"])
+        # The link left; the sound it named stays where it was, with one name only.
+        self.assertTrue((self.trash / "copie.wav").is_symlink())
+        self.assertEqual((inside.stat().st_nlink, self.names()), (1, ["Ada - Song.wav"]))
 
 
 class RemoveTest(Bank):
