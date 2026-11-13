@@ -119,6 +119,23 @@ _upgrade = {"checked": False}
 # the start of both (FON-60).
 SETTING_FORECAST_ONCE = "features.forecast_drawn_once"
 _SETTING_OFF = {"0", "false", "off", ""}
+# The lines a reading of the conducteur takes (_visible_items): of any status.
+# Of those, the ones that cover what is ahead: neither a line the forecast knew
+# it could not play, nor one played (_coverage_rows).
+_VISIBLE_STATUSES = sorted(
+    set(REPLACEABLE_STATUSES)
+    | ENGAGED_STATUSES
+    | {
+        RundownStatus.ON_AIR.value,
+        RundownStatus.PLAYED.value,
+        RundownStatus.FAILED.value,
+    }
+)
+_NOT_RUNWAY = {RundownStatus.FAILED.value, RundownStatus.PLAYED.value}
+# How many of its last lines are read where the conducteur goes on: to find the
+# line of the motif it goes on after (_cursor_after_items), and not to write a
+# line again where one of them is, at the same second (append_forecast_items).
+_LAST_LINES = 50
 
 
 async def programming_parts(session: ormSession) -> list[str]:
@@ -357,19 +374,6 @@ def _align_tz(dt: datetime, ref: datetime) -> datetime:
     return dt
 
 
-def _row_end_at(row: RundownItem) -> datetime:
-    return row.planned_at + timedelta(seconds=max(0.0, float(row.duration or 0)))
-
-
-def _horizon_end(rows: list[RundownItem], now: datetime) -> datetime:
-    last = None
-    for row in rows:
-        end = _align_tz(_row_end_at(row), now)
-        if last is None or end > last:
-            last = end
-    return last if last is not None else now
-
-
 async def _cursor_after_items(
     session: ormSession,
     rows: list[RundownItem],
@@ -395,20 +399,23 @@ async def append_forecast_items(
     version: ProgrammingVersion,
     payloads: list[dict],
     *,
+    ends_at: datetime | None,
     existing: list[RundownItem],
 ) -> list[RundownItem]:
-    cutoff = None
+    """
+    Write the lines of ``payloads`` that start from ``ends_at`` on: where the
+    conducteur ends, read on all its lines (``_conducteur_end``). Those before
+    are planned already. A sound is not written twice at the same second, nor
+    where one of ``existing``, the last lines of the conducteur, already is.
+    """
     existing_keys: set[tuple] = set()
     for row in existing:
-        end = _row_end_at(row)
-        if cutoff is None or end > cutoff:
-            cutoff = end
         planned = naive_datetime(row.planned_at)
         stamp = planned.replace(microsecond=0) if planned is not None else planned
         existing_keys.add((stamp, row.path or row.resource))
     sequence = await _next_sequence(session)
     items: list[RundownItem] = []
-    cutoff_naive = naive_datetime(cutoff) if cutoff is not None else None
+    cutoff_naive = naive_datetime(ends_at)
     for payload in payloads:
         try:
             planned = naive_datetime(datetime.fromisoformat(str(payload["at"])))
@@ -472,8 +479,7 @@ def _coverage_rows(rows: list[RundownItem]) -> list[RundownItem]:
     Played rows stay in the history, but a planned_at hours ahead of the real
     start must not count as runway either, or a reset keeps appending there.
     """
-    ignored = {RundownStatus.FAILED.value, RundownStatus.PLAYED.value}
-    return [row for row in rows if row.status not in ignored]
+    return [row for row in rows if row.status not in _NOT_RUNWAY]
 
 
 def _is_missing_line(row: RundownItem) -> bool:
@@ -666,6 +672,10 @@ async def ensure_forecast(  # noqa: PLR0913
     draw written used to erase the lines the first still planned, not those
     already sent to the playout: the antenna aired the start of both (FON-60,
     ``features.forecast_drawn_once``).
+
+    Whether the conducteur reaches far enough, and where it goes on, is read on
+    all the lines that cover it, not on the 800 a reading answers with
+    (``_conducteur_end``, FON-63).
     """
     from radiotomate.scheduler.rundown import build_rundown, forecast_still_covers
 
@@ -675,11 +685,12 @@ async def ensure_forecast(  # noqa: PLR0913
     rows = _coverage_rows(visible)
     target_ahead = max(15, int(horizon_min))
     _note_reading(nothing_to_play=False)
-    if rows and forecast_still_covers(
-        {"items": [item_to_payload(row) for row in rows]},
-        now,
-        min_ahead_min=target_ahead,
-    ):
+    # No line read covers the conducteur: it is drawn as before, and where it
+    # ends is not read.
+    ends_at = (
+        await _conducteur_end(session, now, horizon_min=horizon_min) if rows else None
+    )
+    if ends_at is not None and ends_at >= now + timedelta(minutes=target_ahead):
         return await _payload_from_visible(
             session,
             rows,
@@ -688,7 +699,7 @@ async def ensure_forecast(  # noqa: PLR0913
             version=version,
         )
 
-    if not rows:
+    if ends_at is None:
         mark = await Setting.from_key(session, SETTING_MISSING_FORECAST)
         # Read before the draw: a title Beets takes while it runs changes the
         # next reading, which draws again.
@@ -750,9 +761,10 @@ async def ensure_forecast(  # noqa: PLR0913
                     horizon_min,
                 )
     else:
-        last_end = _horizon_end(rows, now)
-        start_from = last_end if last_end > now else now
-        follow = await _cursor_after_items(session, rows)
+        start_from = ends_at if ends_at > now else now
+        follow = await _cursor_after_items(
+            session, await _last_lines(session, now, horizon_min=horizon_min)
+        )
         remaining_min = int(
             (now + timedelta(minutes=horizon_min) - start_from).total_seconds() // 60
         )
@@ -764,16 +776,15 @@ async def ensure_forecast(  # noqa: PLR0913
             cursor=follow if follow is not None else cursor,
         )
         # Not under the write lock, which the scheduler would wait for at each
-        # extension: the lines are read again after the draw, and only those
-        # after where they now end are written. Two extensions drawn at the
-        # very same time may still both be, as before.
+        # extension: where the conducteur ends is read again after the draw,
+        # and only the lines from there on are written. Two extensions drawn
+        # at the very same time may still both be, as before.
         await append_forecast_items(
             session,
             version,
             list(forecast.get("items") or []),
-            existing=_coverage_rows(
-                await _visible_items(session, now, horizon_min=horizon_min)
-            ),
+            ends_at=await _conducteur_end(session, now, horizon_min=horizon_min),
+            existing=await _last_lines(session, now, horizon_min=horizon_min),
         )
 
     if commit:
@@ -811,23 +822,9 @@ async def _visible_items(
     horizon_min: int = 30,
     fresh: bool = False,
 ) -> list[RundownItem]:
-    lookback = max(15, min(int(horizon_min), 60))
-    cutoff = naive_datetime(now) - timedelta(minutes=lookback)
-    visible = (
-        set(REPLACEABLE_STATUSES)
-        | ENGAGED_STATUSES
-        | {
-            RundownStatus.ON_AIR.value,
-            RundownStatus.PLAYED.value,
-            RundownStatus.FAILED.value,
-        }
-    )
     query = (
         select(RundownItem)
-        .where(
-            RundownItem.status.in_(list(visible)),
-            RundownItem.planned_at >= cutoff,
-        )
+        .where(*_read_lines(now, horizon_min))
         .order_by(RundownItem.planned_at, RundownItem.sequence)
         .limit(800)
     )
@@ -836,6 +833,82 @@ async def _visible_items(
         # process may have moved them since.
         query = query.execution_options(populate_existing=True)
     return list(await session.scalars(query))
+
+
+def _read_lines(now: datetime, horizon_min: int, *, runway: bool = False) -> tuple:
+    """
+    The lines a reading of the conducteur takes: planned from a quarter of an
+    hour to an hour ago on, as far back as it looks ahead, whatever their
+    status. ``runway``: only those that cover what is ahead (_coverage_rows).
+    """
+    lookback = max(15, min(int(horizon_min), 60))
+    statuses = [
+        status
+        for status in _VISIBLE_STATUSES
+        if not runway or status not in _NOT_RUNWAY
+    ]
+    return (
+        RundownItem.status.in_(statuses),
+        RundownItem.planned_at >= naive_datetime(now) - timedelta(minutes=lookback),
+    )
+
+
+async def _conducteur_end(
+    session: ormSession,
+    now: datetime,
+    *,
+    horizon_min: int,
+) -> datetime | None:
+    """
+    Where the conducteur ends, as the base has it: the latest end of the lines
+    that cover it, all of them. None without any.
+
+    Not the end of the 800 lines a reading answers with (``_visible_items``):
+    six hours of titles of 20 s are more. Read on them, the end of the 800th
+    passed for the end of the conducteur, and each reading of the console,
+    every 3 s, drew again what follows it, at the same times, and wrote it:
+    45 000 lines in 5 min on the rundown bench (FON-63).
+    """
+    # SQLite reads a time to the millisecond: the line it finds the last to
+    # end gives the end to the microsecond, as the draw before went on from it.
+    ends = (
+        func.julianday(RundownItem.planned_at)
+        + func.max(RundownItem.duration, 0.0) / 86400.0
+    )
+    last = (
+        await session.execute(
+            select(RundownItem.planned_at, RundownItem.duration)
+            .where(*_read_lines(now, horizon_min, runway=True))
+            .order_by(
+                ends.desc(),
+                RundownItem.planned_at.desc(),
+                RundownItem.sequence.desc(),
+                RundownItem.id.desc(),
+            )
+            .limit(1)
+        )
+    ).first()
+    if last is None:
+        return None
+    end = last.planned_at + timedelta(seconds=max(0.0, float(last.duration or 0)))
+    return _align_tz(end, now)
+
+
+async def _last_lines(
+    session: ormSession,
+    now: datetime,
+    *,
+    horizon_min: int,
+) -> list[RundownItem]:
+    """The last lines that cover the conducteur, ``_LAST_LINES`` at most, in
+    their order: those where it ends, past the 800 a reading answers with."""
+    rows = await session.scalars(
+        select(RundownItem)
+        .where(*_read_lines(now, horizon_min, runway=True))
+        .order_by(RundownItem.planned_at.desc(), RundownItem.sequence.desc())
+        .limit(_LAST_LINES)
+    )
+    return list(reversed(list(rows)))
 
 
 async def preview_rundown(
