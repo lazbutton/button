@@ -97,9 +97,45 @@ jobs:
       - name: Play the script and listen
         run: python3 engine/playout/tests/antenna.py
 
+  # pytest plays the scheduler before a simulated heartbeat, and the antenna
+  # bench plays the playout before a fake scheduler: a fault between the two
+  # shows in neither. This one brings up the scheduler and the interface of the
+  # branch before the Liquidsoap of the playout image, in its network as on a
+  # station, and compares the times the conducteur gives to what airs, around
+  # two cuts on the minute, a relay and a live. The image of the engine is
+  # built here, on the layers the last build of main left in the cache.
+  rundown:
+    name: the scheduler holds the antenna on time
+    runs-on: ubuntu-latest
+    # Six minutes of antenna: a stack that hangs must not hold the runner.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - name: Build the engine image
+        uses: docker/build-push-action@v7
+        with:
+          context: ./engine
+          file: ./engine/Containerfile
+          load: true
+          tags: button-radiotomate:rundown
+          cache-from: type=gha,scope=radiotomate
+      - name: Hold the antenna and compare the conducteur to it
+        env:
+          RUNDOWN_ENGINE_IMAGE: button-radiotomate:rundown
+        run: python3 engine/playout/tests/rundown.py --journal rundown.json
+      # What the probe noted: `rundown.py --relire rundown.json` judges it again.
+      - name: Upload the journal of the probe
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@v7
+        with:
+          name: conducteur-${{ github.run_attempt }}
+          path: rundown.json
+          retention-days: 14
+
   docker:
     name: build & push images
-    needs: [tests, liquidsoap-check, antenna]
+    needs: [tests, liquidsoap-check, antenna, rundown]
     # From main, or for a version, through version.yml. "Run workflow" has no
     # version input: it never builds one.
     if: >-

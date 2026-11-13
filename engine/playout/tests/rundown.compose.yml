@@ -1,0 +1,98 @@
+# The rundown bench: the real scheduler and the real interface hold the antenna
+# before the real Liquidsoap, in the network of the playout as on a station.
+# rundown.py brings it up, plays its scenario, and takes it down. Test
+# passwords: this bench never serves a station.
+x-engine: &engine
+  image: ${ENGINE_IMAGE:?rundown.py builds this image from engine/Containerfile}
+  environment:
+    RTCONFIG: /data/radiotomate.yaml
+    BEETSDIR: /data/Beets
+    MEDIA_ROOT: /media
+    TZ: Europe/Paris
+  volumes:
+    - data:/data
+    - media:/media
+
+services:
+  icecast:
+    build:
+      context: ../../../services/icecast
+    environment:
+      ICECAST_SOURCE_PASSWORD: antenne-source
+      ICECAST_ADMIN_PASSWORD: antenne-admin
+
+  # The first start of a station, in short, then the base of the bench: stops
+  # once the clock is written. As root, as radiotomate-init on a station.
+  init:
+    image: ${ENGINE_IMAGE:?rundown.py builds this image from engine/Containerfile}
+    user: "0:0"
+    environment:
+      BEETSDIR: /data/Beets
+      MEDIA_ROOT: /media
+      TZ: Europe/Paris
+      # Keys of the table `settings`, as "key=value key=value": a switch turned
+      # off, to see the bench fail.
+      RUNDOWN_SETTINGS: ${RUNDOWN_SETTINGS:-}
+    volumes:
+      - data:/data
+      - media:/media
+      - .:/bench:ro
+    entrypoint: ["python3", "/bench/rundown_seed.py"]
+
+  playout:
+    image: ${LIQUIDSOAP_IMAGE:?rundown.py reads this image in engine/playout/Containerfile}
+    entrypoint: ["/usr/bin/liquidsoap", "/app/radiotomate.liq"]
+    environment:
+      RTCONFIG: /data/radiotomate.yaml
+      TZ: Europe/Paris
+    volumes:
+      - ../radiotomate.liq:/app/radiotomate.liq:ro
+      - data:/data:ro
+      - media:/media:ro
+    # The interface, the scheduler and the probe share this network, as on a
+    # station. 6811: the interface, where rundown.py makes the gestures of a
+    # console. 6800: the harbor, where it sends a live as a studio does.
+    # 6899: the probe, which gives it its journal.
+    ports:
+      - "127.0.0.1::6811"
+      - "127.0.0.1::6800"
+      - "127.0.0.1::6899"
+    depends_on:
+      init:
+        condition: service_completed_successfully
+      icecast:
+        condition: service_started
+
+  interface:
+    <<: *engine
+    network_mode: service:playout
+    command: ["radiotomate", "interface"]
+    depends_on:
+      - playout
+
+  scheduler:
+    <<: *engine
+    network_mode: service:playout
+    command: ["radiotomate", "scheduler"]
+    depends_on:
+      - interface
+
+  # Reads the base of the engine, the heartbeats and the conducteur, and gives
+  # its journal to rundown.py.
+  probe:
+    <<: *engine
+    network_mode: service:playout
+    entrypoint: ["python3", "-u", "/bench/rundown_probe.py"]
+    environment:
+      TZ: Europe/Paris
+      # 1: the console of the probe opens before the antenna starts.
+      RUNDOWN_CONSOLE_EARLY: ${RUNDOWN_CONSOLE_EARLY:-}
+    volumes:
+      - data:/data
+      - .:/bench:ro
+    depends_on:
+      - scheduler
+
+volumes:
+  data:
+  media:

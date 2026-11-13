@@ -52,6 +52,7 @@ Le script lance les mêmes commandes que la CI ([`.github/workflows/`](../.githu
 | `moteur` | `ruff check`, `ruff format --check`, puis `pytest` avec `TZ=Europe/Paris`, sans `tests/interface` ni `tests/e2e` | Poetry |
 | `liquidsoap` | `liquidsoap --check engine/playout/radiotomate.liq`, avec un `RTCONFIG` minimal | Docker |
 | `antenne` | le script du playout joué pour de bon, par `engine/playout/tests/antenna.py` ([plus bas](#lantenne)) | Docker, Python 3 |
+| `conducteur` | le vrai scheduler et la vraie interface devant le vrai Liquidsoap, et l'heure du conducteur comparée à l'antenne, par `engine/playout/tests/rundown.py` ([plus bas](#le-conducteur-devant-lantenne)) | Docker, Python 3 |
 | `console` | `npm test`, puis `tsc` et `vite build` | Node 22, `npm install` fait |
 | `services` | les seize tests du catalogue listés dans `services.yml`, puis `test_compose.py` avec le Compose v2 de la CI, si Docker tourne | `services/catalog/.venv`, voir plus bas |
 | `nginx` | `nginx -t` sur `console/docker/nginx.conf.template` et ses en-têtes de sécurité, rendus par le script de démarrage de l'image | Docker |
@@ -124,6 +125,43 @@ Deux titres du banc sont des MP3 à débit variable sans en-tête Xing, l'un cha
 Le banc coupe enfin son dernier titre par un relais, celui de son propre flux public, puis par un direct, qu'il envoie lui-même au harbor comme l'encodeur d'un studio, par-dessus le relais. Le battement doit les dire `relay` et `stream`, puis `autodj` quand le titre revient. Le relais, lui, ne doit pas revenir : un direct arrête le relais qu'il coupe. Le scheduler et la console lisent ce battement pour savoir ce qui passe, et les tests du moteur le simulent : seul ce banc lit celui du vrai Liquidsoap.
 
 Le banc prend des ports libres, et se défait à la fin, avec son volume et les deux images qu'il a construites. La CI le lance avant de construire les images du moteur ([`engine.yml`](../.github/workflows/engine.yml)) : un script qui ne joue pas n'atteint pas le registre.
+
+## Le conducteur devant l'antenne
+
+Les tests du moteur jouent le scheduler devant un battement simulé, et le banc d'antenne joue le playout devant un faux scheduler : un défaut entre les deux ne se voit ni dans les uns, ni dans l'autre. La partie `conducteur` les fait tourner ensemble :
+
+```bash
+./scripts/verifier.sh conducteur
+python3 engine/playout/tests/rundown.py    # le même banc, sans le résumé
+```
+
+Il faut Docker, rien d'autre. Le banc monte une petite station (`rundown.compose.yml`) : l'Icecast de `services/icecast`, le playout, puis l'interface et le scheduler dans le réseau du playout, comme sur une station. L'image du moteur est construite depuis `engine/Containerfile`, deux à trois minutes la première fois ; le playout est le script du dépôt, dans le Liquidsoap de son image. La base est semée pour le passage (`rundown_seed.py`), comme le fait `radiotomate-init` : installation, migrations, deux comptes, vingt-deux titres dans Beets, quatre bacs, un relais, et une heure type d'un jingle pour deux titres. Les sons sont des balayages fabriqués par ffmpeg, les mots de passe sont d'essai : rien ne vient d'une station.
+
+L'heure type a trois coupures à la minute, une minute après l'autre, posées juste après le démarrage :
+
+1. une coupure « Coupe pile », qui lance un programme de 48 s. Le nettoyeur des files est réglé au plus bas, 30 s : derrière le programme, le titre que l'horloge garde prêt attend plus longtemps ;
+2. une coupure « Attend la fin », un flash à la fin du titre à cheval sur sa minute ;
+3. une seconde coupure « Coupe pile », due pendant le direct.
+
+Entre la deuxième et la troisième, le banc lance un relais, celui de son propre flux, par « Diffuser maintenant », comme une console : le scheduler l'arrête au bout de sa durée maximale, 12 s. Puis il envoie un direct au harbor, comme l'encodeur d'un studio, avec le jeton que le compte du studio prend dans la console. Le direct tient l'antenne pendant la minute de la troisième coupure.
+
+Une sonde (`rundown_probe.py`) tourne dans le réseau du playout. Elle lit le conducteur comme une console ouverte, six heures toutes les 3 s, la base du moteur, les battements que relaie le scheduler, le silence que le playout compte sur sa sortie, et ce que le nettoyeur retire des files. Sa console s'ouvre une fois l'antenne partie : ouverte avant, elle fait tirer la prévision par l'interface pendant que le scheduler tire la sienne, et les premiers sons passent en double, un démarrage sur six environ. C'est la fiche FON-60 ; `--console-au-demarrage` l'ouvre tout de suite, pour rejouer ce défaut. Le banc échoue si :
+
+- un son part à plus de 5 s de l'heure que le conducteur lui donnait une minute avant. Un défaut connu du moteur, FON-61, est dit et pas compté : après la coupure « Attend la fin », un jingle du motif qui passe devant le titre annoncé avant lui ;
+- la coupure « Coupe pile » ne part pas à sa minute, ou le titre qu'elle tranche revient après son son ;
+- la coupure « Attend la fin » coupe le titre qu'elle attend ;
+- une ligne envoyée au playout ne passe jamais, ou part dans une file qui en tient déjà une autre, prévue au même moment ou plus tard ;
+- le nettoyeur des files retire un son ;
+- l'antenne se tait 3 s ;
+- le relais ne prend pas l'antenne, ou dépasse sa durée maximale ;
+- pendant le direct, l'horloge envoie un son au playout, la coupure due passe, pendant ou après lui, sa ligne n'est pas fermée « retenue pendant le direct », ou l'interface accepte un « Diffuser maintenant » ;
+- après le direct, le titre qu'il a coupé revient, ou la grille ne reprend pas.
+
+Une heure donnée avant un relais ou le premier son du banc ne dit rien de ce qui passe après : le conducteur ne les prévoit pas. Ces sons-là ne sont pas comparés, et le relevé les dit « pas jugé ». À partir du direct, le banc ne compare plus d'heure, et ne relève plus ce que l'horloge envoie : le retour d'un direct n'est pas encore propre (FON-55, FON-61). Il y juge le direct lui-même, et finit 25 s après lui, une fois la grille repartie. Le blanc qui suit un direct est mesuré, et dit : c'est la fiche FON-55.
+
+Le banc dure cinq à six minutes. Ses coupures tombent toutes dans l'heure où l'antenne démarre : dans les cinq dernières minutes d'une heure, il peut attendre la suivante. Il prend des ports libres, et se défait à la fin, avec ses volumes et ses images. La CI le lance avant de construire les images du moteur ([`engine.yml`](../.github/workflows/engine.yml)), sur une image du moteur qu'elle construit elle-même, avec le cache du dernier build de `main` (`RUNDOWN_ENGINE_IMAGE`).
+
+Pour voir le banc échouer, couper un interrupteur du moteur dans sa base : `python3 engine/playout/tests/rundown.py features.titles_queued_close_to_air=0` pose cette clé dans la table `settings` avant le démarrage. `--journal relevé.json` garde ce que la sonde a noté, et `--relire relevé.json` le rejuge, sans Docker : en échec, la CI joint ce relevé au job, dans l'artefact `conducteur-1`, 14 jours ; le chiffre est celui de la tentative.
 
 ## Aucune donnée de station
 
