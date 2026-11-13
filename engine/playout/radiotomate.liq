@@ -273,6 +273,27 @@ programs = fallback([stream, relay, carts, jingles_then_autodj, blank()],
   replay_metadata=true,
   id="programs")
 
+# The source on air, for the heartbeat, its remaining time and `/health`. Both
+# fallbacks cut (`track_sensitive=false`): the first child that is ready is the
+# one that plays. `current_source_id` does not tell it: on a switch, Liquidsoap
+# 2.4 hands the transitions of `programs` a wrapper, `insert_initial_track_mark.N`,
+# and a cart, a live and a relay were all announced as "autodj", with the
+# remaining time of the title they had cut, which waits.
+# playout/tests/antenna.py cuts a title with a sound of the carts queue.
+def on_air_source() =
+  if source.is_ready(stream) then
+    "stream"
+  elsif source.is_ready(relay) then
+    "relay"
+  elsif source.is_ready(carts) then
+    "carts"
+  elsif source.is_ready(jingles) then
+    "jingles"
+  else
+    "autodj"
+  end
+end
+
 
 settings.lufs.integrated_metadata := "rg_track_gain"
 bed = normalize_track_gain(programs)
@@ -301,18 +322,52 @@ def finite_seconds(x) =
   if x > 100000. then 0. else max(0., x) end
 end
 
+# The exact length of a title the scheduler pushes, 0. when unknown. ffmpeg,
+# which decodes the files, estimates the length of an MP3 from the bitrate of
+# its first frames when the file has no VBR header (Xing or VBRI). With a quiet
+# start, a title of 20 s is announced for 102 s. With a busy start, for 13 s:
+# it plays on while its remaining time says 0. The scheduler waits for the last
+# seconds of a title to push a jingle or a cut, and pushed them in the middle
+# of such a title. libmad counts the frames: the exact length, in a few
+# milliseconds. A local MP3 only: the decoder knows the length of the other
+# formats. playout/tests/antenna.py plays these two titles.
+def exact_duration(sound) =
+  if string.contains(prefix="/", sound) and r/\.mp3$/i.test(sound) then
+    d = request.duration(resolvers=["mad"], resolve_metadata=false, sound) ?? 0.
+    if d > 0. and d < 100000. then d else 0. end
+  else
+    0.
+  end
+end
+
+# The exact length a request got at its push, 0. without one.
+def pushed_duration(r) =
+  md = request.metadata(r)
+  float_of_string(default=0., md["radiotomate_duration"])
+end
+
+# What is left of the title a queue plays: its exact length less what the queue
+# has played of it. Else the decoder's estimate. `current()` is the title that
+# plays, the next one only once it has started; no test on `request.status`,
+# which stays "ready" for a title on air in Liquidsoap 2.4.
+def queue_remaining(q, estimate) =
+  playing = q.current()
+  exact = if null.defined(playing) then pushed_duration(null.get(playing)) else 0. end
+  if exact > 0. then max(0., exact - max(0., q.elapsed())) else finite_seconds(estimate) end
+end
+
 def track_remaining() =
-  sid = current_source_id()
+  sid = on_air_source()
   if sid == "jingles" then
-    finite_seconds(jingles.remaining())
+    queue_remaining(jingles_queue, jingles.remaining())
   elsif sid == "carts" then
-    finite_seconds(carts.remaining())
+    queue_remaining(carts_queue, carts.remaining())
   elsif sid == "stream" then
     finite_seconds(stream.remaining())
   elsif sid == "relay" then
     finite_seconds(relay.remaining())
   else
-    r = finite_seconds(autodj.remaining())
+    r = queue_remaining(autodj_queue, autodj.remaining())
     if r > 0. then r else finite_seconds(programs.remaining()) end
   end
 end
@@ -591,7 +646,7 @@ def post_to_log(md)
   # from (annotate radiotomate_queue). Transitions in LS 2.3 are unreliable
   # (#4179), so `current_source_id` alone mislabelled carts music as autodj.
   pushed_queue = md["radiotomate_queue"]
-  src = if pushed_queue != "" then pushed_queue else current_source_id() end
+  src = if pushed_queue != "" then pushed_queue else on_air_source() end
   data.add("source", src)
   _ = post_to_radiotomate("/metadata_log", data)
 end
@@ -618,7 +673,8 @@ def cue_duration_uri(uri) =
 end
 
 def cue_duration(r) =
-  cue_duration_uri(request.uri(r))
+  exact = pushed_duration(r)
+  if exact > 0. then exact else cue_duration_uri(request.uri(r)) end
 end
 
 def fill_next(data, field, q, cached)
@@ -665,7 +721,7 @@ end
 
 def post_to_live()
   data = current_md()
-  data.add("source", current_source_id())
+  data.add("source", on_air_source())
   rem = track_remaining()
   voiceover_remaining := rem
   data.add("remaining", string.float(rem))
@@ -696,7 +752,7 @@ harbor.http.register(port=API_PORT, method="GET", "/version", version_GET)
 
 def health_GET(_, res) =
   let data = json()
-  src = current_source_id()
+  src = on_air_source()
   data.add("status", "live")
   data.add("silence_s", string.float(silence_s()))
   data.add("rms_db", string.float(rms_db()))
@@ -829,6 +885,7 @@ def queue_POST(req, res) =
   }) = req.body()
 
   pushed = time()
+  exact = exact_duration(posted.path)
   annotated = "annotate:pushed=\"#{pushed}\",radiotomate_queue=\"#{queue_name}\"" ^
     if null.defined(posted.radiotomate_sound_id) then
       ",radiotomate_sound_id=\"#{null.get(posted.radiotomate_sound_id)}\""
@@ -861,6 +918,9 @@ def queue_POST(req, res) =
     else
       ""
     end
+    ^
+    # Read by track_remaining and by the cues of the queues: see exact_duration.
+    if exact > 0. then ",radiotomate_duration=\"#{exact}\"" else "" end
     ^ ":" ^ posted.path
 
   try
