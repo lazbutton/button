@@ -15,6 +15,7 @@ import json
 import os
 import re
 import shutil
+import tempfile
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -104,6 +105,25 @@ def destination_list(media: Path) -> list[dict]:
     return rows + archives
 
 
+def write_label(folder: Path, data: dict) -> None:
+    """Write a collection's name file. Raises OSError.
+
+    Through a new file, then a rename: the Finder view reads it at every round,
+    and the catalogue runs as root. A link left in the folder, under the name
+    of the file or of a partial copy, is replaced, never followed.
+    """
+    fd, partial = tempfile.mkstemp(prefix=f"{LABEL_FILE}.", dir=folder)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            os.fchmod(handle.fileno(), 0o644)
+            handle.write(json.dumps(data, ensure_ascii=False))
+        os.replace(partial, folder / LABEL_FILE)
+    except BaseException:
+        Path(partial).unlink(missing_ok=True)
+        raise
+    give_like_folder(folder / LABEL_FILE)
+
+
 def create_bank(media: Path, label: str, folder: str) -> tuple[int, dict]:
     """A new collection: its folder, its inbox, its name."""
     label = " ".join(str(label or "").split())
@@ -128,8 +148,46 @@ def create_bank(media: Path, label: str, folder: str) -> tuple[int, dict]:
         except FileExistsError:
             return 409, {"error": f"Le dossier {layout.collection(folder)} existe déjà."}
         (media / INBOX_ARCHIVES / folder).mkdir(parents=True, exist_ok=True)
-        (bank / LABEL_FILE).write_text(json.dumps({"nom": label}, ensure_ascii=False), encoding="utf-8")
+        try:
+            write_label(bank, {"nom": label})
+        except OSError:
+            return 500, {"error": "Le nom n'a pas pu s'écrire dans le dossier de la collection."}
     return 201, {"destination": {"id": folder, "label": label, "group": "archives", "folder": layout.collection(folder)}}
+
+
+def rename_bank(media: Path, name: str, label: str) -> tuple[int, dict]:
+    """A new displayed name for a collection. Its folder keeps its name: the selections of titles read it."""
+    name = str(name or "")
+    label = " ".join(str(label or "").split())
+    if name == ROTATION:
+        return 400, {"error": "La Rotation garde son nom."}
+    if not label:
+        return 400, {"error": "Donne un nom à la collection."}
+    if len(label) > 60:
+        return 400, {"error": "Nom trop long : 60 caractères au plus."}
+    if label.casefold() == "rotation":
+        return 409, {"error": "« rotation » est réservé à la musique de l'auto-DJ."}
+    with _LOCK:
+        existing = archive_names(media)
+        if name not in existing:
+            return 404, {"error": "Collection introuvable."}
+        if any(other != name and bank_label(media, other).casefold() == label.casefold() for other in existing):
+            return 409, {"error": "Une collection porte déjà ce nom."}
+        bank = media / ARCHIVES / name
+        note = bank / LABEL_FILE
+        try:
+            # What else the file says stays. A link there is not read.
+            data = {} if note.is_symlink() else json.loads(note.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            data = {}
+        if not isinstance(data, dict):
+            data = {}
+        data["nom"] = label
+        try:
+            write_label(bank, data)
+        except OSError:
+            return 500, {"error": "Le nom n'a pas pu s'écrire dans le dossier de la collection."}
+    return 200, {"destination": {"id": name, "label": label, "group": "archives", "folder": layout.collection(name)}}
 
 
 def judge_upload(

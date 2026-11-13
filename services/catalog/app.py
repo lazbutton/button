@@ -15,6 +15,7 @@ import urllib.error
 import urllib.request
 
 import agenda_api
+import bank_api
 import inbox_api
 import layout
 import volume_api
@@ -550,6 +551,19 @@ def with_zone(hit: dict) -> dict:
     return {**hit, "zone": layout.zone_of(rel), "habillage": layout.habillage_of(rel)}
 
 
+# The titles of the bank change for who may deposit, a collection for an admin.
+COLLECTION_TITLES = {"/collection/remove.json", "/collection/move.json"}
+COLLECTION_ADMIN = {"/collection/rename.json", "/collection/delete.json"}
+
+
+def whole(qs: dict, key: str, default: int) -> int:
+    """A number of the address, or its default when it is not one."""
+    try:
+        return int((qs.get(key) or [""])[0])
+    except ValueError:
+        return default
+
+
 def json_response(handler: BaseHTTPRequestHandler, payload: dict, status: int = 200) -> None:
     body = json.dumps(payload).encode()
     handler.send_response(status)
@@ -578,9 +592,9 @@ def resolve_media(item_id: str) -> Path | None:
     return path if path.is_file() else None
 
 
-def send_file(handler: BaseHTTPRequestHandler, path: Path) -> None:
+def send_file(handler: BaseHTTPRequestHandler, path: Path, mime: str | None = None) -> None:
     size = path.stat().st_size
-    mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    mime = mime or mimetypes.guess_type(path.name)[0] or "application/octet-stream"
     rng = handler.headers.get("Range")
     start, end = 0, size - 1
     status = 200
@@ -603,6 +617,8 @@ def send_file(handler: BaseHTTPRequestHandler, path: Path) -> None:
     handler.send_response(status)
     cors(handler)
     handler.send_header("Content-Type", mime)
+    # Served on the console's origin: the browser takes the type as given, never guesses another.
+    handler.send_header("X-Content-Type-Options", "nosniff")
     handler.send_header("Accept-Ranges", "bytes")
     handler.send_header("Content-Length", str(length))
     if status == 206:
@@ -692,6 +708,27 @@ class CatalogHandler(BaseHTTPRequestHandler):
         if path == "/inbox.json":
             json_response(self, inbox_api.inbox_status(MEDIA_ROOT, TUSD_DIR))
             return
+        if path == "/collection/list.json":
+            json_response(self, bank_api.summary(MEDIA_ROOT))
+            return
+        if path == "/collection/files.json":
+            status, payload = bank_api.list_files(
+                MEDIA_ROOT,
+                (qs.get("id") or [""])[0],
+                query=(qs.get("q") or [""])[0],
+                offset=whole(qs, "offset", 0),
+                limit=whole(qs, "limit", 100),
+                sort=(qs.get("sort") or ["name"])[0],
+            )
+            json_response(self, payload, status)
+            return
+        if path == "/collection/file":
+            sound = bank_api.audio_file(MEDIA_ROOT, (qs.get("id") or [""])[0], (qs.get("name") or [""])[0])
+            if sound is None:
+                json_response(self, {"error": "not_found"}, 404)
+                return
+            send_file(self, *sound)
+            return
         if path.startswith("/media/"):
             item_id = path.split("/", 2)[2]
             media = resolve_media(item_id)
@@ -701,6 +738,39 @@ class CatalogHandler(BaseHTTPRequestHandler):
             send_file(self, media)
             return
         json_response(self, {"error": "not_found"}, 404)
+
+    def _collection(self, path: str, raw: bytes) -> None:
+        """Change what the bank holds: its titles for who may deposit, its collections for an admin."""
+        if (self.headers.get("Content-Type") or "").split(";")[0].strip() != "application/json":
+            json_response(self, {"error": "JSON attendu"}, 415)
+            return
+        if (self.headers.get("Sec-Fetch-Site") or "same-origin") not in {"same-origin", "none"}:
+            json_response(self, {"error": "requête d'un autre site"}, 403)
+            return
+        cookie = self.headers.get("Cookie") or ""
+        allowed, why = session_admin(cookie) if path in COLLECTION_ADMIN else cookie_allowed(cookie)
+        if not allowed:
+            # The engine did not answer: neither a closed session nor a missing right.
+            status = 401 if "session" in why else 502 if "automate" in why else 403
+            json_response(self, {"error": why}, status)
+            return
+        try:
+            body = json.loads(raw.decode() or "{}")
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            body = None
+        if not isinstance(body, dict):
+            json_response(self, {"error": "json illisible"}, 400)
+            return
+        key = str(body.get("id") or "")
+        if path == "/collection/remove.json":
+            status, payload = bank_api.remove_files(MEDIA_ROOT, key, body.get("names"))
+        elif path == "/collection/move.json":
+            status, payload = bank_api.move_files(MEDIA_ROOT, key, str(body.get("to") or ""), body.get("names"))
+        elif path == "/collection/rename.json":
+            status, payload = inbox_api.rename_bank(MEDIA_ROOT, key, body.get("label", ""))
+        else:
+            status, payload = bank_api.delete_collection(MEDIA_ROOT, key)
+        json_response(self, payload, status)
 
     def _volume_password(self, raw: bytes) -> None:
         if (self.headers.get("Content-Type") or "").split(";")[0].strip() != "application/json":
@@ -806,6 +876,9 @@ class CatalogHandler(BaseHTTPRequestHandler):
                 return
             status, payload = inbox_api.create_bank(MEDIA_ROOT, body.get("label", ""), body.get("folder", ""))
             json_response(self, payload, status)
+            return
+        if path in COLLECTION_TITLES or path in COLLECTION_ADMIN:
+            self._collection(path, raw)
             return
         if path != "/tus-hook":
             json_response(self, {"error": "not_found"}, 404)
