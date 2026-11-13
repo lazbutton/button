@@ -330,7 +330,8 @@ async def test_a_hard_break_on_a_relay_skips_no_soft_one(
 ):
     """
     The hard break of 11:50 names a relay: it cuts nothing, like a break with
-    nothing to play. The soft break of 11:49 goes at the end of the title.
+    nothing to play. The soft break of 11:49 goes at the end of the title, and
+    the conducteur plans it there.
     """
     await _spots(dbsession, pubs_cart, 3)
     partner = Cart(
@@ -353,7 +354,7 @@ async def test_a_hard_break_on_a_relay_skips_no_soft_one(
     breaks = [item for item in forecast["items"] if item["kind"] == "pub"]
     assert [
         (item["minute"], item["status"], item.get("reason")) for item in breaks[:2]
-    ] == [(49, "prévu", None), (50, "manquant", RELAY_CART)]
+    ] == [(50, "manquant", RELAY_CART), (49, "prévu", "glissement")]
     client = _client()
     runs = {**_music_on_air("2026-09-14T11:49:05+02:00"), "remaining": "300"}
     with _clock_at("2026-09-14T11:49:05+02:00"):

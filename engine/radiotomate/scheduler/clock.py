@@ -109,6 +109,14 @@ SETTING_ORDERED_FOLLOW = "features.ordered_lines_follow_clock"
 # title on air, as before, and they come back after it. On, the playout is told
 # to wait for the end of that title.
 SETTING_WAIT_TITLE_END = "features.sounds_wait_for_title_end"
+# ADR 0009: turned off, a title that would run into a hard anchor is held, as
+# before: the conducteur plans a gap before the anchor, the antenna waits for it
+# on a blank, or airs there a title planned after the anchor.
+SETTING_HARD_ANCHORS_CUT = "features.hard_anchors_cut_titles"
+# ADR 0009: turned off, the clock keeps two titles queued whatever is on air, as
+# before: behind a long sound, the queue cleaner takes them out one after the
+# other, and their lines stay « en file ».
+SETTING_QUEUE_CLOSE_TO_AIR = "features.titles_queued_close_to_air"
 _SETTING_OFF = {"0", "false", "off", ""}
 # Why an anchor line closes without going, as the conducteur shows it.
 HELD_BY_LIVE = "retenue pendant le direct"
@@ -122,6 +130,14 @@ TARGET_QUEUE_DEPTH = 2
 JINGLE_QUEUE_DEPTH = 1
 AUTODJ_BURST_REMAINING = 8.0
 AUTODJ_BURST_DEPTH = 3
+# The queue cleaner takes a title out of a queue of the playout once it has
+# waited there ten minutes (queue_cleaner.py, `queue_cleaner.max_age_seconds`),
+# and tells nobody. It leaves the next title of the Auto-DJ, which the clock
+# always keeps ready. Any other line is pushed only when it should air within
+# that time, less a margin for what the durations of the conducteur miss.
+DEFAULT_QUEUE_MAX_AGE = 600.0
+QUEUE_WAIT_SHARE = 0.8
+_queue_wait: dict = {"limit": DEFAULT_QUEUE_MAX_AGE * QUEUE_WAIT_SHARE}
 _PUSHABLE_STATUSES = {
     RundownStatus.PLANNED.value,
     RundownStatus.RESCUE.value,
@@ -211,6 +227,12 @@ def reset_state() -> None:
     _state.epoch = 0
     _state.pending_autodj_skip = False
     _state.pending_autodj_skip_minute = None
+
+
+def set_queue_max_age(seconds: float | None) -> None:
+    """How long the queue cleaner lets a title wait in a queue of the playout,
+    as the scheduler is set up. None: no cleaner, a title may wait there."""
+    _queue_wait["limit"] = None if seconds is None else seconds * QUEUE_WAIT_SHARE
 
 
 def note_cart_round(cart_round: CartRound) -> None:
@@ -644,6 +666,14 @@ async def _line_turn(session: ormSession, line: RundownItem, live_data: dict) ->
         if head == "":
             continue
         queued = await RundownItem.from_id(session, head) if head else None
+        if queued is not None and queued.status == RundownStatus.PLAYED.value:
+            # The title a hard anchor cut: its queue keeps it loaded until it
+            # takes the antenna back, then skips it. It is not ahead of the
+            # line, but hides the titles queued behind it: the lines sent to
+            # that queue tell which one airs next.
+            queued = await _next_sent_to(session, queue)
+            if queued is None:
+                continue
         if (
             queued is None
             or queued.planned_at is None
@@ -653,6 +683,26 @@ async def _line_turn(session: ormSession, line: RundownItem, live_data: dict) ->
     if _QUEUE_RANK.get(src, 0) >= rank:
         return True
     return remaining_seconds(live_data) <= JINGLE_PREEMPT_REMAINING
+
+
+async def _next_sent_to(session: ormSession, queue: str) -> RundownItem | None:
+    """The first line of the file sent to a queue of the playout, not on air yet."""
+    sent = [
+        RundownStatus.PENDING_PUSH.value,
+        RundownStatus.SENT.value,
+        RundownStatus.ACCEPTED.value,
+        RundownStatus.IN_QUEUE.value,
+    ]
+    return await session.scalar(
+        select(RundownItem)
+        .where(RundownItem.queue == queue, RundownItem.status.in_(sent))
+        .order_by(
+            RundownItem.planned_at,
+            case((RundownItem.origin == _DESK_ORIGIN, 0), else_=1),
+            RundownItem.sequence,
+        )
+        .limit(1)
+    )
 
 
 def _on_air_title(live_data: dict) -> str:
@@ -995,6 +1045,12 @@ def _desk_would_overflow(
     )
 
 
+def _seconds_until(planned_at: datetime | None, now: datetime) -> float:
+    if planned_at is None:
+        return 0.0
+    return (planned_at - now.replace(tzinfo=None)).total_seconds()
+
+
 async def _fill_sequential_from_rundown(  # noqa: PLR0912, PLR0913, PLR0915
     session: ormSession,
     gateway: PlayoutGateway,
@@ -1012,6 +1068,13 @@ async def _fill_sequential_from_rundown(  # noqa: PLR0912, PLR0913, PLR0915
     # At its turn a sound goes in the last seconds of the title on air: the
     # playout is told to wait for its end.
     wait = await sounds_wait_for_title_end(session)
+    # A title of the clock that runs into a hard anchor goes, as the conducteur
+    # plans it, and the anchor cuts it.
+    cuts = await hard_anchors_cut_titles(session)
+    # A line goes to its queue when it should air soon: sooner, the queue
+    # cleaner would take it out before its turn.
+    limit = _queue_wait["limit"] if await titles_queued_close_to_air(session) else None
+    long_wait = limit is not None and remaining_seconds(live_data) > limit
     for _ in range(8):
         if hold:
             break
@@ -1043,7 +1106,9 @@ async def _fill_sequential_from_rundown(  # noqa: PLR0912, PLR0913, PLR0915
                     )
                     hold = True
                     break
-                if not turn:
+                # Behind a long sound on air, it would wait in its queue until
+                # the cleaner takes it out: it goes nearer its end.
+                if not turn or long_wait:
                     desk_waits = True
                     continue
                 if not await _push_desk_line(session, gateway, item, now, wait=wait):
@@ -1069,8 +1134,11 @@ async def _fill_sequential_from_rundown(  # noqa: PLR0912, PLR0913, PLR0915
                 break
             if _is_jingle_item(item):
                 if jingles_air:
-                    if jingles_q >= JINGLE_QUEUE_DEPTH or not await _line_turn(
-                        session, item, live_data
+                    # Behind a long sound on air it waits too, as a desk line.
+                    if (
+                        jingles_q >= JINGLE_QUEUE_DEPTH
+                        or long_wait
+                        or not await _line_turn(session, item, live_data)
                     ):
                         # The desk lines after it wait too, or they would air
                         # before it.
@@ -1099,16 +1167,32 @@ async def _fill_sequential_from_rundown(  # noqa: PLR0912, PLR0913, PLR0915
             if autodj_q >= autodj_target:
                 break
             length = float(item.duration or 0)
-            if next_anchor is not None and track_would_overflow_anchor(
-                now,
-                remaining_seconds(live_data),
-                length,
-                next_anchor,
+            remaining = remaining_seconds(live_data)
+            # A line of the desk that would run into a hard anchor waits for it;
+            # so does a title of the clock, with the switch off.
+            if (
+                (desk or not cuts)
+                and next_anchor is not None
+                and track_would_overflow_anchor(now, remaining, length, next_anchor)
             ):
                 _log.info(
                     "Holding autodj track so hard anchor at minute %s can fire",
                     next_anchor,
                 )
+                hold = True
+                break
+            # One title waits ready, whatever plays: the antenna never falls
+            # on an empty queue. A second one goes only when it should air soon:
+            # the queue cleaner would take it out before its turn. A relay ends
+            # when someone stops it: nothing tells how long it would wait.
+            if (
+                limit is not None
+                and autodj_q >= 1
+                and (
+                    source_id(live_data) == "relay"
+                    or max(remaining, _seconds_until(item.planned_at, now)) > limit
+                )
+            ):
                 hold = True
                 break
             if desk:
@@ -1311,6 +1395,22 @@ async def sounds_wait_for_title_end(session: ormSession) -> bool:
     air, tells the playout to wait for the end of that title: a jingle of the
     motif, a soft anchor, a line of the desk. A missing key says so."""
     row = await Setting.from_key(session, SETTING_WAIT_TITLE_END)
+    return row is None or str(row.value).strip().lower() not in _SETTING_OFF
+
+
+async def hard_anchors_cut_titles(session: ormSession) -> bool:
+    """Whether the title that runs into a hard anchor airs, and is cut by it:
+    the conducteur plans it before the anchor, and the clock pushes it as any
+    other. A missing key says so."""
+    row = await Setting.from_key(session, SETTING_HARD_ANCHORS_CUT)
+    return row is None or str(row.value).strip().lower() not in _SETTING_OFF
+
+
+async def titles_queued_close_to_air(session: ormSession) -> bool:
+    """Whether a line waits out of the queues of the playout until it should air
+    soon: behind a long sound, the queue cleaner would take it out before its
+    turn. A missing key says so."""
+    row = await Setting.from_key(session, SETTING_QUEUE_CLOSE_TO_AIR)
     return row is None or str(row.value).strip().lower() not in _SETTING_OFF
 
 

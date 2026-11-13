@@ -45,6 +45,8 @@ from radiotomate.scheduler.execution import (
 )
 
 NIGHT = "2026-09-14T00:30:00+02:00"
+# Two titles of the night file later: the ones after them are close to air.
+NIGHT_LATER = "2026-09-14T00:36:00+02:00"
 JOURNEE_20 = "2026-09-14T10:20:05+02:00"
 EVENING_20 = "2026-09-14T18:20:05+02:00"
 SHORT_20 = "2026-09-14T10:20:05+02:00"
@@ -150,7 +152,7 @@ async def test_motif_jingle_then_three_music(
     assert client.post.call_args_list[0].kwargs["json"]["artist"] == "Jingles"
 
     filled = _live(
-        NIGHT,
+        NIGHT_LATER,
         remaining="180",
         next_jingle={"rid": 1},
         next_autodj={"rid": 1},
@@ -332,10 +334,11 @@ async def _night_music(
     return [item for item in data["items"] if item.get("kind") == "musique"]
 
 
-def _autodj_wants_two() -> dict:
-    """The jingles queue is full and the autodj queue empty: two music lines go."""
+def _autodj_wants_two(time: str = NIGHT) -> dict:
+    """The jingles queue is full and the autodj queue empty: two music lines go,
+    the second one as it is close to air."""
     return _live(
-        NIGHT,
+        time,
         remaining="180",
         next_jingle={"rid": 1},
         jingles_queued=2,
@@ -372,7 +375,7 @@ async def test_a_removed_clock_line_is_not_pushed(
 
     await delete_desk_item(dbsession, removal.id)
     client = _client()
-    await tick(dbsession, _autodj_wants_two(), client, beets_integration)
+    await tick(dbsession, _autodj_wants_two(NIGHT_LATER), client, beets_integration)
     assert _pushed_ids(client) == [music[0]["id"], music[3]["id"]]
 
 
@@ -393,7 +396,7 @@ async def test_a_removed_line_stays_off_air_once_its_removal_expires(
     removed = await dbsession.get(RundownItem, music[0]["id"])
     assert removed.status == RundownStatus.SKIPPED.value
     client = _client()
-    await tick(dbsession, _autodj_wants_two(), client, beets_integration)
+    await tick(dbsession, _autodj_wants_two(NIGHT_LATER), client, beets_integration)
     assert _pushed_ids(client) == [music[3]["id"], music[4]["id"]]
 
 
@@ -452,7 +455,7 @@ async def test_the_lines_already_sent_are_neither_removed_nor_moved(
 
     await insert_desk_item(dbsession, {"suppress_at": music[2]["at"]})
     client = _client()
-    await tick(dbsession, _autodj_wants_two(), client, beets_integration)
+    await tick(dbsession, _autodj_wants_two(NIGHT_LATER), client, beets_integration)
     assert _pushed_ids(client) == [music[3]["id"], music[4]["id"]]
 
 

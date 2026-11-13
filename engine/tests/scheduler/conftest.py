@@ -134,12 +134,19 @@ async def dbsession(raw_app: CustomQuart) -> AsyncGenerator[ormSession]:
 
 @pytest.fixture(autouse=True)
 def reset_clock_sequencer():
-    from radiotomate.scheduler.clock import reset_state
+    from radiotomate.scheduler.clock import (
+        DEFAULT_QUEUE_MAX_AGE,
+        reset_state,
+        set_queue_max_age,
+    )
     from radiotomate.scheduler.metrics import runtime_metrics
     from radiotomate.scheduler.stall import stall_watch
     from radiotomate.scheduler.watchdog import Watchdog
 
     reset_state()
+    # As a station sets it up; a test that starts the scheduler of tests.yaml,
+    # whose queue cleaner is off, leaves it without a limit.
+    set_queue_max_age(DEFAULT_QUEUE_MAX_AGE)
     runtime_metrics.reset()
     stall_watch.reset()
     Watchdog.liquidsoap_version = "disconnected"
@@ -148,6 +155,7 @@ def reset_clock_sequencer():
     invalidate_conducteur_cache()
     yield
     reset_state()
+    set_queue_max_age(DEFAULT_QUEUE_MAX_AGE)
     runtime_metrics.reset()
     stall_watch.reset()
     Watchdog.liquidsoap_version = "disconnected"
