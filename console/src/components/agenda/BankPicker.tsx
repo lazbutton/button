@@ -6,7 +6,7 @@ import { secondsLabel } from "../../api/agendaView";
 
 const TABS: Array<{ id: LibraryTabId; label: string }> = [
   { id: "emission", label: "Émissions" },
-  { id: "archives", label: "Archives" },
+  { id: "archives", label: "Collections" },
   { id: "all", label: "Tout" },
 ];
 

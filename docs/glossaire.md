@@ -12,9 +12,10 @@ Les mots de la radio et ceux du code. Quand la console et le code n'emploient pa
 | Auto-DJ | La musique que le moteur choisit seul dans la banque, selon les catégories | file Liquidsoap `autodj` |
 | Bac | Le mot de la console pour un cart : des sons joués selon un mode, en liste, en boucle, au hasard, ou un relais | `Cart` |
 | Bac ouvert | Un bac dont le dossier existe dans le dossier `Bacs` de Dropbox, sous son numéro et son titre : un son qu'on y dépose entre dans le bac | `cloud-sync`, `deploy/scripts/cloud-sync.sh` |
-| Banque | Les dossiers de fichiers audio de la station : `00-inbox`, `10-rotation`, `20-archives`, `30-habillage`, `40-emissions`, `50-carts`… Une banque d'archives est un dossier de `20-archives` | `BUTTON_MEDIA`, `MEDIA_ROOT` |
+| Banque | Les dossiers de fichiers audio de la station : `00-inbox`, `10-rotation`, `20-archives`, `30-habillage`, `40-emissions`, `50-carts`… Un dossier de `20-archives` est une collection | `BUTTON_MEDIA`, `MEDIA_ROOT` |
 | Catalogue | Le service qui indexe la banque, répond aux recherches et range les envois | `services/catalog/` |
 | Catégorie | Une requête Beets qui choisit des titres, comme `genre:Jazz` | `MusicCategory` |
+| Collection | Un dossier de `20-archives` : des titres à programmer à part, comme un fonds ou des émissions passées. Elle se crée dans **Sons → Banque**, et le nom de son dossier devient le regroupement de ses titres. Le dossier de la station la montre dans `Banques` | `20-archives/<dossier>`, `POST /banks.json`, `.banque.json` |
 | Commande `station` | Le script qui installe une station sur un VPS, puis l'exploite : `station install`, `update`, `status`, `backup`, `restore`… Chaque version publiée le joint à sa page, avec le dossier d'une station à cette version | `deploy/station`, `station.tar.gz`, `/usr/local/bin/station` |
 | Conducteur | Ce qui va passer, puis ce qui est passé, calculé par le scheduler | `rundown_items`, `scheduler/rundown.py` |
 | Console | L'application web de l'équipe | `console/` |

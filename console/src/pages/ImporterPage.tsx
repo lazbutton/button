@@ -505,7 +505,7 @@ export function ImporterPage() {
           const created = await createBank(label, folder);
           await load();
           setDestination(created.id);
-          show(`Banque « ${created.label} » créée : les envois iront dans ${created.folder}`, "success");
+          show(`Collection « ${created.label} » créée : les envois iront dans ${created.folder}`, "success");
         }}
       />
       <ProtoToast message={message} onDismiss={dismiss} />
