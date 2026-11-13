@@ -81,7 +81,15 @@ from radiotomate.models import (
     Setting,
     User,
 )
-from radiotomate.services.media_bank import media_root, unique_trash_path
+from radiotomate.services.media_bank import (
+    EMISSION_FULL,
+    EMISSIONS_TOP,
+    FINDER_CARTS,
+    INBOX_TOP,
+    TRASH_TOP,
+    media_root,
+    unique_trash_path,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session as ormSession
@@ -103,8 +111,7 @@ DEPOSIT_SUFFIXES = {
 }
 CONVERT_TO_FLAC = {".wav", ".wave", ".aiff", ".aif"}
 MAX_DEPOSIT_BYTES = 4 * 1024**3
-EMISSIONS_TOP = "40-emissions"
-REFUSED_TOPS = {"00-inbox", "90-trash", "Carts"}
+REFUSED_TOPS = {INBOX_TOP, TRASH_TOP, FINDER_CARTS}
 ANALYSIS_TIMEOUT = 15 * 60
 _analysis_lock = asyncio.Lock()
 
@@ -936,7 +943,7 @@ def deposit_name(row: AgendaDiffusion, guest: AgendaGuest, suffix: str) -> str:
 
 
 def deposit_folder(row: AgendaDiffusion) -> str:
-    return f"{EMISSIONS_TOP}/{slug(row.title)}/entiere"
+    return f"{EMISSIONS_TOP}/{slug(row.title)}/{EMISSION_FULL}"
 
 
 async def deposit_check(  # noqa: PLR0911
@@ -1000,7 +1007,7 @@ def _media_file(raw: str) -> tuple[Path, str]:
 
 
 def _retire(row: AgendaFile, now: datetime) -> None:
-    """Mark a file replaced; a guest's file goes to 90-trash, a bank file stays."""
+    """Mark a file replaced; a guest's file goes to the trash, a bank file stays."""
     row.replaced_at = utc_naive(now)
     if row.origin != ORIGIN_DEPOT:
         return

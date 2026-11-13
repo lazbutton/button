@@ -75,7 +75,7 @@ Pendant un direct, l'horloge se met en pause et laisse tomber les ancres dues : 
 |---|---|---|
 | Base de la station | `RT_DATA/radiotomate.db` (SQLite) | une par station ; schéma migré par `radiotomate update` au démarrage |
 | Configuration du moteur | `RT_DATA/radiotomate.yaml` | sorties, alertes, rétention, métriques ; écrite par `radiotomate-init` |
-| Banque de sons | `BUTTON_MEDIA` | `00-inbox`, `10-rotation`, `20-archives`, `30-habillage`, `40-emissions`, `50-carts`… |
+| Banque de sons | `BUTTON_MEDIA` | `00-inbox`, `10-rotation`, `20-archives`, `30-habillage`, `40-emissions`, `50-carts`… Chaque composant nomme ces dossiers à un seul endroit : `media_bank.py` pour le moteur, `layout.py` pour le catalogue, la tête de chaque script pour la station ; la console n'en nomme aucun ([décision 0019](decisions/0019-le-rangement-de-la-banque.md)) |
 | Bibliothèque Beets | `RT_DATA/Beets` | index de la banque, ReplayGain |
 | Index de recherche | `MEILI_DATA` | reconstruit par le catalogue |
 | Envois en cours | volume `tusd-data` | les morceaux d'un envoi reprenable |

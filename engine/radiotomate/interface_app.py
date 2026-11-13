@@ -37,6 +37,7 @@ from radiotomate.interface import (
     users,
 )
 from radiotomate.quart import CustomQuart
+from radiotomate.services import media_bank
 from radiotomate.templates import RADIOTOMATE_HELPERS
 
 _log = logging.getLogger(__name__)
@@ -134,6 +135,8 @@ def app_factory(config: dict, reload: bool, beets: BeetsIntegration):
     app.jinja_env.globals.update(
         **RADIOTOMATE_HELPERS,
         csrf_token=csrf.csrf_token,
+        # An example of the auto-DJ pages: the folder is named in media_bank.py.
+        rotation_query=media_bank.rotation_query(),
     )
     app.register_error_handler(Exception, htmx_errors_as_messages)
     app.register_error_handler(Unauthorized, redirect_to_login)

@@ -1,5 +1,6 @@
 import { apiGet, apiPostJson, apiUpload } from "./client";
 import { chunkFiles } from "./audioDrop";
+import { habillageFoldersOf } from "./cartFlags";
 import { BANK_SEND_DEADLINE_MS } from "./sendDeadline";
 import type { BankResponse, Cart } from "./types";
 
@@ -78,6 +79,24 @@ export async function importCartSounds(
 
 export function fetchBankFolders(): Promise<BankResponse> {
   return apiGet<BankResponse>("/media/bank.json");
+}
+
+let habillageKnown: string[] | null = null;
+
+/** The folders of habillage a bac may follow, once the engine said them: they do not change. */
+export function knownHabillageFolders(): string[] {
+  return habillageKnown ?? habillageFoldersOf(null);
+}
+
+/** Asks the engine for the folders of habillage. Unread, the ones known so far stay. */
+export async function readHabillageFolders(): Promise<string[]> {
+  if (habillageKnown) return habillageKnown;
+  try {
+    habillageKnown = habillageFoldersOf(await fetchBankFolders());
+  } catch {
+    return knownHabillageFolders();
+  }
+  return habillageKnown;
 }
 
 export function attachBankFolders(
