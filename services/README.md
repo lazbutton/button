@@ -12,6 +12,9 @@ Index de la banque de sons dans Meilisearch, recherche pour la console, récepti
 | `GET /inbox.json` | File d'attente, rejets, quota de l'inbox et place sur le disque |
 | `GET /media/…` | Lecture d'un fichier de la banque (requêtes Range) |
 | `POST /banks.json` | Crée une collection, pour un admin |
+| `GET /collection/list.json`, `/collection/files.json`, `/collection/file` | Le contenu de la Rotation et des collections, lu sur le disque, et la pré-écoute d'un de leurs fichiers |
+| `POST /collection/remove.json`, `/collection/move.json` | Envoie des titres dans la corbeille de la banque, ou les déplace vers une autre collection, pour qui peut déposer |
+| `POST /collection/rename.json`, `/collection/delete.json` | Renomme une collection, ou la supprime une fois vide, pour un admin |
 | `GET /volume.json` | Nom et hôte du dossier partagé |
 | `POST /volume-password.json` | Pose ou retire le mot de passe du dossier d'un compte, pour un admin |
 | `POST /prune` | Retire de l'index de recherche les fichiers qui ne sont dans aucun bac, pour un admin |
@@ -22,7 +25,7 @@ La console joint le catalogue sous `/library/` : voir [docs/api.md](../docs/api.
 
 Variables : `MEDIA_ROOT`, `MEILI_URL`, `MEILI_MASTER_KEY`, `MEILI_INDEX`, `CATALOG_PORT`, `AUTOMATE_URL`, `TUSD_DIR`, `TUSD_USER`, `INBOX_QUOTA_BYTES`, `STATION_NAME`, `SMB_HOST`, `SHARE_PRIVATE`.
 
-Tests : `./scripts/verifier.sh services` lance les quinze fichiers de test de la CI. Un seul : `cd services/catalog && .venv/bin/python test_inbox_api.py`. Ils couvrent aussi nowplaying, et les scripts du dossier partagé, rangés dans `deploy/`.
+Tests : `./scripts/verifier.sh services` lance les seize fichiers de test de la CI. Un seul : `cd services/catalog && .venv/bin/python test_inbox_api.py`. Ils couvrent aussi nowplaying, et les scripts du dossier partagé, rangés dans `deploy/`.
 
 ## nowplaying
 

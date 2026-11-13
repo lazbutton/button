@@ -8,7 +8,17 @@
 //   node --experimental-strip-types e2e/stubs/catalogue.ts <port> <banque> <moteur>
 
 import { createHash } from "node:crypto";
-import { closeSync, createReadStream, existsSync, openSync, readdirSync, readSync, statfsSync, statSync } from "node:fs";
+import {
+  closeSync,
+  createReadStream,
+  existsSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  readSync,
+  statfsSync,
+  statSync,
+} from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { basename, dirname, extname, join } from "node:path";
 
@@ -200,8 +210,7 @@ function json(response: ServerResponse, status: number, payload: unknown): void 
 }
 
 /** Le fichier, en entier ou par plage : un lecteur audio demande « bytes=0- ». */
-function sendFile(request: IncomingMessage, response: ServerResponse, hit: Hit): void {
-  const file = join(banque, hit.path);
+function sendFile(request: IncomingMessage, response: ServerResponse, file: string, mime: string): void {
   const size = statSync(file).size;
   const [, first = "", last = ""] = /^bytes=(\d*)-(\d*)$/.exec(request.headers.range ?? "") ?? [];
   const partial = Boolean(first || last);
@@ -219,7 +228,7 @@ function sendFile(request: IncomingMessage, response: ServerResponse, hit: Hit):
     return;
   }
   const headers: Record<string, string | number> = {
-    "Content-Type": hit.mime,
+    "Content-Type": mime,
     "Content-Length": end - start + 1,
     "Accept-Ranges": "bytes",
   };
@@ -230,6 +239,69 @@ function sendFile(request: IncomingMessage, response: ServerResponse, hit: Hit):
     return;
   }
   createReadStream(file, { start, end }).pipe(response);
+}
+
+type Shelf = { id: string; label: string; group: "rotation" | "archives"; folder: string };
+type ShelfFile = { name: string; path: string; bytes: number; mtime: number };
+
+/** La rotation, puis un dossier de 20-archives par collection, comme destination_list() du vrai. */
+function shelves(): Shelf[] {
+  const rows: Shelf[] = [{ id: "rotation", label: "Rotation", group: "rotation", folder: "10-rotation" }];
+  const root = join(banque, "20-archives");
+  if (!existsSync(root)) return rows;
+  const found: Shelf[] = [];
+  for (const name of readdirSync(root)) {
+    if (name.startsWith(".") || name.startsWith("_") || !statSync(join(root, name)).isDirectory()) continue;
+    let label = "";
+    try {
+      label = String(JSON.parse(readFileSync(join(root, name, ".banque.json"), "utf8")).nom ?? "").trim();
+    } catch {
+      // Sans nom : celui du dossier.
+    }
+    found.push({ id: name, label: label || name, group: "archives", folder: `20-archives/${name}` });
+  }
+  return [...rows, ...found.sort((a, b) => a.label.localeCompare(b.label, "fr"))];
+}
+
+/** Les fichiers d'une collection, sans ce qui est caché, comme scan() de bank_api.py. */
+function shelfFiles(shelf: Shelf): ShelfFile[] {
+  const folder = join(banque, shelf.folder);
+  if (!existsSync(folder)) return [];
+  const found: ShelfFile[] = [];
+  for (const rel of readdirSync(folder, { recursive: true, encoding: "utf8" })) {
+    const name = rel.split("\\").join("/");
+    if (name.split("/").some((part) => part.startsWith("."))) continue;
+    const path = join(folder, name);
+    const stat = statSync(path);
+    if (stat.isFile()) found.push({ name, path, bytes: stat.size, mtime: stat.mtimeMs });
+  }
+  return found;
+}
+
+/** Une page des titres d'une collection, comme list_files() du vrai : sans étiquettes, le nom fait le titre. */
+function shelfPage(shelf: Shelf, params: URLSearchParams) {
+  const all = shelfFiles(shelf);
+  const words = (params.get("q") ?? "").toLowerCase().split(/\s+/).filter(Boolean);
+  const kept = all.filter((file) => words.every((word) => file.name.toLowerCase().includes(word)));
+  if (params.get("sort") === "recent") kept.sort((a, b) => b.mtime - a.mtime || a.name.localeCompare(b.name));
+  else kept.sort((a, b) => a.name.localeCompare(b.name, "fr", { sensitivity: "base" }));
+  const offset = Math.max(0, Number(params.get("offset")) || 0);
+  const limit = Math.min(Math.max(1, Number(params.get("limit")) || 100), 200);
+  return {
+    destination: shelf,
+    files: kept.slice(offset, offset + limit).map((file) => ({
+      name: file.name,
+      title: basename(file.name, extname(file.name)).replaceAll("_", " ").trim(),
+      artist: "",
+      duration: extname(file.name).toLowerCase() === ".wav" ? wavSeconds(file.path) : null,
+      bytes: file.bytes,
+      modified: new Date(file.mtime).toISOString().replace(/\.\d{3}Z$/, "+00:00"),
+    })),
+    total: all.length,
+    matched: kept.length,
+    bytes: all.reduce((sum, file) => sum + file.bytes, 0),
+    partial: false,
+  };
 }
 
 /** La session du navigateur, lue par le moteur comme account_permissions() du vrai catalogue. */
@@ -268,13 +340,43 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         progress: [],
       });
     }
+    if (path === "/collection/list.json") {
+      const rows = shelves().map((shelf) => {
+        const files = shelfFiles(shelf);
+        return { ...shelf, count: files.length, bytes: files.reduce((sum, file) => sum + file.bytes, 0) };
+      });
+      return json(response, 200, { destinations: rows });
+    }
+    if (path === "/collection/files.json") {
+      const shelf = shelves().find((item) => item.id === url.searchParams.get("id"));
+      if (!shelf) return json(response, 404, { error: "Collection introuvable." });
+      return json(response, 200, shelfPage(shelf, url.searchParams));
+    }
+    if (path === "/collection/file") {
+      const shelf = shelves().find((item) => item.id === url.searchParams.get("id"));
+      const name = url.searchParams.get("name") ?? "";
+      const safe = name && !name.startsWith("/") && !name.split("/").some((part) => part === ".." || part.startsWith("."));
+      const file = shelf && safe ? shelfFiles(shelf).find((item) => item.name === name) : undefined;
+      const mime = file ? AUDIO[extname(file.name).toLowerCase()] : undefined;
+      if (!file || !mime) return json(response, 404, { error: "not_found" });
+      return sendFile(request, response, file.path, mime);
+    }
     if (path.startsWith("/media/")) {
       const hit = index().find((item) => item.id === path.slice("/media/".length));
       if (!hit) return json(response, 404, { error: "not_found" });
-      return sendFile(request, response, hit);
+      return sendFile(request, response, join(banque, hit.path), hit.mime);
     }
   }
-  if (request.method === "POST" && ["/prune", "/banks.json", "/volume-password.json"].includes(path)) {
+  const writes = [
+    "/prune",
+    "/banks.json",
+    "/volume-password.json",
+    "/collection/remove.json",
+    "/collection/move.json",
+    "/collection/rename.json",
+    "/collection/delete.json",
+  ];
+  if (request.method === "POST" && writes.includes(path)) {
     return json(response, 501, { error: `Le faux catalogue des parcours ne simule pas ${path}.` });
   }
   json(response, 404, { error: "not_found" });

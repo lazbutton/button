@@ -2611,6 +2611,106 @@
   white-space: nowrap;
 }
 
+/* Banque : its content, or the upload. The content is a Bacs workspace. */
+
+.banque-page {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 0.85rem;
+  min-height: 0;
+}
+
+.banque-views {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.banque-views-tools {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.banque-shelves-hint {
+  margin: 0.5rem 0.55rem;
+  color: var(--app-text-muted);
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+
+.banque-note {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  padding: 0.5rem var(--bacs-pad);
+  border-bottom: 1px solid var(--app-border);
+  background: var(--gray-a2);
+  color: var(--app-text-muted);
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.banque-note > span {
+  flex: 1 1 14rem;
+  min-width: 0;
+}
+
+.banque-note.is-danger {
+  background: color-mix(in srgb, var(--app-danger) 8%, transparent);
+  color: var(--app-danger-ink);
+}
+
+.bacs-table .c-size {
+  width: 5.25rem;
+  color: var(--app-text-muted);
+  font-size: 0.74rem;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.bacs-table th.c-size {
+  color: var(--app-text-faint);
+  font-size: 0.64rem;
+}
+
+.banque-subfolder {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bacs-artist > span + .banque-subfolder::before {
+  content: "· ";
+}
+
+.banque-more {
+  display: flex;
+  justify-content: center;
+  padding: 0.9rem var(--bacs-pad) 1.1rem;
+}
+
+@container bacs-main (max-width: 640px) {
+  .bacs-table .c-size {
+    display: none;
+  }
+}
+
+/* A phone-wide collection: its ⋯ menu keeps its size, « Ajouter » takes the rest. */
+@container bacs-main (max-width: 520px) {
+  .bacs-head-actions > .rt-IconButton {
+    flex: none;
+    width: 2.5rem;
+  }
+}
+
 @media (min-width: 1100px) {
   .banque-activity {
     position: sticky;

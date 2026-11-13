@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
+import { BanquePage } from "./BanquePage";
 import { CartsPage } from "./CartsPage";
-import { ImporterPage } from "./ImporterPage";
 import { SectionTabs } from "../layout/SectionTabs";
 
 export function SonsPage() {
@@ -23,7 +23,7 @@ export function SonsPage() {
     <SectionTabs
       tabs={[
         { id: "bacs", label: "Bacs", panel: <CartsPage /> },
-        { id: "importer", label: "Banque", panel: <ImporterPage /> },
+        { id: "importer", label: "Banque", panel: <BanquePage /> },
       ]}
     />
   );

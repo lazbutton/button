@@ -54,7 +54,7 @@ Le script lance les mêmes commandes que la CI ([`.github/workflows/`](../.githu
 | `antenne` | le script du playout joué pour de bon, par `engine/playout/tests/antenna.py` ([plus bas](#lantenne)) | Docker, Python 3 |
 | `conducteur` | le vrai scheduler et la vraie interface devant le vrai Liquidsoap, et l'heure du conducteur comparée à l'antenne, par `engine/playout/tests/rundown.py` ([plus bas](#le-conducteur-devant-lantenne)) | Docker, Python 3 |
 | `console` | `npm test`, puis `tsc` et `vite build` | Node 22, `npm install` fait |
-| `services` | les quinze tests du catalogue listés dans `services.yml`, puis `test_compose.py` avec le Compose v2 de la CI, si Docker tourne | `services/catalog/.venv`, voir plus bas |
+| `services` | les seize tests du catalogue listés dans `services.yml`, puis `test_compose.py` avec le Compose v2 de la CI, si Docker tourne | `services/catalog/.venv`, voir plus bas |
 | `nginx` | `nginx -t` sur `console/docker/nginx.conf.template` et ses en-têtes de sécurité, rendus par le script de démarrage de l'image | Docker |
 | `deploy` | `docker compose config` avec `.env.example`, aussi sur le `compose.yml` d'une station, sans ses `build:`. Puis ShellCheck sur les scripts du dépôt, et les tests `bats` de `deploy/station`, comme la CI | Docker, Python 3 |
 | `version` | les tests de `scripts/version.py`, qui lisent aussi le CHANGELOG et `compose.yml`, puis les lignes du CHANGELOG ajoutées depuis `origin/main` ([plus bas](#publier-une-version)) | Python 3 |
