@@ -259,7 +259,7 @@ def watch_conducteur() -> None:
 
     The console opens once the antenna has started. Open before, it has the
     interface draw the forecast while the scheduler draws its own, at its first
-    tick: one start out of four, the first sounds then air twice (FON-60).
+    tick: one start out of six or so, the first sounds then air twice (FON-60).
     RUNDOWN_CONSOLE_EARLY=1 opens it at once, to see that fault."""
     if os.environ.get("RUNDOWN_CONSOLE_EARLY") != "1":
         _on_air.wait()

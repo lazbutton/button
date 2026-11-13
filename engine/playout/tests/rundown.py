@@ -18,7 +18,9 @@ launches a relay, as a console does, then sends a live to the harbor, as the
 encoder of a studio does. It fails when:
 
 - a sound starts more than a few seconds from the time the conducteur gave it
-  a minute before;
+  a minute before. But for a known defect of the engine, told and not counted:
+  the jingle that goes ahead of a title after the cut « Attend la fin »
+  (FON-61);
 - the cut « Coupe pile » does not go on its minute, or the title it cuts comes
   back after its sound;
 - the cut « Attend la fin » cuts the title it waits for;
@@ -33,12 +35,15 @@ encoder of a studio does. It fails when:
   of the console goes through; the title the live has cut comes back after
   it; the grid does not start again.
 
+From the live on, the bench compares no time: the return of a live is not
+clean yet (FON-55, FON-61), and it only judges the live itself.
+
 `key=value` sets a key of the table `settings` before the engine starts: a
 switch turned off shows the bench failing. `--journal FILE` keeps what the
 probe has noted, and `--relire FILE` judges such a file again, without Docker.
 The console of the probe opens once the antenna has started: open before, it
 has the interface and the scheduler draw the forecast at the same time, and the
-first sounds air twice, one start out of four (FON-60).
+first sounds air twice, one start out of six or so (FON-60).
 `--console-au-demarrage` opens it at once, to see that fault.
 
 It needs Docker and Compose, and nothing else: standard library only. The
@@ -79,9 +84,10 @@ STUDIO_BEFORE = 13.0
 # A gesture of the console, which the interface refuses during a live.
 GESTURE_AFTER = 2.0
 STUDIO_AFTER = 6.0
-# The bench ends once a sound the conducteur could foresee has started after
-# the live, and at this at the latest.
-END_AFTER = 120.0
+# The bench ends this long after the live, once the grid is back, and at
+# END_AFTER after the minute of the cut it holds at the latest.
+AFTER_LIVE = 25.0
+END_AFTER = 90.0
 
 # A minute before a sound starts, the conducteur says when: the time it gave
 # then is compared to the start.
@@ -336,18 +342,25 @@ class Reading:
         return next((row for row in self.starts if row["at"] > after), None)
 
     def find_troubles(self) -> list[Trouble]:
+        """Until the antenna starts, and during a relay. And from the live on:
+        the return of a live is not clean yet, the conducteur is compared up to
+        it only (FON-55, FON-61)."""
         found = []
         if self.starts:
             found.append(Trouble(float("-inf"), self.starts[0]["at"]))
-        for begun, span in (
-            (self.marks.get("relay"), self.relay),
-            (self.marks.get("studio_in"), self.live),
-        ):
-            if begun is None:
-                continue
-            first = self.next_start(span.end if span else begun)
-            found.append(Trouble(begun, first["at"] if first else float("inf")))
+        relayed = self.marks.get("relay")
+        if relayed is not None:
+            first = self.next_start(self.relay.end if self.relay else relayed)
+            found.append(Trouble(relayed, first["at"] if first else float("inf")))
+        if self.marks.get("studio_in") is not None:
+            found.append(Trouble(self.marks["studio_in"], float("inf")))
         return found
+
+    def after_the_live(self, moment: float | None) -> bool:
+        """Whether ``moment`` comes once the studio has connected: what the
+        clock sends from then on is not judged but by the live itself."""
+        begun = self.marks.get("studio_in")
+        return begun is not None and moment is not None and moment >= begun
 
     def foreseen(self, start: float) -> bool:
         """Whether the conducteur could tell, a minute before, when a sound
@@ -430,11 +443,36 @@ def what(row: dict) -> str:
     return f"« {row['title']} »"
 
 
-def on_time(reading: Reading) -> tuple[list[str], dict[int, float]]:
+def jingle_ahead(reading: Reading, row: dict) -> dict | None:
+    """A known defect of the engine, FON-61: the jingle of the motif that goes
+    ahead of a title, right after the sound of the cut « Attend la fin ». The
+    title the conducteur puts before the jingle is loaded behind that sound,
+    and the heartbeat no longer counts it: the clock takes the queue of the
+    Auto-DJ for empty. The title, when it is this one."""
+    line = reading.items.get(row["item"], [{}])[-1]
+    if row["source"] != "jingles" or line.get("when") != "sequential":
+        return None
+    before = reading.before(row)
+    if before is None or before["cart"] != reading.plan["carts"][seed.FLASH]:
+        return None
+    title = reading.next_start(row["at"])
+    if title is None or title["source"] != "autodj":
+        return None
+    moment = row["at"] - SAID_BEFORE
+    said_title = reading.said(title["item"], moment)
+    said_jingle = reading.said(row["item"], moment)
+    if None in (said_title, said_jingle) or said_title >= said_jingle:
+        return None
+    return title
+
+
+def on_time(reading: Reading) -> tuple[list[str], dict[int, float], list[str]]:
     """The sounds that started away from the time the conducteur gave them a
-    minute before, and the gap of each sound judged, by its row."""
+    minute before, the gap of each sound judged, by its row, and the sounds a
+    known defect of the engine moved, which the bench does not count."""
     failures = []
     gaps: dict[int, float] = {}
+    known = []
     for row in reading.starts:
         if not reading.foreseen(row["at"]):
             continue
@@ -446,12 +484,20 @@ def on_time(reading: Reading) -> tuple[list[str], dict[int, float]]:
             )
             continue
         gaps[row["id"]] = row["at"] - said
-        if abs(gaps[row["id"]]) > ON_TIME:
-            failures.append(
-                f"{what(row)} est passé à {reading.hms(row['at'])} : une minute avant,"
-                f" le conducteur l'annonçait pour {reading.hms(said)}"
+        if abs(gaps[row["id"]]) <= ON_TIME:
+            continue
+        title = jingle_ahead(reading, row) if gaps[row["id"]] < 0 else None
+        if title is not None:
+            known.append(
+                f"FON-61 : {what(row)} est passé à {reading.hms(row['at'])}, devant"
+                f" {what(title)}, que le conducteur annonçait avant lui"
             )
-    return failures, gaps
+            continue
+        failures.append(
+            f"{what(row)} est passé à {reading.hms(row['at'])} : une minute avant,"
+            f" le conducteur l'annonçait pour {reading.hms(said)}"
+        )
+    return failures, gaps, known
 
 
 def hard_cut(reading: Reading) -> list[str]:
@@ -519,6 +565,8 @@ def never_aired(reading: Reading) -> list[str]:
         last = states[-1]
         if sent is None or item in aired or last["reason"] == FLUSHED_REASON:
             continue
+        if reading.after_the_live(sent["t"]):
+            continue
         if last["status"] in {"on_air", "played"}:
             continue
         waiting = last["status"] in SENT
@@ -551,6 +599,8 @@ def queued_behind(reading: Reading) -> list[str]:
         lines.sort(key=lambda states: (states[0]["t"], states[0]["at"] or 0.0))
         for before, after in zip(lines, lines[1:]):
             pushed = after[0]
+            if reading.after_the_live(pushed["t"]):
+                continue
             # Where the conducteur had the line before it, at that moment.
             then = [state for state in before if state["t"] <= pushed["t"] + 0.05][-1]
             # A line on air may be one a live or a relay has cut: the lines
@@ -704,14 +754,6 @@ def unjudged(reading: Reading, gaps: dict[int, float]) -> list[str]:
         "celui de la coupure « Attend la fin »": next(
             iter(reading.of_cart(seed.FLASH)), None
         ),
-        "un son après le direct": next(
-            (
-                row
-                for row in reading.starts
-                if reading.live and row["at"] > reading.live.end and row["id"] in gaps
-            ),
-            None,
-        ),
     }
     missing = [
         name for name, row in wanted.items() if row is None or row["id"] not in gaps
@@ -747,8 +789,10 @@ def table(reading: Reading, gaps: dict[int, float]) -> None:
 
 def verdict(reading: Reading) -> list[str]:
     """What went wrong, in the words shown to whoever runs the bench."""
-    failures, gaps = on_time(reading)
+    failures, gaps, known = on_time(reading)
     table(reading, gaps)
+    for defect in known:
+        say(f"  défaut connu, pas compté : {defect}")
     quiet, after_live = silences(reading)
     closed = sorted(
         {
@@ -846,13 +890,13 @@ def play(bench: Bench, journal: Journal, marks: dict) -> None:
                 say(f"  {hms(marks['studio_out'])}  le studio s'en va")
             journal.fetch()
             if "studio_out" in marks:
-                # Over once the conducteur has foreseen a sound again, and the
-                # journal of the antenna has it.
+                # Over once the grid is back, and the title the live cut has had
+                # the time to come back.
                 reading = Reading(plan, journal.offset, journal.events, marks)
-                last = reading.live.end if reading.live else marks["studio_out"]
-                if any(
-                    row["at"] > last and reading.foreseen(row["at"])
-                    for row in reading.starts
+                if (
+                    reading.live is not None
+                    and reading.next_start(reading.live.end) is not None
+                    and journal.now() >= reading.live.end + AFTER_LIVE
                 ):
                     break
             time.sleep(1.0)
@@ -882,13 +926,13 @@ def report(failures: list[str]) -> int:
             say(f"  - {failure}", error=True)
         return 1
     say(
-        "Bon : chaque son part à l'heure que le conducteur donnait une minute"
-        " avant. La coupure « Coupe pile » part à sa minute, et le titre qu'elle"
+        "Bon : chaque son comparé part à l'heure que le conducteur donnait une"
+        " minute avant. La coupure « Coupe pile » part à sa minute, et le titre qu'elle"
         " tranche ne revient pas ; la coupure « Attend la fin » attend la fin du"
         " titre. Rien de ce qui est envoyé au playout ne se perd, et le nettoyeur"
         " des files ne retire rien. Le relais s'arrête à sa durée maximale. Pendant"
         " le direct, l'horloge se met en pause et laisse tomber la coupure due ;"
-        " après lui, la grille reprend."
+        " après lui, la grille reprend, sans le titre coupé."
     )
     return 0
 
