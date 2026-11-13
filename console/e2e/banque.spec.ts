@@ -161,7 +161,7 @@ test("retirer puis déplacer des titres d'une collection, par la sélection et p
   const confirmation = page.getByRole("dialog", { name: "Retirer 2 titres ?" });
   await expect(confirmation).toContainText("corbeille de la banque");
   await confirmation.getByRole("button", { name: "Retirer 2 titres" }).click();
-  await expect(avis(page, "2 titres retirés")).toBeVisible();
+  await expect(avis(page, "2 titres retirés de « Jazz d'été ».")).toBeVisible();
   await expect(jazz.getByText(/^2 titres · /)).toBeVisible();
   await expect(page.getByRole("option", { name: /Jazz d'été/ })).toContainText("2 titres");
 
@@ -169,7 +169,7 @@ test("retirer puis déplacer des titres d'une collection, par la sélection et p
   await page.getByRole("menuitem", { name: "Déplacer vers…" }).click();
   const deplacement = page.getByRole("dialog", { name: "Déplacer ce titre" });
   await deplacement.getByRole("button", { name: "Déplacer vers Rotation" }).click();
-  await expect(avis(page, "1 titre déplacé vers Rotation")).toBeVisible();
+  await expect(avis(page, "1 titre déplacé de « Jazz d'été » vers « Rotation ».")).toBeVisible();
   await expect(jazz.getByRole("button", { name: "Pré-écouter Tune" })).toHaveCount(0);
   await expect(page.getByRole("option", { name: /Rotation/ })).toContainText("2 titres");
 
@@ -230,7 +230,7 @@ test("un admin renomme une collection, puis la supprime une fois vide", async ({
   await expect(renommer.getByText("Une collection porte déjà ce nom.")).toBeVisible();
   await renommer.getByLabel("Nom").fill("Nuit blanche");
   await renommer.getByRole("button", { name: "Renommer" }).click();
-  await expect(avis(page, "La collection s'appelle maintenant « Nuit blanche »")).toBeVisible();
+  await expect(avis(page, "La collection « Nuit » s'appelle maintenant « Nuit blanche ».")).toBeVisible();
   const blanche = page.getByRole("region", { name: "Nuit blanche" });
   await expect(blanche.getByRole("heading", { name: "Nuit blanche" })).toBeVisible();
 
@@ -240,7 +240,7 @@ test("un admin renomme une collection, puis la supprime une fois vide", async ({
     .getByRole("dialog", { name: "Supprimer la collection « Nuit blanche » ?" })
     .getByRole("button", { name: "Supprimer la collection" })
     .click();
-  await expect(avis(page, "Collection « Nuit blanche » supprimée")).toBeVisible();
+  await expect(avis(page, "Collection « Nuit blanche » supprimée.")).toBeVisible();
   await expect(page.getByRole("option", { name: /Nuit blanche/ })).toHaveCount(0);
   await expect(page.getByRole("option", { name: /Rotation/ })).toHaveAttribute("aria-selected", "true");
 

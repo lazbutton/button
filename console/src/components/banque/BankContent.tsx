@@ -4,9 +4,9 @@ import { useSearchParams } from "react-router-dom";
 import { useAccount } from "../../api/AccountContext";
 import { BankUnsupportedError, bankShelves, type BankShelf } from "../../api/bankContent";
 import { createBank } from "../../api/banks";
+import { AppToast, useAppToast } from "../../ui/AppToast";
 import { ErrorState, LoadingState } from "../../ui/DataState";
 import { EmptyState } from "../../ui/EmptyState";
-import { ProtoToast, useProtoToast } from "../ProtoToast";
 import { CollectionView } from "./CollectionView";
 import { CreateBankDialog } from "./CreateBankDialog";
 import { ShelfList } from "./ShelfList";
@@ -25,7 +25,7 @@ export function BankContent({ onAdd }: { onAdd: (id: string) => void }) {
   const [unsupported, setUnsupported] = useState(false);
   const [view, setView] = useState<"list" | "detail">(params.get("collection") ? "detail" : "list");
   const [creating, setCreating] = useState<string | null>(null);
-  const { message, show, dismiss } = useProtoToast();
+  const { toast, show, dismiss } = useAppToast();
   const alive = useRef(true);
 
   const load = useCallback(async () => {
@@ -95,12 +95,12 @@ export function BankContent({ onAdd }: { onAdd: (id: string) => void }) {
           onBack={() => setView("list")}
           onAdd={onAdd}
           onChanged={() => void load()}
-          onRenamed={(destination) => {
-            show(`La collection s'appelle maintenant « ${destination.label} »`, "success");
+          onRenamed={(destination, before) => {
+            show(`La collection « ${before} » s'appelle maintenant « ${destination.label} ».`, "success");
             void load();
           }}
           onDeleted={(gone) => {
-            show(`Collection « ${gone.label} » supprimée`, "success");
+            show(`Collection « ${gone.label} » supprimée.`, "success");
             choose("rotation");
             setView("list");
             void load();
@@ -125,10 +125,10 @@ export function BankContent({ onAdd }: { onAdd: (id: string) => void }) {
           const created = await createBank(label, folder);
           await load();
           choose(created.id);
-          show(`Collection « ${created.label} » créée`, "success");
+          show(`Collection « ${created.label} » créée. « Ajouter des titres » y envoie des fichiers.`, "success");
         }}
       />
-      <ProtoToast message={message} onDismiss={dismiss} />
+      <AppToast toast={toast} onDismiss={dismiss} />
     </div>
   );
 }

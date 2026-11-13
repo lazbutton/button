@@ -231,13 +231,13 @@ test("Shift takes every title between two clicks", () => {
   assert.deepEqual([...toggleSelection(order, one, "parti", "e", true)].sort(), ["b", "e"]);
 });
 
-test("a change is summed up in one sentence", () => {
-  assert.deepEqual(changeSummary("removed", { done: ["a"], failed: [], stopped: "" }), {
-    text: "1 titre retiré",
+test("a change says what it did, and to which collections, in sentences", () => {
+  assert.deepEqual(changeSummary("removed", { done: ["a"], failed: [], stopped: "" }, "Rotation"), {
+    text: "1 titre retiré de « Rotation ».",
     tone: "success",
   });
-  assert.deepEqual(changeSummary("moved", { done: ["a", "b"], failed: [], stopped: "" }, "Jazz d'été"), {
-    text: "2 titres déplacés vers Jazz d'été",
+  assert.deepEqual(changeSummary("moved", { done: ["a", "b"], failed: [], stopped: "" }, "Rotation", "Jazz d'été"), {
+    text: "2 titres déplacés de « Rotation » vers « Jazz d'été ».",
     tone: "success",
   });
   const mixed = changeSummary(
@@ -251,21 +251,25 @@ test("a change is summed up in one sentence", () => {
       ],
       stopped: "",
     },
+    "Rotation",
     "Jazz d'été",
   );
   assert.deepEqual(mixed, {
-    text: "1 titre déplacé vers Jazz d'été · 3 refusés : déjà dans Jazz d'été, fichier introuvable",
+    text: "1 titre déplacé de « Rotation » vers « Jazz d'été ». 3 titres refusés : déjà dans Jazz d'été, fichier introuvable.",
     tone: "error",
   });
-  assert.deepEqual(changeSummary("removed", { done: [], failed: [], stopped: "Le catalogue ne répond pas." }), {
-    text: "Le catalogue ne répond pas.",
-    tone: "error",
-  });
-  assert.deepEqual(changeSummary("removed", { done: ["a"], failed: [], stopped: "Le catalogue ne répond pas." }), {
-    text: "1 titre retiré · arrêt avant la fin. Le catalogue ne répond pas.",
-    tone: "error",
-  });
-  assert.equal(changeSummary("removed", { done: [], failed: [], stopped: "" }).text, "Rien n'a changé");
+  assert.deepEqual(
+    changeSummary("removed", { done: [], failed: [], stopped: "Le catalogue ne répond pas." }, "Rotation"),
+    { text: "Le catalogue ne répond pas.", tone: "error" },
+  );
+  assert.deepEqual(
+    changeSummary("removed", { done: ["a"], failed: [], stopped: "Le catalogue ne répond pas." }, "Rotation"),
+    { text: "1 titre retiré de « Rotation ». Arrêt avant la fin. Le catalogue ne répond pas.", tone: "error" },
+  );
+  assert.equal(
+    changeSummary("removed", { done: [], failed: [], stopped: "" }, "Rotation").text,
+    "Rien n'a changé dans « Rotation ».",
+  );
 });
 
 test("a new name follows the rules of the first", () => {

@@ -264,27 +264,33 @@ export function toggleSelection(
   return next;
 }
 
-/** What a removal or a move did, in one sentence, and whether it is good news. */
+/**
+ * What a removal or a move did, and whether it is all done: one sentence per
+ * part, each naming the collections it is about.
+ */
 export function changeSummary(
   kind: "removed" | "moved",
   change: BankChange,
+  from: string,
   target = "",
 ): { text: string; tone: "success" | "error" } {
   const done = change.done.length;
   const failed = change.failed.length;
-  const verb = kind === "removed" ? ["retiré", "retirés"] : ["déplacé", "déplacés"];
-  const where = kind === "moved" && target ? ` vers ${target}` : "";
-  const parts: string[] = [];
-  if (done) parts.push(`${plural(done, `titre ${verb[0]}`, `titres ${verb[1]}`)}${where}`);
+  const sentences: string[] = [];
+  if (done && kind === "removed") {
+    sentences.push(`${plural(done, "titre retiré", "titres retirés")} de « ${from} ».`);
+  }
+  if (done && kind === "moved") {
+    sentences.push(`${plural(done, "titre déplacé", "titres déplacés")} de « ${from} » vers « ${target} ».`);
+  }
   if (failed) {
     const reasons = [...new Set(change.failed.map((item) => item.reason))].slice(0, 2).join(", ");
-    parts.push(`${plural(failed, "refusé", "refusés")} : ${reasons}`);
+    sentences.push(`${plural(failed, "titre refusé", "titres refusés")} : ${reasons}.`);
   }
   // Stopped before anything was done: the reason alone says it.
-  if (change.stopped) parts.push(parts.length ? `arrêt avant la fin. ${change.stopped}` : change.stopped);
-  if (!parts.length) parts.push("Rien n'a changé");
-  const text = parts.join(" · ");
-  return { text: text.charAt(0).toUpperCase() + text.slice(1), tone: failed || change.stopped ? "error" : "success" };
+  if (change.stopped) sentences.push(sentences.length ? `Arrêt avant la fin. ${change.stopped}` : change.stopped);
+  if (!sentences.length) sentences.push(`Rien n'a changé dans « ${from} ».`);
+  return { text: sentences.join(" "), tone: failed || change.stopped ? "error" : "success" };
 }
 
 function fold(text: string): string {

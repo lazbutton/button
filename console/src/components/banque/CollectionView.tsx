@@ -83,7 +83,8 @@ export function CollectionView({
   onAdd: (id: string) => void;
   /** Something changed on the disk: the counts of the left column follow. */
   onChanged: () => void;
-  onRenamed: (destination: BankDestination) => void;
+  /** The collection's new name, and the one it had. */
+  onRenamed: (destination: BankDestination, before: string) => void;
   onDeleted: (shelf: BankShelf) => void;
   notify: Notify;
 }) {
@@ -171,7 +172,7 @@ export function CollectionView({
     setProgress({ kind, done: 0, total: names.length });
     try {
       const change = await send((done, total) => setProgress({ kind, done, total }));
-      const summary = changeSummary(kind, change, target);
+      const summary = changeSummary(kind, change, shelf.label, target);
       notify(summary.text, summary.tone);
     } catch (caught) {
       notify(messageOf(caught, "Le catalogue a refusé la demande."), "error");
@@ -507,7 +508,7 @@ export function CollectionView({
           onClose={() => setRenaming(false)}
           onRenamed={(destination) => {
             setRenaming(false);
-            onRenamed(destination);
+            onRenamed(destination, shelf.label);
           }}
         />
       ) : null}
