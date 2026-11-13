@@ -237,15 +237,23 @@ def on_air_source_id(sid)
 end
 
 # Transitions are currently broken in LS 2.3 :/   https://github.com/savonet/liquidsoap/issues/4179
-def crossfade_3s(a,b)
-  current_source_id := on_air_source_id(source.id(b))
+# One transition per child of `programs`, which names the child it leads to.
+# Nothing else tells it there: the source a transition is given is a wrapper,
+# `insert_initial_track_mark.N`, and the child the antenna leaves still says it
+# is ready. Read from the wrapper, a live was "autodj", and never stopped the
+# relay it cut: the relay came back after it.
+# playout/tests/antenna.py cuts a title with a relay, then with a live.
+def crossfade_3s(sid)
+  fun (_, b) -> begin
+    current_source_id := on_air_source_id(sid)
 
-  # if an input stream is on air, stop downloading from the relay
-  if current_source_id() == "stream" then
-    relay.stop()
+    # if an input stream is on air, stop downloading from the relay
+    if current_source_id() == "stream" then
+      relay.stop()
+    end
+
+    b
   end
-
-  b
 end
 
 def mark_jingles_on_air(_, b)
@@ -268,18 +276,25 @@ jingles_then_autodj = fallback([jingles, autodj],
 # Live takes the antenna as soon as the harbor buffer is ready.
 # The final `blank()` keeps `programs` a safe source.
 programs = fallback([stream, relay, carts, jingles_then_autodj, blank()],
-  transitions=[crossfade_3s, crossfade_3s, crossfade_3s, crossfade_3s, crossfade_3s],
+  transitions=[
+    crossfade_3s("stream"),
+    crossfade_3s("relay"),
+    crossfade_3s("carts"),
+    crossfade_3s("jingles_then_autodj"),
+    crossfade_3s("blank")
+  ],
   track_sensitive=false,
   replay_metadata=true,
   id="programs")
 
 # The source on air, for the heartbeat, its remaining time and `/health`. Both
 # fallbacks cut (`track_sensitive=false`): the first child that is ready is the
-# one that plays. `current_source_id` does not tell it: on a switch, Liquidsoap
+# one that plays. `current_source_id` did not tell it: on a switch, Liquidsoap
 # 2.4 hands the transitions of `programs` a wrapper, `insert_initial_track_mark.N`,
 # and a cart, a live and a relay were all announced as "autodj", with the
 # remaining time of the title they had cut, which waits.
-# playout/tests/antenna.py cuts a title with a sound of the carts queue.
+# playout/tests/antenna.py cuts a title with a sound of the carts queue, then
+# with a relay and a live.
 def on_air_source() =
   if source.is_ready(stream) then
     "stream"

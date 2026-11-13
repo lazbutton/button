@@ -121,6 +121,8 @@ Les sons du banc sont des balayages, fabriqués par `sounds.py` : aucune trame n
 
 Deux titres du banc sont des MP3 à débit variable sans en-tête Xing, l'un chargé puis muet, l'autre muet puis chargé : ffmpeg estime leur durée d'après leurs premières trames, 13 s et 102 s pour 20 s. Le banc compare la durée que le playout annonce de chaque titre, ce qu'il a joué plus ce qu'il lui reste, à sa durée réelle : le scheduler règle sur ce reste l'envoi des jingles et des coupures. Il vérifie aussi la source que disent les battements pendant chaque son : pendant un son de bac, le playout disait encore l'auto-DJ, avec le reste du titre coupé.
 
+Le banc coupe enfin son dernier titre par un relais, celui de son propre flux public, puis par un direct, qu'il envoie lui-même au harbor comme l'encodeur d'un studio, par-dessus le relais. Le battement doit les dire `relay` et `stream`, puis `autodj` quand le titre revient. Le relais, lui, ne doit pas revenir : un direct arrête le relais qu'il coupe. Le scheduler et la console lisent ce battement pour savoir ce qui passe, et les tests du moteur le simulent : seul ce banc lit celui du vrai Liquidsoap.
+
 Le banc prend des ports libres, et se défait à la fin, avec son volume et les deux images qu'il a construites. La CI le lance avant de construire les images du moteur ([`engine.yml`](../.github/workflows/engine.yml)) : un script qui ne joue pas n'atteint pas le registre.
 
 ## Aucune donnée de station

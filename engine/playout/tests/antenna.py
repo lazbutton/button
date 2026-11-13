@@ -6,9 +6,10 @@ playout image, and listens to what comes out.
     python3 engine/playout/tests/antenna.py
 
 `liquidsoap --check` only reads the script. This plays it: titles are pushed as
-the scheduler pushes them, a sound of a cart and a jingle cut in, and the bench
-records the WAV mount of the console's headphones, the same sound as the public
-mount before its MP3 encoder. It fails when:
+the scheduler pushes them, a sound of a cart and a jingle cut in, then a relay
+and a live, sent to the harbor as a studio sends it, cut the last title. The
+bench records the WAV mount of the console's headphones, the same sound as the
+public mount before its MP3 encoder. It fails when:
 
 - a title pushed never airs, or airs out of order;
 - the playout airs the same 20 ms frame again and again: the music queue has
@@ -18,7 +19,10 @@ mount before its MP3 encoder. It fails when:
   is not its own: the scheduler cuts it in the middle, or waits for its end
   long after it;
 - the heartbeat names another source than the one on air: a sound of a cart
-  told as the Auto-DJ, with the remaining time of the title it has cut;
+  told as the Auto-DJ, with the remaining time of the title it has cut, a
+  relay or a live told as anything else, or the title that comes back after
+  them;
+- a relay comes back once the live that took the antenna from it is over;
 - the antenna stays silent.
 
 It needs Docker and Compose, and nothing else: standard library only. Its
@@ -27,14 +31,17 @@ messages are in French, as those of scripts/verifier.sh, which runs it.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
+import socket
 import subprocess
 import sys
 import threading
 import time
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 
 import sounds
@@ -54,7 +61,7 @@ STUCK_BEATS = 5
 # Seconds between the length a title is announced with and its own.
 LENGTH_SLACK = 1.5
 
-TITLES = ["title-1", "title-2", "title-3", "title-4", "title-5", "title-6"]
+TITLES = [f"title-{number}" for number in range(1, 8)]
 JINGLE = "jingle"
 CART = "cart"
 # The queue each sound is pushed to: the source the heartbeat names meanwhile.
@@ -62,12 +69,33 @@ QUEUES = {**dict.fromkeys(TITLES, "autodj"), JINGLE: "jingles", CART: "carts"}
 # What cuts in: the title cut, the seconds into it, and the sound. A sound of a
 # cart, as a cut on the minute pushes, then a jingle.
 CUTS = [(TITLES[0], 6.0, CART), (TITLES[1], 2.0, JINGLE)]
+# The last title: a relay, then a live over it, cut it, and it comes back.
+CUT_BY_LIVE = TITLES[-1]
+# What the studio sends to the harbor: the bench never pushes it to a queue.
+LIVE = "live"
 # The sounds whose announced length is compared to their own.
-MEASURED = [name for name in [*TITLES, CART] if name not in {cut[0] for cut in CUTS}]
+MEASURED = [
+    name
+    for name in [*TITLES, CART]
+    if name not in {CUT_BY_LIVE, *(cut[0] for cut in CUTS)}
+]
 # The start sound has aired, and the music queue has been empty for a while: a
 # first title pushed then is what used to stall.
 EMPTY_QUEUE_SECONDS = 5.0
 LIMIT_SECONDS = 180.0
+
+# The relay takes the public mount of the bench itself, as the playout reaches it.
+RELAY_URL = f"http://icecast:8000/{sounds.PUBLIC_MOUNT}"
+# The seconds a relay has to take the antenna: the last title still plays.
+RELAY_WAIT = 10
+# The relay holds the antenna this long before the studio connects, the studio
+# sends its live this long, and the last title has this long to come back.
+RELAY_SECONDS = 5.0
+LIVE_SECONDS = sounds.HARBOR_BUFFER + 8
+BACK_SECONDS = sounds.HARBOR_BUFFER + 7
+# Heartbeats, one a second, left to the harbor: to put a live on air once the
+# studio connects, and to air what it has buffered once the studio has left.
+HARBOR_BEATS = int(sounds.HARBOR_BUFFER) + 3
 
 
 def say(text: str, *, error: bool = False) -> None:
@@ -117,11 +145,13 @@ class Bench:
         self.image = liquidsoap_image()
         self.env = {**os.environ, "LIQUIDSOAP_IMAGE": self.image}
 
-    def compose(self, *args: str, check: bool = True) -> str:
+    def command(self, *args: str) -> list[str]:
         command = ["docker", "compose", "-p", self.project]
-        command += ["-f", str(HERE / "compose.yml"), *args]
+        return [*command, "-f", str(HERE / "compose.yml"), *args]
+
+    def compose(self, *args: str, check: bool = True) -> str:
         done = subprocess.run(
-            command,
+            self.command(*args),
             env=self.env,
             check=False,
             stdout=subprocess.PIPE,
@@ -131,6 +161,20 @@ class Bench:
         if check and done.returncode != 0:
             raise SystemExit(
                 f"docker compose {' '.join(args)} a échoué :\n{done.stdout}"
+            )
+        return done.stdout
+
+    def sound(self, name: str) -> bytes:
+        """A sound of the bench, read where the playout reads it."""
+        done = subprocess.run(
+            self.command("exec", "-T", "playout", "cat", f"/sounds/{name}.mp3"),
+            env=self.env,
+            check=False,
+            capture_output=True,
+        )
+        if done.returncode != 0 or not done.stdout:
+            raise RuntimeError(
+                f"le son « {name} » du banc ne se lit pas : {done.stderr[:200]!r}"
             )
         return done.stdout
 
@@ -151,12 +195,21 @@ class Bench:
         return self.compose("logs", "--no-color", "--tail", "60", service, check=False)
 
 
+@dataclass(frozen=True)
+class Mark:
+    """A moment of the run: the heartbeats and the titles the journal held then."""
+
+    beats: int
+    rows: int
+
+
 class Playout:
-    """The playout of the bench, as the scheduler and a listener reach it."""
+    """The playout of the bench, as the scheduler, a studio and a listener reach it."""
 
     def __init__(self, bench: Bench) -> None:
         self.api = bench.address("playout", 6833)
         self.journal_url = bench.address("playout", 6822) + "/journal"
+        self.harbor = bench.address("playout", 6800)
         self.icecast = bench.address("icecast", 8000)
 
     def wait(self) -> None:
@@ -180,6 +233,11 @@ class Playout:
         # The start sound has no title.
         return [row["title"] for row in self.journal()["metadata"] if row["title"]]
 
+    def mark(self) -> Mark:
+        """Where the journal stands: what it gains from now on came after."""
+        journal = self.journal()
+        return Mark(len(journal["live"]), len(journal["metadata"]))
+
     def push(self, queue: str, name: str) -> None:
         payload = {
             "path": f"/sounds/{name}.mp3",
@@ -192,6 +250,65 @@ class Playout:
             raise RuntimeError(
                 f"le playout a refusé {name} ({status}) : {body[:200]!r}"
             )
+
+    def relay(self, url: str) -> None:
+        status, body = call("POST", f"{self.api}/relay?url={url}")
+        if status != 200:
+            raise RuntimeError(
+                f"le playout a refusé le relais ({status}) : {body[:200]!r}"
+            )
+
+
+class Studio(threading.Thread):
+    """Sends a live to the harbor until told to stop, as the encoder of a studio
+    does: an MP3 in a loop, at the speed it plays."""
+
+    USER = "studio"
+    TOKEN = "jeton-du-studio"
+
+    def __init__(self, harbor: str, mp3: bytes) -> None:
+        super().__init__(daemon=True)
+        host, port = harbor.removeprefix("http://").rsplit(":", 1)
+        self.address = (host, int(port))
+        self.mp3 = mp3
+        self.stopped = threading.Event()
+        # Why the harbor did not take the live, or dropped it.
+        self.refused = ""
+
+    def run(self) -> None:
+        login = base64.b64encode(f"{self.USER}:{self.TOKEN}".encode()).decode("ascii")
+        head = (
+            f"PUT /{sounds.HARBOR_MOUNT} HTTP/1.1\r\n"
+            f"Host: {self.address[0]}:{self.address[1]}\r\n"
+            f"Authorization: Basic {login}\r\n"
+            "Content-Type: audio/mpeg\r\n"
+            "Expect: 100-continue\r\n\r\n"
+        )
+        try:
+            with socket.create_connection(self.address, timeout=10) as harbor:
+                harbor.sendall(head.encode("ascii"))
+                answer = harbor.recv(1024).split(b"\r\n")[0].decode("ascii", "replace")
+                if answer.split(" ")[1:2] not in (["100"], ["200"]):
+                    self.refused = answer or "aucune réponse"
+                    return
+                self.send(harbor)
+        except OSError as exc:
+            self.refused = str(exc)
+
+    def send(self, harbor: socket.socket) -> None:
+        rate = sounds.MP3_KBPS * 1000 // 8
+        started = time.monotonic()
+        sent = 0
+        while not self.stopped.is_set():
+            due = int((time.monotonic() - started) * rate)
+            while sent < due:
+                at = sent % len(self.mp3)
+                sent += harbor.send(self.mp3[at : at + min(4096, due - sent)])
+            self.stopped.wait(0.05)
+
+    def stop(self) -> None:
+        self.stopped.set()
+        self.join(timeout=15)
 
 
 class Capture(threading.Thread):
@@ -220,13 +337,60 @@ class Capture(threading.Thread):
         return bytes(self.pcm)
 
 
-def scenario(playout: Playout) -> None:
+@dataclass(frozen=True)
+class Cuts:
+    """Where the journal stood when the last title was cut."""
+
+    # The relay had taken the antenna.
+    relay: Mark
+    # The studio connected to the harbor, then left it.
+    live: Mark
+    left: Mark
+
+
+def foreign(rows: list[dict]) -> list[str]:
+    """The titles announced that the bench never pushed: those of a relay."""
+    return [row["title"] for row in rows if row["title"] not in {"", *QUEUES}]
+
+
+def cut(playout: Playout, mp3: bytes) -> Cuts:
+    """Cuts the last title with a relay, then with a live over the relay, and
+    leaves the title the time to come back."""
+    time.sleep(2)
+    ordered = playout.mark()
+    playout.relay(RELAY_URL)
+    # A relay on air announces the title of its stream: one the bench never pushed.
+    wait_for(
+        lambda: foreign(playout.journal()["metadata"][ordered.rows :]),
+        RELAY_WAIT,
+        "le relais n'a jamais pris l'antenne",
+    )
+    relay = playout.mark()
+    time.sleep(RELAY_SECONDS)
+    live = playout.mark()
+    studio = Studio(playout.harbor, mp3)
+    studio.start()
+    # A studio the harbor refuses is told at once.
+    leaving = time.monotonic() + LIVE_SECONDS
+    while time.monotonic() < leaving and not studio.refused:
+        time.sleep(0.5)
+    studio.stop()
+    left = playout.mark()
+    if studio.refused:
+        raise RuntimeError(
+            f"le harbor n'a pas pris le direct du studio : {studio.refused}"
+        )
+    time.sleep(BACK_SECONDS)
+    return Cuts(relay, live, left)
+
+
+def scenario(playout: Playout, mp3: bytes) -> Cuts | None:
     """Pushes the titles as the scheduler does, a sound of a cart on the first
-    one, and a jingle on the second."""
+    one, a jingle on the second, then cuts the last one with a relay and a
+    live. None when the last title never came."""
     pushed: list[str] = []
     due: dict[str, float] = {}
     sent: set[str] = set()
-    ending: float | None = None
     deadline = time.monotonic() + LIMIT_SECONDS
     while time.monotonic() < deadline:
         aired = playout.aired()
@@ -241,12 +405,11 @@ def scenario(playout: Playout) -> None:
             elif sound in due and sound not in sent and time.monotonic() >= due[sound]:
                 sent.add(sound)
                 playout.push(QUEUES[sound], sound)
-        # The last title has started: leave it the time to end.
-        if ending is None and TITLES[-1] in aired and JINGLE in aired:
-            ending = time.monotonic() + sounds.SOUNDS[TITLES[-1]][0] + 2
-        elif ending is not None and time.monotonic() >= ending:
-            return
+        # The last title has started: a relay and a live cut it.
+        if CUT_BY_LIVE in aired and JINGLE in aired:
+            return cut(playout, mp3)
         time.sleep(0.5)
+    return None
 
 
 def ranges(starts: list[int]) -> list[tuple[float, float]]:
@@ -321,8 +484,52 @@ def misnamed(beats: list[dict]) -> dict[str, str]:
     return found
 
 
-def verdict(pcm: bytes, aired: list[str], beats: list[dict]) -> list[str]:
+def told(beats: list[dict], source: str) -> str:
+    """The other sources these heartbeats name, as a failure says them."""
+    others = sorted({beat["source"] for beat in beats if beat["source"] != source})
+    return ", ".join(f"« {name} »" for name in others)
+
+
+def relayed(beats: list[dict], rows: list[dict], cuts: Cuts) -> list[str]:
+    """What went wrong while a relay, then a live, held the antenna, and once
+    the live was over."""
+    failures: list[str] = []
+    # The relay holds the antenna until the harbor has buffered the live, which
+    # holds it until the studio leaves.
+    on_relay = beats[cuts.relay.beats + 1 : cuts.live.beats + 3]
+    on_live = beats[cuts.live.beats + HARBOR_BEATS : cuts.left.beats]
+    held = {"le relais": ("relay", on_relay), "le direct": ("stream", on_live)}
+    # The harbor then airs what it has buffered, and the title comes back.
+    after = beats[cuts.left.beats + HARBOR_BEATS :]
+    back = [beat for beat in after if beat["title"] == CUT_BY_LIVE]
+    if foreign(rows[cuts.left.rows :]):
+        failures.append(
+            "le relais est revenu à l'antenne après le direct, qui ne l'a pas arrêté"
+        )
+    elif not back:
+        failures.append(
+            f"« {CUT_BY_LIVE} » n'est pas revenu à l'antenne après le direct"
+        )
+    else:
+        held[f"« {CUT_BY_LIVE} », revenu après le direct"] = (
+            QUEUES[CUT_BY_LIVE],
+            back,
+        )
+    for what, (source, span) in held.items():
+        if not span:
+            failures.append(f"aucun battement pendant {what}")
+        elif told(span, source):
+            failures.append(
+                f"pendant {what}, le playout dit la source {told(span, source)},"
+                f" pas « {source} » : le scheduler ne sait pas ce qui est à l'antenne"
+            )
+    return failures
+
+
+def verdict(pcm: bytes, journal: dict, cuts: Cuts | None) -> list[str]:
     """What went wrong, in the words shown to whoever runs the bench."""
+    beats = journal["live"]
+    aired = [row["title"] for row in journal["metadata"] if row["title"]]
     seconds, stalls = listen(pcm)
     say(f"  à l'antenne : {', '.join(aired) or 'rien'}")
     say(f"  capture : {len(pcm) / BYTES_PER_SECOND:.1f} s, dont {seconds:.1f} s de son")
@@ -366,6 +573,8 @@ def verdict(pcm: bytes, aired: list[str], beats: list[dict]) -> list[str]:
     order = [name for name in dict.fromkeys(aired) if name in TITLES]
     if order != [name for name in TITLES if name in order]:
         failures.append(f"les titres sont passés dans le désordre : {', '.join(order)}")
+    if cuts is not None:
+        failures += relayed(beats, journal["metadata"], cuts)
     expected = sum(sounds.audible(name) for name in QUEUES)
     if seconds < 0.75 * expected:
         failures.append(
@@ -377,14 +586,15 @@ def verdict(pcm: bytes, aired: list[str], beats: list[dict]) -> list[str]:
 def play(bench: Bench) -> list[str]:
     playout = Playout(bench)
     playout.wait()
+    mp3 = bench.sound(LIVE)
     time.sleep(EMPTY_QUEUE_SECONDS)
     capture = Capture(f"{playout.icecast}/studio.wav")
     capture.start()
     try:
-        scenario(playout)
+        cuts = scenario(playout, mp3)
     finally:
         pcm = capture.stop()
-    return verdict(pcm, playout.aired(), playout.journal()["live"])
+    return verdict(pcm, playout.journal(), cuts)
 
 
 def main() -> int:
@@ -404,7 +614,8 @@ def main() -> int:
             return 1
         say(
             "Bon : chaque titre passe à son tour, annoncé pour sa durée et sous sa"
-            " source, sans trame répétée ni reste figé."
+            " source, sans trame répétée ni reste figé. Un relais, puis un direct,"
+            " prennent l'antenne sous leur nom, et la rendent."
         )
         return 0
     finally:
