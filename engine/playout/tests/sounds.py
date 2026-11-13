@@ -5,8 +5,8 @@ The sounds of the antenna bench, and its RTCONFIG.
 
 Each sound is a sweep: two tones whose pitch keeps moving. No 20 ms frame
 resembles the next one, so a frame the playout airs twice can only be a stall.
-The titles and the jingle are MP3, as most of the music of a station: lame
-encodes them. Standard library only otherwise.
+The titles and the jingle are MP3, as most of the music of a station, and so
+is the live a studio sends: lame encodes them. Standard library only otherwise.
 """
 
 from __future__ import annotations
@@ -32,11 +32,16 @@ SOUNDS = {
     "title-4": (7.0, 1010.0, 6.0, 2600.0, -5.0),
     "title-5": (20.0, 420.0, 7.0, 1800.0, -8.0),
     "title-6": (20.0, 610.0, 5.0, 2300.0, -6.0),
+    # The last title: a relay, then a live, cut it, and it comes back. Long
+    # enough to wait for a slow relay, and to still play after the live.
+    "title-7": (26.0, 880.0, 10.0, 2800.0, -7.0),
     "jingle": (2.5, 2500.0, 40.0, 4000.0, -30.0),
     "cart": (5.0, 1700.0, 25.0, 3300.0, -20.0),
     # Pushed to wait for the end of a title: a jingle, and a sound of a cart.
     "jingle-fin": (2.5, 3100.0, 35.0, 4600.0, -25.0),
     "cart-fin": (5.0, 1300.0, 18.0, 2900.0, -14.0),
+    # What the studio of the bench sends to the harbor, in a loop.
+    "live": (8.0, 350.0, 18.0, 1250.0, -14.0),
 }
 # The start sound of a station is a WAV: this one stays so.
 MP3 = [name for name in SOUNDS if name != "start"]
@@ -50,13 +55,23 @@ SHAPES = {
     "title-5": [(12.0, 1.0, 0.3), (8.0, 0.0, 0.0)],
     "title-6": [(8.0, 0.0, 0.0), (12.0, 1.0, 0.3)],
 }
+# The other MP3 have a constant bit rate: the studio sends its live at the
+# speed it plays.
+MP3_KBPS = 192
+
+# The harbor: where a studio sends its live, and the seconds it buffers before
+# the live takes the antenna, then airs once the studio has left.
+HARBOR_MOUNT = "stream"
+HARBOR_BUFFER = 5.0
+# The public mount: the relay of the bench takes it.
+PUBLIC_MOUNT = "radio.mp3"
 
 RTCONFIG = """\
 ---
 # The antenna bench: the outputs of a station, test passwords.
 playout_process_config:
-    input_name: "stream"
-    input_min_buffer: 5.
+    input_name: "{mount}"
+    input_min_buffer: {buffer}
     input_max_buffer: 30.
     token: {token}
     start_sound: {folder}/start.wav
@@ -66,7 +81,7 @@ playout_process_config:
           quality: 128
           host: icecast
           port: 8000
-          mount: radio.mp3
+          mount: {public}
           password: antenne-source
         - driver: icecast
           encoder: wav
@@ -127,7 +142,7 @@ def lame_options(name: str) -> list[str]:
     if name in SHAPES:
         # VBR, and -t: no Xing header.
         return ["-V", "0", "-t"]
-    return ["--cbr", "-b", "192"]
+    return ["--cbr", "-b", str(MP3_KBPS)]
 
 
 def write(folder: Path) -> None:
@@ -155,7 +170,14 @@ def write(folder: Path) -> None:
             )
             wav.unlink()
     (folder / "radiotomate.yaml").write_text(
-        RTCONFIG.format(token=TOKEN, folder=folder), encoding="utf-8"
+        RTCONFIG.format(
+            token=TOKEN,
+            folder=folder,
+            mount=HARBOR_MOUNT,
+            buffer=HARBOR_BUFFER,
+            public=PUBLIC_MOUNT,
+        ),
+        encoding="utf-8",
     )
 
 

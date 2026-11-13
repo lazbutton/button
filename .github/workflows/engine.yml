@@ -87,7 +87,8 @@ jobs:
   # The type-checker reads the script, this plays it: titles pushed as the
   # scheduler pushes them, in the Liquidsoap of the playout image, and the
   # sound that comes out. A music queue that stalls airs a buzz, with nothing
-  # in the logs.
+  # in the logs. A relay and a live then cut a title: the heartbeat must name
+  # each, as the scheduler and the console read it.
   antenna:
     name: the playout plays what it is given
     runs-on: ubuntu-latest

@@ -3,8 +3,9 @@ The scheduler of the antenna bench: it answers the playout, and keeps what the
 playout says.
 
 The playout posts its heartbeat to /live every second, and each title that airs
-to /metadata_log. `GET /journal` gives both back to antenne.py. Nothing else:
-the bench pushes the titles itself. Standard library only.
+to /metadata_log. `GET /journal` gives both back to antenna.py. It asks
+/can_stream whether a studio may send its live to the harbor: here, any may.
+Nothing else: the bench pushes the titles itself. Standard library only.
 """
 
 from __future__ import annotations
@@ -77,6 +78,7 @@ class Handler(BaseHTTPRequestHandler):
                 _journal["live"].append(_beat(data))
             elif self.path == "/metadata_log":
                 _journal["metadata"].append(_aired(data))
+        # 200 to the rest too: /can_stream lets the studio of the bench in.
         self._answer({})
 
     def log_message(self, fmt: str, *args: object) -> None:

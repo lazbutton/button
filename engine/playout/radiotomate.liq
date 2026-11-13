@@ -260,9 +260,10 @@ carts_wait = blank.eat(id="carts_wait",
 current_source_id = ref("starting")
 
 # Heartbeat `/live` must keep exposing stream | relay | carts | jingles | autodj.
-# The inner fallback id is `jingles_then_autodj`; resolve it to the ready child.
+# The inner fallback ids are `title_end_carts` and, in it, `jingles_then_autodj`;
+# resolve them to the ready child.
 def on_air_source_id(sid)
-  if sid == "jingles_then_autodj" then
+  if sid == "title_end_carts" or sid == "jingles_then_autodj" then
     if source.is_ready(jingles) then "jingles" else "autodj" end
   elsif sid == "carts" or sid == "stream" or sid == "relay" or sid == "jingles" then
     sid
@@ -272,15 +273,23 @@ def on_air_source_id(sid)
 end
 
 # Transitions are currently broken in LS 2.3 :/   https://github.com/savonet/liquidsoap/issues/4179
-def crossfade_3s(a,b)
-  current_source_id := on_air_source_id(source.id(b))
+# One transition per child of `programs`, which names the child it leads to.
+# Nothing else tells it there: the source a transition is given is a wrapper,
+# `insert_initial_track_mark.N`, and the child the antenna leaves still says it
+# is ready. Read from the wrapper, a live was "autodj", and never stopped the
+# relay it cut: the relay came back after it.
+# playout/tests/antenna.py cuts a title with a relay, then with a live.
+def crossfade_3s(sid)
+  fun (_, b) -> begin
+    current_source_id := on_air_source_id(sid)
 
-  # if an input stream is on air, stop downloading from the relay
-  if current_source_id() == "stream" then
-    relay.stop()
+    # if an input stream is on air, stop downloading from the relay
+    if current_source_id() == "stream" then
+      relay.stop()
+    end
+
+    b
   end
-
-  b
 end
 
 def mark_jingles_on_air(_, b)
@@ -315,7 +324,13 @@ title_end_carts = fallback([carts_wait, jingles_then_autodj],
 # Live takes the antenna as soon as the harbor buffer is ready.
 # The final `blank()` keeps `programs` a safe source.
 programs = fallback([stream, relay, carts, title_end_carts, blank()],
-  transitions=[crossfade_3s, crossfade_3s, crossfade_3s, crossfade_3s, crossfade_3s],
+  transitions=[
+    crossfade_3s("stream"),
+    crossfade_3s("relay"),
+    crossfade_3s("carts"),
+    crossfade_3s("title_end_carts"),
+    crossfade_3s("blank")
+  ],
   track_sensitive=false,
   replay_metadata=true,
   id="programs")
@@ -328,12 +343,13 @@ end
 
 # The queue on air: stream | relay | carts | carts_wait | jingles | jingles_wait
 # | autodj, read in what each fallback has selected. `current_source_id` does
-# not tell it: on a switch, Liquidsoap 2.4 hands the transitions of `programs` a
-# wrapper, `insert_initial_track_mark.N`, and a cart, a live and a relay were
-# all announced as "autodj", with the remaining time of the title they had cut,
-# which waits. Nor does `source.is_ready`: a sound that waits is ready long
-# before it plays.
-# playout/tests/antenna.py cuts a title with a sound of the carts queue.
+# not tell it: only the transitions set it, and the fallbacks of the sounds that
+# wait have none. Read from the wrapper Liquidsoap 2.4 hands a transition,
+# `insert_initial_track_mark.N`, it announced a cart, a live and a relay as
+# "autodj", with the remaining time of the title they had cut, which waits. Nor
+# does `source.is_ready`: a sound that waits is ready long before it plays.
+# playout/tests/antenna.py cuts a title with a sound of the carts queue, then
+# with a relay and a live.
 def on_air_queue() =
   top = selected_id(programs)
   if top == "stream" or top == "relay" or top == "carts" then

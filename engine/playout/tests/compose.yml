@@ -31,9 +31,11 @@ services:
       - sounds:/sounds:ro
     # 6833: the orders of the scheduler. 6822: the fake scheduler, which shares
     # this network as the real one does, and gives its journal to antenna.py.
+    # 6800: the harbor, where antenna.py sends a live as a studio does.
     ports:
       - "127.0.0.1::6833"
       - "127.0.0.1::6822"
+      - "127.0.0.1::6800"
     depends_on:
       sounds:
         condition: service_completed_successfully

@@ -67,7 +67,7 @@ Liquidsoap choisit la source dans cet ordre : **direct (harbor) > relais > carts
 
 L'**Agenda** ajoute des diffusions à une date précise : un set déposé passe à son heure (`scheduler/agenda.py`), et un direct daté ouvre le harbor au compte prévu. Un invité dépose son set par un lien privé, sans compte : le fichier passe par tusd, puis le catalogue le range dans `40-emissions` et le déclare au moteur. L'interrupteur `agenda_enabled` coupe tout l'Agenda.
 
-Pendant un direct, l'horloge se met en pause et laisse tomber les ancres dues : leurs lignes passent « sauté » au conducteur. À la fin, les files jingles et auto-DJ sont vidées et le titre auto-DJ entamé est sauté : la grille reprend sur un morceau entier.
+Pendant un direct, l'horloge se met en pause et laisse tomber les ancres dues : leurs lignes passent « sauté » au conducteur. Un relais en cours s'arrête quand le direct prend l'antenne. À la fin, les files jingles et auto-DJ sont vidées et le titre auto-DJ entamé est sauté : la grille reprend sur un morceau entier.
 
 ## Les données
 
