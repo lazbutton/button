@@ -6,6 +6,8 @@ Le détail des changements du moteur par rapport à l'amont : [docs/moteur/chang
 
 ## Non publié
 
+- Un banc de plus vérifie chaque changement du moteur : le vrai scheduler et la vraie interface y tiennent l'antenne devant le vrai Liquidsoap, dans son réseau comme sur une station. Jusque-là, les tests du moteur jouaient le scheduler devant un battement simulé, et le banc d'antenne jouait le playout devant un faux scheduler : un défaut entre les deux ne se voyait nulle part, comme les heures fausses du conducteur autour d'une coupure « Coupe pile », corrigées dans la 1.1.0. En six minutes, le banc joue des titres et des jingles, une coupure « Coupe pile » et son programme, une coupure « Attend la fin », un relais lancé comme depuis la console et un direct envoyé comme par un studio. Il échoue si un son part à plus de 5 s de l'heure que le conducteur lui donnait une minute avant, si une coupure ne part pas comme elle doit, si un son envoyé à l'antenne ne passe jamais, si le nettoyeur des files retire un son, si l'antenne se tait, ou si l'horloge ne se met pas en pause pendant le direct. `./scripts/verifier.sh conducteur` le lance, et la CI avant de construire les images du moteur : voir [Développer](docs/developpement.md#le-conducteur-devant-lantenne). Rien à faire sur une station.
+
 ## 1.1.0
 
 Une mineure : rien d'autre que la mise à jour habituelle, voir [docs/deploiement.md](docs/deploiement.md#mettre-à-jour). Le schéma de la base reste en v18 : aucune migration.

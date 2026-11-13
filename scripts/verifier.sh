@@ -2,8 +2,8 @@
 # Les vérifications de la CI, sur cette machine.
 #   ./scripts/verifier.sh                  tout ce qui peut tourner ici
 #   ./scripts/verifier.sh moteur console   seulement ces parties
-# Parties : donnees, licences, moteur, liquidsoap, antenne, console, services,
-# nginx, deploy, version, e2e.
+# Parties : donnees, licences, moteur, liquidsoap, antenne, conducteur, console,
+# services, nginx, deploy, version, e2e.
 # Sans argument, une partie qui manque d'un outil (Docker…) est sautée.
 # Nommée, elle échoue.
 set -euo pipefail
@@ -12,7 +12,7 @@ root=$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd)
 # Homebrew (macOS) : Poetry, Node et Docker y sont souvent installés.
 [ -d /opt/homebrew/bin ] && export PATH="/opt/homebrew/bin:$PATH"
 
-all=(donnees licences moteur liquidsoap antenne console services nginx deploy version e2e)
+all=(donnees licences moteur liquidsoap antenne conducteur console services nginx deploy version e2e)
 # Code de sortie d'une partie à qui il manque un outil.
 absent=75
 
@@ -187,6 +187,16 @@ check_antenne() {
   python3 "$root/engine/playout/tests/antenna.py"
 }
 
+check_conducteur() {
+  need_docker || return
+  command -v python3 >/dev/null 2>&1 || missing "Python 3 absent : l'installer." || return
+  # Le vrai scheduler et la vraie interface devant le vrai Liquidsoap, dans son
+  # réseau comme sur une station, et l'heure du conducteur comparée à
+  # l'antenne : le job rundown de la CI. Il construit l'image du moteur depuis
+  # engine/Containerfile, prend des ports libres, et dure six minutes.
+  python3 "$root/engine/playout/tests/rundown.py"
+}
+
 check_console() {
   command -v npm >/dev/null 2>&1 || missing "Node absent : installer Node 22." || return
   cd "$root/console"
@@ -349,7 +359,7 @@ skipped=""
 failed=""
 for part in "${parts[@]}"; do
   case $part in
-    donnees | licences | moteur | liquidsoap | antenne | console | services | nginx | deploy | version | e2e) ;;
+    donnees | licences | moteur | liquidsoap | antenne | conducteur | console | services | nginx | deploy | version | e2e) ;;
     *)
       echo "Partie inconnue : $part. Parties : ${all[*]}." >&2
       exit 64
