@@ -1,10 +1,11 @@
 """File d'attente, rejets, quota et collections du dépôt navigateur.
 
-tusd appelle le hook. Les fichiers acceptés vont dans 00-inbox.
+tusd appelle le hook. Les fichiers acceptés vont dans l'inbox.
 La promotion et l'indexation restent au dropbox et à Beets.
 
-Une collection est un dossier de 20-archives : il est découvert
-tout seul, et son nom affiché peut venir de son fichier .banque.json.
+Une collection est un dossier du dossier des collections : il est découvert
+tout seul, et son nom affiché peut venir de son fichier .banque.json. Les noms
+des dossiers sont dans layout.py.
 """
 
 from __future__ import annotations
@@ -19,10 +20,12 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
+import layout
+
 ACCEPTED = {".mp3", ".flac", ".ogg", ".opus", ".m4a", ".wav", ".aif", ".aiff"}
-ROTATION = "rotation"
-ARCHIVES = "20-archives"
-INBOX_ARCHIVES = "00-inbox/archives"
+ROTATION = layout.ROTATION_NAME
+ARCHIVES = layout.COLLECTIONS
+INBOX_ARCHIVES = layout.INBOX_COLLECTIONS
 LABEL_FILE = ".banque.json"
 BANK_SLUG = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?")
 DEFAULT_QUOTA = 100 * 1024 * 1024 * 1024
@@ -65,10 +68,10 @@ def archive_names(media: Path) -> list[str]:
 
 
 def destinations(media: Path) -> dict[str, tuple[str, str]]:
-    """Rotation, then one destination per folder of 20-archives: (inbox, bank)."""
-    found = {ROTATION: ("00-inbox/rotation", "10-rotation")}
+    """Rotation, then one destination per collection: (inbox, bank)."""
+    found = {ROTATION: (layout.INBOX_ROTATION, layout.ROTATION)}
     for name in archive_names(media):
-        found[name] = (f"{INBOX_ARCHIVES}/{name}", f"{ARCHIVES}/{name}")
+        found[name] = (layout.inbox_collection(name), layout.collection(name))
     return found
 
 
@@ -93,9 +96,9 @@ def bank_label(media: Path, name: str) -> str:
 
 
 def destination_list(media: Path) -> list[dict]:
-    rows = [{"id": ROTATION, "label": "Rotation", "group": "rotation", "folder": "10-rotation"}]
+    rows = [{"id": ROTATION, "label": "Rotation", "group": "rotation", "folder": layout.ROTATION}]
     archives = [
-        {"id": name, "label": bank_label(media, name), "group": "archives", "folder": f"{ARCHIVES}/{name}"}
+        {"id": name, "label": bank_label(media, name), "group": "archives", "folder": layout.collection(name)}
         for name in archive_names(media)
     ]
     archives.sort(key=lambda row: row["label"].casefold())
@@ -122,7 +125,7 @@ def write_label(folder: Path, data: dict) -> None:
 
 
 def create_bank(media: Path, label: str, folder: str) -> tuple[int, dict]:
-    """A new archive bank: its folder in 20-archives, its inbox, its name."""
+    """A new collection: its folder, its inbox, its name."""
     label = " ".join(str(label or "").split())
     folder = str(folder or "").strip()
     if not label:
@@ -136,20 +139,20 @@ def create_bank(media: Path, label: str, folder: str) -> tuple[int, dict]:
     with _LOCK:
         existing = archive_names(media)
         if any(name.casefold() == folder for name in existing):
-            return 409, {"error": f"Le dossier {ARCHIVES}/{folder} existe déjà."}
+            return 409, {"error": f"Le dossier {layout.collection(folder)} existe déjà."}
         if any(bank_label(media, name).casefold() == label.casefold() for name in existing):
             return 409, {"error": "Une collection porte déjà ce nom."}
         bank = media / ARCHIVES / folder
         try:
             bank.mkdir(parents=True)
         except FileExistsError:
-            return 409, {"error": f"Le dossier {ARCHIVES}/{folder} existe déjà."}
+            return 409, {"error": f"Le dossier {layout.collection(folder)} existe déjà."}
         (media / INBOX_ARCHIVES / folder).mkdir(parents=True, exist_ok=True)
         try:
             write_label(bank, {"nom": label})
         except OSError:
             return 500, {"error": "Le nom n'a pas pu s'écrire dans le dossier de la collection."}
-    return 201, {"destination": {"id": folder, "label": label, "group": "archives", "folder": f"{ARCHIVES}/{folder}"}}
+    return 201, {"destination": {"id": folder, "label": label, "group": "archives", "folder": layout.collection(folder)}}
 
 
 def rename_bank(media: Path, name: str, label: str) -> tuple[int, dict]:
@@ -184,7 +187,7 @@ def rename_bank(media: Path, name: str, label: str) -> tuple[int, dict]:
             write_label(bank, data)
         except OSError:
             return 500, {"error": "Le nom n'a pas pu s'écrire dans le dossier de la collection."}
-    return 200, {"destination": {"id": name, "label": label, "group": "archives", "folder": f"{ARCHIVES}/{name}"}}
+    return 200, {"destination": {"id": name, "label": label, "group": "archives", "folder": layout.collection(name)}}
 
 
 def judge_upload(
@@ -314,12 +317,12 @@ def _tree_bytes(root: Path) -> int:
 def used_bytes(media: Path) -> int:
     return sum(
         _tree_bytes(media / folder)
-        for folder in ("00-inbox", "10-rotation", "20-archives")
+        for folder in (layout.INBOX, layout.ROTATION, layout.COLLECTIONS)
     )
 
 
 def _rejets_path(media: Path) -> Path:
-    return media / "00-inbox" / "_rejets.json"
+    return media / layout.INBOX_REJETS
 
 
 def read_rejets(media: Path) -> list[dict]:
@@ -377,6 +380,8 @@ def inbox_status(media: Path, tusd_dir: Path | None) -> dict:
     progress = _progress(tusd_dir) if tusd_dir else []
     return {
         "destinations": destination_list(media),
+        # Where a new collection is born: the console shows it, and names no folder itself.
+        "collections": {"folder": layout.COLLECTIONS},
         "quota": {"used": used, "limit": limit},
         "disk": disk_space(media),
         "queue": queue[:200],

@@ -4,6 +4,7 @@ import type { LiveSnapshot, RundownItem } from "./types";
 import {
   DESK_FILE_AHEAD,
   antennaFile,
+  antennaNextItem,
   antennaRundownItem,
   clockCoveringItem,
   clockElapsedSec,
@@ -300,4 +301,38 @@ test("antenna file follows Liquidsoap elapsed, not the planned clock", () => {
   assert.equal(file?.elapsed, 110);
   const item = antennaRundownItem(file!, wall.getTime() - 110_000);
   assert.ok(Math.abs(clockElapsedSec(item, wall) - 110) < 0.001);
+});
+
+test("the engine says the bac of the sound on air: its path is not read", () => {
+  const live: LiveSnapshot = {
+    status: "playing",
+    source: "jingles",
+    title: "Ouverture",
+    elapsed: 2,
+    remaining: 3,
+    // A folder that several bacs may follow: its name says no bac.
+    initial_uri: 'annotate:radiotomate_sound_id="7":/media/habillage/jingles/ouverture.mp3',
+    radiotomate_sound_id: "7",
+    cart_id: 3,
+  };
+  assert.equal(antennaFile(live)?.cartId, 3);
+  // A sound out of any bac: the auto-DJ, by its Beets id.
+  const autodj = antennaFile({
+    ...live,
+    radiotomate_sound_id: "",
+    initial_uri: 'annotate:beets_id="12":/media/bacs/4/x.mp3',
+    cart_id: null,
+  });
+  assert.equal(autodj?.cartId, 0);
+  assert.equal(autodj?.beetsId, 12);
+  // The next sound says its own bac.
+  const next = antennaNextItem(
+    {
+      ...live,
+      next_cart: { title: "Spot", artist: "", rid: 5, initial_uri: 'annotate:radiotomate_sound_id="8":/media/a.mp3', cart_id: 4 },
+    },
+    new Date("2026-09-28T13:29:00+02:00"),
+  );
+  assert.equal(next?.cart_id, 4);
+  assert.equal(next?.sound_id, 8);
 });

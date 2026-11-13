@@ -1,3 +1,5 @@
+import { isHabillageCart } from "./cartFlags.ts";
+import { LEGACY_ROTATION_FOLDER } from "./legacyLayout.ts";
 import type { Cart } from "./types";
 
 /** What a bac holds, as the Sons page shows it. */
@@ -10,9 +12,9 @@ export const BAC_KINDS: { id: BacKind; label: string; plural: string }[] = [
   { id: "relais", label: "Relais", plural: "Relais" },
 ];
 
-export function bacKind(cart: Pick<Cart, "mode" | "bank_folder">): BacKind {
+export function bacKind(cart: Pick<Cart, "mode" | "bank_folder" | "bank_zone">): BacKind {
   if (cart.mode === "relay") return "relais";
-  if ((cart.bank_folder || "").startsWith("30-habillage")) return "habillage";
+  if (isHabillageCart(cart)) return "habillage";
   return "fichiers";
 }
 
@@ -70,7 +72,7 @@ export function formatBytes(value: number): string {
   return `${next.toFixed(digits).replace(".", ",")} ${units[index]}`;
 }
 
-/** The station's quota, as the catalogue counts it: 00-inbox, 10-rotation and 20-archives. */
+/** The station's quota, as the catalogue counts it: the inbox, the rotation and the collections. */
 export type InboxQuota = { used: number; limit: number };
 /** The disk under the bank, as df sees it. */
 export type InboxDisk = { total: number; used: number; free: number };
@@ -136,7 +138,7 @@ export function tusRetryable(message: string | null | undefined): boolean {
   return !/response code: 4\d\d/.test(text);
 }
 
-/** Where an upload lands: rotation, or one archive bank (a folder of 20-archives). */
+/** Where an upload lands: rotation, or one collection. folder is its path in the bank, as the catalogue says. */
 export type BankDestination = { id: string; label: string; group: "rotation" | "archives"; folder: string };
 
 /** Until the catalogue answers, rotation is the only destination known for sure. */
@@ -144,7 +146,7 @@ export const ROTATION_DESTINATION: BankDestination = {
   id: "rotation",
   label: "Rotation",
   group: "rotation",
-  folder: "10-rotation",
+  folder: LEGACY_ROTATION_FOLDER,
 };
 
 export function destinationLabel(list: BankDestination[], id: string | null | undefined): string {
@@ -196,9 +198,9 @@ export function bankProblem(list: BankDestination[], label: string, folder: stri
     return { field: "folder", message: "Minuscules, chiffres et tirets, 40 caractères au plus." };
   }
   if (folder === "rotation") return { field: "folder", message: "« rotation » est réservé à la musique de l'auto-DJ." };
-  if (list.some((item) => item.group === "archives" && item.id.toLowerCase() === folder)) {
-    return { field: "folder", message: `20-archives/${folder} existe déjà.` };
-  }
+  const taken = list.find((item) => item.group === "archives" && item.id.toLowerCase() === folder);
+  // Its path, as the catalogue says it: the console names no folder of the bank.
+  if (taken) return { field: "folder", message: `${taken.folder} existe déjà.` };
   return null;
 }
 

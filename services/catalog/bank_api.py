@@ -26,8 +26,8 @@ from pathlib import Path, PurePosixPath
 
 from mutagen import File as MutagenFile
 
-import agenda_api
 import inbox_api
+import layout
 
 # One page of the list, at most.
 PAGE_MAX = 200
@@ -463,7 +463,7 @@ def remove_files(media: Path, destination: str, names: object) -> tuple[int, dic
     wanted, problem = _names(names)
     if wanted is None:
         return 400, {"error": problem}
-    trash = media / agenda_api.TRASH_TOP
+    trash = media / layout.TRASH
 
     def act(name: str) -> str | None:
         path = _file_in(folder, name)
@@ -569,8 +569,8 @@ def delete_collection(media: Path, name: str) -> tuple[int, dict]:
     with inbox_api._LOCK, _LOCK:
         if name not in inbox_api.archive_names(media):
             return 404, {"error": "Collection introuvable."}
-        bank = media / inbox_api.ARCHIVES / name
-        inbox = media / inbox_api.INBOX_ARCHIVES / name
+        bank = media / layout.collection(name)
+        inbox = media / layout.inbox_collection(name)
         if bank.is_symlink() or os.path.ismount(bank):
             return 409, {"error": "Ce dossier est un lien ou un disque monté : il se retire sur la machine, pas ici."}
         left = len(scan(bank))
@@ -581,7 +581,7 @@ def delete_collection(media: Path, name: str) -> tuple[int, dict]:
         if waiting:
             files = "1 envoi attend" if waiting == 1 else f"{waiting} envois attendent"
             return 409, {"error": f"{files} encore dans le dépôt de la collection : réessaie une fois rangé."}
-        trash = media / agenda_api.TRASH_TOP
+        trash = media / layout.TRASH
         try:
             trash.mkdir(parents=True, exist_ok=True)
         except OSError:

@@ -358,7 +358,7 @@ services:
       # L'heure du compte rendu, dans Dropbox.
       TZ: ${TZ:-Europe/Paris}
     volumes:
-      # Au même chemin que pour le moteur : les liens de Carts/ visent /media.
+      # Au même chemin que pour le moteur : les liens vers le dossier de chaque bac visent /media.
       - ${BUTTON_MEDIA:-./media}:/media
       # Ce qui a déjà été copié : un son retiré dans la console ne revient pas.
       - cloud-sync-state:/state

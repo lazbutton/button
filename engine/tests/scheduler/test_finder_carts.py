@@ -45,6 +45,7 @@ async def test_finder_carts_roundtrip(  # noqa: PLR0913, PLR0915
     prog = (await created.get_json())["cart"]
     prog_id = prog["id"]
     assert prog["bank_folder"] == f"50-carts/{prog_id}"
+    assert prog["bank_zone"] == "bacs"
     assert prog["finder_path"] == f"Carts/{prog_id}-Prog"
     real = media / "50-carts" / str(prog_id)
     view = media / "Carts" / f"{prog_id}-Prog"
@@ -124,6 +125,8 @@ async def test_finder_carts_roundtrip(  # noqa: PLR0913, PLR0915
     jingle_cart = (await jingled.get_json())["cart"]
     jingle_id = jingle_cart["id"]
     assert jingle_cart["bank_folder"] == "30-habillage/jingles"
+    # The console reads the zone, never the name of the folder.
+    assert jingle_cart["bank_zone"] == "habillage"
     jview = media / "Carts" / f"{jingle_id}-jingles"
     assert jview.is_symlink()
     assert jview.resolve() == jingles.resolve()

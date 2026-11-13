@@ -1,6 +1,7 @@
 import json
 import logging
 import math
+import re
 from asyncio import Queue
 from datetime import datetime
 from http.client import HTTPException
@@ -8,10 +9,12 @@ from http.client import HTTPException
 from hypercorn.utils import ShutdownError
 from quart import Blueprint, g, jsonify, make_response, request
 from quart_auth import current_user
+from sqlalchemy import select
 from werkzeug.exceptions import BadRequest
 
 from radiotomate.auth import login_required, permission_required
 from radiotomate.interface.autodj import invalidate_conducteur_cache
+from radiotomate.models import Sound
 from radiotomate.quart import or_shutdown
 from radiotomate.scheduler_api import (
     CartEmptyError,
@@ -155,6 +158,42 @@ def _queued_field(value: object) -> int | None:
         return None
 
 
+_CUES = ("next_autodj", "next_jingle", "next_cart")
+_SOUND_IN_URI = re.compile(r'radiotomate_sound_id="(\d+)"')
+
+
+def _sound_id(payload: dict) -> int | None:
+    """The sound a snapshot or a cue plays: its field, else what its URI says."""
+    raw = str(payload.get("radiotomate_sound_id") or "").strip()
+    if not raw.isdigit():
+        found = _SOUND_IN_URI.search(str(payload.get("initial_uri") or ""))
+        raw = found.group(1) if found else ""
+    return int(raw) if raw.isdigit() else None
+
+
+async def attach_live_carts(session, snapshot: dict) -> None:
+    """Say which cart the sound on air, and each sound cued next, belongs to.
+
+    The console fetches a sound through its cart. It read the cart in the path
+    of the file, and so had to know how the bank names its folders.
+    """
+    cues = [key for key in _CUES if isinstance(snapshot.get(key), dict)]
+    wanted = {key: _sound_id(snapshot[key]) for key in cues}
+    wanted[""] = _sound_id(snapshot)
+    ids = {sound_id for sound_id in wanted.values() if sound_id}
+    carts: dict[int, int] = {}
+    if ids:
+        rows = await session.execute(
+            select(Sound.id, Sound.cart_id).where(Sound.id.in_(ids))
+        )
+        # all(): a Result has keys(), and dict() would read it as a mapping.
+        carts = dict(rows.all())
+    snapshot["cart_id"] = carts.get(wanted[""])
+    for key in cues:
+        # A copy: the cue belongs to the snapshot kept for every reader.
+        snapshot[key] = {**snapshot[key], "cart_id": carts.get(wanted[key])}
+
+
 @blueprint.get("/live")
 @login_required
 async def get():
@@ -199,6 +238,7 @@ async def live_json():
     from radiotomate.services.emissions import attach_live_emission
 
     dirty = await attach_live_emission(g.dbsession, snapshot)
+    await attach_live_carts(g.dbsession, snapshot)
     if dirty:
         await g.dbsession.commit()
     return jsonify(snapshot)

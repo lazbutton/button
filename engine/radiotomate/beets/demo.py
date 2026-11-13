@@ -20,6 +20,7 @@ from unittest.mock import MagicMock
 
 from radiotomate.beets.compat import patch_beets_term_ioctl
 from radiotomate.models.sound import Sound  # noqa: TC001
+from radiotomate.services.media_bank import ROTATION_TOP
 
 patch_beets_term_ioctl()
 
@@ -181,7 +182,7 @@ class BeetsMockIntegration(BeetsIntegration):
                 artist=FAKE_ARTIST,
                 title=artistic_generator(),
                 grouping="rotation",
-                path=f"/media/10-rotation/camille-{i}.mp3",
+                path=f"/media/{ROTATION_TOP}/camille-{i}.mp3",
             )
 
         for i in range(100):
@@ -189,7 +190,7 @@ class BeetsMockIntegration(BeetsIntegration):
                 artist=artistic_generator(),
                 title=artistic_generator(),
                 grouping="rotation",
-                path=f"/media/10-rotation/track-{i}.mp3",
+                path=f"/media/{ROTATION_TOP}/track-{i}.mp3",
             )
 
     def teardown(self):

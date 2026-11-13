@@ -1,4 +1,5 @@
 import { displayNow } from "../lib/nowPlaying.ts";
+import { legacyCartIdFromPath } from "./legacyLayout.ts";
 import type { LiveSnapshot, RundownItem } from "./types";
 
 const PAST_CODES = new Set(["played", "skipped", "replaced"]);
@@ -360,8 +361,8 @@ export function antennaFile(live: LiveSnapshot | null): AntennaFile | null {
   const soundId = Number(live.radiotomate_sound_id || soundFromUri?.[1] || 0);
   const pathMatch = uri.match(/:(\/media\/\S+)$/) || uri.match(/(\/media\/\S+)$/);
   const path = pathMatch?.[1] || "";
-  const cartMatch = path.match(/\/50-carts\/(\d+)\//);
-  const cartId = cartMatch ? Number(cartMatch[1]) : 0;
+  // The engine says the bac of the sound; an older engine leaves its path to read.
+  const cartId = live.cart_id !== undefined ? Number(live.cart_id) || 0 : legacyCartIdFromPath(path);
   const beetsFromUri = uri.match(/beets_id="(\d+)"/);
   const beetsId = beetsFromUri ? Number(beetsFromUri[1]) : 0;
   if (!(soundId > 0 && cartId > 0) && !(beetsId > 0)) return null;
@@ -391,6 +392,7 @@ export function antennaNextItem(live: LiveSnapshot | null, wall: Date): RundownI
     title: cue.title,
     artist: cue.artist,
     initial_uri: cue.initial_uri,
+    cart_id: cue.cart_id,
     elapsed: 0,
     on_air: `next:${cue.rid}`,
   });

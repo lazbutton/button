@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Vue Finder de la médiathèque.
 
-Les dossiers numérotés restent le stockage du moteur. Ce script reconstruit
+Les dossiers de la banque restent le stockage du moteur. Ce script reconstruit
 des liens : Rotation, Banques, Habillage, Émissions, Bacs. Un fichier déposé
 dans un lien arrive dans le dossier réel et y reste.
 
@@ -16,6 +16,23 @@ import re
 import sys
 from pathlib import Path
 
+# Les dossiers de la banque. Les scripts de la station, le catalogue et le
+# moteur les nomment chacun à un seul endroit : services/catalog/test_layout.py
+# les compare, et refuse un nom écrit ailleurs dans ce fichier. apply_share.py,
+# construit dans la même image du partage, les lit ici.
+ROTATION = "10-rotation"
+COLLECTIONS = "20-archives"
+HABILLAGE_TOP = "30-habillage"
+EMISSIONS = "40-emissions"
+CARTS = "50-carts"
+CART_LINKS = "Carts"
+VOLUME = ".volume"
+# Le regroupement Beets de la rotation : jamais une collection.
+ROTATION_NAME = "rotation"
+# Les deux dossiers d'une émission.
+EMISSION_SLOTS = ("entiere", "podcasts")
+
+# Les dossiers de l'habillage, et leur nom dans la vue.
 HABILLAGE = (
     ("jingles", "Jingles"),
     ("ids", "Idents"),
@@ -76,7 +93,7 @@ def _unique(label: str, slug: str, used: set[str]) -> str:
 
 
 def _banks(media: Path) -> list[tuple[str, Path]]:
-    root = media / "20-archives"
+    root = media / COLLECTIONS
     if not root.is_dir():
         return []
     found: list[tuple[str, Path]] = []
@@ -84,14 +101,14 @@ def _banks(media: Path) -> list[tuple[str, Path]]:
     for path in sorted(root.iterdir(), key=lambda item: item.name):
         if not path.is_dir() or path.is_symlink():
             continue
-        if not path.name or path.name.startswith((".", "_")) or path.name == "rotation":
+        if not path.name or path.name.startswith((".", "_")) or path.name == ROTATION_NAME:
             continue
         found.append((_unique(_label(path, path.name), path.name, used), path))
     return found
 
 
 def _emissions(media: Path) -> list[tuple[str, Path]]:
-    root = media / "40-emissions"
+    root = media / EMISSIONS
     if not root.is_dir():
         return []
     found: list[tuple[str, Path]] = []
@@ -131,16 +148,16 @@ def _drop_stale(directory: Path, keep: set[str]) -> None:
 
 def refresh(media: Path, volume: Path | None = None) -> Path:
     media = media.resolve()
-    volume = volume or (media / ".volume")
+    volume = volume or (media / VOLUME)
     _ensure_dir(volume)
     for name in VOLUME_DIRS:
         _ensure_dir(volume / name)
 
-    rotation = media / "10-rotation"
+    rotation = media / ROTATION
     _ensure_dir(rotation)
     _link(volume / "Rotation", rotation)
 
-    carts = media / "Carts"
+    carts = media / CART_LINKS
     _ensure_dir(carts)
     _link(volume / "Bacs", carts)
 
@@ -151,7 +168,7 @@ def refresh(media: Path, volume: Path | None = None) -> Path:
 
     habillage: list[tuple[str, Path]] = []
     for slug, title in HABILLAGE:
-        target = media / "30-habillage" / slug
+        target = media / HABILLAGE_TOP / slug
         _ensure_dir(target)
         habillage.append((title, target))
         _link(volume / "Habillage" / title, target)
