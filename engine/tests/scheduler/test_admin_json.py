@@ -1353,6 +1353,16 @@ async def test_cart_attach_bank_folder_json(  # noqa: PLR0913
         row["path"] == "30-habillage/jingles" and row["count"] == 2
         for row in listed["folders"]
     )
+    # What a new cart of habillage may follow, empty folders included: the
+    # console offers this list, and names no folder itself.
+    assert listed["habillage"] == [
+        "30-habillage/jingles",
+        "30-habillage/ids",
+        "30-habillage/pubs",
+        "30-habillage/beds",
+        "30-habillage/stings",
+        "30-habillage/sfx",
+    ]
     created = await client.post(
         "/carts.json",
         json={"title": "Folder Cart", "mode": "playlist", "schedule_mode": "timed"},
