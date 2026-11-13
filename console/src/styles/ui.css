@@ -608,50 +608,104 @@
   line-height: 1.55;
 }
 
-.ui-toast {
+/* Les messages de la console, en bas à droite. Leur zone est hors de la page,
+   au-dessus de tout : une fenêtre ouverte ne les cache pas. */
+.ui-toast-region {
   position: fixed;
-  right: 1rem;
-  bottom: 1rem;
-  z-index: 100;
+  right: max(1rem, env(safe-area-inset-right));
+  bottom: max(1rem, env(safe-area-inset-bottom));
+  z-index: 1000;
+  width: min(26rem, calc(100vw - 2rem));
+  /* Une fenêtre ouverte retire le pointeur à tout le reste : seul le message le garde. */
+  pointer-events: none;
+}
+
+/* Le ton se lit à trois signes : la barre, la pastille et la forme de l'icône.
+   Vert, c'est fait ; rouge, ce n'est pas fait ; gris, c'est à savoir. */
+.ui-toast {
+  --toast-tone: var(--app-text-faint);
+  --toast-ink: var(--app-text-muted);
+  position: relative;
   display: flex;
   align-items: flex-start;
-  gap: 0.65rem;
-  width: min(24rem, calc(100vw - 2rem));
-  padding: 0.75rem 0.85rem;
+  gap: 0.7rem;
+  padding: 0.7rem 0.6rem 0.7rem 1.05rem;
+  overflow: hidden;
   border: 1px solid var(--app-border-strong);
   border-radius: var(--app-radius-lg);
-  background: color-mix(in srgb, var(--app-surface-2) 96%, transparent);
+  background: var(--app-surface-1);
   box-shadow: var(--app-shadow-float);
+  pointer-events: auto;
   animation: ui-toast-in var(--motion-slow) var(--ease-out);
 }
 
+[data-appearance="dark"] .ui-toast {
+  background: var(--app-surface-2);
+}
+
+.ui-toast::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: var(--toast-tone);
+}
+
 .ui-toast.is-success {
-  border-color: color-mix(in srgb, var(--app-live) 35%, transparent);
+  --toast-tone: var(--app-ok);
+  --toast-ink: var(--app-ok-ink);
 }
 
 .ui-toast.is-error {
-  border-color: color-mix(in srgb, var(--app-danger) 42%, transparent);
+  --toast-tone: var(--app-danger);
+  --toast-ink: var(--app-danger-ink);
+}
+
+.ui-toast-icon {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--toast-tone) 16%, transparent);
+  color: var(--toast-ink);
+}
+
+/* Le texte, puis son bouton : à côté s'il tient, dessous sinon. */
+.ui-toast-body {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  min-width: 0;
+  min-height: 1.5rem;
 }
 
 .ui-toast-copy {
+  flex: 1 1 12rem;
   min-width: 0;
-  flex: 1;
+  margin: 0;
   color: var(--app-text);
-  font-size: 0.75rem;
+  font-size: 0.8125rem;
+  font-weight: 500;
   line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .ui-toast-action {
   flex: 0 0 auto;
+  min-height: 1.75rem;
   margin: 0;
+  padding: 0.2rem 0.65rem;
   border: 1px solid var(--app-border-strong);
   border-radius: var(--app-radius-sm);
   background: var(--app-surface-hover);
   color: var(--app-text);
   font: inherit;
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   font-weight: 650;
-  padding: 0.22rem 0.55rem;
   cursor: pointer;
 }
 
@@ -661,10 +715,12 @@
 
 .ui-toast-close {
   display: grid;
+  flex: 0 0 auto;
   place-items: center;
-  width: 1.6rem;
-  height: 1.6rem;
-  margin: -0.25rem -0.35rem -0.25rem 0;
+  width: 1.5rem;
+  height: 1.5rem;
+  margin: 0;
+  padding: 0;
   border: 0;
   border-radius: var(--app-radius-sm);
   background: transparent;
@@ -685,6 +741,29 @@
   to {
     opacity: 1;
     transform: translateY(0) scale(1);
+  }
+}
+
+/* Au doigt, ou sur un petit écran : des cibles de 40 px, et toute la largeur. */
+@media (pointer: coarse), (max-width: 720px) {
+  .ui-toast-action {
+    min-height: 2.5rem;
+    padding-inline: 0.85rem;
+  }
+
+  .ui-toast-close {
+    width: 2.5rem;
+    height: 2.5rem;
+    margin: -0.35rem -0.3rem -0.35rem 0;
+  }
+}
+
+@media (max-width: 720px) {
+  .ui-toast-region {
+    right: max(0.75rem, env(safe-area-inset-right));
+    bottom: max(0.75rem, env(safe-area-inset-bottom));
+    left: max(0.75rem, env(safe-area-inset-left));
+    width: auto;
   }
 }
 

@@ -6,6 +6,8 @@ Le détail des changements du moteur par rapport à l'amont : [docs/moteur/chang
 
 ## Non publié
 
+- Les messages en bas à droite de l'écran disent d'un coup d'œil ce qui s'est passé. Une confirmation portait le même liseré rouge qu'un échec, et la console devinait le ton d'un message à ses mots : sur la page Comptes, un refus du moteur s'affichait comme une simple information. Chaque message montre maintenant son ton par une barre, une pastille et une icône, en vert pour ce qui est fait, en rouge pour ce qui ne l'est pas, en gris pour ce qui est à savoir. Il nomme ce qu'il concerne, « Jingle grave » retiré de la file au lieu de « Retiré de la file. », et dit la suite quand il y en a une. Il reste le temps d'être lu, plus longtemps pour un échec ou avec « Annuler », et ne part ni sous le pointeur, ni pendant que le clavier y est, ni dans un onglet caché. Une fenêtre ouverte ne le cache plus : il passait dessous, assombri, et les lecteurs d'écran ne l'annonçaient pas.
+
 ## 1.2.0
 
 Une mineure : rien d'autre que la mise à jour habituelle, voir [docs/deploiement.md](docs/deploiement.md#mettre-à-jour). Le schéma de la base reste en v18 : aucune migration.

@@ -5,7 +5,6 @@ import { DirectDialog } from "../components/antenne/DirectDialog";
 import { LibraryPanel } from "../components/antenne/LibraryPanel";
 import { OnAirCard, type AirState } from "../components/antenne/OnAirCard";
 import { QueuePanel } from "../components/antenne/QueuePanel";
-import { ProtoToast, useProtoToast } from "../components/ProtoToast";
 import { useAntennaClock } from "../lib/liveClock";
 import { useMonitorState } from "../lib/MonitorContext";
 import { anchorHint, deskAlert, ownsSpace, SKIP_GUARD_MS, spaceSkips } from "../api/antenneDesk";
@@ -47,6 +46,7 @@ import type {
 } from "../api/types";
 import { apiAnsweredAt } from "../api/jsonCache";
 import { useApiJson } from "../api/useApiJson";
+import { AppToast, useAppToast } from "../ui/AppToast";
 import "../styles/pages/antenne.css";
 
 type DeskMutation = Rundown & { desk_item?: RundownItem };
@@ -140,7 +140,7 @@ function AntenneDesk({
   setRundown: Dispatch<SetStateAction<Rundown | null>>;
   onLiveReload: () => void;
 }) {
-  const { message, show, dismiss } = useProtoToast();
+  const { toast, show, dismiss } = useAppToast();
   const snapshot: LiveSnapshot = live ?? { status: "offline" };
   const clock = useAntennaClock(snapshot);
   const wall = clock.wall;
@@ -169,8 +169,7 @@ function AntenneDesk({
   const renameTitleRef = useRef<HTMLInputElement>(null);
   const undoRef = useRef<(() => Promise<void>) | null>(null);
 
-  // Un geste qui échoue s'annonce en alerte : deviné d'après le texte, le ton
-  // ferait passer un refus ou un moteur muet pour une information.
+  // Un geste qui échoue s'annonce en alerte, avec la raison du moteur quand il en donne une.
   const fail = useCallback(
     (caught: unknown, fallback: string, forbidden = "Il faut le droit antenne. Demande à un admin si tu dois pouvoir le faire.") => {
       if (caught instanceof ApiAuthError) show("Session expirée. Reconnecte-toi.", "error");
@@ -211,7 +210,7 @@ function AntenneDesk({
     setStopping(true);
     try {
       await stopDiffusion(datedSet.id);
-      show("Arrêt demandé : la grille reprend dans quelques secondes.");
+      show("Arrêt demandé : la grille reprend dans quelques secondes.", "success");
       onLiveReload();
     } catch (caught) {
       fail(caught, "Arrêt impossible. Réessaie.");
@@ -234,25 +233,26 @@ function AntenneDesk({
       await apiDelete("/live.json");
       onLiveReload();
     } catch (caught) {
-      fail(caught, "Impossible de passer. Réessaie.");
+      fail(caught, "Impossible de passer au titre suivant. Réessaie.");
     }
   }, [fail, harbor, onLiveReload]);
 
   const nameLive = async () => {
+    const title = showTitle.trim();
     setNaming(true);
     try {
       await apiPostJson("/antenne/emissions.json", {
         scope: "session",
-        title: showTitle.trim(),
+        title,
         artist: showArtist.trim(),
       });
       setShowTitle("");
       setShowArtist("");
-      show(currentShow ? "Live renommé." : "Live nommé.");
+      show(`Le direct s’appelle maintenant « ${title} ».`, "success");
       setRenameOpen(false);
       onLiveReload();
     } catch (caught) {
-      fail(caught, "Impossible de nommer ce live. Réessaie.");
+      fail(caught, "Impossible de nommer le direct. Réessaie.");
     } finally {
       setNaming(false);
     }
@@ -266,9 +266,10 @@ function AntenneDesk({
           hitPayload(hit, beforeId ? { before_id: beforeId } : {}),
         );
         applyRundown(payload);
-        show(beforeId ? "Placé dans la file." : "Mis à la suite.");
+        const { title } = labelsFromHit(hit);
+        show(beforeId ? `« ${title} » placé dans la file.` : `« ${title} » mis à la suite.`, "success");
       } catch (caught) {
-        fail(caught, "Insertion impossible. Réessaie.");
+        fail(caught, "Impossible d’ajouter ce titre à la file. Réessaie.");
       }
     },
     [fail, setRundown, show],
@@ -276,8 +277,9 @@ function AntenneDesk({
 
   const fireNow = useCallback(
     async (hit: LibraryHit) => {
+      const { title } = labelsFromHit(hit);
       if (harbor) {
-        show("Direct à l’antenne.");
+        show(`Le direct tient l’antenne : « ${title} » n’est pas parti.`, "error");
         return;
       }
       try {
@@ -285,12 +287,13 @@ function AntenneDesk({
         applyRundown(payload);
         show(
           snapshot.status === "simulating"
-            ? "Envoyé (démo horloge — pas de Liquidsoap)."
-            : "À l’antenne — coupe.",
+            ? `« ${title} » part à l’antenne (antenne simulée : aucun son ne sort).`
+            : `« ${title} » part à l’antenne : il coupe le titre en cours.`,
+          "success",
         );
         onLiveReload();
       } catch (caught) {
-        fail(caught, "Impossible de mettre à l’antenne. Réessaie.");
+        fail(caught, "Impossible de mettre ce titre à l’antenne. Réessaie.");
       }
     },
     [fail, harbor, onLiveReload, setRundown, show, snapshot.status],
@@ -299,6 +302,8 @@ function AntenneDesk({
   const removeItem = useCallback(
     async (item: RundownItem) => {
       const restored = itemToHit(item);
+      const { title } = rundownCopy(item);
+      const undone = () => show(`Retrait annulé : « ${title} » est de retour dans la file.`, "success");
       try {
         if (isDeskPin(item) && item.id) {
           const payload = await apiDeleteJson<Rundown>(
@@ -312,7 +317,7 @@ function AntenneDesk({
                   hitPayload(restored),
                 );
                 applyRundown(next);
-                show("Annulé.");
+                undone();
               }
             : null;
         } else {
@@ -328,7 +333,7 @@ function AntenneDesk({
                   `/autodj/conducteur/items/${encodeURIComponent(pinId)}.json`,
                 );
                 applyRundown(next);
-                show("Annulé.");
+                undone();
               }
             : restored
               ? async () => {
@@ -337,12 +342,11 @@ function AntenneDesk({
                     hitPayload(restored, clockLineReplacement(item)),
                   );
                   applyRundown(next);
-                  show("Annulé.");
+                  undone();
                 }
               : null;
         }
-        show("Retiré de la file.", "success", {
-          duration: 8000,
+        show(`« ${title} » retiré de la file.`, "success", {
           action: undoRef.current
             ? {
                 label: "Annuler",
@@ -372,7 +376,7 @@ function AntenneDesk({
         });
         applyRundown(payload);
       } catch (caught) {
-        fail(caught, "Réordre impossible. Réessaie.");
+        fail(caught, "Impossible de changer l’ordre de la file. Réessaie.");
       }
     },
     [fail, setRundown],
@@ -538,7 +542,7 @@ function AntenneDesk({
           fireDisabled={harbor}
           onInsertNext={(hit) => void insertHit(hit)}
           onFireNow={(hit) => void fireNow(hit)}
-          onNotice={(text) => show(text)}
+          onNotice={(text) => show(text, "error")}
         />
       </div>
 
@@ -551,7 +555,7 @@ function AntenneDesk({
         offline={offline}
         returnFocus={directButtonRef}
       />
-      <ProtoToast message={message} onDismiss={dismiss} />
+      <AppToast toast={toast} onDismiss={dismiss} />
     </div>
   );
 }

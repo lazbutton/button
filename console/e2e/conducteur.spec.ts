@@ -158,7 +158,7 @@ test("retirer une ligne de l’horloge au clavier : un retrait, qu’« Annuler 
   await page.keyboard.press("Enter");
   expect((await envoi).postDataJSON()).toEqual({ suppress_at: visee.at, suppress_id: visee.id });
 
-  const retrait = avis(page, "Retiré du conducteur.");
+  const retrait = avis(page, /^« .+ » retiré du conducteur\./);
   await expect(retrait).toBeVisible();
   await expect(heure).toHaveCount(0);
   // Sa ligne partie, le bouton aussi : le focus revient au déroulé.
@@ -166,7 +166,7 @@ test("retirer une ligne de l’horloge au clavier : un retrait, qu’« Annuler 
   expect(effaces, "aucune ligne effacée").toEqual([]);
 
   await retrait.getByRole("button", { name: "Annuler" }).click();
-  await expect(avis(page, "Annulé.")).toBeVisible();
+  await expect(avis(page, /^Retrait annulé : « .+ » est revenu à sa place\./)).toBeVisible();
   await expect(heure).toHaveCount(1);
   expect(effaces, "seul le retrait est effacé").toEqual([RETRAIT_POSE]);
   await expect(deroule(page)).toBeFocused();
