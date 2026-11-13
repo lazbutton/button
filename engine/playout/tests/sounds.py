@@ -37,6 +37,9 @@ SOUNDS = {
     "title-7": (26.0, 880.0, 10.0, 2800.0, -7.0),
     "jingle": (2.5, 2500.0, 40.0, 4000.0, -30.0),
     "cart": (5.0, 1700.0, 25.0, 3300.0, -20.0),
+    # Pushed to wait for the end of a title: a jingle, and a sound of a cart.
+    "jingle-fin": (2.5, 3100.0, 35.0, 4600.0, -25.0),
+    "cart-fin": (5.0, 1300.0, 18.0, 2900.0, -14.0),
     # What the studio of the bench sends to the harbor, in a loop.
     "live": (8.0, 350.0, 18.0, 1250.0, -14.0),
 }

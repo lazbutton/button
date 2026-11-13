@@ -6,10 +6,11 @@ playout image, and listens to what comes out.
     python3 engine/playout/tests/antenna.py
 
 `liquidsoap --check` only reads the script. This plays it: titles are pushed as
-the scheduler pushes them, a sound of a cart and a jingle cut in, then a relay
-and a live, sent to the harbor as a studio sends it, cut the last title. The
-bench records the WAV mount of the console's headphones, the same sound as the
-public mount before its MP3 encoder. It fails when:
+the scheduler pushes them, a sound of a cart and a jingle cut in, two more wait
+for the end of a title, then a relay and a live, sent to the harbor as a studio
+sends it, cut the last title. The bench records the WAV mount of the console's
+headphones, the same sound as the public mount before its MP3 encoder. It fails
+when:
 
 - a title pushed never airs, or airs out of order;
 - the playout airs the same 20 ms frame again and again: the music queue has
@@ -22,6 +23,8 @@ public mount before its MP3 encoder. It fails when:
   told as the Auto-DJ, with the remaining time of the title it has cut, a
   relay or a live told as anything else, or the title that comes back after
   them;
+- a sound told to wait for the end of a title cuts it: the end of the title
+  comes back after the sound;
 - a relay comes back once the live that took the antenna from it is over;
 - the antenna stays silent.
 
@@ -64,8 +67,19 @@ LENGTH_SLACK = 1.5
 TITLES = [f"title-{number}" for number in range(1, 8)]
 JINGLE = "jingle"
 CART = "cart"
+# What waits for the end of a title, pushed in its last seconds as the scheduler
+# does: the title, and the sound. A jingle of the motif, then the sound of a cut
+# on the minute that waits for the end.
+WAITS = [(TITLES[2], "jingle-fin"), (TITLES[3], "cart-fin")]
+LAST_SECONDS = 3.0
 # The queue each sound is pushed to: the source the heartbeat names meanwhile.
-QUEUES = {**dict.fromkeys(TITLES, "autodj"), JINGLE: "jingles", CART: "carts"}
+QUEUES = {
+    **dict.fromkeys(TITLES, "autodj"),
+    JINGLE: "jingles",
+    CART: "carts",
+    WAITS[0][1]: "jingles",
+    WAITS[1][1]: "carts",
+}
 # What cuts in: the title cut, the seconds into it, and the sound. A sound of a
 # cart, as a cut on the minute pushes, then a jingle.
 CUTS = [(TITLES[0], 6.0, CART), (TITLES[1], 2.0, JINGLE)]
@@ -79,6 +93,8 @@ MEASURED = [
     for name in [*TITLES, CART]
     if name not in {CUT_BY_LIVE, *(cut[0] for cut in CUTS)}
 ]
+# What follows each sound that waited: its title before it, the next one after.
+FOLLOWS = {sound: (title, TITLES[TITLES.index(title) + 1]) for title, sound in WAITS}
 # The start sound has aired, and the music queue has been empty for a while: a
 # first title pushed then is what used to stall.
 EMPTY_QUEUE_SECONDS = 5.0
@@ -225,23 +241,30 @@ class Playout:
         # The start sound has no title.
         return [row["title"] for row in self.journal()["metadata"] if row["title"]]
 
+    def last_beat(self) -> dict | None:
+        beats = self.journal()["live"]
+        return beats[-1] if beats else None
+
     def now(self) -> float:
         """The time of the journal: when its last heartbeat came. Its clock dates
         every heartbeat and every title, whatever the pace of the heartbeats."""
         for _ in range(3):
-            beats = self.journal()["live"]
-            if beats:
-                return beats[-1]["at"]
+            beat = self.last_beat()
+            if beat is not None:
+                return beat["at"]
             time.sleep(0.5)
         raise RuntimeError("le faux scheduler ne rend plus son journal")
 
-    def push(self, queue: str, name: str) -> None:
-        payload = {
+    def push(self, queue: str, name: str, *, wait: bool = False) -> None:
+        payload: dict = {
             "path": f"/sounds/{name}.mp3",
             "title": name,
             "artist": "Banc",
             "radiotomate_item_id": f"item-{name}",
         }
+        if wait:
+            # As the scheduler: the sound goes at the end of the title on air.
+            payload["wait"] = True
         status, body = call("POST", f"{self.api}/queue/{queue}", payload, timeout=30)
         if status != 200:
             raise RuntimeError(
@@ -388,8 +411,9 @@ def cut(playout: Playout, mp3: bytes) -> Cuts:
 
 def scenario(playout: Playout, mp3: bytes) -> Cuts | None:
     """Pushes the titles as the scheduler does, a sound of a cart on the first
-    one, a jingle on the second, then cuts the last one with a relay and a
-    live. None when the last title never came."""
+    one, a jingle on the second, then two sounds that wait for the end of the
+    third and of the fourth, and cuts the last one with a relay and a live. None
+    when the last title never came."""
     pushed: list[str] = []
     due: dict[str, float] = {}
     sent: set[str] = set()
@@ -407,6 +431,13 @@ def scenario(playout: Playout, mp3: bytes) -> Cuts | None:
             elif sound in due and sound not in sent and time.monotonic() >= due[sound]:
                 sent.add(sound)
                 playout.push(QUEUES[sound], sound)
+        beat = playout.last_beat()
+        for title, sound in WAITS:
+            if sound in sent or beat is None or beat["title"] != title:
+                continue
+            if 0 < beat["remaining"] <= LAST_SECONDS:
+                sent.add(sound)
+                playout.push(QUEUES[sound], sound, wait=True)
         # The last title has started: a relay and a live cut it.
         if CUT_BY_LIVE in aired and JINGLE in aired:
             return cut(playout, mp3)
@@ -483,6 +514,32 @@ def misnamed(beats: list[dict]) -> dict[str, str]:
         named = [beat["source"] for beat in beats if beat["title"] == name]
         if named.count(queue) * 2 < len(named):
             found[name] = max(set(named), key=named.count)
+    return found
+
+
+def returned(aired: list[str]) -> list[tuple[str, str]]:
+    """The titles that came back on air after another sound, with that sound: it
+    cut them before their end. Not the titles the bench cuts on purpose."""
+    cut = {CUT_BY_LIVE, *(title for title, *_ in CUTS)}
+    found = []
+    for index, name in enumerate(aired):
+        before = aired[:index]
+        back = name in before and before[-1] != name
+        if name in TITLES and name not in cut and back:
+            found.append((name, before[-1]))
+    return found
+
+
+def misplaced(aired: list[str]) -> list[str]:
+    """The sounds that waited and did not air between their title and the next."""
+    order = list(dict.fromkeys(aired))
+    found = []
+    for sound, (title, after) in FOLLOWS.items():
+        if sound not in order:
+            continue
+        at = order.index(sound)
+        if order[at - 1 : at] != [title] or order[at + 1 : at + 2] != [after]:
+            found.append(sound)
     return found
 
 
@@ -570,6 +627,16 @@ def verdict(pcm: bytes, journal: dict, cuts: Cuts | None) -> list[str]:
         f"pendant « {name} », le playout dit la source « {source} », pas"
         f" « {QUEUES[name]} » : le scheduler ne sait pas ce qui est à l'antenne"
         for name, source in misnamed(beats).items()
+    ]
+    failures += [
+        f"« {name} » est revenu à l'antenne après « {sound} » : ce son l'a coupé"
+        " avant sa fin, au lieu de l'attendre"
+        for name, sound in returned(aired)
+    ]
+    failures += [
+        f"« {sound} », qui attendait la fin de « {FOLLOWS[sound][0]} », n'est pas"
+        f" passé entre ce titre et « {FOLLOWS[sound][1]} »"
+        for sound in misplaced(aired)
     ]
     failures += [
         f"« {name} » n'est jamais passé à l'antenne"
