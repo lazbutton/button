@@ -93,9 +93,9 @@ RELAY_WAIT = 10
 RELAY_SECONDS = 5.0
 LIVE_SECONDS = sounds.HARBOR_BUFFER + 8
 BACK_SECONDS = sounds.HARBOR_BUFFER + 7
-# Heartbeats, one a second, left to the harbor: to put a live on air once the
-# studio connects, and to air what it has buffered once the studio has left.
-HARBOR_BEATS = int(sounds.HARBOR_BUFFER) + 3
+# Seconds left to the harbor: to put a live on air once the studio connects, and
+# to air what it has buffered once the studio has left.
+HARBOR_SECONDS = sounds.HARBOR_BUFFER + 3
 
 
 def say(text: str, *, error: bool = False) -> None:
@@ -195,14 +195,6 @@ class Bench:
         return self.compose("logs", "--no-color", "--tail", "60", service, check=False)
 
 
-@dataclass(frozen=True)
-class Mark:
-    """A moment of the run: the heartbeats and the titles the journal held then."""
-
-    beats: int
-    rows: int
-
-
 class Playout:
     """The playout of the bench, as the scheduler, a studio and a listener reach it."""
 
@@ -233,10 +225,15 @@ class Playout:
         # The start sound has no title.
         return [row["title"] for row in self.journal()["metadata"] if row["title"]]
 
-    def mark(self) -> Mark:
-        """Where the journal stands: what it gains from now on came after."""
-        journal = self.journal()
-        return Mark(len(journal["live"]), len(journal["metadata"]))
+    def now(self) -> float:
+        """The time of the journal: when its last heartbeat came. Its clock dates
+        every heartbeat and every title, whatever the pace of the heartbeats."""
+        for _ in range(3):
+            beats = self.journal()["live"]
+            if beats:
+                return beats[-1]["at"]
+            time.sleep(0.5)
+        raise RuntimeError("le faux scheduler ne rend plus son journal")
 
     def push(self, queue: str, name: str) -> None:
         payload = {
@@ -339,35 +336,40 @@ class Capture(threading.Thread):
 
 @dataclass(frozen=True)
 class Cuts:
-    """Where the journal stood when the last title was cut."""
+    """When the last title was cut, in the time of the journal."""
 
     # The relay had taken the antenna.
-    relay: Mark
+    relay: float
     # The studio connected to the harbor, then left it.
-    live: Mark
-    left: Mark
+    live: float
+    left: float
 
 
-def foreign(rows: list[dict]) -> list[str]:
-    """The titles announced that the bench never pushed: those of a relay."""
-    return [row["title"] for row in rows if row["title"] not in {"", *QUEUES}]
+def foreign(rows: list[dict], since: float) -> list[str]:
+    """The titles announced since then that the bench never pushed: those of a
+    relay."""
+    return [
+        row["title"]
+        for row in rows
+        if row["at"] > since and row["title"] not in {"", *QUEUES}
+    ]
 
 
 def cut(playout: Playout, mp3: bytes) -> Cuts:
     """Cuts the last title with a relay, then with a live over the relay, and
     leaves the title the time to come back."""
     time.sleep(2)
-    ordered = playout.mark()
+    ordered = playout.now()
     playout.relay(RELAY_URL)
     # A relay on air announces the title of its stream: one the bench never pushed.
     wait_for(
-        lambda: foreign(playout.journal()["metadata"][ordered.rows :]),
+        lambda: foreign(playout.journal()["metadata"], ordered),
         RELAY_WAIT,
         "le relais n'a jamais pris l'antenne",
     )
-    relay = playout.mark()
+    relay = playout.now()
     time.sleep(RELAY_SECONDS)
-    live = playout.mark()
+    live = playout.now()
     studio = Studio(playout.harbor, mp3)
     studio.start()
     # A studio the harbor refuses is told at once.
@@ -375,7 +377,7 @@ def cut(playout: Playout, mp3: bytes) -> Cuts:
     while time.monotonic() < leaving and not studio.refused:
         time.sleep(0.5)
     studio.stop()
-    left = playout.mark()
+    left = playout.now()
     if studio.refused:
         raise RuntimeError(
             f"le harbor n'a pas pris le direct du studio : {studio.refused}"
@@ -494,15 +496,19 @@ def relayed(beats: list[dict], rows: list[dict], cuts: Cuts) -> list[str]:
     """What went wrong while a relay, then a live, held the antenna, and once
     the live was over."""
     failures: list[str] = []
+
+    def between(start: float, end: float) -> list[dict]:
+        return [beat for beat in beats if start < beat["at"] < end]
+
     # The relay holds the antenna until the harbor has buffered the live, which
     # holds it until the studio leaves.
-    on_relay = beats[cuts.relay.beats + 1 : cuts.live.beats + 3]
-    on_live = beats[cuts.live.beats + HARBOR_BEATS : cuts.left.beats]
+    on_relay = between(cuts.relay + 1, cuts.live + 3)
+    on_live = between(cuts.live + HARBOR_SECONDS, cuts.left)
     held = {"le relais": ("relay", on_relay), "le direct": ("stream", on_live)}
     # The harbor then airs what it has buffered, and the title comes back.
-    after = beats[cuts.left.beats + HARBOR_BEATS :]
+    after = between(cuts.left + HARBOR_SECONDS, float("inf"))
     back = [beat for beat in after if beat["title"] == CUT_BY_LIVE]
-    if foreign(rows[cuts.left.rows :]):
+    if foreign(rows, cuts.left):
         failures.append(
             "le relais est revenu à l'antenne après le direct, qui ne l'a pas arrêté"
         )
