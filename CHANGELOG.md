@@ -6,6 +6,8 @@ Le détail des changements du moteur par rapport à l'amont : [docs/moteur/chang
 
 ## Non publié
 
+- Corrigé : au démarrage d'une station, une console ouverte sur le conducteur pouvait faire passer les premiers sons en double. Le scheduler et l'interface prévoient tous deux le conducteur : ils le trouvaient vide en même temps, et chacun écrivait sa prévision. La seconde effaçait les lignes de la première qui n'étaient pas encore parties, mais pas celles déjà envoyées au playout : l'antenne jouait le début des deux, deux jingles de suite, et le conducteur restait à côté de l'antenne pendant quelques minutes. « Réinitialiser le conducteur », qui le vide pendant que le scheduler bat, y était exposé de même. Une seule prévision s'écrit maintenant, celle de qui écrit le premier. Rejoué sur le banc où le moteur tient l'antenne devant le vrai Liquidsoap, console ouverte avant l'antenne : cinq démarrages sur trente-deux passaient leurs premiers sons en double avant le correctif, aucun sur vingt-neuf après, dont trois où les deux prévisions se sont croisées. Le réglage `features.forecast_drawn_once` de la table `settings`, à faux, rend l'ancien comportement sans redéployer. Rien à faire sur une station : le correctif vient avec les images du moteur. Voir [les changements du moteur](docs/moteur/changements-radiotomate.md#conducteur-et-vérité-dantenne).
+
 ## 1.3.0
 
 Une mineure : rien d'autre que la mise à jour habituelle, voir [docs/deploiement.md](docs/deploiement.md#mettre-à-jour). Le schéma de la base reste en v18 : aucune migration.

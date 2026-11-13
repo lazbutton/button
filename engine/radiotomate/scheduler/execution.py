@@ -5,12 +5,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from contextlib import asynccontextmanager, nullcontext
 from datetime import datetime, timedelta
 from time import monotonic
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from sqlalchemy import and_, case, delete, func, or_, select
+from sqlalchemy import and_, case, delete, func, or_, select, text
 
 from radiotomate.domain.execution import (
     ENGAGED_STATUSES,
@@ -50,6 +51,8 @@ from radiotomate.scheduler.clock import (
 from radiotomate.scheduler.timing import queue_empty, queued_count, source_id
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
     from sqlalchemy.orm import Session as ormSession
 
     from radiotomate.beets import BeetsIntegration
@@ -110,6 +113,12 @@ LOST_AFTER = timedelta(seconds=15)
 FORECAST_REVISION = "2"
 SETTING_FORECAST_REVISION = "clock_forecast_revision"
 _upgrade = {"checked": False}
+# ADR 0009: turned off, a draw of the forecast is written whatever another
+# process wrote while it was drawn, as before: the scheduler and the interface
+# that find the conducteur empty at once write a draw each, and the antenna airs
+# the start of both (FON-60).
+SETTING_FORECAST_ONCE = "features.forecast_drawn_once"
+_SETTING_OFF = {"0", "false", "off", ""}
 
 
 async def programming_parts(session: ormSession) -> list[str]:
@@ -606,6 +615,36 @@ def nothing_to_play(*, since: float) -> bool:
     return _last_reading["at"] >= since and _last_reading["nothing_to_play"]
 
 
+async def forecast_drawn_once(session: ormSession) -> bool:
+    """Whether the draw of an empty conducteur is written only if it is still
+    empty: a process that finds lines written meanwhile by another drops its
+    own. A missing key says so."""
+    row = await Setting.from_key(session, SETTING_FORECAST_ONCE)
+    return row is None or str(row.value).strip().lower() not in _SETTING_OFF
+
+
+@asynccontextmanager
+async def _write_lock(session: ormSession) -> AsyncIterator[None]:
+    """
+    The write lock of the base, from a reading of the conducteur to the commit
+    of what is written after it: a transaction begun ``IMMEDIATE``.
+
+    The base takes each statement in a transaction of its own (``db.py``): a
+    reading, then a write, are not one, and another process may write between
+    them. The other writers wait for the commit, ``busy_timeout`` at most (5 s):
+    a draw, which may take seconds, is made before, not here. What the session
+    held is written first, on its own: a failure here does not take it back.
+    """
+    await session.flush()
+    try:
+        await session.execute(text("BEGIN IMMEDIATE"))
+        yield
+    except BaseException:
+        await session.rollback()
+        raise
+    await session.commit()
+
+
 async def ensure_forecast(  # noqa: PLR0913
     session: ormSession,
     beets: BeetsIntegration,
@@ -615,7 +654,19 @@ async def ensure_forecast(  # noqa: PLR0913
     *,
     commit: bool = True,
 ) -> dict:
-    """Persist a stable rundown window: append when short, never re-draw from now."""
+    """
+    Persist a stable rundown window: append when short, never re-draw from now.
+
+    The scheduler calls it at each tick, the interface at each reading of the
+    conducteur, every 3 s while a console has it open: both may find it empty
+    at once, at the start of a station or after a reset. Each draws without a
+    lock; the draw of an empty conducteur is then written under the write lock
+    of the base, and only if the conducteur is still empty: when the other
+    process wrote first, its lines stay and this draw is dropped. The second
+    draw written used to erase the lines the first still planned, not those
+    already sent to the playout: the antenna aired the start of both (FON-60,
+    ``features.forecast_drawn_once``).
+    """
     from radiotomate.scheduler.rundown import build_rundown, forecast_still_covers
 
     now = now_paris(now)
@@ -664,30 +715,40 @@ async def ensure_forecast(  # noqa: PLR0913
             horizon_min=horizon_min,
             cursor=cursor,
         )
-        rows = _coverage_rows(
-            await _visible_items(session, now, horizon_min=horizon_min)
-        )
-        if rows and forecast_still_covers(
-            {"items": [item_to_payload(row) for row in rows]},
-            now,
-            min_ahead_min=target_ahead,
-        ):
-            payload = await _payload_from_visible(
-                session,
-                rows,
-                now=now,
-                horizon_min=horizon_min,
-                version=version,
+        once = await forecast_drawn_once(session)
+        async with _write_lock(session) if once else nullcontext():
+            rows = _coverage_rows(
+                await _visible_items(session, now, horizon_min=horizon_min, fresh=once)
             )
-            if commit:
-                await session.commit()
-            return payload
-        items = list(forecast.get("items") or [])
-        await replace_forecast_items(session, version, items, now=now)
-        missing = await _mark_missing_forecast(
-            session, mark, items, now=now, horizon_min=horizon_min, inputs=inputs
-        )
-        _note_reading(nothing_to_play=missing)
+            # Lines written since the reading: another process drew too. They
+            # stay, and this draw goes; with the switch off, only when they
+            # reach as far as this one asks, as before.
+            kept = bool(rows) and (
+                once
+                or forecast_still_covers(
+                    {"items": [item_to_payload(row) for row in rows]},
+                    now,
+                    min_ahead_min=target_ahead,
+                )
+            )
+            if not kept:
+                items = list(forecast.get("items") or [])
+                await replace_forecast_items(session, version, items, now=now)
+                missing = await _mark_missing_forecast(
+                    session,
+                    mark,
+                    items,
+                    now=now,
+                    horizon_min=horizon_min,
+                    inputs=inputs,
+                )
+                _note_reading(nothing_to_play=missing)
+            else:
+                _log.info(
+                    "Forecast of %d min dropped: another process wrote the"
+                    " conducteur while it was drawn",
+                    horizon_min,
+                )
     else:
         last_end = _horizon_end(rows, now)
         start_from = last_end if last_end > now else now
@@ -702,6 +763,10 @@ async def ensure_forecast(  # noqa: PLR0913
             horizon_min=max(15, remaining_min + 1),
             cursor=follow if follow is not None else cursor,
         )
+        # Not under the write lock, which the scheduler would wait for at each
+        # extension: the lines are read again after the draw, and only those
+        # after where they now end are written. Two extensions drawn at the
+        # very same time may still both be, as before.
         await append_forecast_items(
             session,
             version,
@@ -744,6 +809,7 @@ async def _visible_items(
     now: datetime,
     *,
     horizon_min: int = 30,
+    fresh: bool = False,
 ) -> list[RundownItem]:
     lookback = max(15, min(int(horizon_min), 60))
     cutoff = naive_datetime(now) - timedelta(minutes=lookback)
@@ -756,18 +822,20 @@ async def _visible_items(
             RundownStatus.FAILED.value,
         }
     )
-    rows = list(
-        await session.scalars(
-            select(RundownItem)
-            .where(
-                RundownItem.status.in_(list(visible)),
-                RundownItem.planned_at >= cutoff,
-            )
-            .order_by(RundownItem.planned_at, RundownItem.sequence)
-            .limit(800)
+    query = (
+        select(RundownItem)
+        .where(
+            RundownItem.status.in_(list(visible)),
+            RundownItem.planned_at >= cutoff,
         )
+        .order_by(RundownItem.planned_at, RundownItem.sequence)
+        .limit(800)
     )
-    return rows
+    if fresh:
+        # As the base has them, not as this session read them before: another
+        # process may have moved them since.
+        query = query.execution_options(populate_existing=True)
+    return list(await session.scalars(query))
 
 
 async def preview_rundown(
