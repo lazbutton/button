@@ -12,7 +12,6 @@ import {
 } from "@radix-ui/themes";
 import { MoreHorizontal, Plus, Search, SearchX, Trash2, Users } from "lucide-react";
 import { useMemo, useState, type FormEvent } from "react";
-import { ProtoToast, useProtoToast } from "../components/ProtoToast";
 import { apiDelete, apiPostJson, apiPut, ApiRequestError } from "../api/client";
 import { emissionWindowLabel } from "../api/emissionMeta";
 import { slotsForHost } from "../api/hostSlots";
@@ -33,6 +32,7 @@ import { useApiJson } from "../api/useApiJson";
 import { StreamToken } from "../components/antenne/StreamToken";
 import { SettingsHead } from "../components/reglages/SettingsCard";
 import "../styles/pages/reglages.css";
+import { AppToast, useAppToast } from "../ui/AppToast";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
 import { EmptyState } from "../ui/EmptyState";
 import { FormField, SelectField } from "../ui/FormField";
@@ -54,7 +54,10 @@ const USER_FILTERS = [
 export function UsersPage() {
   const { data, error, loading, reload } = useApiJson<UsersResponse>("/users.json");
   const emissions = useApiJson<EmissionsResponse>("/antenne/emissions.json");
-  const { message, show } = useProtoToast();
+  const { toast, show, dismiss } = useAppToast();
+  // Le ton vient du geste, pas du texte : la raison d'un refus du moteur reste un échec.
+  const done = (text: string) => show(text, "success");
+  const failed = (text: string) => show(text, "error");
   const users = data?.users ?? [];
   const [createOpen, setCreateOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -141,8 +144,8 @@ export function UsersPage() {
                     user={user}
                     emissions={emissions.data?.emissions}
                     onChanged={reload}
-                    onFeedback={show}
-                    onError={show}
+                    onFeedback={done}
+                    onError={failed}
                   />
                 ))}
               </tbody>
@@ -164,8 +167,8 @@ export function UsersPage() {
           )}
         </div>
       </SessionGate>
-      <CreateUserDialog open={createOpen} onOpenChange={setCreateOpen} onCreated={reload} onFeedback={show} />
-      <ProtoToast message={message} />
+      <CreateUserDialog open={createOpen} onOpenChange={setCreateOpen} onCreated={reload} onFeedback={done} />
+      <AppToast toast={toast} onDismiss={dismiss} />
     </div>
   );
 }
@@ -202,9 +205,21 @@ function UserRow({
         permissions: permissionsFromRole(nextRole, nextBroadcast),
       });
       await onChanged();
-      onFeedback(`Rôle de ${user.username} mis à jour`);
+      onFeedback(
+        kind === "role"
+          ? `« ${user.username} » a maintenant le rôle ${ROLE_LABEL[nextRole]}.`
+          : nextBroadcast
+            ? `« ${user.username} » peut maintenant passer en direct.`
+            : `« ${user.username} » ne peut plus passer en direct.`,
+      );
     } catch (caught) {
-      onError(caught instanceof ApiRequestError ? caught.message : "Mise à jour impossible.");
+      onError(
+        caught instanceof ApiRequestError
+          ? caught.message
+          : kind === "role"
+            ? "Impossible de changer ce rôle."
+            : "Impossible de changer le droit de passer en direct.",
+      );
     } finally {
       setUpdating(null);
     }
@@ -215,10 +230,10 @@ function UserRow({
     try {
       await apiDelete(`/users/${user.id}.json`);
       await onChanged();
-      onFeedback("Compte supprimé");
+      onFeedback(`Compte « ${user.username} » supprimé.`);
       setConfirmOpen(false);
     } catch (caught) {
-      onError(caught instanceof ApiRequestError ? caught.message : "Suppression impossible.");
+      onError(caught instanceof ApiRequestError ? caught.message : "Impossible de supprimer ce compte.");
     } finally {
       setDeleting(false);
     }
@@ -352,9 +367,9 @@ function UserFiche({
     try {
       await apiPut(`/users/${user.id}.json`, { notes });
       await onChanged();
-      onFeedback("Notes enregistrées");
+      onFeedback(`Notes de « ${user.username} » enregistrées.`);
     } catch (caught) {
-      onError(caught instanceof ApiRequestError ? caught.message : "Notes impossibles.");
+      onError(caught instanceof ApiRequestError ? caught.message : "Impossible d’enregistrer les notes.");
     } finally {
       setBusy(false);
     }
@@ -367,9 +382,9 @@ function UserFiche({
     try {
       await apiPut(`/users/${user.id}.json`, { password });
       setPassword("");
-      onFeedback("Mot de passe réinitialisé");
+      onFeedback(`Mot de passe de « ${user.username} » réinitialisé.`);
     } catch (caught) {
-      onError(caught instanceof ApiRequestError ? caught.message : "Réinitialisation impossible.");
+      onError(caught instanceof ApiRequestError ? caught.message : "Impossible de réinitialiser le mot de passe.");
     } finally {
       setBusy(false);
     }
@@ -381,11 +396,14 @@ function UserFiche({
     try {
       await setVolumePassword(user.username, clear ? "" : folderPassword);
       setFolderPassword("");
-      onFeedback(clear ? "Accès au dossier retiré" : "Mot de passe du dossier enregistré");
+      onFeedback(
+        clear
+          ? `« ${user.username} » n’a plus accès au dossier de la station.`
+          : `Mot de passe du dossier enregistré pour « ${user.username} ».`,
+      );
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : "Enregistrement impossible.";
-      setFolderError(message);
-      onError(message);
+      // Dit sous le champ, là où il se corrige : pas une seconde fois en bas de l'écran.
+      setFolderError(caught instanceof Error ? caught.message : "Enregistrement impossible.");
     } finally {
       setBusy(false);
     }
@@ -556,7 +574,7 @@ function CreateUserDialog({
         permissions: permissionsFromRole(role, broadcast),
       });
       await onCreated();
-      onFeedback("Compte créé");
+      onFeedback(`Compte « ${username.trim()} » créé.`);
       onOpenChange(false);
     } catch (caught) {
       setFormError(caught instanceof ApiRequestError ? caught.message : "Création impossible.");

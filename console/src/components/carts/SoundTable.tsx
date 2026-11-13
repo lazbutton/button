@@ -57,7 +57,7 @@ export function SoundTable({
   cart: Cart;
   importProgress: CartImportProgress | null;
   onCart: (cart: Cart) => void;
-  notify: (text: string, tone?: ToastTone) => void;
+  notify: (text: string, tone: ToastTone) => void;
   onImport: (collect: () => Promise<File[]>) => Promise<void>;
   onAttachBank: (folders: string[]) => Promise<void>;
 }) {
@@ -699,7 +699,7 @@ function SoundRow({
   onDrop: (fromId: number, toId: number) => Promise<void>;
   onPlay: () => void;
   onCart: (cart: Cart) => void;
-  notify: (text: string, tone?: ToastTone) => void;
+  notify: (text: string, tone: ToastTone) => void;
 }) {
   const [title, setTitle] = useState(sound.title);
   const [editing, setEditing] = useState(false);
@@ -740,7 +740,7 @@ function SoundRow({
   const fire = async () => {
     try {
       await apiPost(`/carts/${cart.id}/sounds/${sound.id}/now.json`);
-      notify(`« ${parsed.title} » envoyé à l'antenne`, "success");
+      notify(`« ${parsed.title} » envoyé à l'antenne.`, "success");
     } catch (caught) {
       if (caught instanceof ApiForbiddenError) notify("Il faut le droit Antenne pour diffuser.", "error");
       else notify(caught instanceof ApiRequestError ? caught.message : "Diffusion impossible.", "error");

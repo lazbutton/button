@@ -29,8 +29,8 @@ import {
   type Tone,
   type UpdatesState,
 } from "../api/updates";
-import { ProtoToast, useProtoToast } from "../components/ProtoToast";
 import { SettingsCard, SettingsHead } from "../components/reglages/SettingsCard";
+import { AppToast, useAppToast } from "../ui/AppToast";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
 import { LoadingState } from "../ui/DataState";
 import "../styles/pages/reglages.css";
@@ -78,7 +78,7 @@ export function MisesAJourPage() {
   const [problem, setProblem] = useState<Problem | null>(null);
   const [busy, setBusy] = useState<"ask" | "withdraw" | "check" | null>(null);
   const [confirming, setConfirming] = useState(false);
-  const { message, show } = useProtoToast();
+  const { toast, show, dismiss } = useAppToast();
   // La version de la station quand la page s'est ouverte : une autre, et la
   // console en service a peut-être changé aussi.
   const opened = useRef<string | null | undefined>(undefined);
@@ -133,7 +133,7 @@ export function MisesAJourPage() {
       show("Mise à jour demandée : la machine la prend dans la minute.", "success");
     } catch (caught) {
       setConfirming(false);
-      fail(caught, "La demande ne part pas.");
+      fail(caught, "La demande n’est pas partie. Réessaie.");
       void load();
     } finally {
       setBusy(null);
@@ -147,7 +147,7 @@ export function MisesAJourPage() {
       setState(next);
       show("Demande retirée.", "success");
     } catch (caught) {
-      fail(caught, "La demande ne se retire pas.");
+      fail(caught, "La demande n’a pas été retirée. Réessaie.");
       void load();
     } finally {
       setBusy(null);
@@ -160,8 +160,8 @@ export function MisesAJourPage() {
     setBusy(null);
     if ("kind" in next) show(next.message, "error");
     else if (next.check.error) show(`Les versions ne se lisent pas : ${next.check.error}.`, "error");
-    else if (next.check.pending) show("GitHub répond lentement : la page se met à jour seule.");
-    else show("Versions relues sur GitHub.");
+    else if (next.check.pending) show("GitHub répond lentement : la page se met à jour seule.", "info");
+    else show("Versions relues sur GitHub.", "success");
   };
 
   if (problem?.kind === "auth" || (unreachable && state == null)) {
@@ -217,7 +217,7 @@ export function MisesAJourPage() {
           />
         )}
       </div>
-      <ProtoToast message={message} />
+      <AppToast toast={toast} onDismiss={dismiss} />
     </div>
   );
 }
