@@ -41,10 +41,10 @@ clean yet (FON-55, FON-61), and it only judges the live itself.
 `key=value` sets a key of the table `settings` before the engine starts: a
 switch turned off shows the bench failing. `--journal FILE` keeps what the
 probe has noted, and `--relire FILE` judges such a file again, without Docker.
-The console of the probe opens once the antenna has started: open before, it
-has the interface and the scheduler draw the forecast at the same time, and the
-first sounds air twice, one start out of six or so (FON-60).
-`--console-au-demarrage` opens it at once, to see that fault.
+The console of the probe opens before the antenna starts: the interface and
+the scheduler then draw the forecast at the same time, and only one draw is
+written (FON-60). With `features.forecast_drawn_once=0`, both are, and the
+first sounds air twice, one start out of six or so.
 
 It needs Docker and Compose, and nothing else: standard library only. The
 image of the engine is built from engine/Containerfile, unless
@@ -127,14 +127,13 @@ class Bench(antenna.Bench):
     """The Compose project of one run: its own name, free ports, and the image
     of the engine, built for the run unless one is given."""
 
-    def __init__(self, settings: list[str], *, early_console: bool = False) -> None:
+    def __init__(self, settings: list[str]) -> None:
         super().__init__()
         self.project = f"conducteur-{os.getpid()}"
         self.given = os.environ.get("RUNDOWN_ENGINE_IMAGE", "")
         self.engine = self.given or f"{self.project}-moteur"
         self.env["ENGINE_IMAGE"] = self.engine
         self.env["RUNDOWN_SETTINGS"] = " ".join(settings)
-        self.env["RUNDOWN_CONSOLE_EARLY"] = "1" if early_console else ""
 
     def command(self, *args: str) -> list[str]:
         command = ["docker", "compose", "-p", self.project]
@@ -588,7 +587,7 @@ def queued_behind(reading: Reading) -> list[str]:
     """The lines sent to a queue of the playout that already held a line
     planned at the same time or later: the queue plays them one after the
     other, not at the times the conducteur gives. The forecast drawn twice at
-    the start does that (FON-60)."""
+    the start did that (FON-60)."""
     sent: dict[str, list[list[dict]]] = {}
     for states in reading.items.values():
         first, last = states[0], states[-1]
@@ -948,11 +947,6 @@ def main() -> int:
         help="une clé de la table settings du banc, posée avant le démarrage",
     )
     parser.add_argument(
-        "--console-au-demarrage",
-        action="store_true",
-        help="ouvre la console de la sonde avant le démarrage de l'antenne (FON-60)",
-    )
-    parser.add_argument(
         "--journal", metavar="FICHIER", help="garde le relevé de la sonde"
     )
     parser.add_argument(
@@ -967,15 +961,13 @@ def main() -> int:
         if "=" not in setting or " " in setting:
             parser.error(f"« {setting} » : une clé et sa valeur, comme clé=valeur")
 
-    bench = Bench(args.settings, early_console=args.console_au_demarrage)
+    bench = Bench(args.settings)
     say(
         f"Conducteur : le scheduler et l'interface de {ENGINE.name}/, devant"
         f" {HERE.parent.name}/radiotomate.liq dans {bench.image}"
     )
     if args.settings:
         say(f"  réglages : {' '.join(args.settings)}")
-    if args.console_au_demarrage:
-        say("  la console de la sonde s'ouvre avant le démarrage de l'antenne")
     try:
         say(
             "  image du moteur : "
