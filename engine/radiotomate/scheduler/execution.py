@@ -41,15 +41,19 @@ from radiotomate.models import (
     Sound,
 )
 from radiotomate.scheduler.clock import (
+    lost_lines_close,
     motif_jingles_air,
     now_paris,
+    rebuilds_after_upgrade,
     reset_sequencer,
 )
+from radiotomate.scheduler.timing import queue_empty, queued_count, source_id
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session as ormSession
 
     from radiotomate.beets import BeetsIntegration
+    from radiotomate.scheduler.playout import PlayoutGateway
 
 _log = logging.getLogger(__name__)
 
@@ -90,6 +94,22 @@ _QUEUED_STATUSES = {
     RundownStatus.ACCEPTED.value,
     RundownStatus.IN_QUEUE.value,
 }
+# What the beat of the playout says of a queue: how many sounds, and the next.
+_QUEUE_BEAT = {
+    "autodj": ("autodj_queued", "next_autodj"),
+    "jingles": ("jingles_queued", "next_jingle"),
+    "carts": ("carts_queued", "next_cart"),
+}
+LOST_REASON = "plus dans le playout"
+# A push the playout has just taken may not be in its beat yet.
+LOST_AFTER = timedelta(seconds=15)
+# How build_rundown plans the conducteur, and how the clock and the as-run
+# follow it. To bump when an engine plans another way than the one before: at
+# its first tick, the lines the other left are drawn again
+# (rebuild_after_upgrade). 2: the title a hard anchor cuts is planned (FON-58).
+FORECAST_REVISION = "2"
+SETTING_FORECAST_REVISION = "clock_forecast_revision"
+_upgrade = {"checked": False}
 
 
 async def programming_parts(session: ormSession) -> list[str]:
@@ -983,6 +1003,58 @@ async def close_flushed_items(
     return len(rows)
 
 
+async def close_lost_lines(session: ormSession, live_data: dict) -> int:
+    """
+    Close the lines sent to a queue the playout says is empty: skipped, « plus
+    dans le playout ». A playout that starts again has empty queues, as at every
+    update of the station, which recreates it: the lines the one before held
+    stayed « en file » for good. They never aired, and stood first in the file,
+    with the time they had (``features.close_lines_lost_by_playout``).
+
+    Not while a jingle or a sound of a cart is on air: behind it, the queue of
+    the Auto-DJ has already taken its next title out, to play it after. Nor a
+    line the playout took a moment ago, which its beat may not count yet, nor
+    the line it says is on air, which the as-run is about to open, nor the line
+    of « Jouer tout de suite », whose title went before it and does not name it.
+    Returns how many it closed.
+    """
+    if source_id(live_data) != "autodj":
+        return 0
+    empty = [
+        queue
+        for queue, (count, cue) in _QUEUE_BEAT.items()
+        if queued_count(live_data, count, cue) == 0 and queue_empty(live_data, cue)
+    ]
+    if not empty or not await lost_lines_close(session):
+        return 0
+    now = datetime.now()
+    rows = list(
+        await session.scalars(
+            select(RundownItem).where(
+                RundownItem.queue.in_(empty),
+                RundownItem.status.in_(list(_QUEUED_STATUSES)),
+                RundownItem.id != str(live_data.get("radiotomate_item_id") or ""),
+                func.coalesce(
+                    RundownItem.queued_at, RundownItem.sent_at, RundownItem.reserved_at
+                )
+                < now - LOST_AFTER,
+            )
+        )
+    )
+    rows = [row for row in rows if not (row.details or {}).get(PLAYED_NOW)]
+    for row in rows:
+        row.status = RundownStatus.SKIPPED.value
+        row.reason = LOST_REASON
+        row.closed_at = now
+    if rows:
+        _log.warning(
+            "Closed %d line(s) the playout no longer holds: its queues are empty",
+            len(rows),
+        )
+        await session.commit()
+    return len(rows)
+
+
 async def _reanchor_on_air(session: ormSession) -> None:
     """Snap a stuck on-air plan back to the real start.
 
@@ -1011,16 +1083,69 @@ async def reset_conducteur(
     session: ormSession,
     beets: BeetsIntegration,
     horizon_min: int = 30,
+    now: datetime | None = None,
 ) -> dict:
     """Reset motif cursor, drop queued forecast, persist a fresh window from now."""
     await reset_sequencer(session, commit=False)
     await clear_live_forecast(session)
     await _reanchor_on_air(session)
     await session.commit()
-    payload = await ensure_forecast(session, beets, horizon_min=horizon_min)
+    payload = await ensure_forecast(session, beets, now=now, horizon_min=horizon_min)
     payload = dict(payload)
     payload["action"] = "reset"
     return payload
+
+
+def forget_upgrade_check(*, checked: bool = False) -> None:
+    """Whether this process has compared its forecast revision with the one of
+    the base. Tests: a tick does it once, at the first one."""
+    _upgrade["checked"] = checked
+
+
+async def rebuild_after_upgrade(
+    session: ormSession,
+    beets: BeetsIntegration,
+    gateway: PlayoutGateway,
+    now: datetime | None = None,
+) -> bool:
+    """
+    At the first tick of an engine that plans the conducteur another way than
+    the one before (``FORECAST_REVISION``), rebuild it, as « Reconstruire le
+    conducteur » does: the lines still to air are thrown away and drawn again
+    from now, and the queues of the playout emptied. Left as they were, they
+    kept the times of the engine before, an hour off on a station whose
+    conducteur had drifted, and nothing brought them back: a line that starts
+    sooner than planned does not move the ones planned after the next hard
+    anchor (``features.rebuild_conducteur_after_upgrade``).
+
+    A base with no line has nothing to rebuild: a new station. Returns whether
+    it rebuilt.
+    """
+    if _upgrade["checked"]:
+        return False
+    stored = await Setting.from_key(session, SETTING_FORECAST_REVISION)
+    if stored is not None and str(stored.value) == FORECAST_REVISION:
+        _upgrade["checked"] = True
+        return False
+    await Setting.upsert(session, SETTING_FORECAST_REVISION, FORECAST_REVISION)
+    lines = await session.scalar(select(func.count()).select_from(RundownItem))
+    if not lines or not await rebuilds_after_upgrade(session):
+        await session.commit()
+        _upgrade["checked"] = True
+        return False
+    # The playout of an update starts with empty queues. One that kept running
+    # still holds titles: their lines go, so they go too.
+    flushed = await gateway.flush_queues()
+    if not flushed.ok:
+        _log.warning("flush queues before the rebuild failed: %s", flushed.error)
+    await reset_conducteur(session, beets, now=now)
+    _upgrade["checked"] = True
+    _log.warning(
+        "Conducteur rebuilt: this engine plans it another way (revision %s, was %s)",
+        FORECAST_REVISION,
+        stored.value if stored is not None else "none",
+    )
+    return True
 
 
 async def published_rundown(
@@ -1199,7 +1324,7 @@ async def realign_rundown(
         RundownItem.status.in_(list(waiting)),
         RundownItem.planned_at >= item.planned_at,
     )
-    wall = await _next_cut_at(session, started)
+    wall = await next_cut_at(session, started)
     if wall is not None:
         query = query.where(RundownItem.planned_at < wall)
     rows = await session.scalars(
@@ -1245,7 +1370,7 @@ def _is_hard_line(row: RundownItem) -> bool:
     return row.kind == PositionKind.PUB.value
 
 
-async def _next_cut_at(session: ormSession, after: datetime) -> datetime | None:
+async def next_cut_at(session: ormSession, after: datetime) -> datetime | None:
     """
     When the next hard anchor the conducteur plans goes, after ``after``: it
     will cut what plays then. A hard anchor with nothing to play has no line
@@ -1273,16 +1398,28 @@ def _ends(item: RundownItem, started: datetime) -> datetime:
     return started + timedelta(seconds=max(0.0, float(item.duration or 0)))
 
 
-def _start_one_after_the_other(end: datetime, following: list[RundownItem]) -> None:
+def _start_one_after_the_other(
+    end: datetime,
+    following: list[RundownItem],
+    *,
+    sooner: bool = False,
+) -> None:
     """
     The item on air ends at ``end``. Of the items after it, in their order, one
     planned before the end of the one before it starts there, and one planned
     later keeps its time: after an hour of live, the items planned during it
     follow each other from now, and those planned after it stay. A closed item
     takes no time on air.
+
+    ``sooner``: an item of the file planned later starts there too. Behind the
+    sound of an anchor the queue plays on, and no title waits for the time it
+    had: the ones planned before it have aired ahead of the anchor, on an
+    antenna ahead of the conducteur. An anchor keeps to its minute.
     """
     for row in following:
-        row.planned_at = max(naive_datetime(row.planned_at), end)
+        planned = naive_datetime(row.planned_at)
+        pulled = sooner and row.when_mode != WhenMode.ANCHORED.value
+        row.planned_at = end if pulled else max(planned, end)
         if row.status not in _CLOSED_DESK_STATUSES:
             end = _ends(row, row.planned_at)
 
@@ -1294,9 +1431,10 @@ async def _after_the_sound(
 ) -> None:
     """
     The sound of an anchor of the clock is on air: it keeps its own time, and
-    the items still to air start one after the other from its end. Those the
-    antenna had no time for before it, planned in the minutes before, then those
-    planned after it.
+    the items still to air start one after the other from its end, up to the
+    next hard anchor. Those the antenna had no time for before it, planned in
+    the minutes before, then those planned after it: sooner than planned when
+    the first of them have gone ahead of the anchor.
     """
     desk_airs = await desk_lines_air(session)
     waiting = {
@@ -1308,7 +1446,7 @@ async def _after_the_sound(
         RundownItem.status.in_(list(waiting)),
         RundownItem.planned_at >= started - REALIGN_MAX,
     )
-    wall = await _next_cut_at(session, started)
+    wall = await next_cut_at(session, started)
     if wall is not None:
         query = query.where(RundownItem.planned_at < wall)
     rows = await session.scalars(
@@ -1319,7 +1457,7 @@ async def _after_the_sound(
         )
     )
     following = [row for row in rows if _follows(row, desk_airs=desk_airs, late=True)]
-    _start_one_after_the_other(_ends(sound, started), following)
+    _start_one_after_the_other(_ends(sound, started), following, sooner=True)
 
 
 async def _latest_item_for_sound(
