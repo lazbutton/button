@@ -1,9 +1,9 @@
-"""File d'attente, rejets, quota et banques du dépôt navigateur.
+"""File d'attente, rejets, quota et collections du dépôt navigateur.
 
 tusd appelle le hook. Les fichiers acceptés vont dans 00-inbox.
 La promotion et l'indexation restent au dropbox et à Beets.
 
-Une banque d'archives est un dossier de 20-archives : il est découvert
+Une collection est un dossier de 20-archives : il est découvert
 tout seul, et son nom affiché peut venir de son fichier .banque.json.
 """
 
@@ -106,7 +106,7 @@ def create_bank(media: Path, label: str, folder: str) -> tuple[int, dict]:
     label = " ".join(str(label or "").split())
     folder = str(folder or "").strip()
     if not label:
-        return 400, {"error": "Donne un nom à la banque."}
+        return 400, {"error": "Donne un nom à la collection."}
     if len(label) > 60:
         return 400, {"error": "Nom trop long : 60 caractères au plus."}
     if not BANK_SLUG.fullmatch(folder):
@@ -118,7 +118,7 @@ def create_bank(media: Path, label: str, folder: str) -> tuple[int, dict]:
         if any(name.casefold() == folder for name in existing):
             return 409, {"error": f"Le dossier {ARCHIVES}/{folder} existe déjà."}
         if any(bank_label(media, name).casefold() == label.casefold() for name in existing):
-            return 409, {"error": "Une banque porte déjà ce nom."}
+            return 409, {"error": "Une collection porte déjà ce nom."}
         bank = media / ARCHIVES / folder
         try:
             bank.mkdir(parents=True)
