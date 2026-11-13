@@ -78,7 +78,7 @@ export function ClockSteps({
   const remove = (index: number) => {
     const removed = steps[index];
     onChange({ ...clock, motif: steps.filter((_, at) => at !== index) });
-    onRemoved(`Étape ${index + 1} retirée (${stepKindLabel(removed.kind)})`, (latest) => {
+    onRemoved(`Étape ${index + 1} retirée (${stepKindLabel(removed.kind)}).`, (latest) => {
       const motif = latest.motif.slice();
       const back = { ...removed };
       delete back.id;

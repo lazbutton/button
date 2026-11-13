@@ -5,7 +5,6 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { ClockEditor } from "../components/programmation/ClockEditor";
 import { ClockSidebar } from "../components/programmation/ClockSidebar";
 import { CreateClockDialog } from "../components/programmation/CreateClockDialog";
-import { ProtoToast, useProtoToast } from "../components/ProtoToast";
 import { RepairClockCartDialog } from "../components/RepairClockCartDialog";
 import { apiDelete, apiGet, apiPostJson, ApiRequestError } from "../api/client";
 import { apiCacheDrop } from "../api/jsonCache";
@@ -15,6 +14,7 @@ import { SessionGate } from "../api/SessionGate";
 import type { CartsResponse, CategoriesResponse, Clock, ClocksResponse, Rundown, SlotsResponse } from "../api/types";
 import { useApiJson } from "../api/useApiJson";
 import { useClockSaver } from "../api/useClockSaver";
+import { AppToast, useAppToast } from "../ui/AppToast";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
 import "../styles/pages/programmation.css";
 
@@ -26,7 +26,7 @@ export function HorlogesPage() {
   const rundownRes = useApiJson<Rundown>("/autodj/conducteur.json", 15_000);
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
-  const { message, show, dismiss } = useProtoToast();
+  const { toast, show, dismiss } = useAppToast();
   const [view, setView] = useState<"list" | "detail">(() => (params.get("clock") ? "detail" : "list"));
   const [creating, setCreating] = useState<{ copyOf: Clock | null } | null>(null);
   const [deleting, setDeleting] = useState<Clock | null>(null);
@@ -88,7 +88,6 @@ export function HorlogesPage() {
       }
       setSaveError(text);
       show(`${text} Les changements restent à l'écran : corrige, ils repartiront au geste suivant.`, "error", {
-        duration: 9000,
         action: { label: "Revenir à la version enregistrée", onClick: () => revert(id) },
       });
     },
@@ -113,8 +112,7 @@ export function HorlogesPage() {
   const removed = (text: string, undo: (latest: Clock) => Clock) => {
     if (!clock) return;
     const id = clock.id;
-    show(text, "info", {
-      duration: 6000,
+    show(text, "success", {
       action: {
         label: "Annuler",
         onClick: () => {
@@ -155,7 +153,7 @@ export function HorlogesPage() {
       apiCacheDrop("/autodj/clocks.json");
       await clocksRes.reload();
       select(payload.clock.id);
-      show(from ? `« ${name} » créée, copie de « ${from.name} »` : `« ${name} » créée`, "success");
+      show(from ? `« ${name} » créée, copie de « ${from.name} ».` : `« ${name} » créée.`, "success");
     } catch (caught) {
       throw new Error(errorText(caught, "Création impossible."));
     }
@@ -177,7 +175,7 @@ export function HorlogesPage() {
       );
       setView("list");
       await clocksRes.reload();
-      show(`« ${deleting.name} » supprimée`, "success");
+      show(`« ${deleting.name} » supprimée.`, "success");
       setDeleting(null);
     } catch (caught) {
       show(errorText(caught, "Suppression impossible."), "error");
@@ -295,12 +293,12 @@ export function HorlogesPage() {
           await clocksRes.reload();
           await cartsRes.reload();
           if (clock) saver.forget(clock.id);
-          show("Étape réparée", "success");
+          show("Étape réparée.", "success");
         }}
         onOpenCart={(id) => navigate(`/sons?id=${id}`)}
         onError={(text) => show(text, "error")}
       />
-      <ProtoToast message={message} onDismiss={dismiss} />
+      <AppToast toast={toast} onDismiss={dismiss} />
     </div>
   );
 }

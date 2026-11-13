@@ -79,7 +79,7 @@ export function EmissionDialog({
       if (row) await apiPut(`/antenne/emissions/${row.id}.json`, body);
       else await apiPostJson("/antenne/emissions.json", body);
       await onDone(
-        row ? `« ${body.title} » enregistrée` : `« ${body.title} » ajoutée, ${DAY_LONG[day].toLowerCase()} ${start}`,
+        row ? `« ${body.title} » enregistrée.` : `« ${body.title} » ajoutée, ${DAY_LONG[day].toLowerCase()} ${start}.`,
       );
       onClose();
     } catch (caught) {
@@ -95,7 +95,7 @@ export function EmissionDialog({
     setFailure("");
     try {
       await apiDelete(`/antenne/emissions/${row.id}.json`);
-      await onDone(`« ${row.title} » retirée de la semaine`);
+      await onDone(`« ${row.title} » retirée de la semaine.`);
       onClose();
     } catch (caught) {
       setFailure(errorText(caught, "Suppression impossible."));

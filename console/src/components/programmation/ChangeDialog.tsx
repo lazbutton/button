@@ -5,6 +5,7 @@ import { apiDelete, apiPostJson, apiPut } from "../../api/client";
 import { errorText } from "../../api/programmationErrors";
 import { DAY_LETTER, DAY_LONG, daySetLabel, hhmm, type Run } from "../../api/programmationView";
 import type { Clock, Slot } from "../../api/types";
+import type { ToastTone } from "../../ui/AppToast";
 
 const DEFAULT_COLOR = "#7a9e6a";
 const PRESETS = [
@@ -42,7 +43,8 @@ export function ChangeDialog({
   onClose: () => void;
   /** From an edit: start a new change inside the run. */
   onSplit: (day: number, minute: number, clockId: number | null) => void;
-  onDone: (message: string, failed: boolean) => Promise<void>;
+  /** Ce que la page annonce, et sur quel ton : un jour refusé en fait un échec. */
+  onDone: (message: string, tone: ToastTone) => Promise<void>;
 }) {
   const editing = target?.mode === "edit" ? target.run.slots[0] : null;
   const [clockId, setClockId] = useState("");
@@ -135,15 +137,16 @@ export function ChangeDialog({
       setFailure(failed.join(" · "));
       if (done)
         await onDone(
-          `${done} jour${done === 1 ? "" : "s"} enregistré${done === 1 ? "" : "s"}, le reste a été refusé`,
-          true,
+          `${done} jour${done === 1 ? "" : "s"} enregistré${done === 1 ? "" : "s"}, le reste a été refusé.`,
+          "error",
         );
       return;
     }
-    await onDone(
-      done ? `${daySetLabel(days)} à ${hhmm(minute)} : ${clock.name}` : "Rien à changer : c'était déjà programmé ainsi",
-      false,
-    );
+    if (done) {
+      await onDone(`Changement enregistré : ${daySetLabel(days)} à ${hhmm(minute)}, « ${clock.name} ».`, "success");
+    } else {
+      await onDone("Rien à changer : c'était déjà programmé ainsi.", "info");
+    }
     onClose();
   };
 
@@ -154,8 +157,8 @@ export function ChangeDialog({
     try {
       await apiDelete(`/autodj/slots/${editing.id}.json`);
       await onDone(
-        `Changement de ${DAY_LONG[editing.day_of_week].toLowerCase()} ${hhmm(editing.minute)} retiré`,
-        false,
+        `Changement de ${DAY_LONG[editing.day_of_week].toLowerCase()} ${hhmm(editing.minute)} retiré.`,
+        "success",
       );
       onClose();
     } catch (caught) {

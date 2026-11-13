@@ -2,13 +2,13 @@ import { Button, Code, Dialog, DropdownMenu, IconButton, Kbd, Spinner, TextField
 import { FlaskConical, ListMusic, MoreHorizontal, Pencil, Plus, Search, SearchX, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { ProtoToast, useProtoToast } from "../components/ProtoToast";
 import { ApiRequestError, apiDelete, apiGet, apiPostJson, apiPut } from "../api/client";
 import { errorText } from "../api/programmationErrors";
 import { nameTaken } from "../api/programmationView";
 import { SessionGate } from "../api/SessionGate";
 import type { CategoriesResponse, Category, ClocksResponse } from "../api/types";
 import { useApiJson } from "../api/useApiJson";
+import { AppToast, useAppToast } from "../ui/AppToast";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
 import { FormField } from "../ui/FormField";
 import "../styles/pages/programmation.css";
@@ -23,7 +23,7 @@ function isTyping(target: EventTarget | null): boolean {
 export function CategoriesPage() {
   const { data, error, loading, reload } = useApiJson<CategoriesResponse>("/autodj/categories.json");
   const clocksRes = useApiJson<ClocksResponse>("/autodj/clocks.json");
-  const { message, show, dismiss } = useProtoToast();
+  const { toast, show, dismiss } = useAppToast();
   const [query, setQuery] = useState("");
   const [editing, setEditing] = useState<Category | "new" | null>(null);
   const [deleting, setDeleting] = useState<Category | null>(null);
@@ -74,7 +74,7 @@ export function CategoriesPage() {
     try {
       await apiDelete(`/autodj/categories/${deleting.id}.json`);
       await reload();
-      show(`« ${deleting.name} » supprimée`, "success");
+      show(`« ${deleting.name} » supprimée.`, "success");
       setDeleting(null);
     } catch (caught) {
       show(errorText(caught, "Suppression impossible."), "error");
@@ -268,7 +268,7 @@ export function CategoriesPage() {
         busy={deleteBusy}
         onConfirm={remove}
       />
-      <ProtoToast message={message} onDismiss={dismiss} />
+      <AppToast toast={toast} onDismiss={dismiss} />
     </div>
   );
 }
@@ -339,7 +339,7 @@ function SelectionDialog({
     try {
       if (initial) await apiPut(`/autodj/categories/${initial.id}.json`, body);
       else await apiPostJson("/autodj/categories.json", body);
-      await onSaved(initial ? `« ${body.name} » enregistrée` : `« ${body.name} » créée`);
+      await onSaved(initial ? `« ${body.name} » enregistrée.` : `« ${body.name} » créée.`);
       onClose();
     } catch (caught) {
       setFailure(errorText(caught, "Enregistrement impossible."));

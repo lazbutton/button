@@ -2,7 +2,6 @@ import { Button } from "@radix-ui/themes";
 import { CircleAlert, CircleCheck, CircleHelp, CircleX, RefreshCw, type LucideIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { HealthStrip } from "../components/antenne/HealthStrip";
-import { ProtoToast, useProtoToast } from "../components/ProtoToast";
 import { SettingsCard, SettingsHead } from "../components/reglages/SettingsCard";
 import {
   ANTENNE_FLUSH_JSON,
@@ -26,6 +25,7 @@ import { automateSummary } from "../api/reglages";
 import { SessionGate } from "../api/SessionGate";
 import type { AntenneState, LiveSnapshot } from "../api/types";
 import { useApiJson } from "../api/useApiJson";
+import { AppToast, useAppToast } from "../ui/AppToast";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
 import "../styles/pages/reglages.css";
 
@@ -42,7 +42,7 @@ const SUMMARY_ICON: Record<PillarTone, LucideIcon> = {
 export function AutomatePage() {
   const antenne = useApiJson<AntenneState>(ANTENNE_STATE_JSON, 5000);
   const live = useApiJson<LiveSnapshot>("/live.json", 5000);
-  const { message, show } = useProtoToast();
+  const { toast, show, dismiss } = useAppToast();
   const [busy, setBusy] = useState<"reload" | "flush" | "reset" | "prune" | null>(null);
   const state = antenne.data;
   const pillars = derivePillars(state, harborIsLive(live.data));
@@ -54,8 +54,7 @@ export function AutomatePage() {
   const summary = automateSummary(pillars, stale, updatedAt);
   const SummaryIcon = SUMMARY_ICON[summary.tone];
 
-  // Un échec s'annonce en alerte : deviné d'après le texte, le ton ferait
-  // passer un refus ou un moteur muet pour une information.
+  // Un échec s'annonce en alerte, avec la raison du moteur quand il en donne une.
   const fail = (caught: unknown, fallback: string) => {
     if (caught instanceof ApiAuthError) show("Session expirée. Reconnecte-toi.", "error");
     else if (caught instanceof ApiForbiddenError) show("Réservé à un admin. Reconnecte-toi avec ce compte.", "error");
@@ -68,7 +67,7 @@ export function AutomatePage() {
     setBusy("reload");
     try {
       await Promise.all([antenne.reload(), live.reload()]);
-      show("État rechargé");
+      show("État rechargé.", "success");
     } catch (caught) {
       fail(caught, "Rechargement impossible.");
     } finally {
@@ -81,9 +80,9 @@ export function AutomatePage() {
     try {
       await apiPost(ANTENNE_FLUSH_JSON);
       await antenne.reload();
-      show("Files vidées");
+      show("Files vidées : l’horloge passe aux lignes suivantes.", "success");
     } catch (caught) {
-      fail(caught, "Vidage impossible.");
+      fail(caught, "Impossible de vider les files.");
     } finally {
       setBusy(null);
     }
@@ -94,7 +93,7 @@ export function AutomatePage() {
     try {
       await apiPostJson(REBUILD_JSON, { reset: true });
       await antenne.reload();
-      show("Conducteur reconstruit");
+      show("Conducteur reconstruit depuis maintenant.", "success");
     } catch (caught) {
       fail(caught, "Reconstruction impossible.");
     } finally {
@@ -128,7 +127,12 @@ export function AutomatePage() {
         return;
       }
       const removed = Number(payload.removed) || 0;
-      show(removed > 0 ? `${removed} titres retirés de la bibliothèque` : "Aucun titre hors bac.");
+      if (removed === 0) show("Aucun titre hors bac : rien à retirer.", "info");
+      else
+        show(
+          removed === 1 ? "1 titre retiré de la bibliothèque." : `${removed} titres retirés de la bibliothèque.`,
+          "success",
+        );
     } catch {
       show("Le catalogue ne répond pas. Réessaie dans un instant.", "error");
     } finally {
@@ -236,7 +240,7 @@ export function AutomatePage() {
           </ul>
         </SettingsCard>
       </div>
-      <ProtoToast message={message} />
+      <AppToast toast={toast} onDismiss={dismiss} />
     </div>
   );
 }
