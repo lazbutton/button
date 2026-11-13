@@ -6,13 +6,13 @@ import { titleTaken } from "../../api/cartErrors";
 import { cartFolderName, finderRel } from "../../api/cartFolder";
 import { MODE_HELP, relayUrlOk } from "../../api/cartMeta";
 import { keepEdits, unsavedEdits, type CartAnswer } from "../../api/cartSave";
-import { fetchBankFolders } from "../../api/cartSounds";
+import { habillageFoldersOf } from "../../api/cartFlags";
+import { fetchBankFolders, knownHabillageFolders } from "../../api/cartSounds";
 import { fetchVolume, stationSmbUrl } from "../../api/volume";
 import type { Cart, CartMode } from "../../api/types";
 import { ConfirmDialog } from "../../ui/ConfirmDialog";
 import { FormField, SelectField } from "../../ui/FormField";
 import type { BacUsage } from "./BacHeader";
-import { HABILLAGE_FOLDERS } from "./CreateBacDialog";
 
 const PLAY_MODES: { value: CartMode; label: string }[] = [
   { value: "playlist_loop", label: "Boucle" },
@@ -78,7 +78,7 @@ export function CartInspector({
   const alive = useRef(false);
   const session = useRef(0);
   const [refusal, setRefusal] = useState("");
-  const [bankPaths, setBankPaths] = useState<string[]>(HABILLAGE_FOLDERS);
+  const [bankPaths, setBankPaths] = useState<string[]>(knownHabillageFolders);
   const [copied, setCopied] = useState(false);
   const [nameCopy, setNameCopy] = useState<"" | "ok" | "fail">("");
   const [volume, setVolume] = useState<{ name: string; host: string } | null>(null);
@@ -113,7 +113,7 @@ export function CartInspector({
       .then((payload) => {
         if (cancelled || !payload.available) return;
         const extra = payload.folders.map((folder) => folder.path);
-        setBankPaths([...new Set([...HABILLAGE_FOLDERS, ...extra])].sort());
+        setBankPaths([...new Set([...habillageFoldersOf(payload), ...extra])].sort());
       })
       .catch(() => undefined);
     return () => {

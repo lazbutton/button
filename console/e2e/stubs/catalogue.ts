@@ -28,6 +28,8 @@ type Hit = {
   grouping: string;
   folder: string;
   top: string;
+  zone: string;
+  habillage: string;
   duration: number;
   bytes: number;
   mime: string;
@@ -61,6 +63,21 @@ function kindOf(rel: string): string {
   if (parts[0] === "40-emissions" && parts[2] === "podcasts") return "podcast";
   if (parts[0] === "40-emissions" && parts[2] === "entiere") return "emission";
   return "son";
+}
+
+// La zone d'un fichier, comme layout.zone_of() du vrai catalogue.
+const ZONES: Record<string, string> = {
+  "10-rotation": "rotation",
+  "20-archives": "collections",
+  "30-habillage": "habillage",
+  "40-emissions": "emissions",
+  "50-carts": "bacs",
+};
+const HABILLAGE_TYPES = ["jingles", "ids", "pubs", "beds", "stings", "sfx"];
+
+function habillageOf(rel: string): string {
+  const parts = rel.split("/");
+  return parts.length >= 3 && parts[0] === "30-habillage" && HABILLAGE_TYPES.includes(parts[1]) ? parts[1] : "";
 }
 
 function groupingOf(rel: string): string {
@@ -110,6 +127,8 @@ function index(): Hit[] {
       grouping: groupingOf(path),
       folder: dirname(path),
       top,
+      zone: ZONES[top] ?? "",
+      habillage: habillageOf(path),
       duration: extname(path).toLowerCase() === ".wav" ? wavSeconds(file) : 0,
       bytes: statSync(file).size,
       mime,
@@ -152,7 +171,10 @@ function anyOf(raw: string | null, value: string): boolean {
   return values.length === 0 || values.includes(value);
 }
 
-function search(params: URLSearchParams): { hits: Hit[]; estimatedTotalHits: number } {
+// Les filtres de la recherche, dans l'ordre de search_filter() du vrai catalogue.
+const FILTERS = ["grouping", "folder", "top", "zone", "habillage"] as const;
+
+function search(params: URLSearchParams): { hits: Hit[]; estimatedTotalHits: number; filters: string[] } {
   const words = (params.get("q") ?? "").toLowerCase().split(/\s+/).filter(Boolean);
   const kind = params.get("kind") ?? "";
   const limit = Math.min(Number(params.get("limit") || 80) || 80, 200);
@@ -161,9 +183,12 @@ function search(params: URLSearchParams): { hits: Hit[]; estimatedTotalHits: num
     if (!words.every((word) => text.includes(word))) return false;
     if (kind === "son" && !["son", "emission", "podcast"].includes(hit.kind)) return false;
     if (kind && kind !== "son" && hit.kind !== kind) return false;
-    return anyOf(params.get("grouping"), hit.grouping) && anyOf(params.get("folder"), hit.folder) && anyOf(params.get("top"), hit.top);
+    return FILTERS.every((field) => anyOf(params.get(field), hit[field]));
   });
-  return { hits: found.slice(0, limit), estimatedTotalHits: found.length };
+  // Ce que la recherche a pris : la console redemande par dossier ce qu'un catalogue plus ancien ignore.
+  const given = (field: string) => (params.get(field) ?? "").split(",").some((part) => part.trim());
+  const filters = [...(kind ? ["kind"] : []), ...FILTERS.filter(given)];
+  return { hits: found.slice(0, limit), estimatedTotalHits: found.length, filters };
 }
 
 function json(response: ServerResponse, status: number, payload: unknown): void {
@@ -233,6 +258,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     if (path === "/inbox.json") {
       return json(response, 200, {
         destinations: [{ id: "rotation", label: "Rotation", group: "rotation", folder: "10-rotation" }],
+        collections: { folder: "20-archives" },
         quota: { used: usedBytes(), limit: 100 * 1024 ** 3 },
         disk: diskSpace(),
         queue: [],

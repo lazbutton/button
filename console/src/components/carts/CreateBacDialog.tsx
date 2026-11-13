@@ -1,22 +1,14 @@
 import { Button, Dialog, RadioCards, SegmentedControl, TextField } from "@radix-ui/themes";
 import { Music2, Radio, Sparkles } from "lucide-react";
-import { useState, type ReactElement } from "react";
+import { useEffect, useState, type ReactElement } from "react";
 import { bacErrorText, titleTaken } from "../../api/cartErrors";
 import { MODE_HELP, relayUrlOk } from "../../api/cartMeta";
+import { knownHabillageFolders, readHabillageFolders } from "../../api/cartSounds";
 import { MAX_DURATION_PRESETS, type BacKind } from "../../api/soundsView";
 import type { CartMode } from "../../api/types";
 import { FormField, SelectField } from "../../ui/FormField";
 
 export type CartCreateExtra = { url?: string; max_duration?: number; bank_folder?: string };
-
-export const HABILLAGE_FOLDERS = [
-  "30-habillage/jingles",
-  "30-habillage/ids",
-  "30-habillage/pubs",
-  "30-habillage/beds",
-  "30-habillage/stings",
-  "30-habillage/sfx",
-];
 
 const FILE_MODES: { value: CartMode; label: string }[] = [
   { value: "playlist_loop", label: "Boucle" },
@@ -46,11 +38,26 @@ export function CreateBacDialog({
   const [title, setTitle] = useState("");
   const [kind, setKind] = useState<BacKind>(defaultKind);
   const [mode, setMode] = useState<CartMode>("playlist_loop");
-  const [folder, setFolder] = useState(HABILLAGE_FOLDERS[0]);
+  // The folders of habillage, as the engine says them: the console names none.
+  const [folders, setFolders] = useState(knownHabillageFolders);
+  const [folder, setFolder] = useState(() => knownHabillageFolders()[0]);
   const [url, setUrl] = useState("");
   const [minutes, setMinutes] = useState("60");
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState("");
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    void readHabillageFolders().then((read) => {
+      if (cancelled) return;
+      setFolders(read);
+      setFolder((current) => (read.includes(current) ? current : read[0]));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
 
   const seconds = Math.round(Number(minutes) * 60);
   const relayReady = relayUrlOk(url) && Number.isFinite(seconds) && seconds > 0;
@@ -62,7 +69,7 @@ export function CreateBacDialog({
     setUrl("");
     setMinutes("60");
     setMode(defaultKind === "habillage" ? "random" : "playlist_loop");
-    setFolder(HABILLAGE_FOLDERS[0]);
+    setFolder(folders[0]);
     setKind(defaultKind);
     setFailure("");
   };
@@ -209,7 +216,7 @@ export function CreateBacDialog({
                 <SelectField
                   label="Dossier de la banque"
                   value={folder}
-                  options={HABILLAGE_FOLDERS.map((path) => ({ value: path, label: path }))}
+                  options={folders.map((path) => ({ value: path, label: path }))}
                   onValueChange={setFolder}
                   hint="Le bac et ce dossier restent liés : un ajout au bac y est rangé, un fichier déposé dans le dossier entre dans le bac."
                 />

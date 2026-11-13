@@ -91,6 +91,8 @@ export type Cart = {
   schedule_second: string;
   next_sound_id: number | null;
   bank_folder?: string | null;
+  /** Où est le dossier du bac, sans le nommer. null sans dossier, absent d'un moteur plus ancien. */
+  bank_zone?: "habillage" | "emissions" | "bacs" | null;
   ident_pads?: boolean;
   finder_path?: string | null;
   /** Absent d'un moteur plus ancien. */
@@ -107,6 +109,8 @@ export type BankFolder = {
 export type BankResponse = {
   available: boolean;
   folders: BankFolder[];
+  /** Les dossiers d'habillage qu'un bac peut suivre, même vides. Absent d'un moteur plus ancien. */
+  habillage?: string[];
 };
 
 export type UserPermissions = {
@@ -232,6 +236,8 @@ export type Cue = {
   artist: string;
   rid: number;
   initial_uri: string;
+  /** Le bac du son, null hors d'un bac. Absent d'un moteur plus ancien. */
+  cart_id?: number | null;
 };
 
 export type LiveStatus = "offline" | "simulating" | "playing";
@@ -305,6 +311,8 @@ export type LiveSnapshot = {
   on_air?: string;
   initial_uri?: string;
   radiotomate_sound_id?: string;
+  /** Le bac du son à l'antenne, null hors d'un bac. Absent d'un moteur plus ancien. */
+  cart_id?: number | null;
   next_autodj?: Cue | null;
   next_jingle?: Cue | null;
   next_cart?: Cue | null;

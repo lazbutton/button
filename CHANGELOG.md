@@ -7,6 +7,7 @@ Le détail des changements du moteur par rapport à l'amont : [docs/moteur/chang
 ## Non publié
 
 - Dans la console, une « banque d'archives » s'appelle maintenant une « collection » : un dossier de `20-archives`, où ranger des titres à programmer à part. « Archives » devient « Collections » dans le choix de la destination de **Sons → Banque**, dans la Bibliothèque de la page Antenne et dans « Choisir dans la banque » de l'Agenda, et « Nouvelle banque d'archives » devient « Nouvelle collection ». « La banque » reste le nom de toute la bibliothèque de sons. Seul le nom affiché change : les dossiers du disque, `Banques` dans le dossier de la station et les routes du catalogue restent les mêmes.
+- La console ne lit plus les noms des dossiers de la banque : le moteur et le catalogue lui disent ce qu'est un bac d'habillage, à quel bac appartient le son à l'antenne, et où est un titre de la Bibliothèque. Chaque composant nomme les dossiers à un seul endroit, première étape d'un rangement plus clair de la banque ([décision 0019](docs/decisions/0019-le-rangement-de-la-banque.md)). Rien ne change sur le disque. Un changement se voit à l'écoute de la page Antenne : un jingle d'un bac d'habillage s'y entend maintenant à sa place dans l'antenne, comme un son d'un autre bac, au lieu de l'heure prévue au conducteur. Le catalogue réindexe la banque à son premier démarrage, comme à chaque démarrage.
 
 ## 1.1.0
 

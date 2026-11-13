@@ -152,3 +152,17 @@ test("a new bank gets a folder and is checked like the catalogue does", () => {
   assert.match(problem("Musique", "rotation"), /^folder: .*réservé/);
   assert.match(problem("Jazz live", "Jazz Live"), /^folder: .*minuscules/i);
 });
+
+test("a bac says where its folder is: the console reads no path", () => {
+  const zoned = (mode: Cart["mode"], bank_zone: Cart["bank_zone"], bank_folder = "ailleurs/x") =>
+    ({ id: 9, title: "B9", mode, bank_folder, bank_zone, sounds: [] }) as unknown as Cart;
+  assert.equal(bacKind(zoned("random", "habillage")), "habillage");
+  assert.equal(bacKind(zoned("random", "bacs", "30-habillage/jingles")), "fichiers");
+  assert.equal(bacKind(zoned("playlist", null)), "fichiers");
+  assert.equal(bacKind(zoned("relay", "habillage")), "relais");
+});
+
+test("a taken folder is named as the catalogue gave it", () => {
+  const taken: BankDestination[] = [{ id: "jazz", label: "Jazz", group: "archives", folder: "collections/jazz" }];
+  assert.deepEqual(bankProblem(taken, "Autre", "jazz"), { field: "folder", message: "collections/jazz existe déjà." });
+});
