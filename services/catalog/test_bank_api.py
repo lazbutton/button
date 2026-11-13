@@ -170,7 +170,7 @@ class ListTest(Bank):
         self.assertEqual([(row["id"], row["label"], row["count"]) for row in rows], [("rotation", "Rotation", 1), ("jazz", "Jazz d'été", 2)])
         self.assertEqual(rows[1]["bytes"], (self.jazz / "b.wav").stat().st_size * 2)
 
-    def test_only_a_file_of_the_collection_is_listed_and_played(self) -> None:
+    def test_only_a_sound_of_the_collection_is_listed_and_played(self) -> None:
         inside = sound(self.rotation / "Ada - Song.wav")
         outside = sound(self.media.parent / "ailleurs.wav", artist="Secret")
         (self.rotation / "lien.wav").symlink_to(outside)
@@ -179,20 +179,43 @@ class ListTest(Bank):
 
         # A link that stays in the collection is one of its titles; the others are not read.
         self.assertEqual(self.names(), ["Ada - Song.wav", "copie.wav"])
-        self.assertEqual(bank_api.file_path(self.media, "rotation", "Ada - Song.wav"), inside)
-        self.assertEqual(bank_api.file_path(self.media, "rotation", "copie.wav"), inside)
-        for name in ("lien.wav", "voisin.wav", "", "../20-archives/jazz/Bea - Live.wav", "/etc/passwd", ".banque.json"):
-            self.assertIsNone(bank_api.file_path(self.media, "rotation", name), name)
+        self.assertEqual(bank_api.audio_file(self.media, "rotation", "Ada - Song.wav"), (inside, "audio/wav"))
+        self.assertEqual(bank_api.audio_file(self.media, "rotation", "copie.wav"), (inside, "audio/wav"))
+        for name in ("lien.wav", "voisin.wav", "", "../20-archives/jazz/Bea - Live.wav", "/etc/passwd"):
+            self.assertIsNone(bank_api.audio_file(self.media, "rotation", name), name)
         for name in ("absent.wav", "a\x00b"):
-            self.assertIsNone(bank_api.file_path(self.media, "rotation", name), name)
-        self.assertIsNone(bank_api.file_path(self.media, "inconnue", "Ada - Song.wav"))
+            self.assertIsNone(bank_api.audio_file(self.media, "rotation", name), name)
+        self.assertIsNone(bank_api.audio_file(self.media, "inconnue", "Ada - Song.wav"))
+
+    def test_a_file_that_is_not_a_sound_is_listed_but_never_served(self) -> None:
+        # Served on the console's origin, a page or a script would run as the console.
+        for name in ("ecoute.html", "image.svg", "outil.js", "notes.txt", "Ada - Song.WAV.html"):
+            (self.jazz / name).write_text("<script>alert(1)</script>", encoding="utf-8")
+        self.assertEqual(len(self.names("jazz")), 5)
+        for name in self.names("jazz"):
+            self.assertIsNone(bank_api.audio_file(self.media, "jazz", name), name)
+        flac = self.jazz / "Bea - Live.FLAC"
+        flac.write_bytes(b"fLaC")
+        self.assertEqual(bank_api.audio_file(self.media, "jazz", flac.name), (flac, "audio/flac"))
+
+    def test_a_hidden_file_is_never_served_nor_touched(self) -> None:
+        # The name file of the collection is there, beside its titles.
+        note = self.jazz / ".banque.json"
+        hidden = sound(self.jazz / ".ancien" / "Concert 1998.wav")
+        for name in (".banque.json", ".ancien/Concert 1998.wav"):
+            self.assertIsNone(bank_api.audio_file(self.media, "jazz", name), name)
+        status, payload = bank_api.remove_files(self.media, "jazz", [".banque.json", ".ancien/Concert 1998.wav"])
+        self.assertEqual(payload["removed"], [])
+        self.assertEqual([row["reason"] for row in payload["failed"]], ["fichier introuvable"] * 2)
+        self.assertEqual(bank_api.move_files(self.media, "jazz", "rotation", [".banque.json"])[1]["moved"], [])
+        self.assertTrue(note.is_file() and hidden.is_file())
 
     def test_a_link_out_of_the_collection_is_never_touched(self) -> None:
         outside = sound(self.media.parent / "ailleurs.wav")
         (self.rotation / "lien.wav").symlink_to(outside)
         self.assertEqual(
             bank_api.remove_files(self.media, "rotation", ["lien.wav"]),
-            (200, {"removed": [], "failed": [{"name": "lien.wav", "reason": "fichier introuvable"}]}),
+            (200, {"removed": [], "failed": [{"name": "lien.wav", "reason": "fichier introuvable"}], "left": []}),
         )
         self.assertEqual(bank_api.move_files(self.media, "rotation", "jazz", ["lien.wav"])[1]["moved"], [])
         self.assertTrue((self.rotation / "lien.wav").is_symlink() and outside.is_file())
@@ -218,6 +241,7 @@ class RemoveTest(Bank):
         self.assertEqual(status, 200)
         self.assertEqual(payload["removed"], ["Ada - Song.wav", "Album/Bea - Live.wav"])
         self.assertEqual(payload["failed"], [{"name": "absent.wav", "reason": "fichier introuvable"}])
+        self.assertEqual(payload["left"], [])
         self.assertEqual(self.names(), ["Cy - Reste.wav"])
         self.assertEqual(sorted(path.name for path in self.trash.iterdir()), ["Ada - Song.wav", "Bea - Live.wav"])
 
@@ -227,21 +251,61 @@ class RemoveTest(Bank):
         (self.trash / "Ada - Song (2).wav").write_bytes(b"le second")
         sound(self.rotation / "Ada - Song.wav")
         status, payload = bank_api.remove_files(self.media, "rotation", ["Ada - Song.wav"])
-        self.assertEqual((status, payload), (200, {"removed": ["Ada - Song.wav"], "failed": []}))
+        self.assertEqual((status, payload), (200, {"removed": ["Ada - Song.wav"], "failed": [], "left": []}))
         self.assertEqual((self.trash / "Ada - Song.wav").read_bytes(), b"le premier")
         self.assertEqual((self.trash / "Ada - Song (2).wav").read_bytes(), b"le second")
         self.assertTrue((self.trash / "Ada - Song (3).wav").is_file())
+
+    def test_a_long_name_already_in_the_trash_gets_a_shorter_one(self) -> None:
+        # 240 bytes: « (2) » would make it longer than a file system takes.
+        name = "é" * 118 + ".wav"
+        self.trash.mkdir()
+        (self.trash / name).write_bytes(b"le premier")
+        sound(self.rotation / name)
+        sound(self.rotation / "Bea - Live.wav")
+        status, payload = bank_api.remove_files(self.media, "rotation", [name, "Bea - Live.wav"])
+        self.assertEqual((payload["removed"], payload["failed"]), ([name, "Bea - Live.wav"], []))
+        self.assertEqual(len(list(self.trash.iterdir())), 3)
+        self.assertEqual((self.trash / name).read_bytes(), b"le premier")
+        self.assertTrue(all(len(path.name.encode()) <= 240 for path in self.trash.iterdir()))
+
+    def test_a_title_that_fails_does_not_stop_the_others(self) -> None:
+        for name in ("a.wav", "b.wav", "c.wav"):
+            sound(self.rotation / name)
+        real = bank_api._to_trash
+
+        def broken(path, trash):
+            if path.name == "b.wav":
+                raise OSError(errno.EIO, "disque en erreur")
+            return real(path, trash)
+
+        with mock.patch.object(bank_api, "_to_trash", side_effect=broken):
+            status, payload = bank_api.remove_files(self.media, "rotation", ["a.wav", "b.wav", "c.wav"])
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["removed"], ["a.wav", "c.wav"])
+        self.assertEqual(payload["failed"], [{"name": "b.wav", "reason": "déplacement impossible"}])
+        self.assertEqual(self.names(), ["b.wav"])
+
+    def test_a_request_stops_in_time_and_says_what_is_left(self) -> None:
+        for name in ("a.wav", "b.wav", "c.wav"):
+            sound(self.rotation / name)
+        # The time is up from the start: the first title goes all the same.
+        with mock.patch.object(bank_api, "TIME_BUDGET", -1):
+            status, payload = bank_api.remove_files(self.media, "rotation", ["a.wav", "b.wav", "c.wav"])
+        self.assertEqual((payload["removed"], payload["failed"], payload["left"]), (["a.wav"], [], ["b.wav", "c.wav"]))
+        self.assertEqual(self.names(), ["b.wav", "c.wav"])
 
     def test_a_name_never_leaves_its_collection(self) -> None:
         kept = sound(self.jazz / "Bea - Live.wav")
         outside = sound(self.media.parent / "ailleurs.wav")
         (self.rotation / "dehors").symlink_to(self.media.parent)
-        names = ["../20-archives/jazz/Bea - Live.wav", "/etc/passwd", ".banque.json", "dehors/ailleurs.wav", "", 3]
+        names = ["../20-archives/jazz/Bea - Live.wav", "/etc/passwd", ".cache.wav", "dehors/ailleurs.wav", "", 3]
+        (self.rotation / ".cache.wav").write_bytes(b"cache")
         status, payload = bank_api.remove_files(self.media, "rotation", names[:-1])
         self.assertEqual(status, 200)
         self.assertEqual(payload["removed"], [])
         self.assertEqual([row["reason"] for row in payload["failed"]], ["fichier introuvable"] * 5)
-        self.assertTrue(kept.is_file() and outside.is_file())
+        self.assertTrue(kept.is_file() and outside.is_file() and (self.rotation / ".cache.wav").is_file())
         self.assertEqual(list(self.trash.iterdir()), [])
         # Not a list of names: nothing is tried.
         for bad in (names, [], None, "Ada - Song.wav"):
@@ -259,7 +323,9 @@ class MoveTest(Bank):
         sound(self.rotation / "Ada - Song.wav")
         sound(self.rotation / "Album" / "Bea - Live.wav")
         status, payload = bank_api.move_files(self.media, "rotation", "jazz", ["Ada - Song.wav", "Album/Bea - Live.wav"])
-        self.assertEqual((status, payload), (200, {"moved": ["Ada - Song.wav", "Album/Bea - Live.wav"], "failed": []}))
+        self.assertEqual(
+            (status, payload), (200, {"moved": ["Ada - Song.wav", "Album/Bea - Live.wav"], "failed": [], "left": []})
+        )
         self.assertEqual(self.names(), [])
         # A collection is flat: the title of a subfolder lands at its root.
         self.assertEqual(self.names("jazz"), ["Ada - Song.wav", "Bea - Live.wav"])
@@ -297,30 +363,75 @@ class MoveTest(Bank):
         self.assertEqual(bank_api.move_files(self.media, "rotation", "jazz", [])[0], 400)
         self.assertEqual(self.names(), ["Ada - Song.wav"])
 
-    def test_a_move_to_another_disk_copies(self) -> None:
-        sound(self.rotation / "Ada - Song.wav")
-        # A collection on its own disk, or a file system without hard links.
-        with mock.patch.object(bank_api.os, "link", side_effect=OSError(errno.EXDEV, "autre disque")):
-            status, payload = bank_api.move_files(self.media, "rotation", "jazz", ["Ada - Song.wav"])
-            self.assertEqual(payload, {"moved": ["Ada - Song.wav"], "failed": []})
-            # Even then, a title already there stays.
-            sound(self.rotation / "Ada - Song.wav")
-            status, payload = bank_api.move_files(self.media, "rotation", "jazz", ["Ada - Song.wav"])
-            self.assertEqual(payload["failed"], [{"name": "Ada - Song.wav", "reason": "déjà dans Jazz d'été"}])
-        self.assertEqual((self.names(), self.names("jazz")), (["Ada - Song.wav"], ["Ada - Song.wav"]))
 
-    def test_a_copy_cut_short_leaves_the_title_where_it_was(self) -> None:
-        sound(self.rotation / "Ada - Song.wav")
-        full = OSError(errno.ENOSPC, "disque plein")
-        with (
-            mock.patch.object(bank_api.os, "link", side_effect=OSError(errno.EXDEV, "autre disque")),
-            mock.patch.object(inbox_api.shutil, "move", side_effect=full),
-        ):
+def other_disk(source: Path):
+    """os.link as between two disks, for links that start from this file only."""
+    real = os.link
+
+    def link(src, dst, **kwargs):
+        if Path(src) == source:
+            raise OSError(errno.EXDEV, "autre disque")
+        return real(src, dst, **kwargs)
+
+    return mock.patch.object(bank_api.os, "link", side_effect=link)
+
+
+class OtherDiskTest(Bank):
+    def test_a_move_to_another_disk_copies_then_names_the_copy(self) -> None:
+        source = sound(self.rotation / "Ada - Song.wav", seconds=2)
+        content = source.read_bytes()
+        with other_disk(source), mock.patch.object(bank_api.shutil, "copy2", wraps=bank_api.shutil.copy2) as copy:
+            status, payload = bank_api.move_files(self.media, "rotation", "jazz", ["Ada - Song.wav"])
+        self.assertEqual(payload, {"moved": ["Ada - Song.wav"], "failed": [], "left": []})
+        self.assertEqual(copy.call_count, 1)
+        # Written under a hidden name, then given its own: nothing else is left there.
+        self.assertTrue(Path(copy.call_args.args[1]).name.startswith("."))
+        self.assertEqual(sorted(path.name for path in self.jazz.iterdir()), [".banque.json", "Ada - Song.wav"])
+        self.assertEqual(((self.jazz / "Ada - Song.wav").read_bytes(), source.exists()), (content, False))
+
+    def test_a_copy_never_replaces_a_title_that_came_meanwhile(self) -> None:
+        source = sound(self.rotation / "Ada - Song.wav")
+        real_copy = bank_api.shutil.copy2
+
+        def copy_while_another_lands(src, dst, **kwargs):
+            (self.jazz / "Ada - Song.wav").write_bytes(b"arrive pendant la copie")
+            return real_copy(src, dst, **kwargs)
+
+        with other_disk(source), mock.patch.object(bank_api.shutil, "copy2", side_effect=copy_while_another_lands):
+            status, payload = bank_api.move_files(self.media, "rotation", "jazz", ["Ada - Song.wav"])
+        self.assertEqual(payload["failed"], [{"name": "Ada - Song.wav", "reason": "déjà dans Jazz d'été"}])
+        self.assertEqual((self.jazz / "Ada - Song.wav").read_bytes(), b"arrive pendant la copie")
+        self.assertTrue(source.is_file())
+        self.assertEqual(sorted(path.name for path in self.jazz.iterdir()), [".banque.json", "Ada - Song.wav"])
+
+    def test_a_copy_cut_short_leaves_nothing_behind(self) -> None:
+        source = sound(self.rotation / "Ada - Song.wav")
+
+        def half_then_full(src, dst, **kwargs):
+            Path(dst).write_bytes(Path(src).read_bytes()[:10])
+            raise OSError(errno.ENOSPC, "disque plein")
+
+        with other_disk(source), mock.patch.object(bank_api.shutil, "copy2", side_effect=half_then_full):
             status, payload = bank_api.move_files(self.media, "rotation", "jazz", ["Ada - Song.wav"])
         self.assertEqual(
-            payload, {"moved": [], "failed": [{"name": "Ada - Song.wav", "reason": "pas assez de place sur le disque"}]}
+            payload,
+            {"moved": [], "failed": [{"name": "Ada - Song.wav", "reason": "pas assez de place sur le disque"}], "left": []},
         )
+        # The half written copy is gone, and the title is still where it was.
+        self.assertEqual(sorted(path.name for path in self.jazz.iterdir()), [".banque.json"])
         self.assertEqual((self.names(), self.names("jazz")), (["Ada - Song.wav"], []))
+
+    def test_a_copy_that_cannot_fit_is_not_tried(self) -> None:
+        source = sound(self.rotation / "Ada - Song.wav")
+        with (
+            other_disk(source),
+            mock.patch.object(inbox_api, "disk_free", return_value=10),
+            mock.patch.object(bank_api.shutil, "copy2") as copy,
+        ):
+            status, payload = bank_api.remove_files(self.media, "rotation", ["Ada - Song.wav"])
+        self.assertEqual(payload["failed"], [{"name": "Ada - Song.wav", "reason": "pas assez de place sur le disque"}])
+        self.assertEqual(copy.call_count, 0)
+        self.assertTrue(source.is_file())
 
 
 class CollectionTest(Bank):
@@ -340,6 +451,18 @@ class CollectionTest(Bank):
         self.assertEqual([path.name for path in self.jazz.iterdir()], [".banque.json"])
         # The same name again, another case: it is still its own.
         self.assertEqual(inbox_api.rename_bank(self.media, "jazz", "JAZZ DU SOIR")[0], 200)
+
+    def test_a_new_name_never_follows_a_link(self) -> None:
+        precious = self.media.parent / "precieux.txt"
+        precious.write_text("à ne pas écraser", encoding="utf-8")
+        (self.jazz / ".banque.json").unlink()
+        (self.jazz / ".banque.json").symlink_to(precious)
+        (self.jazz / ".banque.json.partial").symlink_to(precious)
+        self.assertEqual(inbox_api.rename_bank(self.media, "jazz", "Jazz du soir")[0], 200)
+        self.assertEqual(precious.read_text(encoding="utf-8"), "à ne pas écraser")
+        note = self.jazz / ".banque.json"
+        self.assertFalse(note.is_symlink())
+        self.assertEqual(json.loads(note.read_text(encoding="utf-8")), {"nom": "Jazz du soir"})
 
     def test_a_new_name_is_checked_like_the_first(self) -> None:
         (self.media / "20-archives" / "nuit").mkdir()
@@ -361,42 +484,59 @@ class CollectionTest(Bank):
         inbox.mkdir(parents=True)
         title = sound(self.jazz / "Ada - Song.wav")
         self.assertEqual(
-            inbox_api.delete_bank(self.media, "jazz"),
+            bank_api.delete_collection(self.media, "jazz"),
             (409, {"error": "La collection contient encore 1 fichier : retire ou déplace d'abord ses titres."}),
         )
         title.unlink()
         waiting = sound(inbox / "Bea - Live.wav")
         sound(inbox / "Cy - Tune.wav")
         self.assertEqual(
-            inbox_api.delete_bank(self.media, "jazz"),
+            bank_api.delete_collection(self.media, "jazz"),
             (409, {"error": "2 envois attendent encore dans le dépôt de la collection : réessaie une fois rangé."}),
         )
         self.assertTrue(self.jazz.is_dir() and waiting.is_file())
         for path in inbox.iterdir():
             path.unlink()
-        # What the Finder and the tagging pass leave behind does not hold a collection.
+        # What the Finder leaves behind does not hold a collection, and goes with it.
         (self.jazz / ".DS_Store").write_bytes(b"finder")
+        (self.jazz / "._Ada - Song.wav").write_bytes(b"appledouble")
         (self.jazz / "vide").mkdir()
-        self.assertEqual(inbox_api.delete_bank(self.media, "jazz"), (200, {"deleted": "jazz"}))
+        self.assertEqual(bank_api.delete_collection(self.media, "jazz"), (200, {"deleted": "jazz", "trashed": 0}))
         self.assertFalse(self.jazz.exists() or inbox.exists())
+        self.assertFalse(self.trash.exists() and any(self.trash.iterdir()))
         self.assertEqual([row["id"] for row in inbox_api.destination_list(self.media)], ["rotation"])
 
+    def test_a_hidden_file_goes_to_the_trash_with_the_collection(self) -> None:
+        # « Vide » in the list, yet a sound waits in a hidden folder: it is kept.
+        hidden = sound(self.jazz / ".ancien" / "Concert 1998.wav")
+        content = hidden.read_bytes()
+        (self.jazz / ".notes").write_text("à garder", encoding="utf-8")
+        self.assertEqual(bank_api.list_files(self.media, "jazz")[1]["total"], 0)
+        self.assertEqual(bank_api.delete_collection(self.media, "jazz"), (200, {"deleted": "jazz", "trashed": 2}))
+        self.assertFalse(self.jazz.exists())
+        self.assertEqual((self.trash / "Concert 1998.wav").read_bytes(), content)
+        self.assertEqual((self.trash / ".notes").read_text(encoding="utf-8"), "à garder")
+
     def test_what_is_not_a_plain_collection_stays(self) -> None:
-        self.assertEqual(inbox_api.delete_bank(self.media, "rotation"), (400, {"error": "La Rotation ne se supprime pas."}))
+        self.assertEqual(
+            bank_api.delete_collection(self.media, "rotation"), (400, {"error": "La Rotation ne se supprime pas."})
+        )
         for name in ("inconnue", "", "../10-rotation"):
-            self.assertEqual(inbox_api.delete_bank(self.media, name), (404, {"error": "Collection introuvable."}), name)
+            self.assertEqual(
+                bank_api.delete_collection(self.media, name), (404, {"error": "Collection introuvable."}), name
+            )
         elsewhere = self.media.parent / "disque"
         elsewhere.mkdir()
         (self.media / "20-archives" / "lien").symlink_to(elsewhere)
-        status, payload = inbox_api.delete_bank(self.media, "lien")
+        status, payload = bank_api.delete_collection(self.media, "lien")
         self.assertEqual((status, payload["error"][:28]), (409, "Ce dossier est un lien ou un"))
         self.assertTrue(elsewhere.is_dir() and self.rotation.is_dir())
 
     def test_a_title_that_just_arrived_is_never_deleted(self) -> None:
         late = sound(self.jazz / "Ada - Song.wav")
         # It came in between the count and the removal.
-        with mock.patch.object(inbox_api, "_visible_files", return_value=0):
-            status, payload = inbox_api.delete_bank(self.media, "jazz")
+        with mock.patch.object(bank_api, "scan", return_value=[]):
+            status, payload = bank_api.delete_collection(self.media, "jazz")
         self.assertEqual(status, 409)
         self.assertTrue(late.is_file())
         self.assertEqual(inbox_api.bank_label(self.media, "jazz"), "Jazz d'été")
@@ -485,6 +625,18 @@ class RoutesTest(Bank):
         self.assertEqual((status, body), (206, b"RIFF"))
         self.assertEqual(self.call("/collection/file?id=rotation&name=..%2F..%2Fsecret", cookie=cookie)[0], 404)
 
+    def test_a_sound_is_served_as_a_sound_and_nothing_else_is_served(self) -> None:
+        request = urllib.request.Request(
+            self.base + "/collection/file?id=rotation&name=Ada%20-%20Song.wav", headers={"Cookie": "session=animateur"}
+        )
+        with urllib.request.urlopen(request, timeout=4) as response:
+            self.assertEqual(response.headers["Content-Type"], "audio/wav")
+            self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
+        # A page dropped through the station folder would run as the console.
+        (self.rotation / "ecoute.html").write_text("<script>alert(1)</script>", encoding="utf-8")
+        status, body = self.call("/collection/file?id=rotation&name=ecoute.html", cookie="session=admin")
+        self.assertEqual((status, json.loads(body)), (404, {"error": "not_found"}))
+
     def test_nothing_opens_without_a_session(self) -> None:
         gets = ("/collection/list.json", "/collection/files.json?id=rotation", "/collection/file?id=rotation&name=Ada%20-%20Song.wav")
         posts = ("/collection/remove.json", "/collection/move.json", "/collection/rename.json", "/collection/delete.json")
@@ -514,11 +666,11 @@ class RoutesTest(Bank):
         cookie = "session=programmateur"
         self.assertEqual(
             self.json("/collection/remove.json", cookie=cookie, payload=remove),
-            (200, {"removed": ["Ada - Song.wav"], "failed": []}),
+            (200, {"removed": ["Ada - Song.wav"], "failed": [], "left": []}),
         )
         self.assertEqual(
             self.json("/collection/move.json", cookie=cookie, payload=move),
-            (200, {"moved": ["Bea - Live.wav"], "failed": []}),
+            (200, {"moved": ["Bea - Live.wav"], "failed": [], "left": []}),
         )
         self.assertEqual((self.names(), self.names("jazz")), (["Bea - Live.wav"], []))
         self.assertEqual([path.name for path in self.trash.iterdir()], ["Ada - Song.wav"])
@@ -535,7 +687,9 @@ class RoutesTest(Bank):
         self.assertEqual((status, payload["destination"]["label"]), (200, "Jazz du soir"))
         self.assertEqual(self.json("/collection/delete.json", payload={"id": "jazz"})[0], 409)
         (self.jazz / "Bea - Live.wav").unlink()
-        self.assertEqual(self.json("/collection/delete.json", payload={"id": "jazz"}), (200, {"deleted": "jazz"}))
+        self.assertEqual(
+            self.json("/collection/delete.json", payload={"id": "jazz"}), (200, {"deleted": "jazz", "trashed": 0})
+        )
         self.assertFalse(self.jazz.exists())
 
     def test_a_change_comes_from_the_console_in_json(self) -> None:

@@ -14,6 +14,7 @@ import json
 import os
 import re
 import shutil
+import tempfile
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -101,6 +102,25 @@ def destination_list(media: Path) -> list[dict]:
     return rows + archives
 
 
+def write_label(folder: Path, data: dict) -> None:
+    """Write a collection's name file. Raises OSError.
+
+    Through a new file, then a rename: the Finder view reads it at every round,
+    and the catalogue runs as root. A link left in the folder, under the name
+    of the file or of a partial copy, is replaced, never followed.
+    """
+    fd, partial = tempfile.mkstemp(prefix=f"{LABEL_FILE}.", dir=folder)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            os.fchmod(handle.fileno(), 0o644)
+            handle.write(json.dumps(data, ensure_ascii=False))
+        os.replace(partial, folder / LABEL_FILE)
+    except BaseException:
+        Path(partial).unlink(missing_ok=True)
+        raise
+    give_like_folder(folder / LABEL_FILE)
+
+
 def create_bank(media: Path, label: str, folder: str) -> tuple[int, dict]:
     """A new archive bank: its folder in 20-archives, its inbox, its name."""
     label = " ".join(str(label or "").split())
@@ -125,7 +145,10 @@ def create_bank(media: Path, label: str, folder: str) -> tuple[int, dict]:
         except FileExistsError:
             return 409, {"error": f"Le dossier {ARCHIVES}/{folder} existe déjà."}
         (media / INBOX_ARCHIVES / folder).mkdir(parents=True, exist_ok=True)
-        (bank / LABEL_FILE).write_text(json.dumps({"nom": label}, ensure_ascii=False), encoding="utf-8")
+        try:
+            write_label(bank, {"nom": label})
+        except OSError:
+            return 500, {"error": "Le nom n'a pas pu s'écrire dans le dossier de la collection."}
     return 201, {"destination": {"id": folder, "label": label, "group": "archives", "folder": f"{ARCHIVES}/{folder}"}}
 
 
@@ -147,79 +170,21 @@ def rename_bank(media: Path, name: str, label: str) -> tuple[int, dict]:
             return 404, {"error": "Collection introuvable."}
         if any(other != name and bank_label(media, other).casefold() == label.casefold() for other in existing):
             return 409, {"error": "Une collection porte déjà ce nom."}
-        note = media / ARCHIVES / name / LABEL_FILE
+        bank = media / ARCHIVES / name
+        note = bank / LABEL_FILE
         try:
-            data = json.loads(note.read_text(encoding="utf-8"))
+            # What else the file says stays. A link there is not read.
+            data = {} if note.is_symlink() else json.loads(note.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             data = {}
         if not isinstance(data, dict):
             data = {}
         data["nom"] = label
-        # Through a rename: the Finder view reads this file at every round.
-        partial = note.with_name(f"{LABEL_FILE}.partial")
         try:
-            partial.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-            partial.replace(note)
+            write_label(bank, data)
         except OSError:
-            partial.unlink(missing_ok=True)
             return 500, {"error": "Le nom n'a pas pu s'écrire dans le dossier de la collection."}
-        give_like_folder(note)
     return 200, {"destination": {"id": name, "label": label, "group": "archives", "folder": f"{ARCHIVES}/{name}"}}
-
-
-def _visible_files(root: Path) -> int:
-    """The files a person put there: hidden files and hidden folders do not count."""
-    count = 0
-    if not root.is_dir():
-        return count
-    for _dirpath, dirnames, filenames in os.walk(root, followlinks=False):
-        dirnames[:] = [name for name in dirnames if not name.startswith(".")]
-        count += sum(1 for name in filenames if not name.startswith("."))
-    return count
-
-
-def _remove_empty_tree(root: Path) -> bool:
-    """Remove a folder that holds nothing but hidden files. False, and the file stays, if one came in."""
-    if root.is_symlink() or not root.is_dir():
-        return not root.exists()
-    try:
-        for dirpath, _dirnames, filenames in os.walk(root, topdown=False, followlinks=False):
-            folder = Path(dirpath)
-            hidden = any(part.startswith(".") for part in folder.relative_to(root).parts)
-            # Nothing visible is ever deleted, and a folder that keeps a file keeps its name too.
-            if not hidden and any(not name.startswith(".") for name in filenames):
-                return False
-            for name in filenames:
-                (folder / name).unlink()
-            folder.rmdir()
-    except OSError:
-        return False
-    return True
-
-
-def delete_bank(media: Path, name: str) -> tuple[int, dict]:
-    """Remove an empty collection: its folder and its inbox. A title never goes with it."""
-    name = str(name or "")
-    if name == ROTATION:
-        return 400, {"error": "La Rotation ne se supprime pas."}
-    with _LOCK:
-        if name not in archive_names(media):
-            return 404, {"error": "Collection introuvable."}
-        bank = media / ARCHIVES / name
-        inbox = media / INBOX_ARCHIVES / name
-        if bank.is_symlink() or os.path.ismount(bank):
-            return 409, {"error": "Ce dossier est un lien ou un disque monté : il se retire sur la machine, pas ici."}
-        left = _visible_files(bank)
-        if left:
-            files = "1 fichier" if left == 1 else f"{left} fichiers"
-            return 409, {"error": f"La collection contient encore {files} : retire ou déplace d'abord ses titres."}
-        waiting = _visible_files(inbox)
-        if waiting:
-            files = "1 envoi attend" if waiting == 1 else f"{waiting} envois attendent"
-            return 409, {"error": f"{files} encore dans le dépôt de la collection : réessaie une fois rangé."}
-        if not _remove_empty_tree(inbox) or not _remove_empty_tree(bank):
-            return 409, {"error": "Un fichier vient d'arriver dans la collection, ou son dossier refuse d'être supprimé."}
-    return 200, {"deleted": name}
 
 
 def judge_upload(

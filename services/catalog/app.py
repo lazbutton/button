@@ -543,9 +543,9 @@ def resolve_media(item_id: str) -> Path | None:
     return path if path.is_file() else None
 
 
-def send_file(handler: BaseHTTPRequestHandler, path: Path) -> None:
+def send_file(handler: BaseHTTPRequestHandler, path: Path, mime: str | None = None) -> None:
     size = path.stat().st_size
-    mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    mime = mime or mimetypes.guess_type(path.name)[0] or "application/octet-stream"
     rng = handler.headers.get("Range")
     start, end = 0, size - 1
     status = 200
@@ -568,6 +568,8 @@ def send_file(handler: BaseHTTPRequestHandler, path: Path) -> None:
     handler.send_response(status)
     cors(handler)
     handler.send_header("Content-Type", mime)
+    # Served on the console's origin: the browser takes the type as given, never guesses another.
+    handler.send_header("X-Content-Type-Options", "nosniff")
     handler.send_header("Accept-Ranges", "bytes")
     handler.send_header("Content-Length", str(length))
     if status == 206:
@@ -684,11 +686,11 @@ class CatalogHandler(BaseHTTPRequestHandler):
             json_response(self, payload, status)
             return
         if path == "/collection/file":
-            media = bank_api.file_path(MEDIA_ROOT, (qs.get("id") or [""])[0], (qs.get("name") or [""])[0])
-            if media is None:
+            sound = bank_api.audio_file(MEDIA_ROOT, (qs.get("id") or [""])[0], (qs.get("name") or [""])[0])
+            if sound is None:
                 json_response(self, {"error": "not_found"}, 404)
                 return
-            send_file(self, media)
+            send_file(self, *sound)
             return
         if path.startswith("/media/"):
             item_id = path.split("/", 2)[2]
@@ -730,7 +732,7 @@ class CatalogHandler(BaseHTTPRequestHandler):
         elif path == "/collection/rename.json":
             status, payload = inbox_api.rename_bank(MEDIA_ROOT, key, body.get("label", ""))
         else:
-            status, payload = inbox_api.delete_bank(MEDIA_ROOT, key)
+            status, payload = bank_api.delete_collection(MEDIA_ROOT, key)
         json_response(self, payload, status)
 
     def _volume_password(self, raw: bytes) -> None:
