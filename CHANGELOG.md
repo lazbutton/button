@@ -6,6 +6,8 @@ Le détail des changements du moteur par rapport à l'amont : [docs/moteur/chang
 
 ## Non publié
 
+- Dans la console, une « banque d'archives » s'appelle maintenant une « collection » : un dossier de `20-archives`, où ranger des titres à programmer à part. « Archives » devient « Collections » dans le choix de la destination de **Sons → Banque**, dans la Bibliothèque de la page Antenne et dans « Choisir dans la banque » de l'Agenda, et « Nouvelle banque d'archives » devient « Nouvelle collection ». « La banque » reste le nom de toute la bibliothèque de sons. Seul le nom affiché change : les dossiers du disque, `Banques` dans le dossier de la station et les routes du catalogue restent les mêmes.
+
 ## 1.1.0
 
 Une mineure : rien d'autre que la mise à jour habituelle, voir [docs/deploiement.md](docs/deploiement.md#mettre-à-jour). Le schéma de la base reste en v18 : aucune migration.

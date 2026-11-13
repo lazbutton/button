@@ -36,7 +36,7 @@ Nadia écoute une cinquantaine d'albums par semaine, et en garde une dizaine. El
 ## Son parcours
 
 1. **Déposer.** Dans **Sons → Banque**, elle glisse les nouveautés. L'envoi reprend après une coupure, et la console montre l'avancement, la place libre et les fichiers refusés avec leur raison. Chez elle, elle passe par le dossier de la station : [dossier-reseau.md](../exploitation/dossier-reseau.md).
-2. **Choisir.** Dans **Programmation → Sélections de titres**, elle décrit ce qui passe : `genre:Jazz`, ou une banque d'archives par son regroupement, `grouping:<dossier>`.
+2. **Choisir.** Dans **Programmation → Sélections de titres**, elle décrit ce qui passe : `genre:Jazz`, ou une collection par son regroupement, `grouping:<dossier>`.
 3. **Composer.** Dans **Heures types**, elle enchaîne titres, jingles, programmes et pubs. Ses **Coupures à la minute** coupent pile, ou attendent la fin du titre.
 4. **Poser la semaine.** Dans **Semaine**, chaque créneau reçoit son heure type, et chaque émission hebdomadaire ses heures et son animateur, comme Inès, choisi en **Compte du plateau**.
 5. **Habiller.** Dans **Sons → Bacs**, elle crée un bac de jingles, un bac de pubs, ou un relais pour un décrochage, avec son adresse et sa durée max : [decrochage.md](../exploitation/decrochage.md).

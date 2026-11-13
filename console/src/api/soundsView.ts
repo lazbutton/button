@@ -185,12 +185,12 @@ export type BankProblem = { field: "label" | "folder"; message: string } | null;
 /** Why a new bank cannot be created as typed, and which field to fix. */
 export function bankProblem(list: BankDestination[], label: string, folder: string): BankProblem {
   const name = label.trim().replace(/\s+/g, " ");
-  if (!name) return { field: "label", message: "Donne un nom à la banque." };
+  if (!name) return { field: "label", message: "Donne un nom à la collection." };
   if (name.length > 60) return { field: "label", message: "Nom trop long : 60 caractères au plus." };
   if (fold(name) === "rotation")
     return { field: "label", message: "« Rotation » est réservé à la musique de l'auto-DJ." };
   if (list.some((item) => fold(item.label) === fold(name))) {
-    return { field: "label", message: "Une banque porte déjà ce nom." };
+    return { field: "label", message: "Une collection porte déjà ce nom." };
   }
   if (!BANK_FOLDER.test(folder)) {
     return { field: "folder", message: "Minuscules, chiffres et tirets, 40 caractères au plus." };

@@ -1,6 +1,6 @@
 #!/bin/sh
 # Arbre unique de la banque BUTTON. Idempotent.
-# Les banques d'archives (dossiers de 20-archives) se créent depuis la console.
+# Les collections (dossiers de 20-archives) se créent depuis la console.
 #
 # MEDIA_OWNER (uid:gid), posé par radiotomate-init et le catalogue, qui tournent
 # en root : la banque est au moteur, rtuser, comme RT_DATA. La boucle Beets et

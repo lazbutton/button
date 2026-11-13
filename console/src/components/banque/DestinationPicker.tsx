@@ -29,7 +29,7 @@ export function DestinationPicker({
   const archiveCount = destinations.filter((item) => item.group === "archives").length;
   const groups = [
     { id: "rotation", label: "Musique", items: visible.filter((item) => item.group === "rotation") },
-    { id: "archives", label: "Archives", items: visible.filter((item) => item.group === "archives") },
+    { id: "archives", label: "Collections", items: visible.filter((item) => item.group === "archives") },
   ].filter((group) => group.items.length);
   const flat = groups.flatMap((group) => group.items);
 
@@ -71,7 +71,7 @@ export function DestinationPicker({
   };
 
   const optionId = (index: number) => `${baseId}-option-${index}`;
-  const kind = value.group === "rotation" ? "Musique" : "Archives";
+  const kind = value.group === "rotation" ? "Musique" : "Collection";
   let index = -1;
 
   return (
@@ -106,8 +106,8 @@ export function DestinationPicker({
           aria-expanded="true"
           aria-controls={`${baseId}-list`}
           aria-activedescendant={flat[active] ? optionId(active) : undefined}
-          aria-label="Rechercher une banque"
-          placeholder={archiveCount > 6 ? `Rechercher parmi ${archiveCount + 1} banques` : "Rechercher une banque"}
+          aria-label="Rechercher une destination"
+          placeholder={archiveCount > 6 ? `Rechercher parmi ${archiveCount + 1} destinations` : "Rechercher une destination"}
           value={query}
           onChange={(event) => {
             setQuery(event.target.value);
@@ -119,7 +119,7 @@ export function DestinationPicker({
             <Search size={15} aria-hidden="true" />
           </TextField.Slot>
         </TextField.Root>
-        <div className="banque-dest-list" id={`${baseId}-list`} role="listbox" aria-label="Banques" ref={listRef}>
+        <div className="banque-dest-list" id={`${baseId}-list`} role="listbox" aria-label="Destinations" ref={listRef}>
           {groups.map((group) => (
             <div key={group.id} role="group" aria-label={group.label}>
               <p className="banque-dest-group" aria-hidden="true">
@@ -152,7 +152,7 @@ export function DestinationPicker({
               })}
             </div>
           ))}
-          {flat.length === 0 ? <p className="banque-dest-empty">Aucune banque pour « {query.trim()} ».</p> : null}
+          {flat.length === 0 ? <p className="banque-dest-empty">Aucune destination pour « {query.trim()} ».</p> : null}
         </div>
         {onCreate ? (
           <div className="banque-dest-foot">
@@ -166,7 +166,7 @@ export function DestinationPicker({
               }}
             >
               <FolderPlus className="ui-button-icon" />
-              {flat.length === 0 && query.trim() ? `Créer « ${query.trim()} »` : "Nouvelle banque d'archives"}
+              {flat.length === 0 && query.trim() ? `Créer « ${query.trim()} »` : "Nouvelle collection"}
             </Button>
           </div>
         ) : null}
