@@ -2,7 +2,7 @@
 """Comptes du volume Finder : groupes, mots de passe Samba, dossiers verrouillés.
 
 Tourne dans le conteneur share, en root. Les mots de passe arrivent dans
-SHARE_PRIVATE, jamais sur la médiathèque. La vue (.volume) reste en lecture
+SHARE_PRIVATE, jamais sur la médiathèque. La vue du partage reste en lecture
 pour le partage : on ne peut pas y créer un dossier. Les fichiers se déposent
 dans les dossiers réels, qui sont inscriptibles.
 """
@@ -23,7 +23,8 @@ DEPOSER_GID = 2050
 ORGANISER_GID = 2051
 SHARE_UID = 2052
 USERNAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$")
-EMISSION_KEEP = {"entiere", "podcasts"}
+# Les dossiers de la banque sont nommés dans refresh_volume.py, de la même image.
+EMISSION_KEEP = set(refresh_volume.EMISSION_SLOTS)
 HABILLAGE_SLUGS = [slug for slug, _title in refresh_volume.HABILLAGE]
 # Les dossiers de root dans SHARE_PRIVATE : les mots de passe en attente, et la
 # base de Samba (private dir).
@@ -104,7 +105,7 @@ def smb_conf(station: str) -> str:
    passdb backend = tdbsam:/share-private/samba/passdb.tdb
 
 [{name}]
-   path = /media/.volume
+   path = /media/{refresh_volume.VOLUME}
    comment = Mediatheque
    browseable = yes
    read only = no
@@ -206,21 +207,21 @@ def sweep_flat(directory: Path, keep: set[str] | None = None) -> int:
 
 
 def sweep_media(media: Path) -> int:
-    removed = sweep_flat(media / "10-rotation")
-    archives = media / "20-archives"
+    removed = sweep_flat(media / refresh_volume.ROTATION)
+    archives = media / refresh_volume.COLLECTIONS
     if archives.is_dir() and not archives.is_symlink():
         for bank in archives.iterdir():
             if bank.is_dir() and not bank.is_symlink() and not bank.name.startswith((".", "_")):
                 removed += sweep_flat(bank)
-    habillage = media / "30-habillage"
+    habillage = media / refresh_volume.HABILLAGE_TOP
     for slug in HABILLAGE_SLUGS:
         removed += sweep_flat(habillage / slug)
-    emissions = media / "40-emissions"
+    emissions = media / refresh_volume.EMISSIONS
     if emissions.is_dir() and not emissions.is_symlink():
         for show in emissions.iterdir():
             if show.is_dir() and not show.is_symlink() and not show.name.startswith((".", "_")):
                 removed += sweep_flat(show, EMISSION_KEEP)
-    carts = media / "50-carts"
+    carts = media / refresh_volume.CARTS
     if carts.is_dir() and not carts.is_symlink():
         for cart in carts.iterdir():
             if cart.is_dir() and not cart.is_symlink() and not cart.name.startswith((".", "_")):
@@ -306,7 +307,7 @@ def _drop_user(username: str) -> None:
 
 
 def _lock_view(volume: Path) -> None:
-    for path in (volume, volume / "Banques", volume / "Habillage", volume / "Émissions"):
+    for path in (volume, *(volume / name for name in refresh_volume.VOLUME_DIRS)):
         if path.is_dir() and not path.is_symlink():
             try:
                 os.chown(path, 0, 0)
@@ -337,20 +338,20 @@ def _traverse(path: Path) -> None:
 
 def _open_media(media: Path) -> None:
     # /media est souvent 770 pour le moteur (uid 1000) : sans x pour les autres,
-    # sharewrite n'atteint jamais .volume. On ouvre seulement la traversée.
+    # sharewrite n'atteint jamais la vue. On ouvre seulement la traversée.
     _traverse(media)
-    _open_dir(media / "10-rotation")
-    archives = media / "20-archives"
+    _open_dir(media / refresh_volume.ROTATION)
+    archives = media / refresh_volume.COLLECTIONS
     _traverse(archives)
     if archives.is_dir():
         for bank in archives.iterdir():
             if bank.is_dir() and not bank.name.startswith((".", "_")):
                 _open_dir(bank)
-    habillage = media / "30-habillage"
+    habillage = media / refresh_volume.HABILLAGE_TOP
     _traverse(habillage)
     for slug in HABILLAGE_SLUGS:
         _open_dir(habillage / slug)
-    emissions = media / "40-emissions"
+    emissions = media / refresh_volume.EMISSIONS
     _traverse(emissions)
     if emissions.is_dir():
         for show in emissions.iterdir():
@@ -359,14 +360,14 @@ def _open_media(media: Path) -> None:
             _open_dir(show)
             for slot in EMISSION_KEEP:
                 _open_dir(show / slot)
-    carts = media / "50-carts"
+    carts = media / refresh_volume.CARTS
     _traverse(carts)
     if carts.is_dir():
         for cart in carts.iterdir():
             if cart.is_dir() and not cart.name.startswith((".", "_")):
                 _open_dir(cart)
-    # Vue Finder des bacs : liens vers 50-carts.
-    _open_dir(media / "Carts")
+    # Vue Finder des bacs : liens vers leurs dossiers.
+    _open_dir(media / refresh_volume.CART_LINKS)
 
 
 def _read_json(path: Path) -> dict | None:

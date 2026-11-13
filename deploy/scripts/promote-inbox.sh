@@ -4,20 +4,33 @@
 # de la boucle, ou à la main :
 #   docker exec button-radiotomate-dropbox-1 sh /promote-inbox.sh [--dry-run]
 #
-# - 00-inbox/rotation        -> 10-rotation
-# - 00-inbox/archives/<banque> -> 20-archives/<banque>, pour chaque dossier de 20-archives
-# - 10-rotation et 20-archives : un fichier déjà là est tagué sur place.
+# - l'inbox de la rotation (INBOX_ROTATION) -> la rotation (ROTATION)
+# - l'inbox d'une collection (INBOX_COLLECTIONS/<collection>) -> son dossier
+#   (COLLECTIONS/<collection>), pour chaque dossier de COLLECTIONS
+# - Dans la rotation et les collections : un fichier déjà là est tagué sur place.
 #   wav / aiff deviennent du flac dans le même dossier. Un fichier n'est
 #   réécrit que si son nom lui donne un tag qu'il n'a pas.
 # - Sans BROADCAST_CODEC : MP3 / FLAC / OGG / M4A déplacés tels quels ;
-#   WAV / AIFF convertis en FLAC ; l'original part dans 00-inbox/_sources.
+#   WAV / AIFF convertis en FLAC ; l'original part dans INBOX_SOURCES.
 # - BROADCAST_CODEC=mp3 ou opus (petit disque) : tout fichier accepté est réencodé
 #   (MP3 320 ou Opus 192) et l'original est effacé. Pas de masters sur le volume.
 # Rejouable : une cible déjà présente est ignorée.
 # Un fichier modifié pendant le passage attend le suivant : voir settled.
 set -eu
 MEDIA="${MEDIA_ROOT:-/media}"
-SOURCES="$MEDIA/00-inbox/_sources"
+
+# Les dossiers de la banque. Les scripts de la station, le catalogue et le
+# moteur les nomment chacun à un seul endroit : services/catalog/test_layout.py
+# les compare, et refuse un nom écrit ailleurs dans ce fichier.
+INBOX=00-inbox
+ROTATION=10-rotation
+COLLECTIONS=20-archives
+# L'inbox range un dépôt d'après sa destination, et garde les originaux convertis.
+INBOX_ROTATION=$INBOX/rotation
+INBOX_COLLECTIONS=$INBOX/archives
+INBOX_SOURCES=$INBOX/_sources
+
+SOURCES="$MEDIA/$INBOX_SOURCES"
 BROADCAST_CODEC="${BROADCAST_CODEC:-}"
 DRY=0
 [ "${1:-}" = "--dry-run" ] && DRY=1
@@ -164,7 +177,7 @@ promote_dir() {
         encode "$src" "$target" -map 0:a -c:a flac -compression_level 5 \
           -metadata artist="$artist" -metadata title="$title" || continue
         run mv "$src" "$SOURCES/$name"
-        echo "promu : $name -> $dest/$(basename "$target") (original dans _sources)"
+        echo "promu : $name -> $dest/$(basename "$target") (original dans ${SOURCES##*/})"
         promoted=$((promoted+1))
         ;;
       *)
@@ -218,16 +231,16 @@ tag_in_place() {
   done
 }
 
-promote_dir "$MEDIA/00-inbox/rotation" "$MEDIA/10-rotation"
-# Une collection = un dossier de 20-archives (sauf ceux en . ou _).
-for bank in "$MEDIA"/20-archives/*/; do
+promote_dir "$MEDIA/$INBOX_ROTATION" "$MEDIA/$ROTATION"
+# Une collection = un dossier de COLLECTIONS (sauf ceux en . ou _).
+for bank in "$MEDIA/$COLLECTIONS"/*/; do
   [ -d "$bank" ] || continue
   ed=$(basename "$bank")
   case "$ed" in .*|_*) continue ;; esac
-  promote_dir "$MEDIA/00-inbox/archives/$ed" "$MEDIA/20-archives/$ed"
-  tag_in_place "$MEDIA/20-archives/$ed"
+  promote_dir "$MEDIA/$INBOX_COLLECTIONS/$ed" "$MEDIA/$COLLECTIONS/$ed"
+  tag_in_place "$MEDIA/$COLLECTIONS/$ed"
 done
-tag_in_place "$MEDIA/10-rotation"
+tag_in_place "$MEDIA/$ROTATION"
 echo "promotion : $promoted promu(s), $skipped ignoré(s), $moving en cours de copie, $failed illisible(s). Index Beets au prochain tour (${BEETS_IMPORT_INTERVAL:-45} s)."
 # Un fichier sauté se voit aussi au code de sortie, pour qui lance le script à
 # la main. La boucle Beets passe outre et continue.

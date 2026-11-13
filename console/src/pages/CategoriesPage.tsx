@@ -405,7 +405,7 @@ function SelectionDialog({
                 Tester
               </Button>
             </div>
-            <span className="ui-field-hint">Exemples : path:/media/10-rotation · grouping:matinale · genre:Jazz</span>
+            <span className="ui-field-hint">Exemples : grouping:matinale · genre:Jazz</span>
           </div>
           {/* A refusal was about the query before: it goes once the query changes. */}
           {test && !(test.error && stale) ? (

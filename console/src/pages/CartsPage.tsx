@@ -478,7 +478,7 @@ const EMPTY_KIND: Record<Exclude<BacFilter, "tous">, { title: string; text: stri
   },
   habillage: {
     title: "Aucun habillage",
-    text: "Jingles, idents, virgules : leurs fichiers vivent dans 30-habillage, dans la banque.",
+    text: "Jingles, idents, virgules : leurs fichiers vivent dans le dossier Habillage de la banque.",
   },
   relais: { title: "Aucun relais", text: "Un relais diffuse le flux d'une radio partenaire, pour une durée bornée." },
 };

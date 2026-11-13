@@ -112,6 +112,93 @@ async def test_live_json_offline_and_snapshot(
     live_mod.set_live_snapshot(None)
 
 
+async def test_live_json_names_the_cart_of_each_sound(  # noqa: PLR0913
+    raw_app,
+    app_configration: dict,
+    beets_integration: BeetsIntegration,
+    dbsession: ormSession,
+    users_password: str,
+    jingles_cart,
+):
+    """The console fetches a sound through its cart: it is told which one,
+    and does not read it in the path of the file."""
+    user = User(username="live-json-cart")
+    user.update_password(users_password)
+    dbsession.add(user)
+    await dbsession.commit()
+    sound = await dbsession.scalar(
+        select(Sound).where(Sound.cart_id == jingles_cart.id)
+    )
+    assert sound is not None
+    client = _interface_client(app_configration, beets_integration)
+    await _login(client, "live-json-cart", users_password)
+    annotated = f'annotate:radiotomate_sound_id="{sound.id}",liq_amplify="-3 dB"'
+    try:
+        live_mod.set_live_snapshot(
+            live_mod.normalize_live(
+                {
+                    "status": "playing",
+                    "source": "jingles",
+                    "title": "Jingle",
+                    "radiotomate_sound_id": str(sound.id),
+                    # A folder shared by several carts: its name says no cart.
+                    "initial_uri": f"{annotated}:/media/30-habillage/jingles/a.mp3",
+                    "next_cart": {
+                        "title": "Spot",
+                        "rid": 5,
+                        "initial_uri": f"{annotated}:/media/ailleurs/b.mp3",
+                    },
+                    "next_autodj": {
+                        "title": "Suite",
+                        "rid": 3,
+                        "initial_uri": 'annotate:beets_id="12":/media/c.mp3',
+                    },
+                }
+            )
+        )
+        playing = await (await client.get("/live.json")).get_json()
+        assert playing["cart_id"] == jingles_cart.id
+        assert playing["next_cart"]["cart_id"] == jingles_cart.id
+        assert playing["next_cart"]["title"] == "Spot"
+        assert playing["next_autodj"]["cart_id"] is None
+        assert playing["next_jingle"] is None
+        # The snapshot kept for the next reader is left as the playout sent it.
+        assert "cart_id" not in live_mod.get_live_snapshot()["next_cart"]
+
+        # A sound removed since, with only its id on the snapshot.
+        live_mod.set_live_snapshot(
+            live_mod.normalize_live(
+                {
+                    "status": "playing",
+                    "source": "carts",
+                    "radiotomate_sound_id": "999999",
+                }
+            )
+        )
+        gone = await (await client.get("/live.json")).get_json()
+        assert gone["cart_id"] is None
+
+        # The cue alone names the sound, as the playout writes it in the URI.
+        live_mod.set_live_snapshot(
+            live_mod.normalize_live(
+                {
+                    "status": "playing",
+                    "source": "autodj",
+                    "initial_uri": f"{annotated}:/media/50-carts/9/d.mp3",
+                }
+            )
+        )
+        by_uri = await (await client.get("/live.json")).get_json()
+        assert by_uri["cart_id"] == jingles_cart.id
+
+        live_mod.set_live_snapshot(None)
+        offline = await (await client.get("/live.json")).get_json()
+        assert offline["status"] == "offline"
+        assert offline["cart_id"] is None
+    finally:
+        live_mod.set_live_snapshot(None)
+
+
 async def test_skip_json_forbidden_without_live(
     raw_app,
     app_configration: dict,

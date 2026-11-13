@@ -75,3 +75,71 @@ def test_iter_skips_symlink_escape(media: Path):
     (dest / "ok.mp3").write_bytes(mp3.read_bytes())
     files = {path.name for path in bank.iter_bank_audio(dest)}
     assert files == {"ok.mp3"}
+
+
+def test_the_bank_names_its_folders_in_one_place():
+    # Named once, in media_bank.py: these are the names a station has on its disk.
+    assert bank.BANK_TOPS == ("30-habillage", "40-emissions", "50-carts")
+    assert (bank.INBOX_TOP, bank.ROTATION_TOP) == ("00-inbox", "10-rotation")
+    assert (bank.TRASH_TOP, bank.FINDER_CARTS) == ("90-trash", "Carts")
+    assert bank.habillage_folders() == [
+        "30-habillage/jingles",
+        "30-habillage/ids",
+        "30-habillage/pubs",
+        "30-habillage/beds",
+        "30-habillage/stings",
+        "30-habillage/sfx",
+    ]
+
+
+def test_a_cart_named_after_habillage_takes_its_folder():
+    assert bank.HABILLAGE_TITLES == {
+        "jingles": "30-habillage/jingles",
+        "jingle": "30-habillage/jingles",
+        "ids": "30-habillage/ids",
+        "id": "30-habillage/ids",
+        "pubs": "30-habillage/pubs",
+        "pub": "30-habillage/pubs",
+        "beds": "30-habillage/beds",
+        "bed": "30-habillage/beds",
+        "stings": "30-habillage/stings",
+        "sting": "30-habillage/stings",
+        "sfx": "30-habillage/sfx",
+    }
+    assert bank.habillage_folder_for_title(" Stings ") == "30-habillage/stings"
+    assert bank.habillage_folder_for_title("Prog") is None
+
+
+def test_a_cart_is_told_its_zone_not_read_in_its_folder():
+    assert bank.bank_zone("30-habillage/jingles") == "habillage"
+    assert bank.bank_zone("/30-habillage/") == "habillage"
+    assert bank.bank_zone("40-emissions/matinale/entiere") == "emissions"
+    assert bank.bank_zone("50-carts/8") == "bacs"
+    # No folder, as for a relay, or a folder no cart may follow.
+    assert bank.bank_zone(None) is None
+    assert bank.bank_zone("") is None
+    assert bank.bank_zone("10-rotation") is None
+
+
+def test_the_engine_names_the_folders_in_media_bank_only():
+    """Changing how the bank is laid out changes media_bank.py, and no other file.
+
+    The published migrations keep what they wrote: they never change. The
+    catalogue and the station's scripts are compared with media_bank.py by
+    services/catalog/test_layout.py.
+    """
+    package = Path(bank.__file__).resolve().parents[1]
+    published = package / "commands" / "update"
+    folders = ("00-inbox", "10-rotation", "20-archives", "30-habillage")
+    folders += ("40-emissions", "50-carts", "90-trash", ".volume")
+    found = []
+    for path in sorted(package.rglob("*")):
+        if path.suffix not in {".py", ".jinja", ".liq", ".js", ".json"}:
+            continue
+        if path == Path(bank.__file__).resolve() or published in path.parents:
+            continue
+        text = path.read_text(encoding="utf-8")
+        found += [
+            f"{path.relative_to(package)} : {name}" for name in folders if name in text
+        ]
+    assert found == []

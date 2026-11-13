@@ -82,7 +82,7 @@ Le réglage `features.public_site_routes` de la table `settings`, à faux (`0`, 
 }
 ```
 
-`emission`, ajouté par-dessus, vaut `null` ou `{id, title, artist, state:"waiting"|"on_air", until, scope, start_minute?, day_of_week?}`. `DELETE /live.json` → `{ok:true}` si le compte a `live` (un admin passe). Si le scheduler ne répond pas : `502 {error:"scheduler_unavailable"}`. Si c'est le playout : `502 {error:"playout_unavailable"}`, voir [Antenne](#antenne).
+`emission`, ajouté par-dessus, vaut `null` ou `{id, title, artist, state:"waiting"|"on_air", until, scope, start_minute?, day_of_week?}`. `cart_id`, ajouté aussi, est le bac du son à l'antenne, et chacun des sons qui suivent, `next_autodj`, `next_jingle` et `next_cart`, a le sien : `null` hors d'un bac, comme un titre de l'auto-DJ, ou pour un son retiré depuis. La console prend un son par son bac, et ne lit plus le bac dans le chemin du fichier ([ADR 0019](decisions/0019-le-rangement-de-la-banque.md)). Un moteur plus ancien n'envoie pas ces champs : la console lit alors le chemin, comme avant. `DELETE /live.json` → `{ok:true}` si le compte a `live` (un admin passe). Si le scheduler ne répond pas : `502 {error:"scheduler_unavailable"}`. Si c'est le playout : `502 {error:"playout_unavailable"}`, voir [Antenne](#antenne).
 
 ### Conducteur
 
@@ -169,7 +169,9 @@ Les gestes d'antenne passent par le scheduler, puis par le playout : « Suivant 
 
 ### Carts
 
-`GET /carts.json` → `{carts:[…]}`. Un cart : `{id, version, title, notes, mode, url, queue, max_duration, bank_folder, ident_pads, skipped_files:[…], sounds:[…]}`.
+`GET /carts.json` → `{carts:[…]}`. Un cart : `{id, version, title, notes, mode, url, queue, max_duration, bank_folder, bank_zone, ident_pads, skipped_files:[…], sounds:[…]}`.
+
+`bank_zone` dit où est `bank_folder`, sans le nommer : `habillage`, `emissions` ou `bacs`, le dossier propre du bac ; `null` sans dossier, comme pour un relais. Un bac d'habillage est un bac dont `bank_zone` vaut `habillage`. Un moteur plus ancien n'envoie pas le champ : la console lit alors le début de `bank_folder`.
 
 `mode` vaut `playlist`, `playlist_loop`, `random` ou `relay`. Ce n’est pas `clock` / `loop` / `once`. En `playlist`, les sons prêts jamais passés partent d’abord, dans l’ordre ; quand il n’y en a plus, la playlist reprend au début, comme `playlist_loop`. En `random`, le moteur tire sans redite : chaque son prêt passe une fois par tour, dans un ordre tiré au sort, et d’un tour à l’autre la moitié des sons passée en dernier attend. Un son compte comme passé quand le playout le dit à l’antenne, et ceux que le conducteur prévoit déjà gardent leur tour. Quand le tour n’a plus que des sons entendus à l’instant, ou que le conducteur prévoit déjà tous les autres, le tour suivant s’ouvre avec le son le plus loin de son dernier passage et du prochain prévu ; à égalité, celui entendu le moins récemment. Le réglage `features.random_no_repeat` de la table `settings`, à faux (`0`, `false`, `off` ou une valeur vide), rend l’ancien tirage, parmi tous les sons prêts à chaque fois. Une clé absente compte comme vraie. `next_sound_id` est le son que « Diffuser maintenant » jouerait : `null` en `random`, en `relay`, ou si aucun son n’est prêt. `schedule_mode` est à part (`clock`, `jingles`, `timed`). `url` n’est rempli qu’en `relay`. `ident_pads` est le drapeau des pads. Un son : `{id, rank, title, duration, active, available, gain, peak, last_played, uploader, path}`.
 
@@ -189,7 +191,7 @@ Jouer tout de suite, droit `live` : `POST /carts/{id}/now.json` et `POST /carts/
 
 ### Banque
 
-`GET /media/bank.json` (session) → `{available, folders:[{path, count}]}` : les dossiers de la banque qu'un cart peut rattacher. `available` est faux si la banque n'est pas montée.
+`GET /media/bank.json` (session) → `{available, folders:[{path, count}], habillage:[…]}` : les dossiers de la banque qu'un cart peut rattacher. `available` est faux si la banque n'est pas montée. `habillage` donne les dossiers d'habillage qu'un bac peut suivre, même vides, et même sans banque : la console les propose à la création d'un bac d'habillage, et n'en nomme aucun. Un moteur plus ancien ne l'envoie pas : la console prend alors sa liste d'avant.
 
 ### Système
 
@@ -251,11 +253,16 @@ La politique de sécurité du contenu (CSP) de la console ne suit pas ces régla
 
 Le catalogue demande une session sur toutes ses routes, sauf `/health`, `/health/live` et `/tus-hook`, qu'appelle tusd. La recherche et la pré-écoute, `GET /library/media/{id}` avec requêtes Range, sont ouvertes à tous les rôles. Les routes `POST` demandent un admin. nginx vérifie la session devant `/library/` (`auth_request`) : sans session, il rend `401`, et `500` si le moteur ne répond pas. Le catalogue la vérifie aussi, par `/account.json`, car son port se joint sans nginx : `401 {error}` sans session, `502 {error}` si le moteur ne répond pas. Quand une pré-écoute échoue, la console redemande la même adresse en `HEAD` : l'élément audio ne donne pas le statut, et un `401` y veut dire que la session a expiré.
 
-`GET /library/search?q=&limit=&kind=&grouping=&folder=&top=` est le service catalogue (`services/catalog`). Réponse : `{hits:[{id, path, title, artist, kind, grouping, folder, top, duration}], estimatedTotalHits}`. Une liste séparée par des virgules fait un OU : `grouping=matinale,jazz`. `top` est le dossier de premier niveau : `top=20-archives` donne toutes les collections.
+`GET /library/search?q=&limit=&kind=&grouping=&zone=&habillage=&folder=&top=` est le service catalogue (`services/catalog`). Réponse : `{hits:[{id, path, title, artist, kind, grouping, zone, habillage, folder, top, duration}], estimatedTotalHits, filters}`. Une liste séparée par des virgules fait un OU : `grouping=matinale,jazz`.
 
-`GET /inbox.json` (via `/library/inbox.json`) : `{destinations, quota:{used, limit}, disk:{total, used, free}, queue, rejected, progress}`. L’envoi reprend par tus sur `/tus/`, pas par Radiotomate.
+- `zone` dit où est un titre, sans nommer son dossier : `rotation`, `collections`, `habillage`, `emissions` ou `bacs`. `zone=collections` donne toutes les collections. `habillage` est le dossier d'habillage où le titre est posé, comme `beds` ; vide ailleurs, et dans un de ses sous-dossiers. La console filtre par eux, et ne nomme aucun dossier de la banque ([ADR 0019](decisions/0019-le-rangement-de-la-banque.md)).
+- Le catalogue les lit dans le chemin du titre, à chaque recherche, et filtre par les dossiers qu'ils désignent : `zone=collections` par `top`, `habillage=beds` par `folder`. L'index ne change pas, et ses réponses sont celles d'une recherche par dossier. Une zone ou un dossier d'habillage qu'il ne connaît pas ne donne aucun titre.
+- `folder` est le dossier du fichier, et `top` son dossier de premier niveau : une console plus ancienne filtre encore par eux.
+- `filters` donne les filtres que la recherche a pris, comme `["zone"]`. Un catalogue plus ancien ne l'envoie pas, et ignore `zone` : la console redemande alors par `folder` ou `top`.
 
-`quota` : `used` compte les fichiers de `00-inbox`, `10-rotation` et `20-archives`, `limit` vient de `INBOX_QUOTA_BYTES`. `disk` est le disque sous la banque, comme le voit `df`, en octets. Il vaut `null` quand le catalogue ne le lit pas, et manque dans un catalogue plus ancien. La console montre la limite qu'un envoi rencontre en premier : le disque, ou le quota s'il laisse moins de place.
+`GET /inbox.json` (via `/library/inbox.json`) : `{destinations, collections:{folder}, quota:{used, limit}, disk:{total, used, free}, queue, rejected, progress}`. L’envoi reprend par tus sur `/tus/`, pas par Radiotomate. `collections.folder` est le dossier où naît une collection, que la console montre à sa création ; un catalogue plus ancien ne l'envoie pas.
+
+`quota` : `used` compte les fichiers de l'inbox, de la rotation et des collections, `limit` vient de `INBOX_QUOTA_BYTES`. `disk` est le disque sous la banque, comme le voit `df`, en octets. Il vaut `null` quand le catalogue ne le lit pas, et manque dans un catalogue plus ancien. La console montre la limite qu'un envoi rencontre en premier : le disque, ou le quota s'il laisse moins de place.
 
 Un envoi, de la Banque ou d'un invité de l'Agenda, arrive d'abord dans le dossier de tusd, puis il est copié dans la banque. Le catalogue le refuse, « pas assez de place sur le disque », quand il ne tient pas sur le disque, quel que soit le quota. Au début de l'envoi, il doit y tenir deux fois si tusd est sur le même disque que la banque ; à son arrivée, une fois, pour la copie. Une copie coupée ne laisse rien dans la banque, et un envoi refusé quitte le dossier de tusd. Un envoi de la Banque qui ferait passer `used` au-dessus de `limit` est refusé, « quota dépassé ». Chaque envoi se juge seul : des envois lancés ensemble ne se comptent pas entre eux.
 

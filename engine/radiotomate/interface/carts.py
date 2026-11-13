@@ -306,6 +306,7 @@ def _cart_json(cart: Cart, sounds: list[Sound] | None = None) -> dict:
         "schedule_second": cart.schedule_second,
         "next_sound_id": nxt.id if nxt else None,
         "bank_folder": cart.bank_folder or "",
+        "bank_zone": media_bank.bank_zone(cart.bank_folder),
         "ident_pads": bool(getattr(cart, "ident_pads", False)),
         "finder_path": (media_bank.finder_rel(cart.id, cart.title) if cart.id else ""),
         "skipped_files": _skipped_files(cart, listed),
@@ -601,10 +602,12 @@ async def delete_cart_json(cart_id: int):
 @login_required
 async def media_bank_json():
     root = media_root()
+    # Offered to a cart whether they hold a sound or not, even with no bank yet.
+    habillage = media_bank.habillage_folders()
     if not root.is_dir():
-        return jsonify({"available": False, "folders": []})
+        return jsonify({"available": False, "folders": [], "habillage": habillage})
     folders = await asyncio.to_thread(list_bank_folders, root)
-    return jsonify({"available": True, "folders": folders})
+    return jsonify({"available": True, "folders": folders, "habillage": habillage})
 
 
 @blueprint.post("/carts/<int:cart_id>/sounds.json")

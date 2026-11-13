@@ -6,7 +6,7 @@
 # Toutes les CLOUD_SYNC_INTERVAL secondes, il lit le dossier Bacs/ du dossier
 # Dropbox de la station (CLOUD_SYNC_REMOTE, comme dropbox:BUTTON). Chaque
 # dossier Bacs/<id>-<titre> ouvre le bac <id> : ses fichiers nouveaux sont
-# copiés dans le dossier de ce bac, par son lien Carts/<id>-… de la banque, et
+# copiés dans le dossier de ce bac, par son lien de la banque (CART_LINKS), et
 # le moteur les prend à son tour suivant. Seul le compte rendu de chaque
 # dossier, _compte-rendu.txt, repart vers Dropbox.
 #
@@ -30,6 +30,11 @@ set -eu
 REMOTE="${CLOUD_SYNC_REMOTE:-}"
 INTERVAL="${CLOUD_SYNC_INTERVAL:-60}"
 MEDIA="${MEDIA_ROOT:-/media}"
+# Le dossier des liens vers le dossier de chaque bac. Les scripts de la station,
+# le catalogue et le moteur nomment les dossiers de la banque chacun à un seul
+# endroit : services/catalog/test_layout.py les compare, et refuse un nom écrit
+# ailleurs dans ce fichier.
+CART_LINKS=Carts
 STATE="${CLOUD_SYNC_STATE:-/state}"
 GUIDE="docs/exploitation/bacs-dropbox.md"
 REPORT="_compte-rendu.txt"
@@ -352,7 +357,7 @@ open_folder() { # open_folder <nom du dossier dans Bacs/>
       ;;
   esac
   cart_dir=
-  for link in "$MEDIA/Carts/$id"-*; do
+  for link in "$MEDIA/$CART_LINKS/$id"-*; do
     if [ -L "$link" ] && [ -d "$link" ] && cart_dir=$(cd -P "$link" && pwd); then
       break
     fi
@@ -428,9 +433,9 @@ open_folder() { # open_folder <nom du dossier dans Bacs/>
 
 sync_once() {
   trouble=0
-  if [ ! -d "$MEDIA/Carts" ]; then
+  if [ ! -d "$MEDIA/$CART_LINKS" ]; then
     trouble=1
-    once "sans Carts" "$MEDIA/Carts manque : la banque n'est pas montée, ou le moteur ne l'a pas encore préparée. Nouvel essai toutes les $INTERVAL s."
+    once "sans $CART_LINKS" "$MEDIA/$CART_LINKS manque : la banque n'est pas montée, ou le moteur ne l'a pas encore préparée. Nouvel essai toutes les $INTERVAL s."
     return 0
   fi
   if ! rc lsf -R --format tsp --time-format unix --separator "$TAB" "$REMOTE/Bacs" > "$WORK/brute" 2> "$WORK/erreur"; then

@@ -34,10 +34,27 @@ AUDIO_SUFFIXES = {
     ".mp2",
     ".webm",
 }
-BANK_TOPS = ("30-habillage", "40-emissions", "50-carts")
+# The folders of the bank are named here, and nowhere else in the engine. The
+# catalogue (services/catalog/layout.py) and the station's scripts name the same
+# ones: services/catalog/test_layout.py compares them.
+INBOX_TOP = "00-inbox"
+ROTATION_TOP = "10-rotation"
+HABILLAGE_TOP = "30-habillage"
+EMISSIONS_TOP = "40-emissions"
 CART_DROP_TOP = "50-carts"
-FINDER_CARTS = "Carts"
 TRASH_TOP = "90-trash"
+FINDER_CARTS = "Carts"
+# The folders of habillage, and the folder of a show that holds its full episodes.
+HABILLAGE_TYPES = ("jingles", "ids", "pubs", "beds", "stings", "sfx")
+EMISSION_FULL = "entiere"
+# What a cart may follow.
+BANK_TOPS = (HABILLAGE_TOP, EMISSIONS_TOP, CART_DROP_TOP)
+# What the console is told of a cart's folder, instead of reading its name.
+BANK_ZONES = {
+    HABILLAGE_TOP: "habillage",
+    EMISSIONS_TOP: "emissions",
+    CART_DROP_TOP: "bacs",
+}
 MAX_BANK_ATTACH = 2000
 # The files of a cart's folder that the cart did not take, and why. The bank
 # skips it, as any dot file. The scheduler writes it, the interface reads it.
@@ -59,19 +76,41 @@ REFUSAL_TOO_MANY = (
 # nor the EBML header. Such a file is audio all the same.
 _UNREAD_SUFFIXES = {".wma", ".webm"}
 _SLUG_RE = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def habillage_rel(kind: str) -> str:
+    return f"{HABILLAGE_TOP}/{kind}"
+
+
+# A cart named after a folder of habillage, in the plural or the singular,
+# follows it.
 HABILLAGE_TITLES = {
-    "jingles": "30-habillage/jingles",
-    "jingle": "30-habillage/jingles",
-    "ids": "30-habillage/ids",
-    "id": "30-habillage/ids",
-    "pubs": "30-habillage/pubs",
-    "pub": "30-habillage/pubs",
-    "beds": "30-habillage/beds",
-    "bed": "30-habillage/beds",
-    "stings": "30-habillage/stings",
-    "sting": "30-habillage/stings",
-    "sfx": "30-habillage/sfx",
+    title: habillage_rel(kind)
+    for kind in HABILLAGE_TYPES
+    for title in (kind, kind.removesuffix("s"))
 }
+
+
+def rotation_query() -> str:
+    """The Beets query of the rotation, as the Rotation selection has it since v9.
+
+    The pages of the auto-DJ give it as an example. The bank is at /media in the
+    station's containers.
+    """
+    return f"path:/media/{ROTATION_TOP}"
+
+
+def habillage_folders() -> list[str]:
+    """The folders of habillage, as the bank_folder of a cart names them."""
+    return [habillage_rel(kind) for kind in HABILLAGE_TYPES]
+
+
+def bank_zone(rel: str | None) -> str | None:
+    """habillage, emissions or bacs: where a cart's folder is, whatever its name."""
+    text = str(rel or "").strip().replace("\\", "/").strip("/")
+    if not text:
+        return None
+    return BANK_ZONES.get(text.split("/", 1)[0])
 
 
 def media_root() -> Path:
@@ -95,10 +134,12 @@ def media_writable() -> bool:
 
 def assert_bank_top(rel: str) -> None:
     top = rel.split("/", 1)[0]
-    if top in {"00-inbox", TRASH_TOP}:
+    if top in {INBOX_TOP, TRASH_TOP}:
         raise DomainValidationError("inbox/trash cannot be attached to a cart")
     if top == FINDER_CARTS:
-        raise DomainValidationError("Carts/ is a Finder view, not a bank folder")
+        raise DomainValidationError(
+            f"{FINDER_CARTS}/ is a Finder view, not a bank folder"
+        )
     if top not in BANK_TOPS:
         raise DomainValidationError(
             "rotation and archives belong to auto-DJ, not carts"
@@ -124,7 +165,9 @@ def media_rel(path: Path) -> str | None:
 def _resolved_under_root(raw: str) -> tuple[Path, str]:
     logical = str(raw or "").strip().replace("\\", "/").strip("/")
     if logical.split("/", 1)[0] == FINDER_CARTS:
-        raise DomainValidationError("Carts/ is a Finder view, not a bank folder")
+        raise DomainValidationError(
+            f"{FINDER_CARTS}/ is a Finder view, not a bank folder"
+        )
     root = media_root()
     candidate = Path(raw)
     path = candidate if candidate.is_absolute() else (root / candidate)
@@ -136,7 +179,9 @@ def _resolved_under_root(raw: str) -> tuple[Path, str]:
         raise DomainValidationError("path is outside the media bank")
     rel = resolved.relative_to(root).as_posix()
     if rel.split("/", 1)[0] == FINDER_CARTS:
-        raise DomainValidationError("Carts/ is a Finder view, not a bank folder")
+        raise DomainValidationError(
+            f"{FINDER_CARTS}/ is a Finder view, not a bank folder"
+        )
     return resolved, rel
 
 
@@ -224,7 +269,7 @@ def _replace_finder_link(view: Path, real: Path) -> None:
 
 
 def ensure_cart_tree(cart_id: int, title: str, existing: str | None = None) -> str:
-    """Create the canonical bank folder and the Finder Carts/ view. Returns rel."""
+    """Create the canonical bank folder and its link for the Finder. Returns rel."""
     if not media_writable():
         raise DomainValidationError("media bank is not writable")
     rel = canonical_rel_for_cart(cart_id, title, existing)
@@ -368,7 +413,7 @@ def forget_legacy_files(paths: list[Path]) -> None:
 
 
 def trash_exclusive_file(path: Path, other_refs: int) -> None:
-    """Move a bank file to 90-trash when this cart was the last reference."""
+    """Move a bank file to the trash when this cart was the last reference."""
     if not path:
         return
     try:

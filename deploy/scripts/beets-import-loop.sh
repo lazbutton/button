@@ -1,5 +1,5 @@
 #!/bin/sh
-# Indexe sur place 10-rotation et 20-archives (pas de move Beets).
+# Indexe sur place la rotation et les collections (pas de move Beets).
 set -eu
 MEDIA="${MEDIA_ROOT:-/media}"
 INTERVAL="${BEETS_IMPORT_INTERVAL:-45}"
@@ -8,13 +8,22 @@ SEEN="${TMPDIR:-/tmp}/beets-import-loop"
 # Monté à la racine du conteneur. Les tests le prennent dans le dépôt.
 PROMOTE="${PROMOTE_INBOX:-/promote-inbox.sh}"
 
+# Les dossiers de la banque. Les scripts de la station, le catalogue et le
+# moteur les nomment chacun à un seul endroit : services/catalog/test_layout.py
+# les compare, et refuse un nom écrit ailleurs dans ce fichier.
+ROTATION=10-rotation
+COLLECTIONS=20-archives
+# Le regroupement Beets de la rotation. Celui d'une collection est le nom de son
+# dossier.
+ROTATION_NAME=rotation
+
 # Beets note ce qu'il a importé (import.incremental) et ne le relit plus. La
 # boucle importe par titre (-s) : l'historique retient alors chaque fichier.
 # Par dossier, il ne retenait que le dossier, et un titre déposé ensuite, à plat
-# dans 10-rotation ou dans une banque, n'entrait jamais dans la bibliothèque.
+# dans la rotation ou dans une collection, n'entrait jamais dans la bibliothèque.
 #
 # Avant chaque import, la bibliothèque et l'historique suivent le disque :
-# - Un fichier disparu de 10-rotation ou de 20-archives quitte la bibliothèque
+# - Un fichier disparu de la rotation ou des collections quitte la bibliothèque
 #   (beet remove, qui ne touche pas au disque), sans attendre que son dossier se
 #   calme : le retrait ne lit rien du fichier. Seul « n'existe pas » compte, pas
 #   une erreur de droits ou de disque.
@@ -30,8 +39,8 @@ PROMOTE="${PROMOTE_INBOX:-/promote-inbox.sh}"
 #   Perdu ou illisible, il se refait de même.
 # - Il oublie un fichier disparu que la bibliothèque ne connaît plus : remis au
 #   même chemin, le fichier est réindexé, sous un nouvel identifiant.
-follow_disk() {
-  python3 - "$MEDIA" <<'PY'
+follow_disk() { # les dossiers de tête que Beets indexe, sous la banque
+  python3 - "$MEDIA" "$ROTATION" "$COLLECTIONS" <<'PY'
 import os
 import pickle
 import sqlite3
@@ -71,7 +80,7 @@ def missing(path):
 
 before = items()
 tops = []
-for name in (b"10-rotation", b"20-archives"):
+for name in map(os.fsencode, sys.argv[2:]):
     top = os.path.join(media, name, b"")
     if not os.path.isdir(top):
         continue
@@ -161,7 +170,7 @@ PY
 #   qui suit.
 # - -d : devant un fichier disparu entre-temps, Beets efface aussi les dossiers
 #   vidés jusqu'à la racine de sa bibliothèque, la banque : une banque vidée de
-#   son dernier titre disparaîtrait, et 20-archives avec elle. Avec une racine
+#   son dernier titre disparaîtrait, et COLLECTIONS avec elle. Avec une racine
 #   hors de la banque, il n'efface rien.
 # - -M : rien ne se déplace.
 # Le gain ReplayGain se relit aussi dans les tags. Un fichier remplacé qui n'en a
@@ -356,13 +365,13 @@ while true; do
     python3 /refresh_volume.py || true
   fi
   if follow_disk; then
-    if [ -d "$MEDIA/10-rotation" ] && folder_state same "$MEDIA/10-rotation"; then
-      reread "$MEDIA/10-rotation" grouping || true
-      beet import -A -q -s "$MEDIA/10-rotation" || true
-      set_fields "$MEDIA/10-rotation" grouping=rotation || true
+    if [ -d "$MEDIA/$ROTATION" ] && folder_state same "$MEDIA/$ROTATION"; then
+      reread "$MEDIA/$ROTATION" grouping || true
+      beet import -A -q -s "$MEDIA/$ROTATION" || true
+      set_fields "$MEDIA/$ROTATION" grouping="$ROTATION_NAME" || true
     fi
-    # Chaque dossier de 20-archives est une banque ; son nom, tel quel, devient le grouping.
-    for dir in "$MEDIA"/20-archives/*/; do
+    # Chaque dossier de COLLECTIONS est une collection ; son nom, tel quel, devient le grouping.
+    for dir in "$MEDIA/$COLLECTIONS"/*/; do
       [ -d "$dir" ] || continue
       dir=${dir%/}
       # Pas de basename : $(…) retirerait un retour à la ligne final.
@@ -379,7 +388,7 @@ while true; do
   if [ -f "$PROMOTE" ]; then
     sh "$PROMOTE" || true
   fi
-  folder_state keep "$MEDIA/10-rotation" "$MEDIA"/20-archives/*/ ||
+  folder_state keep "$MEDIA/$ROTATION" "$MEDIA/$COLLECTIONS"/*/ ||
     echo "État des dossiers : impossible de le noter dans $SEEN, l'erreur est au-dessus. Beets n'indexe rien tant que la boucle ne peut pas y écrire." >&2
   if [ -f /export_share_roles.py ]; then
     python3 /export_share_roles.py || true
