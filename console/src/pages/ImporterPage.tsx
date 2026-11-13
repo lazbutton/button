@@ -95,6 +95,15 @@ function bankUppy(): BankUppy {
   return uppy;
 }
 
+/** The destination the upload view opens on: « Ajouter des titres », from a collection. */
+export function presetDestination(id: string) {
+  lastDestination = id;
+  const uppy = bankUppy();
+  for (const file of uppy.getFiles()) {
+    if (fileState(file) === "ready") uppy.setFileMeta(file.id, { destination: id });
+  }
+}
+
 function fileState(file: BankFile): FileState {
   if (file.error) return "error";
   if (file.progress.uploadComplete) return "done";

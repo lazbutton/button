@@ -5,9 +5,12 @@ import { useMonitorState } from "./MonitorContext";
 /**
  * Pré-écoute d'un titre de la bibliothèque, dans le casque seulement.
  * Le casque d'antenne se tait pendant la pré-écoute, puis reprend où il en était.
+ * `urlOf` dit où lire un titre : sans lui, par son identifiant dans la recherche.
  */
-export function usePreview(onError: (message: string) => void) {
+export function usePreview(onError: (message: string) => void, urlOf: (id: string) => string = previewUrl) {
   const { applyMute, isMuted } = useMonitorState();
+  const urlOfRef = useRef(urlOf);
+  urlOfRef.current = urlOf;
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const restoreRef = useRef<boolean | null>(null);
   const [playingId, setPlayingId] = useState<string | null>(null);
@@ -65,7 +68,7 @@ export function usePreview(onError: (message: string) => void) {
         restoreRef.current = isMuted();
         applyMute(true);
       }
-      const src = previewUrl(id);
+      const src = urlOfRef.current(id);
       audio.src = src;
       setPlayingId(id);
       void audio.play().catch((caught: unknown) => {
