@@ -128,6 +128,7 @@ async def test_a_jingle_waits_for_the_title_loaded_behind_a_sound(  # noqa: PLR0
 @pytest.mark.parametrize("source", [*CUT_IN, "autodj"])
 @pytest.mark.parametrize(("value", "waits"), SWITCH)
 async def test_a_jingle_waits_for_a_title_the_beat_does_not_show_yet(  # noqa: PLR0913
+    container_tz: str,
     dbsession: ormSession,
     jingles_cart: Cart,
     beets_integration: BeetsIntegration,
@@ -148,6 +149,7 @@ async def test_a_jingle_waits_for_a_title_the_beat_does_not_show_yet(  # noqa: P
 
 @pytest.mark.parametrize("source", [*CUT_IN, "autodj"])
 async def test_a_title_the_beat_should_show_and_does_not_is_lost(
+    container_tz: str,
     dbsession: ormSession,
     jingles_cart: Cart,
     beets_integration: BeetsIntegration,
@@ -223,3 +225,52 @@ async def test_the_title_a_hard_anchor_cut_holds_nothing_alone_in_its_queue(
     beat = _beat(lines["M3"], "carts", next_autodj=_cue(lines["M3"].id))
     await tick(dbsession, beat, client, beets_integration)
     assert _jingles(client) == [lines["J4"].id]
+
+
+@pytest.mark.parametrize(("value", "waits"), SWITCH)
+async def test_the_title_a_hard_anchor_cut_hides_a_title_pushed_a_moment_ago(  # noqa: PLR0913
+    container_tz: str,
+    dbsession: ormSession,
+    jingles_cart: Cart,
+    beets_integration: BeetsIntegration,
+    value: str | None,
+    waits: bool,
+):
+    """« M2 » was cut by a hard anchor, and its queue keeps it loaded; « M3 » was
+    pushed behind it two seconds ago, and the beat counts nothing yet. The
+    jingle waits for « M3 ». Turned off, it goes ahead of it, as before."""
+    await _switch(dbsession, value)
+    lines = await _before_j4(dbsession, beets_integration, sent=JUST_NOW)
+    client = _client()
+    beat = _beat(lines["M3"], "carts", next_autodj=_cue(lines["M2"].id))
+    await tick(dbsession, beat, client, beets_integration)
+    assert (lines["J4"].id not in _jingles(client)) is waits
+
+
+@pytest.mark.parametrize(("value", "waits"), SWITCH)
+async def test_a_sound_of_the_desk_waits_for_a_jingle_the_beat_does_not_show_yet(  # noqa: PLR0913
+    container_tz: str,
+    dbsession: ormSession,
+    jingles_cart: Cart,
+    beets_integration: BeetsIntegration,
+    value: str | None,
+    waits: bool,
+):
+    """« J4 » was pushed to the jingles queue two seconds ago, and the beat does
+    not show it yet. A sound of the desk put after it goes to the carts queue,
+    which plays first: it waits for « J4 », at the end of « M3 » as behind a
+    sound. Turned off, it goes ahead of « J4 », as before."""
+    await _switch(dbsession, value)
+    lines = await _before_j4(dbsession, beets_integration, sent=LONG_AGO)
+    lines["M3"].status = RundownStatus.ON_AIR.value
+    _sent(lines["J4"], JUST_NOW)
+    _sent(lines["M5"], LONG_AGO)
+    await dbsession.commit()
+    at = lines["M5"].planned_at.replace(tzinfo=PARIS)
+    line = await _put_next(dbsession, at.isoformat(), "son")
+    client = _client()
+    beat = _beat(lines["M3"], "autodj", "2", next_autodj=_cue(lines["M5"].id))
+    beat["autodj_queued"] = 1
+    beat["radiotomate_item_id"] = lines["M3"].id
+    await tick(dbsession, beat, client, beets_integration)
+    assert (("/queue/carts", line.id) not in _pushes(client)) is waits
