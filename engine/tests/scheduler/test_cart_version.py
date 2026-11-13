@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session as ormSession
 
 from radiotomate.beets import BeetsIntegration
-from radiotomate.models import Cart, Sound
+from radiotomate.models import Cart, RundownItem, Sound
 from radiotomate.quart import CustomQuart
 from radiotomate.scheduler import schedule
 from radiotomate.scheduler.clock import tick
@@ -42,6 +42,19 @@ async def _modified_long_ago(session: ormSession, *carts: Cart) -> None:
         await session.execute(
             table.update().where(table.c.id == cart.id).values(modified=LONG_AGO)
         )
+    await session.commit()
+
+
+async def _sent_a_quarter_ago(session: ormSession) -> None:
+    """The lines a tick sent, a quarter of an hour before the next one: the
+    playout took them that long ago."""
+    rows = await session.scalars(
+        select(RundownItem).where(RundownItem.reserved_at.is_not(None))
+    )
+    for row in rows:
+        for name in ("reserved_at", "sent_at", "queued_at"):
+            if getattr(row, name) is not None:
+                setattr(row, name, getattr(row, name) - timedelta(minutes=15))
     await session.commit()
 
 
@@ -116,6 +129,7 @@ async def test_a_cart_on_air_keeps_its_version(
     for minutes in (0, 15, 30, 45):
         at = (night + timedelta(minutes=minutes)).isoformat()
         async with raw_app.extensions["sqlalchemy"].session() as session:
+            await _sent_a_quarter_ago(session)
             await tick(session, _live(at), client, beets_integration)
     queues = [call.args[0] for call in client.post.call_args_list]
     assert queues.count("/queue/jingles") == 4

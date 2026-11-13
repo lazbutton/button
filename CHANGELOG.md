@@ -6,6 +6,8 @@ Le détail des changements du moteur par rapport à l'amont : [docs/moteur/chang
 
 ## Non publié
 
+- Corrigé : un jingle de l'heure type passait devant le titre que le conducteur annonçait avant lui, jusqu'à 24 s avant son heure. Après le son d'une coupure « Attend la fin », la file de l'auto-DJ a déjà chargé le titre suivant, et ne le compte plus ; juste après un direct, le playout peut dire sa file vide avant d'y voir le titre que l'horloge vient d'envoyer. L'horloge croyait alors la file vide, et le jingle passait d'abord : après un direct, deux jingles passaient de suite, puis deux titres s'inversaient au conducteur, l'un à 45 s de son heure. Une ligne mise à la suite au pupitre, qui suit la même règle, pouvait faire de même. L'horloge attend maintenant le titre que la file nomme, ou qu'elle vient d'y envoyer. Le banc du conducteur ne tolère plus ce défaut. Le réglage `features.titles_sent_go_first` de la table `settings`, à faux, rend l'ancien comportement sans redéployer. Rien à faire sur une station : le correctif vient avec les images du moteur. Voir [les changements du moteur](docs/moteur/changements-radiotomate.md#conducteur-et-vérité-dantenne).
+
 ## 1.3.0
 
 Une mineure : rien d'autre que la mise à jour habituelle, voir [docs/deploiement.md](docs/deploiement.md#mettre-à-jour). Le schéma de la base reste en v18 : aucune migration.
