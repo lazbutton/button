@@ -9,7 +9,6 @@ import { CreateBacDialog, type CartCreateExtra } from "../components/carts/Creat
 import { RelayEditor } from "../components/carts/RelayEditor";
 import { SkippedFiles } from "../components/carts/SkippedFiles";
 import { SoundTable } from "../components/carts/SoundTable";
-import { ProtoToast, useProtoToast } from "../components/ProtoToast";
 import {
   attachBankFolders,
   fileLabel,
@@ -36,7 +35,7 @@ import { SessionGate } from "../api/SessionGate";
 import { cartTotalSeconds, formatClock, formatSpan, relayHost } from "../api/soundsView";
 import type { Cart, CartMode, CartsResponse, Clock, ClocksResponse } from "../api/types";
 import { useApiJson } from "../api/useApiJson";
-import type { ToastTone } from "../ui/AppToast";
+import { AppToast, useAppToast } from "../ui/AppToast";
 import "../styles/pages/sons.css";
 
 const FILTERS = new Set<BacFilter>(["tous", "fichiers", "habillage", "relais"]);
@@ -105,7 +104,7 @@ function bacUsage(clocks: Clock[], cart: Cart): BacUsage {
 export function CartsPage() {
   const { data, setData, error, loading, reload } = useApiJson<CartsResponse>("/carts.json");
   const clocksRes = useApiJson<ClocksResponse>("/autodj/clocks.json");
-  const { message, show, dismiss } = useProtoToast();
+  const { toast, show, dismiss } = useAppToast();
   const [params, setParams] = useSearchParams();
   const [busy, setBusy] = useState(false);
   const [firing, setFiring] = useState(false);
@@ -171,8 +170,6 @@ export function CartsPage() {
     return () => window.removeEventListener("keydown", onKey);
   }, [inspectorOpen]);
 
-  const notify = (text: string, tone?: ToastTone) => show(text, tone);
-
   const fail = (caught: unknown, fallback: string) => show(bacErrorText(caught, fallback), "error");
 
   const selectCart = (id: number) => {
@@ -237,7 +234,7 @@ export function CartsPage() {
         putCart,
       );
       putCart(next);
-      show(files.length === 1 ? "1 son ajouté" : `${files.length} sons ajoutés`, "success");
+      show(files.length === 1 ? "1 son ajouté." : `${files.length} sons ajoutés.`, "success");
     } catch (caught) {
       fail(caught, "Ajout impossible.");
     } finally {
@@ -256,10 +253,10 @@ export function CartsPage() {
       const added = Math.max(0, payload.cart.sounds.length - before);
       show(
         added === 0
-          ? "Dossier lié : ses sons étaient déjà dans le bac"
+          ? "Dossier lié : ses sons étaient déjà dans le bac."
           : added === 1
-            ? "1 son lié, sans copie"
-            : `${added} sons liés, sans copie`,
+            ? "1 son lié, sans copie."
+            : `${added} sons liés, sans copie.`,
         "success",
       );
     } finally {
@@ -283,7 +280,7 @@ export function CartsPage() {
       if (!cartMatchesBacFilter(created.cart, filter)) next.set("filtre", bacFilterFor(created.cart));
     });
     setView("detail");
-    show(`« ${created.cart.title} » créé`, "success");
+    show(`« ${created.cart.title} » créé.`, "success");
   };
 
   // The settings go with the version of the bac the form's typing started from. Changed
@@ -310,7 +307,7 @@ export function CartsPage() {
       if (result.status === "saved") {
         putCart(result.cart);
         await reload();
-        show("Bac enregistré", "success");
+        show("Bac enregistré.", "success");
         return formStillShown(form, base.id, result.cart, shown.current) && stillHere() ? result : null;
       }
       if (result.status === "gone") {
@@ -321,13 +318,13 @@ export function CartsPage() {
         }
         await reload();
         if (here) show(goneText(null), "error");
-        else show(goneText(base.title), "error", { duration: 9000 });
+        else show(goneText(base.title), "error");
         return null;
       }
       if (formStillShown(form, base.id, result.cart, shown.current) && stillHere()) {
         return { status: "changed", cart: result.cart, text: changedText(result.settings) };
       }
-      show(lostText(base.title, result.settings), "error", { duration: 9000 });
+      show(lostText(base.title, result.settings), "error");
     } catch (caught) {
       fail(caught, "Enregistrement impossible.");
     } finally {
@@ -344,7 +341,7 @@ export function CartsPage() {
       writeParams((next) => next.delete("id"));
       setView("list");
       await reload();
-      show(`« ${cart.title} » supprimé`, "success");
+      show(`« ${cart.title} » supprimé.`, "success");
     } catch (caught) {
       if (caught instanceof ApiRequestError && caught.status === 409) {
         show("Une horloge utilise ce bac : retire-le d'abord dans Programmation.", "error");
@@ -361,7 +358,7 @@ export function CartsPage() {
     setFiring(true);
     try {
       await apiPost(`/carts/${cart.id}/now.json`);
-      show(`« ${cart.title} » envoyé à l'antenne`, "success");
+      show(`« ${cart.title} » envoyé à l'antenne.`, "success");
     } catch (caught) {
       if (caught instanceof ApiForbiddenError) show("Il faut le droit Antenne pour diffuser.", "error");
       else show(caught instanceof ApiRequestError ? caught.message : "Diffusion impossible.", "error");
@@ -415,7 +412,7 @@ export function CartsPage() {
                     cart={cart}
                     importProgress={importProgress}
                     onCart={putCart}
-                    notify={notify}
+                    notify={show}
                     onImport={(collect) => importAudio(cart.id, collect)}
                     onAttachBank={(folders) => attachBank(cart.id, folders)}
                   />
@@ -447,7 +444,7 @@ export function CartsPage() {
           </div>
         )}
       </SessionGate>
-      <ProtoToast message={message} onDismiss={dismiss} />
+      <AppToast toast={toast} onDismiss={dismiss} />
     </div>
   );
 }

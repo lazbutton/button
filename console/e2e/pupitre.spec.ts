@@ -118,7 +118,7 @@ test("« / » mène à la recherche, et Entrée met le titre trouvé à la suite
   const demande = (await insertion).postDataJSON();
   expect(demande).toMatchObject({ title: "Annonce locale", kind: "pub" });
   expect(demande, "à la suite, pas avant une ligne").not.toHaveProperty("before_id");
-  await expect(avis(page, "Mis à la suite.")).toBeVisible();
+  await expect(avis(page, "« Annonce locale » mis à la suite.")).toBeVisible();
 });
 
 test("la pré-écoute passe au casque seul, puis lui rend l’antenne", async ({ page }) => {
@@ -152,7 +152,7 @@ test("la pré-écoute passe au casque seul, puis lui rend l’antenne", async ({
 
 test("Diffuser met le titre à l’antenne tout de suite", async ({ page }) => {
   await bibliotheque(page).getByRole("button", { name: "Diffuser Jingle station maintenant" }).click();
-  await expect(avis(page, /^Envoyé|^À l’antenne/)).toBeVisible();
+  await expect(avis(page, /^« Jingle station » part à l’antenne/)).toBeVisible();
   await expect(antenne(page).getByText("Jingle station", { exact: true })).toBeVisible();
   await expect(page.getByRole("banner").getByRole("link", { name: /^À l’antenne : Jingle station[,.]/ })).toBeVisible();
 });
@@ -190,9 +190,9 @@ test("une ligne montée devant une ligne déjà commencée prend la tête de la 
   // Le moteur de démo date de l'appui une ligne mise à la suite. Derrière le
   // titre lancé par « Diffuser », elle prend la tête de la file, déjà commencée.
   await bibliotheque(page).getByRole("button", { name: "Diffuser Grande distance maintenant" }).click();
-  await expect(avis(page, /^Envoyé|^À l’antenne/)).toBeVisible();
+  await expect(avis(page, /^« Grande distance » part à l’antenne/)).toBeVisible();
   await bibliotheque(page).getByRole("button", { name: /^Mettre à la suite : Annonce locale,/ }).click();
-  await expect(avis(page, "Mis à la suite.")).toBeVisible();
+  await expect(avis(page, "« Annonce locale » mis à la suite.")).toBeVisible();
   // La tête de la file doit avoir commencé depuis plus que la durée de la
   // ligne montée : le temps du moteur passe pour de vrai.
   await page.waitForTimeout(5_000);
@@ -204,7 +204,7 @@ test("une ligne montée devant une ligne déjà commencée prend la tête de la 
     // La ligne à monter, mise à la suite pendant que la file est tenue : la
     // sienne ne finit pas avant le geste.
     await bibliotheque(page).getByRole("button", { name: /^Mettre à la suite : Jingle station,/ }).click();
-    await expect(avis(page, "Mis à la suite.")).toBeVisible();
+    await expect(avis(page, "« Jingle station » mis à la suite.")).toBeVisible();
     const rang = (await titresDesLignes(page)).indexOf("Jingle station");
     expect(rang, "« Jingle station » sous la tête de la file").toBeGreaterThan(0);
 
@@ -238,6 +238,8 @@ test("une ligne retirée de la file revient avec « Annuler »", async ({ page }
     await expect(ligne).toHaveCount(1);
     const retirer = ligne.getByRole("button", { name: /^Retirer / });
     const nom = (await retirer.getAttribute("aria-label")) ?? "";
+    // Les messages nomment la ligne, comme son bouton.
+    const titre = nom.replace(/^Retirer (.+) de la file$/, "$1");
 
     // Le retrait nomme la ligne, avec son heure : une autre ligne de l'horloge à
     // la même heure exacte resterait dans la file.
@@ -247,12 +249,12 @@ test("une ligne retirée de la file revient avec « Annuler »", async ({ page }
     );
     await retirer.click();
     expect((await envoi).postDataJSON()).toEqual({ suppress_at: at, suppress_id: id });
-    const retrait = avis(page, "Retiré de la file.");
+    const retrait = avis(page, `« ${titre} » retiré de la file.`);
     await expect(retrait).toBeVisible();
     await expect(ligne).toHaveCount(0);
 
     await retrait.getByRole("button", { name: "Annuler" }).click();
-    await expect(avis(page, "Annulé.")).toBeVisible();
+    await expect(avis(page, `Retrait annulé : « ${titre} » est de retour dans la file.`)).toBeVisible();
     await expect(ligne).toHaveCount(1);
     await expect(ligne.getByRole("button", { name: nom, exact: true })).toBeVisible();
   });

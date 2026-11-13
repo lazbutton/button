@@ -117,6 +117,13 @@ SETTING_HARD_ANCHORS_CUT = "features.hard_anchors_cut_titles"
 # before: behind a long sound, the queue cleaner takes them out one after the
 # other, and their lines stay « en file ».
 SETTING_QUEUE_CLOSE_TO_AIR = "features.titles_queued_close_to_air"
+# Whether a line sent to a queue the playout says is empty is closed: a playout
+# that starts again has lost it. Off: it stays « en file », as before. A missing
+# key: it is closed.
+SETTING_CLOSE_LOST_LINES = "features.close_lines_lost_by_playout"
+# Whether the conducteur is rebuilt at the first tick of an engine that plans it
+# another way than the one before. Off: its lines stay. A missing key: rebuilt.
+SETTING_REBUILD_AFTER_UPGRADE = "features.rebuild_conducteur_after_upgrade"
 _SETTING_OFF = {"0", "false", "off", ""}
 # Why an anchor line closes without going, as the conducteur shows it.
 HELD_BY_LIVE = "retenue pendant le direct"
@@ -510,13 +517,18 @@ async def _clock_step(  # noqa: PLR0912, PLR0913, PLR0915
             return
 
     from radiotomate.scheduler.execution import (
+        close_lost_lines,
         close_passed_jingles,
         close_past_anchor_lines,
         ensure_forecast,
+        rebuild_after_upgrade,
     )
 
+    await rebuild_after_upgrade(session, beets, gateway, now)
     await close_past_anchor_lines(session, now)
     await close_passed_jingles(session, now)
+    # Before the queues are filled: a line pushed now is not in the beat yet.
+    await close_lost_lines(session, live_data)
     clock_id = clock.id
     weekday = now.weekday()
     await ensure_forecast(session, beets, now=now)
@@ -1051,6 +1063,63 @@ def _seconds_until(planned_at: datetime | None, now: datetime) -> float:
     return (planned_at - now.replace(tzinfo=None)).total_seconds()
 
 
+# What airs before a line pushed to a queue: the jingles go before the titles.
+_AHEAD_OF = {"jingles": ["jingles"], "autodj": ["jingles", "autodj"]}
+
+
+async def _goes_ahead_of_the_cut(
+    session: ormSession,
+    item: RundownItem,
+    live_data: dict,
+    now: datetime,
+    *,
+    queue: str,
+) -> None:
+    """
+    A line of the clock just pushed, that the conducteur plans after the next
+    hard anchor and that airs before it: nothing is left to air before the
+    anchor, on an antenna ahead of the conducteur, after a title lost or
+    skipped. It takes the time it airs at: the end of what plays, and of what
+    waits before it. Left at its time, it stood first in the file with a time
+    after the sound of the anchor, minutes after its airing. The lines planned
+    after it keep theirs: they go after that sound.
+    """
+    from radiotomate.scheduler.execution import next_cut_at
+
+    if item.planned_at is None or source_id(live_data) in {"relay", "stream"}:
+        return
+    local = now.replace(tzinfo=None)
+    cut = await next_cut_at(session, local)
+    if cut is None or item.planned_at < cut:
+        return
+    ahead = await session.scalars(
+        select(RundownItem).where(
+            RundownItem.id != item.id,
+            RundownItem.queue.in_(_AHEAD_OF[queue]),
+            RundownItem.status.in_(
+                [
+                    RundownStatus.PENDING_PUSH.value,
+                    RundownStatus.SENT.value,
+                    RundownStatus.ACCEPTED.value,
+                    RundownStatus.IN_QUEUE.value,
+                ]
+            ),
+        )
+    )
+    wait = remaining_seconds(live_data) + sum(float(row.duration or 0) for row in ahead)
+    start = local + timedelta(seconds=wait)
+    if start < cut:
+        _log.info(
+            "Rundown %s planned at %s airs ahead of the hard anchor of %s: %s",
+            item.id,
+            item.planned_at,
+            cut,
+            start,
+        )
+        item.planned_at = start
+        await session.commit()
+
+
 async def _fill_sequential_from_rundown(  # noqa: PLR0912, PLR0913, PLR0915
     session: ormSession,
     gateway: PlayoutGateway,
@@ -1154,6 +1223,9 @@ async def _fill_sequential_from_rundown(  # noqa: PLR0912, PLR0913, PLR0915
                     session, gateway, item, queue="jingles", wait=wait
                 ):
                     continue
+                await _goes_ahead_of_the_cut(
+                    session, item, live_data, now, queue="jingles"
+                )
                 actions.append("jingle")
                 _state.cursor += 1
                 jingles_q += 1
@@ -1206,6 +1278,10 @@ async def _fill_sequential_from_rundown(  # noqa: PLR0912, PLR0913, PLR0915
                     session, gateway, item, queue=queue
                 ):
                     continue
+                if queue == "autodj":
+                    await _goes_ahead_of_the_cut(
+                        session, item, live_data, now, queue="autodj"
+                    )
                 actions.append(
                     "autodj"
                     if item.kind == PositionKind.MUSIQUE.value
@@ -1411,6 +1487,20 @@ async def titles_queued_close_to_air(session: ormSession) -> bool:
     soon: behind a long sound, the queue cleaner would take it out before its
     turn. A missing key says so."""
     row = await Setting.from_key(session, SETTING_QUEUE_CLOSE_TO_AIR)
+    return row is None or str(row.value).strip().lower() not in _SETTING_OFF
+
+
+async def lost_lines_close(session: ormSession) -> bool:
+    """Whether a line sent to a queue the playout says is empty is closed: the
+    playout has started again, and lost it. A missing key says so."""
+    row = await Setting.from_key(session, SETTING_CLOSE_LOST_LINES)
+    return row is None or str(row.value).strip().lower() not in _SETTING_OFF
+
+
+async def rebuilds_after_upgrade(session: ormSession) -> bool:
+    """Whether the conducteur is rebuilt at the first tick of an engine that
+    plans it another way than the one before. A missing key says so."""
+    row = await Setting.from_key(session, SETTING_REBUILD_AFTER_UPGRADE)
     return row is None or str(row.value).strip().lower() not in _SETTING_OFF
 
 

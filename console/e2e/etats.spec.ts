@@ -153,7 +153,7 @@ test("moteur injoignable pendant « Annuler » : la console dit que la ligne res
   const ligne = file(page).getByRole("listitem").filter({ hasText: heure });
   await expect(ligne).toHaveCount(1);
   await ligne.getByRole("button", { name: /^Retirer / }).click();
-  const retrait = avis(page, "Retiré de la file.");
+  const retrait = avis(page, /^« .+ » retiré de la file\./);
   await expect(retrait).toBeVisible();
   await expect(ligne).toHaveCount(0);
 

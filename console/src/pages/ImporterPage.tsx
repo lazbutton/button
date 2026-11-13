@@ -39,7 +39,7 @@ import { useAccount } from "../api/AccountContext";
 import { CreateBankDialog } from "../components/banque/CreateBankDialog";
 import { DestinationPicker } from "../components/banque/DestinationPicker";
 import { StationFolder } from "../components/banque/StationFolder";
-import { ProtoToast, useProtoToast } from "../components/ProtoToast";
+import { AppToast, useAppToast } from "../ui/AppToast";
 import "../styles/pages/sons.css";
 
 type BankMeta = { destination: string };
@@ -156,7 +156,7 @@ export function ImporterPage() {
   const files = useUppyState(uppy, (state) => state.files);
   const totalProgress = useUppyState(uppy, (state) => state.totalProgress);
   const { status, problem, loadedAt, loading, load } = useInbox();
-  const { message, show, dismiss } = useProtoToast();
+  const { toast, show, dismiss } = useAppToast();
   const [destination, setDestinationState] = useState(lastDestination);
   const [creating, setCreating] = useState<string | null>(null);
   const [skipped, setSkipped] = useState<string[]>([]);
@@ -185,12 +185,11 @@ export function ImporterPage() {
     const sent = result.successful?.length ?? 0;
     const refused = result.failed?.length ?? 0;
     if (!sent && !refused) return;
-    if (!refused) show(sent === 1 ? "1 fichier envoyé à la banque" : `${sent} fichiers envoyés à la banque`, "success");
-    else
-      show(
-        `${sent} envoyé${sent === 1 ? "" : "s"}, ${refused} refusé${refused === 1 ? "" : "s"} : voir la liste`,
-        "error",
-      );
+    if (!refused) show(sent === 1 ? "1 fichier envoyé à la banque." : `${sent} fichiers envoyés à la banque.`, "success");
+    else {
+      const kept = sent === 0 ? "Aucun fichier envoyé" : sent === 1 ? "1 fichier envoyé" : `${sent} fichiers envoyés`;
+      show(`${kept}, ${refused} refusé${refused === 1 ? "" : "s"} : la liste dit pourquoi.`, "error");
+    }
   });
 
   // Closing the tab mid-upload loses the file handles: ask first.
@@ -229,7 +228,10 @@ export function ImporterPage() {
           })),
         );
       } catch {
+        // Rien n'est entré : « déjà dans la liste », plus bas, ne remplace pas ce message.
         show("Ces fichiers n'ont pas pu entrer dans la liste.", "error");
+        setSkipped(refused);
+        return;
       }
     }
     const added = uppy.getFiles().length - before;
@@ -505,10 +507,10 @@ export function ImporterPage() {
           const created = await createBank(label, folder);
           await load();
           setDestination(created.id);
-          show(`Collection « ${created.label} » créée : les envois iront dans ${created.folder}`, "success");
+          show(`Collection « ${created.label} » créée : les envois iront dans ${created.folder}.`, "success");
         }}
       />
-      <ProtoToast message={message} onDismiss={dismiss} />
+      <AppToast toast={toast} onDismiss={dismiss} />
     </div>
   );
 }

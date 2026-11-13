@@ -45,10 +45,10 @@ import { useApiJson } from "../api/useApiJson";
 import { AgendaList } from "../components/agenda/AgendaList";
 import { AgendaWeek } from "../components/agenda/AgendaWeek";
 import { DiffusionDialog, type DiffusionTarget } from "../components/agenda/DiffusionDialog";
-import { ProtoToast, useProtoToast } from "../components/ProtoToast";
 import { useBrand } from "../lib/BrandContext";
 import { useParisNow } from "../lib/parisClock";
 import { useHosts } from "../lib/useHosts";
+import { AppToast, useAppToast } from "../ui/AppToast";
 import "../styles/pages/programmation.css";
 import "../styles/pages/agenda.css";
 
@@ -71,7 +71,7 @@ export function AgendaPage() {
   const [target, setTarget] = useState<DiffusionTarget | null>(null);
   const [weeklyOpen, setWeeklyOpen] = useState<WeeklyOccurrence | null>(null);
   const [confirmOff, setConfirmOff] = useState(false);
-  const { message, show, dismiss } = useProtoToast();
+  const { toast, show, dismiss } = useAppToast();
 
   const days = useMemo(() => weekDays(monday), [monday]);
   const path = view === "semaine" ? agendaPath(monday, addDays(monday, 6)) : agendaPath(today, addDays(today, LIST_DAYS - 1));
@@ -112,19 +112,18 @@ export function AgendaPage() {
       const saved = await updateDiffusion(row.id, { version: row.version, start, end });
       await reload();
       show(text, "success", {
-        duration: 6000,
         action: {
           label: "Annuler",
           onClick: () => {
             void updateDiffusion(saved.id, { version: saved.version, start: before.start, end: before.end })
               .then(() => reload())
-              .then(() => show("Remis comme avant", "info"))
-              .catch((caught) => show(errorText(caught, "Retour impossible."), "error"));
+              .then(() => show(`Changement annulé : « ${row.title} » a repris son horaire.`, "success"))
+              .catch((caught) => show(errorText(caught, "Impossible d'annuler ce changement."), "error"));
           },
         },
       });
     } catch (caught) {
-      show(errorText(caught, "Déplacement impossible."), "error");
+      show(errorText(caught, "Changement d'horaire impossible."), "error");
       await reload();
     }
   };
@@ -142,9 +141,10 @@ export function AgendaPage() {
     try {
       await setAgendaEnabled(enabled);
       await reload();
-      show(enabled ? "L'agenda est rallumé" : "L'agenda est coupé : la grille joue seule", enabled ? "success" : "info");
+      show(enabled ? "L'agenda est rallumé." : "L'agenda est coupé : la grille joue seule.", "success");
     } catch (caught) {
-      show(errorText(caught, "Changement impossible."), "error");
+      const fallback = enabled ? "Impossible de rallumer l'agenda." : "Impossible de couper l'agenda.";
+      show(errorText(caught, fallback), "error");
     } finally {
       setConfirmOff(false);
     }
@@ -156,7 +156,7 @@ export function AgendaPage() {
       await reload();
       show(text, "success");
     } catch (caught) {
-      show(errorText(caught, "Action impossible."), "error");
+      show(errorText(caught, "Changement impossible pour ce jour-là."), "error");
     } finally {
       setWeeklyOpen(null);
     }
@@ -300,11 +300,11 @@ export function AgendaPage() {
                   row,
                   wallString(day, start),
                   wallString(day, start + row.duration_min),
-                  `« ${row.title} » déplacée : ${dayLongLabel(day)}, ${wallString(day, start).slice(11)}`,
+                  `« ${row.title} » déplacée : ${dayLongLabel(day)}, ${wallString(day, start).slice(11)}.`,
                 )
               }
               onResize={(row, day, end) =>
-                void moveTo(row, wallOf(row.starts_at), wallString(day, end), `« ${row.title} » finit à ${wallString(day, end).slice(11)}`)
+                void moveTo(row, wallOf(row.starts_at), wallString(day, end), `« ${row.title} » finit à ${wallString(day, end).slice(11)}.`)
               }
             />
           ) : (
@@ -411,7 +411,7 @@ export function AgendaPage() {
                       onClick={() =>
                         void weeklyAction(
                           () => restoreOccurrence(weeklyOpen.emission_id, weeklyOpen.date),
-                          `« ${weeklyOpen.title} » rétablie ce jour-là`,
+                          `« ${weeklyOpen.title} » rétablie ce jour-là.`,
                         )
                       }
                     >
@@ -425,7 +425,7 @@ export function AgendaPage() {
                       onClick={() =>
                         void weeklyAction(
                           () => cancelOccurrence(weeklyOpen.emission_id, weeklyOpen.date),
-                          `« ${weeklyOpen.title} » annulée ce jour-là`,
+                          `« ${weeklyOpen.title} » annulée ce jour-là.`,
                         )
                       }
                     >
@@ -476,7 +476,7 @@ export function AgendaPage() {
           </div>
         </Dialog.Content>
       </Dialog.Root>
-      <ProtoToast message={message} onDismiss={dismiss} />
+      <AppToast toast={toast} onDismiss={dismiss} />
     </div>
   );
 }

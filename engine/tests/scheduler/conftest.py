@@ -139,6 +139,7 @@ def reset_clock_sequencer():
         reset_state,
         set_queue_max_age,
     )
+    from radiotomate.scheduler.execution import forget_upgrade_check
     from radiotomate.scheduler.metrics import runtime_metrics
     from radiotomate.scheduler.stall import stall_watch
     from radiotomate.scheduler.watchdog import Watchdog
@@ -147,6 +148,9 @@ def reset_clock_sequencer():
     # As a station sets it up; a test that starts the scheduler of tests.yaml,
     # whose queue cleaner is off, leaves it without a limit.
     set_queue_max_age(DEFAULT_QUEUE_MAX_AGE)
+    # As a scheduler past its first tick: the base of a test has no forecast
+    # revision, and the first tick of a new engine rebuilds the conducteur.
+    forget_upgrade_check(checked=True)
     runtime_metrics.reset()
     stall_watch.reset()
     Watchdog.liquidsoap_version = "disconnected"
