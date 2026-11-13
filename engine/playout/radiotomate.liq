@@ -1102,11 +1102,16 @@ end
 harbor.http.register(port=API_PORT, method="POST", "/queue/:queue", queue_POST)
 
 
-def _queue_clean_result(q, max_age)
+# `spare_next`: the next title of the queue stays, however long it has waited.
+# The scheduler keeps one title ready in the Auto-DJ queue behind what plays,
+# a recorded show of an hour as well: taken out after ten minutes, it left the
+# queue empty at the end of the show, and its line in the conducteur for good.
+def _queue_clean_result(q, max_age, ~spare_next=false)
   now = time()
   removed = ref(0)
   kept = ref(0)
   playing = ref(-1)
+  spared = ref(not spare_next)
   current_maybe = q.current()
   if null.defined(current_maybe) then
     playing := request.id(null.get(current_maybe))
@@ -1114,6 +1119,9 @@ def _queue_clean_result(q, max_age)
   list.iter(fun (r) -> begin
     rid = request.id(r)
     if rid == playing() then
+      kept := kept() + 1
+    elsif not spared() then
+      spared := true
       kept := kept() + 1
     else
       md = request.metadata(r)
@@ -1167,7 +1175,7 @@ def queue_clean_POST(req, res) =
   end
   res.status_code(200)
   res.json({
-    autodj=_queue_clean_result(autodj_queue, clamped),
+    autodj=_queue_clean_result(autodj_queue, clamped, spare_next=true),
     jingles=both(jingles_queue, jingles_wait_queue),
     carts=both(carts_queue, carts_wait_queue)
   })

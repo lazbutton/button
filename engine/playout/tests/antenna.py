@@ -26,6 +26,8 @@ when:
 - a sound told to wait for the end of a title cuts it: the end of the title
   comes back after the sound;
 - a relay comes back once the live that took the antenna from it is over;
+- the cleaner of the queues takes out the next title of the Auto-DJ, which the
+  scheduler keeps ready behind what plays, or leaves the one after it;
 - the antenna stays silent.
 
 It needs Docker and Compose, and nothing else: standard library only. Its
@@ -95,6 +97,12 @@ MEASURED = [
 ]
 # What follows each sound that waited: its title before it, the next one after.
 FOLLOWS = {sound: (title, TITLES[TITLES.index(title) + 1]) for title, sound in WAITS}
+# The cleaner of the queues, which the scheduler runs every minute: the second
+# title is the next one of the Auto-DJ and stays, the third one leaves once it
+# has waited this long, the least the playout takes. The first title, 40 s and
+# the sound of a cart that cuts it, is still on air then.
+SPARED, CLEANED = TITLES[1], TITLES[2]
+CLEAN_SECONDS = 30.0
 # The start sound has aired, and the music queue has been empty for a while: a
 # first title pushed then is what used to stall.
 EMPTY_QUEUE_SECONDS = 5.0
@@ -219,6 +227,8 @@ class Playout:
         self.journal_url = bench.address("playout", 6822) + "/journal"
         self.harbor = bench.address("playout", 6800)
         self.icecast = bench.address("icecast", 8000)
+        # What the cleaner of the queues answered, once the scenario has run it.
+        self.cleaned: dict | None = None
 
     def wait(self) -> None:
         wait_for(
@@ -270,6 +280,18 @@ class Playout:
             raise RuntimeError(
                 f"le playout a refusé {name} ({status}) : {body[:200]!r}"
             )
+
+    def clean(self, seconds: float) -> dict:
+        """Takes out of the queues what has waited there that long, as the
+        scheduler does every minute: what the playout says it removed and kept."""
+        status, body = call(
+            "POST", f"{self.api}/queue/clean", {"max_age_seconds": seconds}
+        )
+        if status != 200:
+            raise RuntimeError(
+                f"le playout a refusé de nettoyer ses files ({status}) : {body[:200]!r}"
+            )
+        return json.loads(body)
 
     def relay(self, url: str) -> None:
         status, body = call("POST", f"{self.api}/relay?url={url}")
@@ -412,9 +434,11 @@ def cut(playout: Playout, mp3: bytes) -> Cuts:
 def scenario(playout: Playout, mp3: bytes) -> Cuts | None:
     """Pushes the titles as the scheduler does, a sound of a cart on the first
     one, a jingle on the second, then two sounds that wait for the end of the
-    third and of the fourth, and cuts the last one with a relay and a live. None
-    when the last title never came."""
+    third and of the fourth, and cuts the last one with a relay and a live. While
+    the first title plays, it runs the cleaner of the queues. None when the last
+    title never came."""
     pushed: list[str] = []
+    pushed_at: dict[str, float] = {}
     due: dict[str, float] = {}
     sent: set[str] = set()
     deadline = time.monotonic() + LIMIT_SECONDS
@@ -425,6 +449,19 @@ def scenario(playout: Playout, mp3: bytes) -> Cuts | None:
         if len(pushed) < len(TITLES) and len(waiting) < 2:
             pushed.append(TITLES[len(pushed)])
             playout.push("autodj", pushed[-1])
+            pushed_at[pushed[-1]] = time.monotonic()
+        if (
+            playout.cleaned is None
+            and CLEANED in pushed_at
+            and SPARED not in aired
+            and time.monotonic() >= pushed_at[CLEANED] + CLEAN_SECONDS + 1
+        ):
+            playout.cleaned = playout.clean(CLEAN_SECONDS)
+            removed = playout.cleaned.get("autodj", {}).get("removed", 0)
+            # The scheduler pushes again what it no longer finds in the queue:
+            # the rest of the bench goes on with every title.
+            for name in [SPARED, CLEANED][2 - min(2, removed) :]:
+                playout.push("autodj", name)
         for title, seconds, sound in CUTS:
             if title in aired and sound not in due:
                 due[sound] = time.monotonic() + seconds
@@ -589,7 +626,26 @@ def relayed(beats: list[dict], rows: list[dict], cuts: Cuts) -> list[str]:
     return failures
 
 
-def verdict(pcm: bytes, journal: dict, cuts: Cuts | None) -> list[str]:
+def swept(cleaned: dict | None) -> list[str]:
+    """What went wrong when the cleaner of the queues ran, behind the first title."""
+    if cleaned is None:
+        return [
+            f"le nettoyage des files n'a pas tourné : « {SPARED} » était déjà"
+            f" passé {CLEAN_SECONDS:.0f} s après l'envoi de « {CLEANED} »"
+        ]
+    removed = cleaned.get("autodj", {}).get("removed")
+    if removed == 1:
+        return []
+    return [
+        f"le nettoyage des files a retiré {removed} titre(s) de la file de l'auto-DJ,"
+        f" en attente depuis {CLEAN_SECONDS:.0f} s : il laisse le prochain, que le"
+        " scheduler garde prêt derrière ce qui passe, et retire celui d'après"
+    ]
+
+
+def verdict(
+    pcm: bytes, journal: dict, cuts: Cuts | None, cleaned: dict | None
+) -> list[str]:
     """What went wrong, in the words shown to whoever runs the bench."""
     beats = journal["live"]
     aired = [row["title"] for row in journal["metadata"] if row["title"]]
@@ -648,6 +704,7 @@ def verdict(pcm: bytes, journal: dict, cuts: Cuts | None) -> list[str]:
         failures.append(f"les titres sont passés dans le désordre : {', '.join(order)}")
     if cuts is not None:
         failures += relayed(beats, journal["metadata"], cuts)
+    failures += swept(cleaned)
     expected = sum(sounds.audible(name) for name in QUEUES)
     if seconds < 0.75 * expected:
         failures.append(
@@ -667,7 +724,7 @@ def play(bench: Bench) -> list[str]:
         cuts = scenario(playout, mp3)
     finally:
         pcm = capture.stop()
-    return verdict(pcm, playout.journal(), cuts)
+    return verdict(pcm, playout.journal(), cuts, playout.cleaned)
 
 
 def main() -> int:
@@ -687,8 +744,9 @@ def main() -> int:
             return 1
         say(
             "Bon : chaque titre passe à son tour, annoncé pour sa durée et sous sa"
-            " source, sans trame répétée ni reste figé. Un relais, puis un direct,"
-            " prennent l'antenne sous leur nom, et la rendent."
+            " source, sans trame répétée ni reste figé. Le nettoyage des files"
+            " laisse le prochain titre. Un relais, puis un direct, prennent"
+            " l'antenne sous leur nom, et la rendent."
         )
         return 0
     finally:

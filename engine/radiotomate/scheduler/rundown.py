@@ -16,6 +16,7 @@ from radiotomate.scheduler.clock import (
     RELAY_CART,
     _load_cart,
     _pick_music,
+    hard_anchors_cut_titles,
     load_sequencer_cursor,
     next_hard_anchor,
     next_soft_anchor,
@@ -648,6 +649,18 @@ async def build_rundown(  # noqa: PLR0912, PLR0915
     carts: dict = {}
     used_sounds: dict[int, set[int]] = {}
     skip_switch: list[bool] = []
+    cut_switch: list[bool] = []
+
+    async def cuts_the_title() -> bool:
+        """
+        Whether the title that runs into a hard anchor is planned, and cut by
+        it, as the antenna plays it (clock._fill_sequential_from_rundown). Off,
+        it is left out, and the forecast has a gap before the anchor, as before.
+        The switch is read once, and only when it matters.
+        """
+        if not cut_switch:
+            cut_switch.append(await hard_anchors_cut_titles(session))
+        return cut_switch[0]
 
     async def overtakes(hard: dict) -> bool:
         """
@@ -789,6 +802,9 @@ async def build_rundown(  # noqa: PLR0912, PLR0915
         else:
             overflow_anchor = False
 
+        # A hard anchor with nothing to play, planned after the title it does
+        # not cut.
+        silent_anchor: dict | None = None
         if overflow_anchor and upcoming is not None:
             anchor_dt, anchor_pos = upcoming
             anchored_item = await _prepare_cart(
@@ -808,6 +824,24 @@ async def build_rundown(  # noqa: PLR0912, PLR0915
                     break
                 continue
             payload, duration = anchored_item
+            astride = prepared is not None and await cuts_the_title()
+            if astride and payload.get("status") == STATUS_MISSING:
+                # Nothing cuts the title: it plays to its end, as any other, and
+                # the anchor keeps its line, « manquant », to be repaired.
+                silent_anchor = payload
+            elif astride:
+                # The title that runs into the anchor plays, and the anchor cuts
+                # it: the antenna keeps no blank before a hard anchor. Its line
+                # lasts until the anchor, where the title stops.
+                cut_payload, _full, artist, title = prepared
+                cut_payload["duration"] = (anchor_dt - t).total_seconds()
+                items.append(cut_payload)
+                if artist:
+                    picked_artists.add(artist)
+                if title:
+                    picked_titles.add(title)
+                sim_cursor += 1
+        if silent_anchor is None and overflow_anchor and upcoming is not None:
             if upcoming_soft is not None and upcoming_soft[0] < anchor_dt:
                 # The soft anchor due before it: « sauté » if the hard one goes,
                 # else it keeps its minute, in the gap the held title leaves.
@@ -850,6 +884,8 @@ async def build_rundown(  # noqa: PLR0912, PLR0915
 
         payload, duration, artist, title = prepared
         items.append(payload)
+        if silent_anchor is not None:
+            items.append(silent_anchor)
         if artist:
             picked_artists.add(artist)
         if title:

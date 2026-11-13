@@ -10,7 +10,7 @@ from time import monotonic
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from sqlalchemy import and_, delete, func, or_, select
+from sqlalchemy import and_, case, delete, func, or_, select
 
 from radiotomate.domain.execution import (
     ENGAGED_STATUSES,
@@ -21,7 +21,13 @@ from radiotomate.domain.execution import (
     rundown_summary,
     status_label,
 )
-from radiotomate.enums import CommandStatus, PositionKind, RundownStatus, WhenMode
+from radiotomate.enums import (
+    CommandStatus,
+    PositionKind,
+    RundownStatus,
+    SyncMode,
+    WhenMode,
+)
 from radiotomate.models import (
     AutoDJSlot,
     Cart,
@@ -1046,8 +1052,12 @@ async def record_live_item(
     return item
 
 
-async def reconcile_as_run(session: ormSession, log: MetadataLog) -> None:
-    """Link an as-run row to its rundown item without merging the two tables."""
+async def _item_of_as_run(
+    session: ormSession,
+    log: MetadataLog,
+) -> tuple[RundownItem | None, bool]:
+    """The rundown item an as-run row is about, and whether the playout named
+    it: else it is a guess, from its sound or its title."""
     item = None
     if log.rundown_item_id:
         item = await RundownItem.from_id(session, log.rundown_item_id)
@@ -1055,17 +1065,32 @@ async def reconcile_as_run(session: ormSession, log: MetadataLog) -> None:
         extra_id = log.extra.get("radiotomate_item_id")
         if extra_id:
             item = await RundownItem.from_id(session, str(extra_id))
-        extra_sound = log.extra.get("radiotomate_sound_id")
-        if item is None and extra_sound:
-            try:
-                item = await _latest_item_for_sound(session, int(extra_sound))
-            except (TypeError, ValueError):
-                item = None
+    if item is not None:
+        return item, True
+    extra_sound = (log.extra or {}).get("radiotomate_sound_id")
+    if extra_sound:
+        try:
+            item = await _latest_item_for_sound(session, int(extra_sound))
+        except (TypeError, ValueError):
+            item = None
     if item is None:
         item = await _latest_open_item(session, log)
+    return item, False
+
+
+async def reconcile_as_run(session: ormSession, log: MetadataLog) -> None:
+    """Link an as-run row to its rundown item without merging the two tables."""
+    item, exact = await _item_of_as_run(session, log)
     if item is None:
         return
     log.rundown_item_id = item.id
+    if exact and await _cut_by_a_hard_anchor(session, item, log):
+        # The queue of the Auto-DJ says once more the title a hard anchor cut,
+        # as it takes the antenna back, then skips it
+        # (clock._skip_cut_autodj_if_ready): the title does not air again. Its
+        # line stays played, and the lines after it, planned after the sound of
+        # the anchor, stay where they are.
+        return
     previous = list(
         await session.scalars(
             select(RundownItem).where(
@@ -1089,12 +1114,32 @@ async def reconcile_as_run(session: ormSession, log: MetadataLog) -> None:
     # before the jingle it airs in place of, but leaves that jingle where it was.
     if _in_the_motif(item) and await motif_jingles_air(session):
         await _close_jingles_before(session, item, now)
-    await realign_rundown(session, item, now)
+    if item.when_mode == WhenMode.ANCHORED.value and item.origin == "clock":
+        await _after_the_sound(session, item, now)
+    await realign_rundown(session, item, now, exact=exact)
+
+
+async def _cut_by_a_hard_anchor(
+    session: ormSession,
+    item: RundownItem,
+    log: MetadataLog,
+) -> bool:
+    """Whether a hard anchor has cut the title of this line: the clock wrote it
+    in the as-run when it fired the anchor (clock._remember_cut_autodj)."""
+    rows = await session.scalars(
+        select(MetadataLog).where(MetadataLog.rundown_item_id == item.id)
+    )
+    return any(
+        row is not log and (row.extra or {}).get("skip_reason") == "hard_sync"
+        for row in rows
+    )
 
 
 REALIGN_TOLERANCE = timedelta(seconds=5)
-# Beyond this the as-run row was linked to the wrong planned item (repeated
-# title / sound); shifting the whole rundown by an hour would do more harm.
+# Beyond this an as-run row linked by its sound or its title was linked to the
+# wrong planned item (repeated title / sound); shifting the whole rundown by an
+# hour would do more harm. A row the playout linked itself, by the id of its
+# line, is believed: the antenna did start that late, or that early.
 REALIGN_MAX = timedelta(minutes=10)
 
 
@@ -1102,13 +1147,26 @@ async def realign_rundown(
     session: ormSession,
     item: RundownItem,
     started: datetime,
+    *,
+    exact: bool = False,
 ) -> timedelta:
     """
     Anchor the rundown on the as-run: the item that just went on air takes the
-    real start time and every later sequential item slides by the same delta.
-    Anchored positions (fixed minute) keep their own time. Desk lines slide like
-    clock lines while they air (``features.desk_lines_air``), and keep their own
-    time otherwise. Returns the applied shift (zero when within tolerance).
+    real start time, and the items after it follow, up to the next hard anchor
+    the conducteur plans. That one goes on its minute, whatever airs before it,
+    and the items planned after its sound keep their time.
+
+    The sequential items after it slide by the same delta. Started late, a soft
+    anchor slides with them: it waits for the end of the title before it. A
+    hard anchor keeps its minute. Desk lines slide like clock lines while they
+    air (``features.desk_lines_air``), and keep their own time otherwise.
+    Returns the delta (zero when within tolerance).
+
+    ``exact``: the playout named the line of this as-run. Its start is believed
+    whatever the delta, as after a long live: started more than ``REALIGN_MAX``
+    late, the items after it start one after the other from its end, and one
+    planned later than that keeps its time. Linked by its sound or its title, a
+    delta beyond ``REALIGN_MAX`` is a wrong link, and moves nothing.
     """
     if item.planned_at is None or item.when_mode == WhenMode.ANCHORED.value:
         return timedelta(0)
@@ -1126,26 +1184,37 @@ async def realign_rundown(
     delta = started - planned
     if abs(delta) < REALIGN_TOLERANCE:
         return timedelta(0)
-    if abs(delta) > REALIGN_MAX:
+    far = abs(delta) > REALIGN_MAX
+    if far and not exact:
         _log.warning(
             "rundown realign skipped: %+.0fs on %s looks like a mislinked as-run",
             delta.total_seconds(),
             item.id,
         )
         return timedelta(0)
+    late = delta > timedelta(0)
     waiting = REPLACEABLE_STATUSES | (ENGAGED_STATUSES - {RundownStatus.ON_AIR.value})
     query = select(RundownItem).where(
         RundownItem.id != item.id,
         RundownItem.status.in_(list(waiting)),
-        RundownItem.when_mode != WhenMode.ANCHORED.value,
         RundownItem.planned_at >= item.planned_at,
     )
-    if not desk_airs:
-        query = query.where(RundownItem.origin != DESK_ORIGIN)
-    following = list(await session.scalars(query))
+    wall = await _next_cut_at(session, started)
+    if wall is not None:
+        query = query.where(RundownItem.planned_at < wall)
+    rows = await session.scalars(
+        query.order_by(
+            RundownItem.planned_at,
+            case((RundownItem.origin == DESK_ORIGIN, 0), else_=1),
+            RundownItem.sequence,
+        )
+    )
+    following = [row for row in rows if _follows(row, desk_airs=desk_airs, late=late)]
     item.planned_at = started
-    for row in following:
-        if row.planned_at is not None:
+    if late and far:
+        _start_one_after_the_other(_ends(item, started), following)
+    else:
+        for row in following:
             row.planned_at = naive_datetime(row.planned_at) + delta
     _log.info(
         "rundown realigned by %+.0fs on %s (%d following item(s))",
@@ -1154,6 +1223,103 @@ async def realign_rundown(
         len(following),
     )
     return delta
+
+
+def _follows(row: RundownItem, *, desk_airs: bool, late: bool) -> bool:
+    """Whether an item planned after the one that went on air follows it."""
+    if row.planned_at is None:
+        return False
+    if row.when_mode == WhenMode.ANCHORED.value:
+        # A soft anchor of the clock goes at the end of the title before it:
+        # later with it, never sooner than planned. A hard one, a set or a live
+        # of the Agenda keep their time.
+        return late and row.origin == "clock" and not _is_hard_line(row)
+    return desk_airs or row.origin != DESK_ORIGIN
+
+
+def _is_hard_line(row: RundownItem) -> bool:
+    """An anchor line that cuts on its minute, as ``ClockPosition.sync_enum``
+    reads its position."""
+    if row.sync:
+        return row.sync == SyncMode.DURE.value
+    return row.kind == PositionKind.PUB.value
+
+
+async def _next_cut_at(session: ormSession, after: datetime) -> datetime | None:
+    """
+    When the next hard anchor the conducteur plans goes, after ``after``: it
+    will cut what plays then. A hard anchor with nothing to play has no line
+    planned, and cuts nothing.
+    """
+    rows = await session.scalars(
+        select(RundownItem)
+        .where(
+            RundownItem.status.in_(
+                [RundownStatus.PLANNED.value, RundownStatus.RESCUE.value]
+            ),
+            RundownItem.when_mode == WhenMode.ANCHORED.value,
+            RundownItem.origin == "clock",
+            RundownItem.planned_at > after,
+        )
+        .order_by(RundownItem.planned_at, RundownItem.sequence)
+    )
+    for row in rows:
+        if _is_hard_line(row):
+            return row.planned_at
+    return None
+
+
+def _ends(item: RundownItem, started: datetime) -> datetime:
+    return started + timedelta(seconds=max(0.0, float(item.duration or 0)))
+
+
+def _start_one_after_the_other(end: datetime, following: list[RundownItem]) -> None:
+    """
+    The item on air ends at ``end``. Of the items after it, in their order, one
+    planned before the end of the one before it starts there, and one planned
+    later keeps its time: after an hour of live, the items planned during it
+    follow each other from now, and those planned after it stay. A closed item
+    takes no time on air.
+    """
+    for row in following:
+        row.planned_at = max(naive_datetime(row.planned_at), end)
+        if row.status not in _CLOSED_DESK_STATUSES:
+            end = _ends(row, row.planned_at)
+
+
+async def _after_the_sound(
+    session: ormSession,
+    sound: RundownItem,
+    started: datetime,
+) -> None:
+    """
+    The sound of an anchor of the clock is on air: it keeps its own time, and
+    the items still to air start one after the other from its end. Those the
+    antenna had no time for before it, planned in the minutes before, then those
+    planned after it.
+    """
+    desk_airs = await desk_lines_air(session)
+    waiting = {
+        RundownStatus.PLANNED.value,
+        RundownStatus.RESCUE.value,
+    } | (ENGAGED_STATUSES - {RundownStatus.ON_AIR.value})
+    query = select(RundownItem).where(
+        RundownItem.id != sound.id,
+        RundownItem.status.in_(list(waiting)),
+        RundownItem.planned_at >= started - REALIGN_MAX,
+    )
+    wall = await _next_cut_at(session, started)
+    if wall is not None:
+        query = query.where(RundownItem.planned_at < wall)
+    rows = await session.scalars(
+        query.order_by(
+            RundownItem.planned_at,
+            case((RundownItem.origin == DESK_ORIGIN, 0), else_=1),
+            RundownItem.sequence,
+        )
+    )
+    following = [row for row in rows if _follows(row, desk_airs=desk_airs, late=True)]
+    _start_one_after_the_other(_ends(sound, started), following)
 
 
 async def _latest_item_for_sound(

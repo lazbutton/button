@@ -950,7 +950,8 @@ async def test_a_hard_break_with_nothing_to_play_skips_no_soft_one(
 ):
     """
     The hard break of 11:50 has an empty cart: it cuts nothing. The soft break
-    of 11:49 is no « sauté »: it goes at the end of the title.
+    of 11:49 is no « sauté »: it goes at the end of the title, and the
+    conducteur plans it there.
     """
     await _spots(dbsession, pubs_cart, 3)
     empty = Cart(
@@ -969,11 +970,13 @@ async def test_a_hard_break_with_nothing_to_play_skips_no_soft_one(
         horizon_min=15,
         cursor=0,
     )
+    title = forecast["items"][0]
+    assert title["kind"] == "musique"
     breaks = [item for item in forecast["items"] if item["kind"] == "pub"]
-    assert [(item["minute"], item["status"]) for item in breaks[:2]] == [
-        (49, "prévu"),
-        (50, "manquant"),
-    ]
+    assert [
+        (item["minute"], item["status"], item.get("reason")) for item in breaks[:2]
+    ] == [(50, "manquant", "cart introuvable"), (49, "prévu", "glissement")]
+    assert _at(breaks[1]) == item_end_at(title) > _at(breaks[0])
     client = _client()
     runs = {**_music_on_air("2026-09-14T11:49:05+02:00"), "remaining": "300"}
     with _clock_at("2026-09-14T11:49:05+02:00"):

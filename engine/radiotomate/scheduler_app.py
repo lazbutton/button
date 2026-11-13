@@ -19,6 +19,7 @@ from radiotomate.scheduler import (
     analyzer,
     antenne,
     bank_sync,
+    clock,
     harbor,
     health,
     live,
@@ -119,7 +120,15 @@ def app_factory(config: dict, beets: BeetsIntegration) -> CustomQuart:
             dbsettings = await radiotomate.models.Setting.load_all(session)
             app.config.from_mapping(dbsettings)
         app.add_background_task(beets.background_analyzer, db)
-        if app.config.get("QUEUE_CLEAN_ENABLED", True):
+        # The clock pushes a line only when it should air before the cleaner
+        # would take it out of its queue.
+        cleaning = app.config.get("QUEUE_CLEAN_ENABLED", True)
+        clock.set_queue_max_age(
+            queue_cleaner.clamp_max_age(app.config.get("QUEUE_CLEAN_MAX_AGE"))
+            if cleaning
+            else None
+        )
+        if cleaning:
             app.add_background_task(queue_cleaner.loop, app)
         app.add_background_task(bank_sync.loop, app)
         if app.config.get("RETENTION_ENABLED", True):
