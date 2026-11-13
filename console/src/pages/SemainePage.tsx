@@ -4,7 +4,6 @@ import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { Link } from "react-router-dom";
 import { ChangeDialog, type ChangeTarget } from "../components/programmation/ChangeDialog";
 import { EmissionDialog, type EmissionTarget } from "../components/programmation/EmissionDialog";
-import { ProtoToast, useProtoToast } from "../components/ProtoToast";
 import { apiDelete } from "../api/client";
 import { nextEmissionWhen } from "../api/emissionMeta";
 import { errorText } from "../api/programmationErrors";
@@ -24,6 +23,7 @@ import { SessionGate } from "../api/SessionGate";
 import type { ClocksResponse, Emission, EmissionsResponse, SlotsResponse } from "../api/types";
 import { useApiJson } from "../api/useApiJson";
 import { parisParts, parisWeekdayMon0, useParisNow } from "../lib/parisClock";
+import { AppToast, useAppToast } from "../ui/AppToast";
 import "../styles/pages/programmation.css";
 
 const POLL_MS = 10_000;
@@ -47,7 +47,7 @@ export function SemainePage() {
   const slotsRes = useApiJson<SlotsResponse>("/autodj/slots.json", POLL_MS);
   const clocksRes = useApiJson<ClocksResponse>("/autodj/clocks.json", 30_000);
   const emissionsRes = useApiJson<EmissionsResponse>("/antenne/emissions.json", POLL_MS);
-  const { message, show, dismiss } = useProtoToast();
+  const { toast, show, dismiss } = useAppToast();
   const [change, setChange] = useState<ChangeTarget | null>(null);
   const [emission, setEmission] = useState<EmissionTarget | null>(null);
   const slots = useMemo(() => slotsRes.data?.slots ?? [], [slotsRes.data]);
@@ -402,9 +402,9 @@ export function SemainePage() {
         tints={tints}
         onClose={() => setChange(null)}
         onSplit={(day, minute, clockId) => setChange({ mode: "create", day, minute, clockId: otherClock(clockId) })}
-        onDone={async (text, failed) => {
+        onDone={async (text, tone) => {
           await slotsRes.reload();
-          show(text, failed ? "error" : "success");
+          show(text, tone);
         }}
       />
       {emission ? (
@@ -417,7 +417,7 @@ export function SemainePage() {
           }}
         />
       ) : null}
-      <ProtoToast message={message} onDismiss={dismiss} />
+      <AppToast toast={toast} onDismiss={dismiss} />
     </div>
   );
 }

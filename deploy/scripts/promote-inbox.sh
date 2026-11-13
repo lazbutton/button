@@ -219,7 +219,7 @@ tag_in_place() {
 }
 
 promote_dir "$MEDIA/00-inbox/rotation" "$MEDIA/10-rotation"
-# Une banque d'archives = un dossier de 20-archives (sauf ceux en . ou _).
+# Une collection = un dossier de 20-archives (sauf ceux en . ou _).
 for bank in "$MEDIA"/20-archives/*/; do
   [ -d "$bank" ] || continue
   ed=$(basename "$bank")

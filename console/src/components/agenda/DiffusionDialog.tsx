@@ -240,10 +240,10 @@ export function DiffusionDialog({
           for (const item of rows) created.push(await attachBankFile(item.id, source.path, source.duration));
         }
         if (created.length === 1) {
-          await onChanged(`« ${created[0].title} » ajoutée, ${rangeLabel(created[0].starts_at, created[0].ends_at)}`);
+          await onChanged(`« ${created[0].title} » ajoutée, ${rangeLabel(created[0].starts_at, created[0].ends_at)}.`);
           onEdit(created[0]);
         } else {
-          await onChanged(`${created.length} dates ajoutées`);
+          await onChanged(`${created.length} dates ajoutées.`);
           onClose();
         }
         return;
@@ -254,7 +254,7 @@ export function DiffusionDialog({
         : { version: row.version, title: title.trim(), set_title: setTitleText, tracklist };
       const saved = await updateDiffusion(row.id, update);
       setRow(saved);
-      await onChanged(`« ${saved.title} » enregistrée`);
+      await onChanged(`« ${saved.title} » enregistrée.`);
       onClose();
     } catch (caught) {
       setFailure(errorText(caught, "Enregistrement impossible."));
@@ -269,7 +269,7 @@ export function DiffusionDialog({
     setFailure("");
     try {
       const count = await deleteDiffusion(row.id, following);
-      await onChanged(count > 1 ? `${count} dates retirées de l'agenda` : `« ${row.title} » retirée de l'agenda`);
+      await onChanged(count > 1 ? `${count} dates retirées de l'agenda.` : `« ${row.title} » retirée de l'agenda.`);
       onClose();
     } catch (caught) {
       setFailure(errorText(caught, "Suppression impossible."));
@@ -283,7 +283,7 @@ export function DiffusionDialog({
     setBusy("stop");
     try {
       setRow(await stopDiffusion(row.id));
-      await onChanged("Arrêt demandé : la grille reprend dans quelques secondes");
+      await onChanged("Arrêt demandé : la grille reprend dans quelques secondes.");
     } catch (caught) {
       setFailure(errorText(caught, "Arrêt impossible."));
     } finally {
@@ -551,7 +551,7 @@ export function DiffusionDialog({
                   row={row}
                   editable={editable}
                   onPick={() => setBankOpen(true)}
-                  onRemove={() => fileAction(() => detachFile(row.id), "Fichier retiré")}
+                  onRemove={() => fileAction(() => detachFile(row.id), "Fichier retiré.")}
                 />
                 <InviteBox
                   row={row}
@@ -560,7 +560,7 @@ export function DiffusionDialog({
                     if (!row.guest) return;
                     await renewGuestLink(row.guest.id);
                     setRow(await getDiffusion(row.id));
-                    await onChanged("Nouveau lien créé : l'ancien ne marche plus");
+                    await onChanged("Nouveau lien créé : l'ancien ne marche plus.");
                   }}
                 />
                 <section className="ag-section" aria-label="Infos du set">
@@ -699,7 +699,7 @@ export function DiffusionDialog({
           slotMinutes={row.duration_min}
           onClose={() => setBankOpen(false)}
           onPick={async (hit) => {
-            await fileAction(() => attachBankFile(row.id, hit.path, hit.duration), "Fichier choisi : analyse en cours");
+            await fileAction(() => attachBankFile(row.id, hit.path, hit.duration), "Fichier choisi : analyse en cours.");
             setBankOpen(false);
           }}
         />

@@ -61,9 +61,10 @@ export function CreateBankDialog({
       }}
     >
       <Dialog.Content maxWidth="30rem">
-        <Dialog.Title>Nouvelle banque d'archives</Dialog.Title>
+        <Dialog.Title>Nouvelle collection</Dialog.Title>
         <Dialog.Description size="2" color="gray" mb="4">
-          Une banque est un dossier de 20-archives. Les fichiers envoyés vers elle y sont rangés, puis Beets les indexe.
+          Une collection est un dossier de 20-archives. Les fichiers envoyés vers elle y sont rangés, puis Beets les
+          indexe.
         </Dialog.Description>
         <form
           className="bacs-dialog-form"
@@ -77,7 +78,7 @@ export function CreateBankDialog({
               size="2"
               className="ui-field-control"
               value={label}
-              placeholder="Archives jazz"
+              placeholder="Jazz en public"
               autoFocus
               onChange={(event) => {
                 setLabel(event.target.value);
@@ -91,7 +92,7 @@ export function CreateBankDialog({
             hint={
               <>
                 Il sert de grouping à l'auto-DJ : une catégorie <Code size="1">grouping:{folder || "…"}</Code> joue
-                cette banque.
+                cette collection.
               </>
             }
           >
@@ -120,7 +121,7 @@ export function CreateBankDialog({
               </Button>
             </Dialog.Close>
             <Button type="submit" size="2" highContrast disabled={busy || Boolean(tried && problem)}>
-              {busy ? "Création…" : "Créer la banque"}
+              {busy ? "Création…" : "Créer la collection"}
             </Button>
           </div>
         </form>

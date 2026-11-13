@@ -33,7 +33,7 @@ export const LIBRARY_TABS: { id: LibraryTabId; label: string }[] = [
   { id: "jingle", label: "Jingles" },
   { id: "pub", label: "Pubs" },
   { id: "habillage", label: "Habillage" },
-  { id: "archives", label: "Archives" },
+  { id: "archives", label: "Collections" },
   { id: "emission", label: "Émissions" },
 ];
 

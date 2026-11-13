@@ -212,6 +212,7 @@ Les parcours, dans `console/e2e/` :
 | `conducteur.spec.ts` | la page Conducteur dans les mots de la console ; une ligne sans son, que le bandeau compte et qui mène à « Réparer », et ce que l'animateur en voit ; le retrait d'une ligne de l'horloge au clavier, qui la nomme, puis « Annuler », un retrait sans réponse, et un conducteur qui ne répond plus, simulés par `page.route` devant le moteur de démo |
 | `etats.spec.ts` | session expirée, droit manquant, moteur injoignable, moteur muet, moteur arrêté derrière nginx (502 en HTML), envoi trop lourd pour nginx (413 en HTML) et route absente, puis les gestes refusés ou sans réponse de la page Automate, simulés par `page.route` devant le moteur de démo et le faux catalogue |
 | `bacs.spec.ts` | « Diffuser maintenant » sur un bac sans son prêt : la console dit que rien n'est parti |
+| `messages.spec.ts` | les messages en bas à droite de l'écran : au-dessus d'une fenêtre ouverte, ils se lisent, s'annoncent et se ferment sans la fermer ; un refus du moteur, simulé par `page.route`, s'annonce en alerte, quels que soient ses mots |
 | `roles.spec.ts` | ce que voient l'animateur, le programmateur et l'admin |
 | `apparence.spec.ts` | le thème clair et le sombre, choisis dans le menu du compte ou suivant l'appareil |
 | `telephone.spec.ts` | la console sur un téléphone de 360 px, au doigt |

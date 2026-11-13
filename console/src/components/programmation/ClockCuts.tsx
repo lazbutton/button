@@ -54,7 +54,7 @@ export function ClockCuts({
   const remove = (cut: ClockPosition) => {
     const minute = cut.minute ?? 0;
     onChange({ ...clock, anchors: clock.anchors.filter((row) => row.minute !== minute) });
-    onRemoved(`Coupure ${minuteMark(minute)} retirée`, (latest) => {
+    onRemoved(`Coupure ${minuteMark(minute)} retirée.`, (latest) => {
       if (latest.anchors.some((row) => row.minute === minute)) return latest;
       const back = { ...cut };
       delete back.id;

@@ -11,7 +11,7 @@ Index de la banque de sons dans Meilisearch, recherche pour la console, récepti
 | `GET /search` | Recherche dans la banque (`q`, `limit`, `kind`, `grouping`, `folder`) |
 | `GET /inbox.json` | File d'attente, rejets, quota de l'inbox et place sur le disque |
 | `GET /media/…` | Lecture d'un fichier de la banque (requêtes Range) |
-| `POST /banks.json` | Crée une banque d'archives, pour un admin |
+| `POST /banks.json` | Crée une collection, pour un admin |
 | `GET /volume.json` | Nom et hôte du dossier partagé |
 | `POST /volume-password.json` | Pose ou retire le mot de passe du dossier d'un compte, pour un admin |
 | `POST /prune` | Retire de l'index de recherche les fichiers qui ne sont dans aucun bac, pour un admin |

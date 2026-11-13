@@ -2,7 +2,6 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { PlanSummary } from "../components/conducteur/PlanSummary";
 import { RundownPanel } from "../components/conducteur/RundownPanel";
-import { ProtoToast, useProtoToast } from "../components/ProtoToast";
 import { RepairClockCartDialog } from "../components/RepairClockCartDialog";
 import { useAntennaClock } from "../lib/liveClock";
 import { useAccount } from "../api/AccountContext";
@@ -16,7 +15,7 @@ import {
   apiPostJson,
 } from "../api/client";
 import { SessionGate } from "../api/SessionGate";
-import { withoutClosedTwins } from "../api/conducteurView";
+import { lineCopy, withoutClosedTwins } from "../api/conducteurView";
 import { CONDUCTEUR_JSON, clockLineRemoval, isDeskPin, partitionRundown } from "../api/rundownLive";
 import type {
   CartsResponse,
@@ -27,6 +26,7 @@ import type {
   RundownItem,
 } from "../api/types";
 import { useApiJson } from "../api/useApiJson";
+import { AppToast, useAppToast } from "../ui/AppToast";
 import { PageHeader } from "../ui/PageHeader";
 import "../styles/pages/conducteur.css";
 
@@ -101,7 +101,7 @@ export function ConducteurPage() {
   const { data, setData, error, loading, reload } = useApiJson<Rundown>(CONDUCTEUR_JSON, POLL_MS);
   const emissions = useApiJson<EmissionsResponse>("/antenne/emissions.json", POLL_MS);
   const clock = useAntennaClock(live.data);
-  const { message, show, dismiss } = useProtoToast();
+  const { toast, show, dismiss } = useAppToast();
   const [repairItem, setRepairItem] = useState<RundownItem | null>(null);
   const { role } = useAccount();
   const canEdit = roleAtLeast(role, "programmateur");
@@ -125,10 +125,10 @@ export function ConducteurPage() {
   // Il part avec son message et ne revient pas : son échec dit que la ligne reste
   // retirée, et comment la remettre, plutôt que de faire réessayer.
   const undoRemoval = useCallback(
-    async (removalId: string) => {
+    async (removalId: string, title: string) => {
       try {
         setData(await apiDeleteJson<Rundown>(lineUrl(removalId)));
-        showRef.current("Annulé.", "success");
+        showRef.current(`Retrait annulé : « ${title} » est revenu à sa place.`, "success");
       } catch (caught) {
         const back = "La ligne reste retirée : remets-la au pupitre, depuis la bibliothèque.";
         if (caught instanceof ApiUnavailableError) showRef.current(`L’automate ne répond pas. ${back}`, "error");
@@ -152,20 +152,19 @@ export function ConducteurPage() {
       const id = item.id;
       if (!id || removingRef.current.has(id)) return;
       removingRef.current.add(id);
+      const { title } = lineCopy(item);
       try {
         if (isDeskPin(item)) {
           setData(await apiDeleteJson<Rundown>(lineUrl(id)));
-          showRef.current("Retiré du conducteur.", "success");
+          showRef.current(`« ${title} » retiré du conducteur.`, "success");
         } else {
           const payload = await apiPostJson<DeskMutation>("/autodj/conducteur/items.json", clockLineRemoval(item));
           setData(payload);
           const removalId = payload.desk_item?.id;
           showRef.current(
-            "Retiré du conducteur.",
+            `« ${title} » retiré du conducteur.`,
             "success",
-            removalId
-              ? { duration: 8000, action: { label: "Annuler", onClick: () => void undoRemoval(removalId) } }
-              : undefined,
+            removalId ? { action: { label: "Annuler", onClick: () => void undoRemoval(removalId, title) } } : undefined,
           );
         }
         refocus(null);
@@ -235,7 +234,7 @@ export function ConducteurPage() {
           onError={(text) => showRef.current(text, "error")}
         />
       ) : null}
-      <ProtoToast message={message} onDismiss={dismiss} />
+      <AppToast toast={toast} onDismiss={dismiss} />
     </main>
   );
 }
