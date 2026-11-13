@@ -88,7 +88,7 @@ Les heures ne sont pas stockées de la même façon partout : heure locale dans 
 
 ## Ce que le moteur surveille
 
-- **Alertes** : silence, playout injoignable, battement perdu, sortie Icecast coupée, créneau de direct sans encodeur, diffusion de l'Agenda qui ne peut pas passer, disque presque plein. La console les montre même sans cible ; `enabled: false` les coupe. Elles partent dans le journal, vers un webhook JSON, en tâche Vikunja, sur un téléphone par ntfy, ou par e-mail (bloc `alerts:` du YAML, que le scheduler relit seul). ntfy et l'e-mail se règlent par `station config`. La commande `station` donne aussi ses propres alertes par eux : mise à jour annulée, sauvegarde ratée. Voir [exploitation/alertes.md](exploitation/alertes.md).
+- **Alertes** : silence, playout injoignable, battement perdu, antenne figée sur le même son, sortie Icecast coupée, créneau de direct sans encodeur, diffusion de l'Agenda qui ne peut pas passer, disque presque plein. La console les montre même sans cible ; `enabled: false` les coupe. Elles partent dans le journal, vers un webhook JSON, en tâche Vikunja, sur un téléphone par ntfy, ou par e-mail (bloc `alerts:` du YAML, que le scheduler relit seul). ntfy et l'e-mail se règlent par `station config`. La commande `station` donne aussi ses propres alertes par eux : mise à jour annulée, sauvegarde ratée. Voir [exploitation/alertes.md](exploitation/alertes.md).
 - **Métriques** : `/metrics.json` sur le scheduler, et un export JSONL par heure.
 - **Rétention** : le conducteur joué, les commandes acquittées et le vieux journal d'antenne sont purgés, et le journal est exporté avant suppression.
 - **Sondes** : `/health/live` et `/health/ready` sur l'interface et le scheduler, et `/health` sur le playout.

@@ -28,6 +28,7 @@ from radiotomate.scheduler.clock import overlay_rundown_next, source_id
 from radiotomate.scheduler.clock import tick as clock_tick
 from radiotomate.scheduler.execution import nothing_to_play
 from radiotomate.scheduler.metrics import runtime_metrics
+from radiotomate.scheduler.stall import stall_watch
 
 blueprint = Blueprint("live", __name__)
 watching_clients = set()
@@ -328,6 +329,12 @@ def should_run_tick(live_data: dict, *, now: float | None = None) -> bool:
 
 async def _check_queues(data):
     live_data = json.loads(data)
+    # Every heartbeat, before the tick gate: a stalled queue shows in them.
+    # The watch never stops the clock.
+    try:
+        stall_watch.beat(live_data)
+    except Exception:
+        _log.exception("stall watch failed on a heartbeat")
     await _on_playout_source(live_data)
     current_app.add_background_task(_relay_next_if_changed, live_data)
     if _flag_sequencer_running.locked():

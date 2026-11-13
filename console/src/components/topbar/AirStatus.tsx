@@ -2,7 +2,7 @@ import { Popover } from "@radix-ui/themes";
 import { ArrowRight, ChevronDown } from "lucide-react";
 import { useId, useState } from "react";
 import { Link } from "react-router-dom";
-import { formatDuration, incidentLabel, type PillarTone } from "../../api/antenneState";
+import { formatDuration, incidentAdvice, incidentLabel, type PillarTone } from "../../api/antenneState";
 import type { TopAir, TopHealth } from "../../api/topbar";
 import type { AntenneState } from "../../api/types";
 
@@ -98,6 +98,7 @@ export function AirStatus({
                   <span>
                     {incident.detail ? `${incident.detail} · ` : ""}depuis {formatDuration(incident.since_s)}
                   </span>
+                  {incidentAdvice(incident) ? <span className="tb-incident-advice">{incidentAdvice(incident)}</span> : null}
                 </li>
               ))}
             </ul>

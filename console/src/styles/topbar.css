@@ -306,6 +306,11 @@
   font-size: 0.75rem;
 }
 
+/* Ce qu'il faut faire d'un incident : plus lisible que son détail. */
+.tb-incidents li .tb-incident-advice {
+  color: var(--app-text);
+}
+
 .tb-pop-foot {
   display: flex;
   flex-wrap: wrap;

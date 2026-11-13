@@ -136,10 +136,12 @@ async def dbsession(raw_app: CustomQuart) -> AsyncGenerator[ormSession]:
 def reset_clock_sequencer():
     from radiotomate.scheduler.clock import reset_state
     from radiotomate.scheduler.metrics import runtime_metrics
+    from radiotomate.scheduler.stall import stall_watch
     from radiotomate.scheduler.watchdog import Watchdog
 
     reset_state()
     runtime_metrics.reset()
+    stall_watch.reset()
     Watchdog.liquidsoap_version = "disconnected"
     from radiotomate.interface.autodj import invalidate_conducteur_cache
 
@@ -147,6 +149,7 @@ def reset_clock_sequencer():
     yield
     reset_state()
     runtime_metrics.reset()
+    stall_watch.reset()
     Watchdog.liquidsoap_version = "disconnected"
     invalidate_conducteur_cache()
 

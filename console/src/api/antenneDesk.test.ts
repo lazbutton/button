@@ -54,6 +54,17 @@ test("alert only when something is wrong", () => {
   assert.match(icecast?.help ?? "", /flux public/);
 });
 
+test("a stalled antenna says what to do: skipping changes nothing", () => {
+  const stalled = deskAlert({ tone: "problem", label: "Problème", cause: "Antenne figée" });
+  assert.equal(stalled?.tone, "problem");
+  assert.equal(stalled?.title, "Antenne figée");
+  assert.equal(stalled?.live, "");
+  assert.equal(
+    stalled?.help,
+    "Les auditeurs entendent le même son en boucle : le playout n’avance plus dans sa file. « Suivant » et « Vider les files » n’y changent rien : il faut relancer le moteur, sur la machine de la station.",
+  );
+});
+
 test("an unreachable engine comes first: the rest is an old reading", () => {
   const lost = deskAlert({ tone: "silence", label: "Silence 12 s", cause: "" }, "14:32");
   assert.equal(lost?.tone, "problem");
