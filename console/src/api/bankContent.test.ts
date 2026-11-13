@@ -13,6 +13,7 @@ import {
   chunks,
   deleteCollection,
   isAudioName,
+  MAYBE_DONE,
   modifiedLabel,
   moveBankFiles,
   removeBankFiles,
@@ -67,9 +68,15 @@ test("a refusal says what to do, in the catalogue's words when it has some", () 
   assert.equal(callProblem(409, "Une collection porte déjà ce nom."), "Une collection porte déjà ce nom.");
   // The engine did not answer the catalogue: neither a session nor a right is in question.
   assert.equal(callProblem(502, "automate injoignable"), "Le moteur ne répond pas au catalogue. Réessaie dans un instant.");
+  assert.equal(
+    callProblem(502, "automate injoignable", true),
+    "Le moteur ne répond pas au catalogue. Réessaie dans un instant.",
+  );
   // nginx in front of a catalogue that is down: an HTML page, no word at all.
   for (const status of [502, 503, 504]) {
     assert.equal(callProblem(status, undefined), "Le catalogue ne répond pas. Réessaie dans un instant.");
+    // A change sent: nginx gave up waiting, or the catalogue dropped it half way.
+    assert.equal(callProblem(status, undefined, true), MAYBE_DONE);
   }
   assert.equal(callProblem(500, ""), "Le catalogue a refusé la demande.");
 });
@@ -140,7 +147,8 @@ test("a batch without an answer stops the rest and keeps what was done", async (
   assert.equal(calls.length, 2);
   assert.deepEqual(calls[0].body, { id: "rotation", to: "jazz", names: names.slice(0, BANK_BATCH) });
   assert.equal(change.done.length, BANK_BATCH);
-  assert.equal(change.stopped, "Le catalogue ne répond pas. Réessaie dans un instant.");
+  // nginx stopped waiting: the second batch may have been moved, in part or in full.
+  assert.equal(change.stopped, MAYBE_DONE);
 
   // No answer in time to a change: it may have been made.
   catalogue(new DOMException("trop long", "TimeoutError"));
@@ -151,15 +159,43 @@ test("a batch without an answer stops the rest and keeps what was done", async (
   assert.equal((await removeBankFiles("rotation", ["a.mp3"])).stopped, "Le catalogue ne répond pas. Réessaie dans un instant.");
 });
 
+test("what the catalogue had no time for goes first in the next batch", async () => {
+  const names = ["a.wav", "b.wav", "c.wav", "d.wav"];
+  const calls = catalogue(
+    { body: { moved: ["a.wav"], failed: [], left: ["b.wav", "c.wav", "d.wav"] } },
+    { body: { moved: ["b.wav", "c.wav"], failed: [{ name: "d.wav", reason: "déjà dans Rotation" }], left: [] } },
+  );
+  const progress: string[] = [];
+  const change = await moveBankFiles("jazz", "rotation", names, (done, total) => progress.push(`${done}/${total}`));
+  assert.deepEqual(
+    calls.map((item) => (item.body as { names: string[] }).names),
+    [names, ["b.wav", "c.wav", "d.wav"]],
+  );
+  assert.deepEqual(change, {
+    done: ["a.wav", "b.wav", "c.wav"],
+    failed: [{ name: "d.wav", reason: "déjà dans Rotation" }],
+    stopped: "",
+  });
+  assert.deepEqual(progress, ["1/4", "4/4"]);
+
+  // A catalogue that does nothing at all: no endless loop.
+  catalogue({ body: { moved: [], failed: [], left: ["a.wav"] } });
+  assert.equal(
+    (await moveBankFiles("jazz", "rotation", ["a.wav"])).stopped,
+    "Le catalogue n'a rien pu faire de ces titres. Réessaie dans un instant.",
+  );
+});
+
 test("a collection is renamed and deleted by its folder name", async () => {
   const calls = catalogue(
     { body: { destination: { ...JAZZ, label: "Jazz du soir" } } },
-    { body: { deleted: "jazz" } },
+    { body: { deleted: "jazz", trashed: 2 } },
     { status: 409, body: { error: "La collection contient encore 2 fichiers : retire ou déplace d'abord ses titres." } },
     { status: 403, body: { error: "réservé à un admin" } },
   );
   assert.equal((await renameCollection("jazz", "Jazz du soir")).label, "Jazz du soir");
-  await deleteCollection("jazz");
+  // The hidden files it kept went to the trash: the console says how many.
+  assert.equal(await deleteCollection("jazz"), 2);
   assert.deepEqual(calls.map((item) => [item.url, item.body]), [
     ["/library/collection/rename.json", { id: "jazz", label: "Jazz du soir" }],
     ["/library/collection/delete.json", { id: "jazz" }],

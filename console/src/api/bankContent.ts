@@ -57,11 +57,17 @@ export class BankCallError extends Error {
   }
 }
 
+/** A change sent, and no answer: it may have been made. */
+export const MAYBE_DONE = "Pas de réponse du catalogue : le geste a peut-être été fait. Vérifie la liste avant de recommencer.";
+
 /**
  * What to say of a refusal, from its status and the catalogue's own word.
  * Null: the catalogue does not know the route, it is older than the console.
+ * `write`: a change was sent. nginx gives up after 30 s with a 504, or a 502
+ * when the catalogue drops the request, while the change may go on or be half
+ * done: the message says so.
  */
-export function callProblem(status: number, said: string | undefined): string | null {
+export function callProblem(status: number, said: string | undefined, write = false): string | null {
   const word = (said || "").trim();
   if (status === 404 && word === "not_found") return null;
   if (status === 401) return "Session expirée : recharge la page et reconnecte-toi.";
@@ -69,8 +75,11 @@ export function callProblem(status: number, said: string | undefined): string | 
     return "Il faut le rôle Programmateur pour changer les titres de la banque.";
   }
   if (status === 403 && word === "réservé à un admin") return "Réservé à un admin.";
+  // The catalogue answered itself, before changing anything: the engine did not answer it.
   if (status >= 500 && /automate/.test(word)) return "Le moteur ne répond pas au catalogue. Réessaie dans un instant.";
-  if (status === 502 || status === 503 || status === 504) return "Le catalogue ne répond pas. Réessaie dans un instant.";
+  if (status === 502 || status === 503 || status === 504) {
+    return write ? MAYBE_DONE : "Le catalogue ne répond pas. Réessaie dans un instant.";
+  }
   // The catalogue speaks French: its sentence says what to fix.
   if (word && word !== "not_found") return /[.!?]$/.test(word) ? word : `${word}.`;
   return "Le catalogue a refusé la demande.";
@@ -92,17 +101,12 @@ async function call<T>(path: string, body?: unknown): Promise<T> {
     );
   } catch (caught) {
     const late = caught instanceof DOMException && caught.name === "TimeoutError";
-    if (late && body !== undefined) {
-      throw new BankCallError(
-        "Pas de réponse du catalogue : le geste a peut-être été fait. Vérifie la liste avant de recommencer.",
-        0,
-      );
-    }
+    if (late && body !== undefined) throw new BankCallError(MAYBE_DONE, 0);
     throw new BankCallError("Le catalogue ne répond pas. Réessaie dans un instant.", 0);
   }
   const payload = (await response.json().catch(() => ({}))) as T & { error?: string };
   if (response.ok) return payload;
-  const problem = callProblem(response.status, payload.error);
+  const problem = callProblem(response.status, payload.error, body !== undefined);
   if (problem === null) throw new BankUnsupportedError();
   throw new BankCallError(problem, response.status);
 }
@@ -142,28 +146,42 @@ export function chunks<T>(items: T[], size: number): T[][] {
   return parts;
 }
 
-type BatchAnswer = { removed?: string[]; moved?: string[]; failed?: BankFailure[] };
+/** `left`: the titles the catalogue had no time for, before nginx gives up waiting. */
+type BatchAnswer = { removed?: string[]; moved?: string[]; failed?: BankFailure[]; left?: string[] };
 
-/** Batch after batch: a batch that gets no answer stops the rest, and says so. */
+/**
+ * Batch after batch. What the catalogue had no time for goes first in the next
+ * one. A batch that gets no answer stops the rest, and says so.
+ */
 async function inBatches(
   names: string[],
   send: (batch: string[]) => Promise<BatchAnswer>,
   onProgress?: (done: number, total: number) => void,
 ): Promise<BankChange> {
   const change: BankChange = { done: [], failed: [], stopped: "" };
-  let seen = 0;
-  for (const batch of chunks(names, BANK_BATCH)) {
+  let queue = [...names];
+  while (queue.length) {
+    const batch = queue.slice(0, BANK_BATCH);
+    let answer: BatchAnswer;
     try {
-      const answer = await send(batch);
-      change.done.push(...(answer.removed ?? answer.moved ?? []));
-      change.failed.push(...(answer.failed ?? []));
+      answer = await send(batch);
     } catch (caught) {
       if (caught instanceof BankUnsupportedError) throw caught;
       change.stopped = caught instanceof Error ? caught.message : "Le catalogue ne répond pas.";
       break;
     }
-    seen += batch.length;
-    onProgress?.(seen, names.length);
+    const done = answer.removed ?? answer.moved ?? [];
+    const failed = answer.failed ?? [];
+    // Only names of this batch come back, and the catalogue always does its first one.
+    const left = (answer.left ?? []).filter((name) => batch.includes(name));
+    change.done.push(...done);
+    change.failed.push(...failed);
+    if (left.length >= batch.length) {
+      change.stopped = "Le catalogue n'a rien pu faire de ces titres. Réessaie dans un instant.";
+      break;
+    }
+    queue = [...left, ...queue.slice(batch.length)];
+    onProgress?.(names.length - queue.length, names.length);
   }
   return change;
 }
@@ -193,8 +211,10 @@ export async function renameCollection(id: string, label: string): Promise<BankD
   return payload.destination;
 }
 
-export async function deleteCollection(id: string): Promise<void> {
-  await call<{ deleted?: string }>("/collection/delete.json", { id });
+/** Deletes an empty collection. Returns how many hidden files went to the trash with it. */
+export async function deleteCollection(id: string): Promise<number> {
+  const payload = await call<{ deleted?: string; trashed?: number }>("/collection/delete.json", { id });
+  return typeof payload.trashed === "number" ? payload.trashed : 0;
 }
 
 // The formats the engine plays: AUDIO_SUFFIXES, in engine/radiotomate/services/media_bank.py.

@@ -85,7 +85,8 @@ export function CollectionView({
   onChanged: () => void;
   /** The collection's new name, and the one it had. */
   onRenamed: (destination: BankDestination, before: string) => void;
-  onDeleted: (shelf: BankShelf) => void;
+  /** The collection is gone; `trashed` hidden files went to the trash with it. */
+  onDeleted: (shelf: BankShelf, trashed: number) => void;
   notify: Notify;
 }) {
   const rotation = shelf.group === "rotation";
@@ -136,7 +137,8 @@ export function CollectionView({
   }, [query, sort]);
 
   const loadMore = async () => {
-    if (!page || loadingMore) return;
+    // After an incomplete search, the next page would skip what the full one sorts first.
+    if (!page || page.partial || loadingMore) return;
     const mine = ticket.current;
     setLoadingMore(true);
     try {
@@ -194,9 +196,9 @@ export function CollectionView({
   const confirmDeletion = async () => {
     setDeleting(true);
     try {
-      await deleteCollection(shelf.id);
+      const trashed = await deleteCollection(shelf.id);
       setConfirmDelete(false);
-      onDeleted(shelf);
+      onDeleted(shelf, trashed);
     } catch (caught) {
       setConfirmDelete(false);
       notify(messageOf(caught, "Suppression impossible."), "error");
@@ -443,7 +445,9 @@ export function CollectionView({
                     selected={selected.has(file.name)}
                     playing={preview.playingId === file.name}
                     onToggle={(shift) => {
-                      setSelected((before) => toggleSelection(order, before, lastClicked.current, file.name, shift));
+                      // Read now: React may run the update after the next line.
+                      const last = lastClicked.current;
+                      setSelected((before) => toggleSelection(order, before, last, file.name, shift));
                       lastClicked.current = file.name;
                     }}
                     onPlay={() => preview.toggle(file.name)}
@@ -454,7 +458,7 @@ export function CollectionView({
               </tbody>
             </table>
           )}
-          {page && files.length > 0 && files.length < matched ? (
+          {page && !page.partial && files.length > 0 && files.length < matched ? (
             <div className="banque-more">
               <Button size="2" variant="soft" color="gray" disabled={loadingMore} onClick={() => void loadMore()}>
                 {loadingMore ? <Spinner size="1" /> : null}

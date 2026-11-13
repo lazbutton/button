@@ -99,8 +99,11 @@ export function BankContent({ onAdd }: { onAdd: (id: string) => void }) {
             show(`La collection « ${before} » s'appelle maintenant « ${destination.label} ».`, "success");
             void load();
           }}
-          onDeleted={(gone) => {
-            show(`Collection « ${gone.label} » supprimée.`, "success");
+          onDeleted={(gone, trashed) => {
+            const hidden = trashed
+              ? ` ${trashed === 1 ? "Un fichier caché qu'elle gardait est parti" : `${trashed} fichiers cachés qu'elle gardait sont partis`} dans la corbeille de la banque.`
+              : "";
+            show(`Collection « ${gone.label} » supprimée.${hidden}`, "success");
             choose("rotation");
             setView("list");
             void load();
