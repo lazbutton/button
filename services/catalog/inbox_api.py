@@ -129,6 +129,99 @@ def create_bank(media: Path, label: str, folder: str) -> tuple[int, dict]:
     return 201, {"destination": {"id": folder, "label": label, "group": "archives", "folder": f"{ARCHIVES}/{folder}"}}
 
 
+def rename_bank(media: Path, name: str, label: str) -> tuple[int, dict]:
+    """A new displayed name for a collection. Its folder keeps its name: the selections of titles read it."""
+    name = str(name or "")
+    label = " ".join(str(label or "").split())
+    if name == ROTATION:
+        return 400, {"error": "La Rotation garde son nom."}
+    if not label:
+        return 400, {"error": "Donne un nom à la collection."}
+    if len(label) > 60:
+        return 400, {"error": "Nom trop long : 60 caractères au plus."}
+    if label.casefold() == "rotation":
+        return 409, {"error": "« rotation » est réservé à la musique de l'auto-DJ."}
+    with _LOCK:
+        existing = archive_names(media)
+        if name not in existing:
+            return 404, {"error": "Collection introuvable."}
+        if any(other != name and bank_label(media, other).casefold() == label.casefold() for other in existing):
+            return 409, {"error": "Une collection porte déjà ce nom."}
+        note = media / ARCHIVES / name / LABEL_FILE
+        try:
+            data = json.loads(note.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            data = {}
+        if not isinstance(data, dict):
+            data = {}
+        data["nom"] = label
+        # Through a rename: the Finder view reads this file at every round.
+        partial = note.with_name(f"{LABEL_FILE}.partial")
+        try:
+            partial.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+            partial.replace(note)
+        except OSError:
+            partial.unlink(missing_ok=True)
+            return 500, {"error": "Le nom n'a pas pu s'écrire dans le dossier de la collection."}
+        give_like_folder(note)
+    return 200, {"destination": {"id": name, "label": label, "group": "archives", "folder": f"{ARCHIVES}/{name}"}}
+
+
+def _visible_files(root: Path) -> int:
+    """The files a person put there: hidden files and hidden folders do not count."""
+    count = 0
+    if not root.is_dir():
+        return count
+    for _dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        dirnames[:] = [name for name in dirnames if not name.startswith(".")]
+        count += sum(1 for name in filenames if not name.startswith("."))
+    return count
+
+
+def _remove_empty_tree(root: Path) -> bool:
+    """Remove a folder that holds nothing but hidden files. False, and the file stays, if one came in."""
+    if root.is_symlink() or not root.is_dir():
+        return not root.exists()
+    try:
+        for dirpath, _dirnames, filenames in os.walk(root, topdown=False, followlinks=False):
+            folder = Path(dirpath)
+            hidden = any(part.startswith(".") for part in folder.relative_to(root).parts)
+            # Nothing visible is ever deleted, and a folder that keeps a file keeps its name too.
+            if not hidden and any(not name.startswith(".") for name in filenames):
+                return False
+            for name in filenames:
+                (folder / name).unlink()
+            folder.rmdir()
+    except OSError:
+        return False
+    return True
+
+
+def delete_bank(media: Path, name: str) -> tuple[int, dict]:
+    """Remove an empty collection: its folder and its inbox. A title never goes with it."""
+    name = str(name or "")
+    if name == ROTATION:
+        return 400, {"error": "La Rotation ne se supprime pas."}
+    with _LOCK:
+        if name not in archive_names(media):
+            return 404, {"error": "Collection introuvable."}
+        bank = media / ARCHIVES / name
+        inbox = media / INBOX_ARCHIVES / name
+        if bank.is_symlink() or os.path.ismount(bank):
+            return 409, {"error": "Ce dossier est un lien ou un disque monté : il se retire sur la machine, pas ici."}
+        left = _visible_files(bank)
+        if left:
+            files = "1 fichier" if left == 1 else f"{left} fichiers"
+            return 409, {"error": f"La collection contient encore {files} : retire ou déplace d'abord ses titres."}
+        waiting = _visible_files(inbox)
+        if waiting:
+            files = "1 envoi attend" if waiting == 1 else f"{waiting} envois attendent"
+            return 409, {"error": f"{files} encore dans le dépôt de la collection : réessaie une fois rangé."}
+        if not _remove_empty_tree(inbox) or not _remove_empty_tree(bank):
+            return 409, {"error": "Un fichier vient d'arriver dans la collection, ou son dossier refuse d'être supprimé."}
+    return 200, {"deleted": name}
+
+
 def judge_upload(
     name: str,
     destination: str,

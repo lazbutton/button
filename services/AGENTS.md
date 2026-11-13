@@ -7,7 +7,7 @@
 ```bash
 cd services/catalog
 pip install -r requirements.txt          # dans un venv, une fois
-../../scripts/verifier.sh services       # les quinze tests, comme la CI
+../../scripts/verifier.sh services       # les seize tests, comme la CI
 ```
 
 Pour essayer Icecast et nowplaying seuls : [deploy/local/](../deploy/local/README.md).
@@ -15,7 +15,8 @@ Pour essayer Icecast et nowplaying seuls : [deploy/local/](../deploy/local/READM
 ## Le catalogue
 
 - `catalog/app.py` est un serveur de la bibliothèque standard (`http.server`), sans framework. Les routes sont des `if path == …` dans `CatalogHandler`. Il dépend seulement de `mutagen` et de `watchdog`, et parle à Meilisearch en HTTP.
-- `inbox_api.py` range les envois du navigateur. `agenda_api.py` reçoit les sets des invités de l'Agenda. `volume_api.py` gère les mots de passe du dossier partagé.
+- `inbox_api.py` range les envois du navigateur, et crée, renomme et supprime les collections. `bank_api.py` lit le contenu de la Rotation et des collections sur le disque, et en retire ou déplace des titres : jamais d'effacement, un titre retiré part dans `90-trash`, et un déplacement ne remplace jamais un fichier. `agenda_api.py` reçoit les sets des invités de l'Agenda. `volume_api.py` gère les mots de passe du dossier partagé.
+- Un module nouveau s'ajoute au `COPY` du `Dockerfile` : `test_bank_api.py` vérifie que l'image porte chaque module qu'importe `app.py`.
 - Le catalogue demande au moteur qui est connecté : `account_permissions` lit `/account.json` avec le cookie du navigateur. Il ne stocke aucun compte.
 - Toutes les routes demandent une session, sauf `/health`, `/health/live` et `/tus-hook`, qu'appelle tusd. Le contrôle est en tête de `do_GET` : tous les rôles cherchent et pré-écoutent. Les routes `POST` demandent un admin (`session_admin`). nginx demande aussi la session devant `/library/`, mais le port du catalogue se joint sans lui : ne pas compter sur nginx seul.
 - Au démarrage, avant de servir, le catalogue donne `TUSD_DIR` à `TUSD_USER`, l'utilisateur de tusd (`give_tusd_dir`) : Docker crée ce volume au nom de root. Sans `TUSD_USER`, comme dans le `compose.yml` d'une version d'avant, c'est `1000:1000`, l'utilisateur de l'image de tusd.
@@ -27,7 +28,7 @@ Pour essayer Icecast et nowplaying seuls : [deploy/local/](../deploy/local/READM
 ## Tests
 
 - Chaque test est un script `unittest` lancé seul : `python test_inbox_api.py`. Les faux services, comme un faux moteur, sont des `BaseHTTPRequestHandler` dans le test.
-- La CI lance quinze fichiers, listés dans `.github/workflows/services.yml` sous la forme `- run: python test_xxx.py`. `scripts/verifier.sh` lit cette liste : un fichier de test nouveau s'y ajoute, sinon personne ne le lance.
+- La CI lance seize fichiers, listés dans `.github/workflows/services.yml` sous la forme `- run: python test_xxx.py`. `scripts/verifier.sh` lit cette liste : un fichier de test nouveau s'y ajoute, sinon personne ne le lance.
 - `test_compose.py` tourne une seconde fois avec Compose v2, qu'une station peut avoir encore : `COMPOSE_IMAGE` lui donne une image de Docker épinglée, dont il prend le Compose. `verifier.sh` lit l'image dans `services.yml`, et la lance si Docker tourne.
 
 ## nowplaying et Icecast
