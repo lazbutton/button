@@ -273,6 +273,27 @@ programs = fallback([stream, relay, carts, jingles_then_autodj, blank()],
   replay_metadata=true,
   id="programs")
 
+# The source on air, for the heartbeat, its remaining time and `/health`. Both
+# fallbacks cut (`track_sensitive=false`): the first child that is ready is the
+# one that plays. `current_source_id` does not tell it: on a switch, Liquidsoap
+# 2.4 hands the transitions of `programs` a wrapper, `insert_initial_track_mark.N`,
+# and a cart, a live and a relay were all announced as "autodj", with the
+# remaining time of the title they had cut, which waits.
+# playout/tests/antenna.py cuts a title with a sound of the carts queue.
+def on_air_source() =
+  if source.is_ready(stream) then
+    "stream"
+  elsif source.is_ready(relay) then
+    "relay"
+  elsif source.is_ready(carts) then
+    "carts"
+  elsif source.is_ready(jingles) then
+    "jingles"
+  else
+    "autodj"
+  end
+end
+
 
 settings.lufs.integrated_metadata := "rg_track_gain"
 bed = normalize_track_gain(programs)
@@ -336,7 +357,7 @@ def queue_remaining(q, estimate) =
 end
 
 def track_remaining() =
-  sid = current_source_id()
+  sid = on_air_source()
   if sid == "jingles" then
     queue_remaining(jingles_queue, jingles.remaining())
   elsif sid == "carts" then
@@ -625,7 +646,7 @@ def post_to_log(md)
   # from (annotate radiotomate_queue). Transitions in LS 2.3 are unreliable
   # (#4179), so `current_source_id` alone mislabelled carts music as autodj.
   pushed_queue = md["radiotomate_queue"]
-  src = if pushed_queue != "" then pushed_queue else current_source_id() end
+  src = if pushed_queue != "" then pushed_queue else on_air_source() end
   data.add("source", src)
   _ = post_to_radiotomate("/metadata_log", data)
 end
@@ -700,7 +721,7 @@ end
 
 def post_to_live()
   data = current_md()
-  data.add("source", current_source_id())
+  data.add("source", on_air_source())
   rem = track_remaining()
   voiceover_remaining := rem
   data.add("remaining", string.float(rem))
@@ -731,7 +752,7 @@ harbor.http.register(port=API_PORT, method="GET", "/version", version_GET)
 
 def health_GET(_, res) =
   let data = json()
-  src = current_source_id()
+  src = on_air_source()
   data.add("status", "live")
   data.add("silence_s", string.float(silence_s()))
   data.add("rms_db", string.float(rms_db()))

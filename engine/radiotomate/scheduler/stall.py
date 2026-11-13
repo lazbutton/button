@@ -11,11 +11,12 @@ read on the antenna bench (``playout/tests``) with Liquidsoap 2.4.6:
   read the same to the last digit every time. On sound that plays it never
   does, not even on a steady tone sent by an encoder.
 
-Neither is enough alone. With Liquidsoap 2.4.5 as with 2.4.6, the heartbeat
-names its source ``autodj`` while a cart, a live or a relay cuts a title of the
-Auto-DJ, and carries the remaining time of the title cut, which waits: there, a
-remaining time that stays put is an antenna that is fine. And a level that
-stands still says nothing of the queue.
+Neither is enough alone. Until the playout read its source from what is ready
+(``on_air_source``, 2026-11-13), the heartbeat named its source ``autodj``
+while a cart, a live or a relay cut a title of the Auto-DJ, and carried the
+remaining time of the title cut, which waits: there, a remaining time that
+stays put is an antenna that is fine. And a level that stands still says
+nothing of the queue.
 :class:`StallWatch` reads the first sign in each heartbeat,
 :func:`level_stands_still` the second in two readings of ``/health``, and
 :mod:`radiotomate.scheduler.alerts` opens the ``playout_stalled`` incident when

@@ -6,9 +6,9 @@ playout image, and listens to what comes out.
     python3 engine/playout/tests/antenna.py
 
 `liquidsoap --check` only reads the script. This plays it: titles are pushed as
-the scheduler pushes them, a jingle cuts in, and the bench records the WAV mount
-of the console's headphones, the same sound as the public mount before its MP3
-encoder. It fails when:
+the scheduler pushes them, a sound of a cart and a jingle cut in, and the bench
+records the WAV mount of the console's headphones, the same sound as the public
+mount before its MP3 encoder. It fails when:
 
 - a title pushed never airs, or airs out of order;
 - the playout airs the same 20 ms frame again and again: the music queue has
@@ -17,6 +17,8 @@ encoder. It fails when:
 - the length a title is announced with, what it has played plus what is left,
   is not its own: the scheduler cuts it in the middle, or waits for its end
   long after it;
+- the heartbeat names another source than the one on air: a sound of a cart
+  told as the Auto-DJ, with the remaining time of the title it has cut;
 - the antenna stays silent.
 
 It needs Docker and Compose, and nothing else: standard library only. Its
@@ -54,6 +56,14 @@ LENGTH_SLACK = 1.5
 
 TITLES = ["title-1", "title-2", "title-3", "title-4", "title-5", "title-6"]
 JINGLE = "jingle"
+CART = "cart"
+# The queue each sound is pushed to: the source the heartbeat names meanwhile.
+QUEUES = {**dict.fromkeys(TITLES, "autodj"), JINGLE: "jingles", CART: "carts"}
+# What cuts in: the title cut, the seconds into it, and the sound. A sound of a
+# cart, as a cut on the minute pushes, then a jingle.
+CUTS = [(TITLES[0], 6.0, CART), (TITLES[1], 2.0, JINGLE)]
+# The sounds whose announced length is compared to their own.
+MEASURED = [name for name in [*TITLES, CART] if name not in {cut[0] for cut in CUTS}]
 # The start sound has aired, and the music queue has been empty for a while: a
 # first title pushed then is what used to stall.
 EMPTY_QUEUE_SECONDS = 5.0
@@ -211,10 +221,11 @@ class Capture(threading.Thread):
 
 
 def scenario(playout: Playout) -> None:
-    """Pushes the titles as the scheduler does, and a jingle on the second one."""
+    """Pushes the titles as the scheduler does, a sound of a cart on the first
+    one, and a jingle on the second."""
     pushed: list[str] = []
-    jingle_at: float | None = None
-    jingle_sent = False
+    due: dict[str, float] = {}
+    sent: set[str] = set()
     ending: float | None = None
     deadline = time.monotonic() + LIMIT_SECONDS
     while time.monotonic() < deadline:
@@ -224,14 +235,12 @@ def scenario(playout: Playout) -> None:
         if len(pushed) < len(TITLES) and len(waiting) < 2:
             pushed.append(TITLES[len(pushed)])
             playout.push("autodj", pushed[-1])
-        # The jingle cuts the second title, two seconds in.
-        if jingle_at is None and TITLES[1] in aired:
-            jingle_at = time.monotonic() + 2
-        elif (
-            jingle_at is not None and not jingle_sent and time.monotonic() >= jingle_at
-        ):
-            jingle_sent = True
-            playout.push("jingles", JINGLE)
+        for title, seconds, sound in CUTS:
+            if title in aired and sound not in due:
+                due[sound] = time.monotonic() + seconds
+            elif sound in due and sound not in sent and time.monotonic() >= due[sound]:
+                sent.add(sound)
+                playout.push(QUEUES[sound], sound)
         # The last title has started: leave it the time to end.
         if ending is None and TITLES[-1] in aired and JINGLE in aired:
             ending = time.monotonic() + sounds.SOUNDS[TITLES[-1]][0] + 2
@@ -286,13 +295,11 @@ def stuck(beats: list[dict]) -> list[tuple[str, int]]:
 
 
 def announced(beats: list[dict]) -> dict[str, float]:
-    """The length each title is announced with: what it has played plus what is
-    left, the median of its heartbeats. Not the title the jingle cuts: what it
-    has played starts again after the jingle."""
+    """The length each sound is announced with: what it has played plus what is
+    left, the median of its heartbeats. Not a title that a sound cuts: what it
+    has played starts again after that sound. Nor the jingle: too few heartbeats."""
     found: dict[str, float] = {}
-    for name in TITLES:
-        if name == TITLES[1]:
-            continue
+    for name in MEASURED:
         lengths = sorted(
             beat["elapsed"] + beat["remaining"]
             for beat in beats
@@ -300,6 +307,17 @@ def announced(beats: list[dict]) -> dict[str, float]:
         )
         if lengths:
             found[name] = lengths[len(lengths) // 2]
+    return found
+
+
+def misnamed(beats: list[dict]) -> dict[str, str]:
+    """The sounds whose heartbeats mostly name another source than their queue,
+    and that source. A heartbeat at the turn of two sounds may mix them."""
+    found: dict[str, str] = {}
+    for name, queue in QUEUES.items():
+        named = [beat["source"] for beat in beats if beat["title"] == name]
+        if named.count(queue) * 2 < len(named):
+            found[name] = max(set(named), key=named.count)
     return found
 
 
@@ -332,18 +350,23 @@ def verdict(pcm: bytes, aired: list[str], beats: list[dict]) -> list[str]:
     ]
     failures += [
         f"« {name} » est passé à l'antenne sans temps restant"
-        for name in TITLES
-        if name in aired and name != TITLES[1] and name not in lengths
+        for name in MEASURED
+        if name in aired and name not in lengths
+    ]
+    failures += [
+        f"pendant « {name} », le playout dit la source « {source} », pas"
+        f" « {QUEUES[name]} » : le scheduler ne sait pas ce qui est à l'antenne"
+        for name, source in misnamed(beats).items()
     ]
     failures += [
         f"« {name} » n'est jamais passé à l'antenne"
-        for name in [*TITLES, JINGLE]
+        for name in QUEUES
         if name not in aired
     ]
     order = [name for name in dict.fromkeys(aired) if name in TITLES]
     if order != [name for name in TITLES if name in order]:
         failures.append(f"les titres sont passés dans le désordre : {', '.join(order)}")
-    expected = sum(sounds.audible(name) for name in [*TITLES, JINGLE])
+    expected = sum(sounds.audible(name) for name in QUEUES)
     if seconds < 0.75 * expected:
         failures.append(
             f"{seconds:.1f} s de son seulement, sur {expected:.1f} s de sons poussés"
@@ -380,8 +403,8 @@ def main() -> int:
             say("\nLa fin du journal du playout :\n" + bench.log("playout"), error=True)
             return 1
         say(
-            "Bon : chaque titre passe à son tour, annoncé pour sa durée, sans trame"
-            " répétée ni reste figé."
+            "Bon : chaque titre passe à son tour, annoncé pour sa durée et sous sa"
+            " source, sans trame répétée ni reste figé."
         )
         return 0
     finally:

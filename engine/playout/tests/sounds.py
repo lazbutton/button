@@ -33,6 +33,7 @@ SOUNDS = {
     "title-5": (20.0, 420.0, 7.0, 1800.0, -8.0),
     "title-6": (20.0, 610.0, 5.0, 2300.0, -6.0),
     "jingle": (2.5, 2500.0, 40.0, 4000.0, -30.0),
+    "cart": (5.0, 1700.0, 25.0, 3300.0, -20.0),
 }
 # The start sound of a station is a WAV: this one stays so.
 MP3 = [name for name in SOUNDS if name != "start"]
