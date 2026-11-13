@@ -111,13 +111,17 @@ class CatalogSessionTest(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body)["filters"], ["zone", "habillage"])
+        # Lues comme les dossiers qu'ils désignent : l'index garde ses champs.
         self.assertEqual(
             Meili.searches[-1]["filter"],
-            'zone = "collections" AND (habillage = "beds" OR habillage = "sfx")',
+            'top = "20-archives" AND (folder = "30-habillage/beds" OR folder = "30-habillage/sfx")',
         )
         status, body = _call(self.base + "/search?q=a", cookie="session=ouverte")
-        self.assertEqual(json.loads(body)["filters"], [])
+        answer = json.loads(body)
+        self.assertEqual(answer["filters"], [])
         self.assertNotIn("filter", Meili.searches[-1])
+        # Chaque titre dit sa zone, lue dans son chemin.
+        self.assertEqual((answer["hits"][0]["zone"], answer["hits"][0]["habillage"]), ("rotation", ""))
 
     def test_probes_answer_without_a_session(self) -> None:
         for path in ("/health", "/health/live"):

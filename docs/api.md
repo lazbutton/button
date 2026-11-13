@@ -255,9 +255,10 @@ Le catalogue demande une session sur toutes ses routes, sauf `/health`, `/health
 
 `GET /library/search?q=&limit=&kind=&grouping=&zone=&habillage=&folder=&top=` est le service catalogue (`services/catalog`). Réponse : `{hits:[{id, path, title, artist, kind, grouping, zone, habillage, folder, top, duration}], estimatedTotalHits, filters}`. Une liste séparée par des virgules fait un OU : `grouping=matinale,jazz`.
 
-- `zone` dit où est un titre, sans nommer son dossier : `rotation`, `collections`, `habillage`, `emissions` ou `bacs`. `zone=collections` donne toutes les collections. `habillage` est le dossier d'habillage du titre, comme `beds`, et vide ailleurs. La console filtre par eux, et ne nomme aucun dossier de la banque ([ADR 0019](decisions/0019-le-rangement-de-la-banque.md)).
+- `zone` dit où est un titre, sans nommer son dossier : `rotation`, `collections`, `habillage`, `emissions` ou `bacs`. `zone=collections` donne toutes les collections. `habillage` est le dossier d'habillage où le titre est posé, comme `beds` ; vide ailleurs, et dans un de ses sous-dossiers. La console filtre par eux, et ne nomme aucun dossier de la banque ([ADR 0019](decisions/0019-le-rangement-de-la-banque.md)).
+- Le catalogue les lit dans le chemin du titre, à chaque recherche, et filtre par les dossiers qu'ils désignent : `zone=collections` par `top`, `habillage=beds` par `folder`. L'index ne change pas, et ses réponses sont celles d'une recherche par dossier. Une zone ou un dossier d'habillage qu'il ne connaît pas ne donne aucun titre.
 - `folder` est le dossier du fichier, et `top` son dossier de premier niveau : une console plus ancienne filtre encore par eux.
-- `filters` donne les filtres que la recherche a pris, comme `["zone"]`. Un catalogue plus ancien ne l'envoie pas, et ignore `zone` : la console redemande alors par `folder` ou `top`. Après sa mise à jour, le catalogue réindexe tout à son démarrage, et donne `zone` à chaque titre.
+- `filters` donne les filtres que la recherche a pris, comme `["zone"]`. Un catalogue plus ancien ne l'envoie pas, et ignore `zone` : la console redemande alors par `folder` ou `top`.
 
 `GET /inbox.json` (via `/library/inbox.json`) : `{destinations, collections:{folder}, quota:{used, limit}, disk:{total, used, free}, queue, rejected, progress}`. L’envoi reprend par tus sur `/tus/`, pas par Radiotomate. `collections.folder` est le dossier où naît une collection, que la console montre à sa création ; un catalogue plus ancien ne l'envoie pas.
 

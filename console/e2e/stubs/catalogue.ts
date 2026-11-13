@@ -75,9 +75,11 @@ const ZONES: Record<string, string> = {
 };
 const HABILLAGE_TYPES = ["jingles", "ids", "pubs", "beds", "stings", "sfx"];
 
+// Le dossier d'habillage où le fichier est posé, pas un de ses sous-dossiers,
+// comme layout.habillage_of() du vrai catalogue.
 function habillageOf(rel: string): string {
   const parts = rel.split("/");
-  return parts.length >= 3 && parts[0] === "30-habillage" && HABILLAGE_TYPES.includes(parts[1]) ? parts[1] : "";
+  return parts.length === 3 && parts[0] === "30-habillage" && HABILLAGE_TYPES.includes(parts[1]) ? parts[1] : "";
 }
 
 function groupingOf(rel: string): string {

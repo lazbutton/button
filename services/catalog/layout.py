@@ -46,6 +46,8 @@ ZONES = {
     EMISSIONS: "emissions",
     CARTS: "bacs",
 }
+# Le dossier de tête d'une zone : la recherche filtre par lui.
+ZONE_TOPS = {zone: top for top, zone in ZONES.items()}
 
 
 def collection(name: str) -> str:
@@ -74,8 +76,12 @@ def zone_of(rel: str) -> str:
 
 
 def habillage_of(rel: str) -> str:
-    """The habillage folder a file is in, such as jingles or beds; empty anywhere else."""
+    """The habillage folder a file lies in, such as jingles or beds; empty anywhere else.
+
+    Only a file right in that folder, not in one of its subfolders: the same files
+    as a search by that folder.
+    """
     parts = rel.split("/")
-    if len(parts) >= 3 and parts[0] == HABILLAGE and parts[1] in HABILLAGE_TYPES:
+    if len(parts) == 3 and parts[0] == HABILLAGE and parts[1] in HABILLAGE_TYPES:
         return parts[1]
     return ""

@@ -219,9 +219,6 @@ def document_for(path: Path) -> dict | None:
         "grouping": grouping_of(rel),
         "folder": str(Path(rel).parent.as_posix()),
         "top": top,
-        # What the console filters on: it names no folder of the bank.
-        "zone": layout.zone_of(rel),
-        "habillage": layout.habillage_of(rel),
         "duration": round(duration, 3),
         "bytes": path.stat().st_size,
         "mime": mime,
@@ -267,7 +264,7 @@ def ensure_index() -> None:
         f"{MEILI_URL}/indexes/{INDEX}/settings",
         {
             "searchableAttributes": ["title", "artist", "filename", "path", "folder"],
-            "filterableAttributes": ["kind", "grouping", "folder", "top", "zone", "habillage"],
+            "filterableAttributes": ["kind", "grouping", "folder", "top"],
             "sortableAttributes": ["path", "title", "duration"],
         },
     )
@@ -489,22 +486,30 @@ def cors(handler: BaseHTTPRequestHandler) -> None:
     handler.send_header("Access-Control-Expose-Headers", "Content-Range, Accept-Ranges, Content-Length")
 
 
-def any_of(field: str, raw: str) -> str:
-    """grouping=matinale,jazz reads as matinale OR jazz."""
-    values = [value.strip() for value in raw.split(",") if value.strip()]
+def listed(raw: str) -> list[str]:
+    """matinale, jazz -> [matinale, jazz]."""
+    return [value.strip() for value in raw.split(",") if value.strip()]
+
+
+def one_of(field: str, values: list[str]) -> str:
     clauses = [f"{field} = {json.dumps(value, ensure_ascii=False)}" for value in values]
     if len(clauses) > 1:
         return "(" + " OR ".join(clauses) + ")"
     return clauses[0] if clauses else ""
 
 
-# zone and habillage name no folder of the bank: the console asks with them.
-# folder and top stay for a console older than this catalogue.
-SEARCH_FIELDS = ("grouping", "folder", "top", "zone", "habillage")
+def any_of(field: str, raw: str) -> str:
+    """grouping=matinale,jazz reads as matinale OR jazz."""
+    return one_of(field, listed(raw))
 
 
 def search_filter(qs: dict[str, list[str]]) -> tuple[list[str], list[str]]:
     """The clauses of a search, and the parameters they were read from.
+
+    The console asks by zone and by habillage folder, which name no folder of
+    the bank. They read here as the folders they stand for, in layout.py: the
+    index keeps the fields it had, and answers the same titles as a search by
+    folder. folder and top stay, for a console older than this catalogue.
 
     The parameters go back with the answer. A console that asks for a filter
     this catalogue does not know reads that it was not applied, and asks again
@@ -520,12 +525,29 @@ def search_filter(qs: dict[str, list[str]]) -> tuple[list[str], list[str]]:
         clauses.append(f'kind = "{token}"')
     if token:
         applied.append("kind")
-    for field in SEARCH_FIELDS:
+    for field in ("grouping", "folder", "top"):
         clause = any_of(field, (qs.get(field) or [""])[0])
         if clause:
             clauses.append(clause)
             applied.append(field)
+    # A zone or a folder of habillage this catalogue does not know holds no
+    # title: it reads as an empty folder, which no file has.
+    zones = listed((qs.get("zone") or [""])[0])
+    if zones:
+        clauses.append(one_of("top", [layout.ZONE_TOPS.get(zone, "") for zone in zones]))
+        applied.append("zone")
+    kinds = listed((qs.get("habillage") or [""])[0])
+    if kinds:
+        folders = [layout.habillage(kind) if kind in layout.HABILLAGE_TYPES else "" for kind in kinds]
+        clauses.append(one_of("folder", folders))
+        applied.append("habillage")
     return clauses, applied
+
+
+def with_zone(hit: dict) -> dict:
+    """A title of the search, with its zone and its folder of habillage, read from its path."""
+    rel = str(hit.get("path") or "")
+    return {**hit, "zone": layout.zone_of(rel), "habillage": layout.habillage_of(rel)}
 
 
 def json_response(handler: BaseHTTPRequestHandler, payload: dict, status: int = 200) -> None:
@@ -641,10 +663,11 @@ class CatalogHandler(BaseHTTPRequestHandler):
             except RuntimeError as exc:
                 json_response(self, {"error": str(exc), "hits": []}, 503)
                 return
+            hits = result.get("hits") if isinstance(result, dict) else []
             json_response(
                 self,
                 {
-                    "hits": result.get("hits") if isinstance(result, dict) else [],
+                    "hits": [with_zone(hit) for hit in hits if isinstance(hit, dict)] if isinstance(hits, list) else [],
                     "estimatedTotalHits": result.get("estimatedTotalHits", 0)
                     if isinstance(result, dict)
                     else 0,

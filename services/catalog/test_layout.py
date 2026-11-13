@@ -101,13 +101,14 @@ class CatalogueReadsTheBankTest(unittest.TestCase):
         self.assertEqual(doc["grouping"], "jazz")
         self.assertEqual(doc["kind"], "son")
 
-    def test_a_document_says_its_zone_without_naming_a_folder(self) -> None:
-        # What the console filters on: the zone, and the kind of habillage.
+    def test_a_title_found_says_its_zone_without_naming_a_folder(self) -> None:
+        # What the console reads: the zone, and the folder of habillage the file
+        # lies in, not one of its subfolders, as a search by folder.
         cases = {
             "10-rotation/a.mp3": ("rotation", ""),
             "20-archives/jazz/a.mp3": ("collections", ""),
             "30-habillage/beds/a.mp3": ("habillage", "beds"),
-            "30-habillage/beds/noel/a.mp3": ("habillage", "beds"),
+            "30-habillage/beds/noel/a.mp3": ("habillage", ""),
             "30-habillage/a.mp3": ("habillage", ""),
             "30-habillage/autre/a.mp3": ("habillage", ""),
             "40-emissions/matinale/entiere/a.mp3": ("emissions", ""),
@@ -115,8 +116,18 @@ class CatalogueReadsTheBankTest(unittest.TestCase):
             "ailleurs/a.mp3": ("", ""),
         }
         for rel, expected in cases.items():
-            doc = catalog.document_for(self.put(rel))
-            self.assertEqual((doc["zone"], doc["habillage"]), expected, rel)
+            hit = catalog.with_zone({"id": "a", "path": rel, "title": "A"})
+            self.assertEqual((hit["zone"], hit["habillage"]), expected, rel)
+            self.assertEqual(hit["title"], "A")
+        self.assertEqual(catalog.with_zone({})["zone"], "")
+
+    def test_the_index_keeps_its_fields(self) -> None:
+        # The zone is read at each search: nothing to index again after an update.
+        doc = catalog.document_for(self.put("20-archives/jazz/a.mp3"))
+        self.assertEqual(
+            set(doc),
+            {"id", "path", "filename", "title", "artist", "kind", "grouping", "folder", "top", "duration", "bytes", "mime"},
+        )
 
     def test_the_inbox_and_the_trash_are_not_indexed(self) -> None:
         self.assertIsNone(catalog.document_for(self.put("00-inbox/rotation/a.mp3")))
@@ -218,13 +229,29 @@ class SearchFilterTest(unittest.TestCase):
     """The filters of GET /search, as Meilisearch receives them."""
 
     def test_the_console_filters_without_naming_a_folder(self) -> None:
+        # The catalogue reads them as the folders they stand for: the same titles
+        # as an older console's search by folder.
         self.assertEqual(
             catalog.search_filter({"q": ["ada"], "zone": ["collections"]}),
-            (['zone = "collections"'], ["zone"]),
+            (['top = "20-archives"'], ["zone"]),
+        )
+        self.assertEqual(
+            catalog.search_filter({"zone": ["rotation, bacs"]}),
+            (['(top = "10-rotation" OR top = "50-carts")'], ["zone"]),
         )
         self.assertEqual(
             catalog.search_filter({"habillage": ["beds,stings,sfx"]}),
-            (['(habillage = "beds" OR habillage = "stings" OR habillage = "sfx")'], ["habillage"]),
+            (
+                ['(folder = "30-habillage/beds" OR folder = "30-habillage/stings" OR folder = "30-habillage/sfx")'],
+                ["habillage"],
+            ),
+        )
+
+    def test_an_unknown_zone_holds_no_title(self) -> None:
+        self.assertEqual(catalog.search_filter({"zone": ["ailleurs"]}), (['top = ""'], ["zone"]))
+        self.assertEqual(
+            catalog.search_filter({"habillage": ["beds,../x"]}),
+            (['(folder = "30-habillage/beds" OR folder = "")'], ["habillage"]),
         )
 
     def test_an_older_console_still_filters_by_folder(self) -> None:
