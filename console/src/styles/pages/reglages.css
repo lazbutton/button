@@ -1184,16 +1184,53 @@
   border-top: 1px solid var(--app-border);
 }
 
+/* Le numéro, ce qu'est la version et sa date ; son lien, à droite, ou dessous quand la carte se resserre. */
+.reglages-updates-release-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.2rem 0.75rem;
+  margin-bottom: 0.4rem;
+}
+
 .reglages-updates-release h4 {
-  margin: 0 0 0.35rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.2rem 0.45rem;
+  margin: 0;
   color: var(--app-text);
   font-size: 0.82rem;
   font-weight: 650;
 }
 
-.reglages-updates-release h4 span {
+.reglages-updates-release-date {
   color: var(--app-text-muted);
   font-weight: 500;
+}
+
+.reglages-updates-release-head > a {
+  color: var(--app-text);
+  font-size: 0.74rem;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* Correctif, mineure ou majeure : une étiquette ; une majeure à l'encre orange, elle demande une action. */
+.reglages-updates-kind {
+  padding: 0.05rem 0.45rem;
+  border: 1px solid var(--app-border);
+  border-radius: 999px;
+  color: var(--app-text-muted);
+  font-size: 0.7rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.reglages-updates-kind.is-major {
+  border-color: color-mix(in srgb, var(--app-vu-hot) 45%, var(--app-border));
+  color: var(--app-warn-ink);
 }
 
 .reglages-updates-notes {
@@ -1213,23 +1250,39 @@
   padding-left: 1.2rem;
 }
 
+.reglages-updates-notes li + li {
+  margin-top: 0.35rem;
+}
+
 .reglages-updates-notes h5 {
   margin: 0.6rem 0 0.25rem;
   font-size: 0.78rem;
   font-weight: 650;
 }
 
-.reglages-updates-notes code,
-.reglages-updates-notes pre {
-  font-family: var(--code-font-family);
-  font-size: 0.72rem;
-}
-
 .reglages-updates-notes pre {
   padding: 0.55rem 0.7rem;
   border-radius: var(--app-radius-md);
   background: var(--app-surface-2);
+  font-family: var(--code-font-family);
+  font-size: 0.72rem;
   white-space: pre-wrap;
+}
+
+/* Une commande à taper sur la machine, un nom de fichier ou de réglage : en police de code, partout sur la page. */
+.reglages-updates code {
+  padding: 0.05em 0.3em;
+  border-radius: var(--app-radius-sm);
+  background: var(--app-surface-2);
+  color: var(--app-text);
+  font-family: var(--code-font-family);
+  font-size: 0.92em;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+.reglages-updates-command > span {
+  white-space: nowrap;
 }
 
 .reglages-updates-notes a,
@@ -1239,21 +1292,141 @@
   text-underline-offset: 2px;
 }
 
-.reglages-updates-services {
-  margin-top: 0.75rem;
-  font-size: 0.78rem;
-}
-
-.reglages-updates-services summary {
+/* Ce qui se déplie : le détail d'une version, la version de chaque service. Une flèche le dit, et tourne une fois ouvert. */
+.reglages-updates-fold > summary {
   min-height: 2.5rem;
   display: flex;
   align-items: center;
+  gap: 0.35rem;
   color: var(--app-text);
+  font-size: 0.78rem;
+  font-weight: 560;
   cursor: pointer;
+  list-style: none;
 }
 
-.reglages-updates-services summary:focus-visible {
+.reglages-updates-fold > summary::-webkit-details-marker {
+  display: none;
+}
+
+.reglages-updates-fold > summary:hover > span {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.reglages-updates-fold > summary:focus-visible {
   outline: 2px solid var(--app-focus);
   outline-offset: 2px;
+  border-radius: var(--app-radius-sm);
 }
 
+.reglages-updates-chevron {
+  flex: none;
+  width: 1rem;
+  height: 1rem;
+  color: var(--app-text-muted);
+  transition: transform 120ms ease;
+}
+
+.reglages-updates-fold[open] > summary .reglages-updates-chevron {
+  transform: rotate(90deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reglages-updates-chevron {
+    transition: none;
+  }
+}
+
+/* Le détail ouvert se range sous sa flèche, un trait à gauche dit d'où il vient. */
+.reglages-updates-detail > .reglages-updates-notes {
+  margin: 0.15rem 0 0 0.45rem;
+  padding-left: 0.85rem;
+  border-left: 2px solid var(--app-border);
+}
+
+.reglages-updates-services {
+  margin-top: 0.5rem;
+}
+
+.reglages-updates-services > .reglages-list {
+  font-size: 0.78rem;
+}
+
+/* updates.log : une ligne par mise à jour, son résultat d'un coup d'œil, puis quand et ce que la machine en a dit. */
+.reglages-updates-history {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.reglages-updates-history li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 0 0.7rem;
+  padding: 0.6rem 0;
+  border-top: 1px solid var(--app-border);
+}
+
+.reglages-updates-history li:first-child {
+  padding-top: 0.1rem;
+  border-top: 0;
+}
+
+.reglages-updates-history li:last-child {
+  padding-bottom: 0;
+}
+
+.reglages-updates-history-icon {
+  display: grid;
+  place-items: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 999px;
+  background: var(--app-surface-2);
+  color: var(--app-text-muted);
+}
+
+.reglages-updates-history-icon svg {
+  width: 0.95rem;
+  height: 0.95rem;
+  stroke-width: 2;
+}
+
+.reglages-updates-history .tone-ok .reglages-updates-history-icon {
+  background: color-mix(in srgb, var(--app-ok) 16%, transparent);
+  color: var(--app-ok-ink);
+}
+
+.reglages-updates-history .tone-warn .reglages-updates-history-icon {
+  background: color-mix(in srgb, var(--app-vu-hot) 16%, transparent);
+  color: var(--app-warn-ink);
+}
+
+.reglages-updates-history .tone-alert .reglages-updates-history-icon {
+  background: color-mix(in srgb, var(--app-danger) 16%, transparent);
+  color: var(--app-danger-ink);
+}
+
+.reglages-updates-history-copy {
+  min-width: 0;
+  padding-top: 0.15rem;
+}
+
+.reglages-updates-history-title {
+  margin: 0;
+  color: var(--app-text);
+  font-size: 0.8rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.reglages-updates-history-detail {
+  margin: 0.1rem 0 0;
+  color: var(--app-text-muted);
+  font-size: 0.76rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}

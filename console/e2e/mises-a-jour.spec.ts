@@ -37,7 +37,16 @@ function etat(over: Partial<UpdatesState> = {}): UpdatesState {
     ],
     major: null,
     host: HOST,
-    history: [],
+    history: [
+      {
+        started_at: "2026-11-12T04:01+01:00",
+        from: "0.0.9",
+        to: "0.1.0",
+        result: "done",
+        label: "faite",
+        detail: "redémarrée et contrôlée en 21 s",
+      },
+    ],
     request: null,
     last: null,
     blocked: null,
@@ -78,6 +87,8 @@ async function ouvrirLesMisesAJour(page: Page): Promise<void> {
 }
 
 test("un admin met la station à jour d’un bouton, et la page suit la demande jusqu’à son résultat", async ({ page }) => {
+  // Le 12 novembre à 15:00, à Paris : les heures des réponses se disent « aujourd’hui ».
+  await page.clock.setFixedTime(new Date("2026-11-12T15:00:00+01:00"));
   let courant: UpdatesState | number = etat();
   await jouerLeMoteur(page, () => courant);
   let demande: unknown = null;
@@ -90,8 +101,18 @@ test("un admin met la station à jour d’un bouton, et la page suit la demande 
   await ouvrirLesMisesAJour(page);
 
   await expect(page.getByRole("heading", { name: "La 0.2.0 est publiée" })).toBeVisible();
-  // Les notes de la version, sans HTML : le gras et le code restent du texte.
+  await expect(page.getByText("0.0.9 → 0.1.0 : faite")).toBeVisible();
+  await expect(page.getByText("Aujourd’hui à 04:01. Redémarrée et contrôlée en 21 s.")).toBeVisible();
+  // Les notes de la version, sans HTML : d'abord ce qu'elle demande, puis le
+  // détail des changements, à déplier.
+  await expect(page.getByRole("heading", { name: "0.2.0 mineure publiée le 10/11 à 19:40", level: 4 })).toBeVisible();
+  await expect(page.getByText("Rien d'autre que la mise à jour habituelle.")).toBeVisible();
+  await expect(page.getByText("Un correctif, avec")).toBeHidden();
+  await page.getByText("Le détail de la 0.2.0 : 1 changement").click();
   await expect(page.getByText("Un correctif, avec")).toBeVisible();
+  // Les mises à jour de la nuit ne tournent pas encore : la machine le dit, avec ce qu'elle a réglé.
+  await expect(page.locator(".reglages-fact", { hasText: "Mises à jour la nuit" })).toContainText("pas encore");
+  await expect(page.locator("code", { hasText: "sudo station config --updates manual" })).toBeVisible();
   await page.getByRole("button", { name: "Mettre à jour maintenant" }).click();
   const confirmation = page.getByRole("dialog", { name: "Mettre la station à jour, en 0.2.0 ?" });
   await expect(confirmation).toContainText("La station passe de 0.1.0 à 0.2.0.");
@@ -128,7 +149,7 @@ test("un admin met la station à jour d’un bouton, et la page suit la demande 
     },
   });
   await expect(page.getByRole("heading", { name: "Faite : de 0.1.0 à 0.2.0" })).toBeVisible({ timeout: 25_000 });
-  await expect(page.getByText("Le 12/11/2026 à 14:09. Redémarrée et contrôlée en 18 s.")).toBeVisible();
+  await expect(page.getByText("Aujourd’hui à 14:09. Redémarrée et contrôlée en 18 s.")).toBeVisible();
   await expect(page.getByRole("heading", { name: "À jour", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Recharger la page" })).toBeVisible();
 });
@@ -202,7 +223,8 @@ test("HOLD, une majeure, des demandes coupées : pas de bouton, mais pourquoi et
     },
   });
   await page.getByRole("button", { name: "Vérifier les versions" }).click();
-  await expect(page.getByText("sudo station config --console-requests yes", { exact: false })).toBeVisible();
+  // La commande à taper sur la machine se lit en police de code.
+  await expect(page.locator("code", { hasText: "sudo station config --console-requests yes" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Mettre à jour maintenant" })).toHaveCount(0);
 });
 

@@ -410,7 +410,7 @@ sudo bash station update
 
 ### Depuis la console
 
-Un admin met la station à jour d'un bouton : **Réglages → Mises à jour**, « Mettre à jour maintenant ». La page dit la version de la station et la plus haute publiée, les notes de chaque version entre les deux, la demande en cours et la dernière, les dernières lignes de `updates.log`, et `HOLD` s'il bloque. Les autres rôles ne la voient pas.
+Un admin met la station à jour d'un bouton : **Réglages → Mises à jour**, « Mettre à jour maintenant ». La page dit la version de la station et la plus haute publiée, puis, pour chaque version entre les deux, la tête de ses notes, qui dit ce qu'elle demande à la station, et le détail de ses changements, à déplier. Puis la demande en cours et la dernière, les dernières lignes de `updates.log`, chacune avec son résultat, et `HOLD` s'il bloque. Les autres rôles ne la voient pas.
 
 La console ne touche jamais la machine ([décision 0004](decisions/0004-la-console-ne-pilote-jamais-docker.md)). Le bouton écrit une demande dans le moteur. Chaque minute, un minuteur de systemd, `button-demandes`, lance `station requests` : la commande lit la demande par `docker compose exec`, lance `station update --yes`, comme une personne, puis écrit le résultat par le même chemin, d'après `updates.log`. La mise à jour est la même qu'à la main : la plus haute version publiée, une sauvegarde d'abord, le retour seul à la version d'avant si elle ne repart pas.
 
