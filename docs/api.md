@@ -213,6 +213,7 @@ Les vues du tableau, chacune à son compte, derrière le même interrupteur (`40
 - `POST /media/views.json` `{name, state}` → `201 {view}`. Le nom, de 60 signes au plus, se tasse sur ses espaces. Un nom que le compte a déjà : `409 {error, code:"conflict", field:"name"}` ; cent vues au plus par compte, `409` au-delà. Un état inconnu, des colonnes en double ou sans le titre : `400 {code:"validation_error"}`.
 - `PUT /media/views/{id}.json` `{name?, state?}` → `{view}`. `DELETE /media/views/{id}.json` → `{ok:true}`. La vue d'un autre compte rend `404`, comme une vue effacée.
 - Un compte supprimé emporte ses vues.
+
 `GET /media/titles/{id}/plays.json` (session, même interrupteur) → `{days, count, by_origin, recent}` : les passages à l'antenne d'un titre de la bibliothèque, lus au journal d'antenne (`metadata_log`), qui les garde 90 jours. `days` vaut 90 ; `count` compte les passages, hors titres sautés avant de jouer ; `by_origin` les range en `{autodj, bac, agenda, autre}` ; `recent` donne les dix derniers, du plus récent : `{on_air, origin, cart}`, `on_air` à l'heure de Paris, `cart` `{id, title}` ou `null`. Un passage se reconnaît au fichier joué, la fin de la requête que le playout a reçue ; un passage de l'Agenda, à la ligne du conducteur qui l'a envoyé, que le conducteur garde 7 jours : plus ancien, il compte comme un bac. Un identifiant que Beets n'a plus : `404`.
 
 ### Système
