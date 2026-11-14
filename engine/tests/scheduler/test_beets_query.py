@@ -14,6 +14,7 @@ from radiotomate.scheduler.music_rules import _pick_music
 from radiotomate.services.beets_query import (
     BAD_VALUE,
     EXTRA_COMMA,
+    LEGACY_GENRE,
     TRAILING_BACKSLASH,
     UNCLOSED_QUOTE,
     playable_query,
@@ -46,13 +47,19 @@ def jazz_library():
         ("grouping:jazz ,", EXTRA_COMMA),
         (", grouping:jazz", EXTRA_COMMA),
         (",", EXTRA_COMMA),
-        ("grouping:jazz , , genre:Jazz", EXTRA_COMMA),
+        ("grouping:jazz , , genres:Jazz", EXTRA_COMMA),
         # Un tri seul ne filtre rien : la partie d'après prend tout.
         ("grouping:jazz, year+", EXTRA_COMMA),
         ('title:"Swing', UNCLOSED_QUOTE),
         ("grouping:jazz\\", TRAILING_BACKSLASH),
         ("year:abc", BAD_VALUE),
         ("title::(", BAD_VALUE),
+        # Beets 2.14 lit le genre dans `genres`, `genre` par un alias qui avertit.
+        ("genre:Jazz", LEGACY_GENRE),
+        ("grouping:jazz -genre:Rock", LEGACY_GENRE),
+        ("grouping:jazz , ^genre:Rock", LEGACY_GENRE),
+        ('"genre:Hip Hop"', LEGACY_GENRE),
+        ("grouping:jazz genre+", LEGACY_GENRE),
     ],
 )
 def test_refused_queries(beets_integration: BeetsIntegration, query, message):
@@ -67,10 +74,12 @@ def test_refused_queries(beets_integration: BeetsIntegration, query, message):
     [
         "",
         "grouping:jazz",
-        "grouping:jazz genre:Jazz",
+        "grouping:jazz genres:Jazz",
         # Un vrai « ou » : chaque partie filtre.
         "grouping:jazz , grouping:rotation",
-        "grouping:jazz, genre:Jazz year+",
+        "grouping:jazz, genres:Jazz year+",
+        # `genre` ailleurs qu'en nom de champ.
+        "subgenre:Jazz title:genre artist:genre-x",
         # Une virgule dans une valeur reste une valeur.
         "grouping:jazz,rock",
         '"grouping:jazz, blues"',

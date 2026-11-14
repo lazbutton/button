@@ -31,7 +31,7 @@ async def _client(app_configration, beets, dbsession, users_password):
         ({"collection": "nuit"}, "path:/media/20-archives/nuit"),
         ({"artist": "Madame Orage"}, "'artist:=~Madame Orage'"),
         ({"album": "L'été"}, "'album:=~L'\"'\"'été'"),
-        ({"genre": "Jazz"}, "genre:=~Jazz"),
+        ({"genre": "Jazz"}, "genres:=~Jazz"),
         ({"year_from": "2015"}, "year:2015.."),
         ({"year_from": "2015", "year_to": "2019"}, "year:2015..2019"),
         ({"year_to": "1999"}, "year:1..1999"),

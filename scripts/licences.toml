@@ -114,3 +114,4 @@ licences = [
 "combine-errors@3.0.3" = { licence = "MIT", verifiee = "Readme.md du paquet et dépôt MatthewMueller/combine-errors : MIT. Son package.json n'a pas de champ license." }
 
 [paquets.python]
+"packaging@25.0" = { licence = "Apache-2.0 OR BSD-2-Clause", verifiee = "LICENSE du paquet : au choix LICENSE.APACHE (Apache 2.0) ou LICENSE.BSD (BSD à deux clauses). Ses métadonnées n'en donnent que les classifieurs. Dépendance de Beets depuis la 2.14." }

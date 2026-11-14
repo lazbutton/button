@@ -43,7 +43,8 @@ def _beets(tmp_path: Path) -> BeetsIntegration:
             artist=artist,
             album=album,
             year=year,
-            genre=genre,
+            # Beets 2.14 keeps the genres in a list: genre= would be a flexible field
+            genres=[genre] if genre else [],
             length=length,
         )
         lib.add(item)
