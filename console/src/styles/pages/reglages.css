@@ -205,6 +205,15 @@
   line-height: 1.5;
 }
 
+/* Un second groupe dans la même carte, comme les sources de Réglages → Fiches. */
+.reglages-card-subtitle {
+  margin: 1.1rem 0 0;
+  color: var(--app-text);
+  font-size: 0.8rem;
+  font-weight: 650;
+  line-height: 1.3;
+}
+
 .reglages-card-body {
   padding: 0.85rem 1.05rem 1.05rem;
 }

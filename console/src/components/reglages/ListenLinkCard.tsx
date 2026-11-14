@@ -29,9 +29,10 @@ function failure(caught: unknown, fallback: string): string {
 /**
  * Réglages → Station → « Fiches et liens » (FON-84), pour un admin : le service qui rend le lien
  * d'un titre vers la plateforme de chacun. Éteint par défaut. Sa propre sauvegarde : la clé
- * partenaire s'écrit, elle ne se relit jamais. Réglages → Fiches (FON-26) la reprendra.
+ * partenaire s'écrit, elle ne se relit jamais. Le rangement de la banque ouvert, elle est dans
+ * Réglages → Fiches (FON-26).
  */
-export function ListenLinkCard() {
+export function ListenLinkCard({ title = "Fiches et liens" }: { title?: string }) {
   const [loaded, setLoaded] = useState<Loaded>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
   const [form, setForm] = useState<ListenLinkForm | null>(null);
@@ -71,7 +72,7 @@ export function ListenLinkCard() {
   const card = (children: React.ReactNode) => (
     <section className="reglages-card reglages-fieldset" aria-labelledby="listen-link-title">
       <h3 id="listen-link-title" className="reglages-card-title">
-        Fiches et liens
+        {title}
       </h3>
       {children}
     </section>

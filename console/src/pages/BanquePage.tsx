@@ -4,21 +4,31 @@ import { useAccount } from "../api/AccountContext";
 import { BankHealthView } from "../components/banque/BankHealth";
 import { BankContent } from "../components/banque/BankContent";
 import { StationFolder } from "../components/banque/StationFolder";
+import { ReviewView } from "../components/fiches/ReviewView";
 import { ImporterPage, presetDestination } from "./ImporterPage";
 
-type Vue = "contenu" | "ajouter" | "sante";
+type Vue = "contenu" | "ajouter" | "relire" | "sante";
 
 /**
- * Sons → Banque : ce qu'elle contient, l'envoi de fichiers, ou sa santé (FON-72),
- * une fois le rangement de la banque ouvert. La vue ouverte reste dans
- * l'adresse (`?vue=ajouter`), comme l'onglet.
+ * Sons → Banque : ce qu'elle contient, l'envoi de fichiers, les fiches à relire
+ * (FON-26) ou sa santé (FON-72), une fois le rangement de la banque ouvert. La
+ * vue ouverte reste dans l'adresse (`?vue=ajouter`), comme l'onglet.
  */
 export function BanquePage() {
   const [params, setParams] = useSearchParams();
-  const { account } = useAccount();
+  const { account, isAdmin } = useAccount();
+  // FON-26 : les fiches à relire, pour le Programmateur, une fois le rangement de la banque ouvert.
+  const review = account?.features?.bank_tidy === true && (isAdmin || account.permissions.autodj === true);
   const health = account?.features?.bank_health === true;
   const asked = params.get("vue");
-  const vue: Vue = asked === "ajouter" ? "ajouter" : asked === "sante" && health ? "sante" : "contenu";
+  const vue: Vue =
+    asked === "ajouter"
+      ? "ajouter"
+      : asked === "relire" && review
+        ? "relire"
+        : asked === "sante" && health
+          ? "sante"
+          : "contenu";
 
   const open = (next: Vue) => {
     const updated = new URLSearchParams(params);
@@ -46,6 +56,7 @@ export function BanquePage() {
         >
           <SegmentedControl.Item value="contenu">Contenu</SegmentedControl.Item>
           <SegmentedControl.Item value="ajouter">Ajouter</SegmentedControl.Item>
+          {review ? <SegmentedControl.Item value="relire">À relire</SegmentedControl.Item> : null}
           {health ? <SegmentedControl.Item value="sante">Santé</SegmentedControl.Item> : null}
         </SegmentedControl.Root>
         {/* The upload view has it in its own header. */}
@@ -57,6 +68,8 @@ export function BanquePage() {
       </div>
       {vue === "ajouter" ? (
         <ImporterPage />
+      ) : vue === "relire" ? (
+        <ReviewView />
       ) : vue === "sante" ? (
         <BankHealthView onOpenTable={openTable} />
       ) : (

@@ -5,7 +5,7 @@
 import { worstTone, type Pillar, type PillarTone } from "./antenneState.ts";
 import type { Role } from "./roles.ts";
 
-export type ReglagesSectionId = "comptes" | "station" | "automate" | "mises-a-jour" | "compte";
+export type ReglagesSectionId = "comptes" | "station" | "fiches" | "automate" | "mises-a-jour" | "compte";
 
 export type ReglagesSection = {
   /** La valeur de `?onglet=` : les liens vers une partie la gardent. */
@@ -19,14 +19,20 @@ export type ReglagesSection = {
 const SECTIONS: readonly ReglagesSection[] = [
   { id: "comptes", label: "Comptes", admin: true },
   { id: "station", label: "Station", admin: true },
+  { id: "fiches", label: "Fiches", admin: true },
   { id: "automate", label: "Automate", admin: true },
   { id: "mises-a-jour", label: "Mises à jour", admin: true },
   { id: "compte", label: "Mon compte", admin: false },
 ];
 
-/** L'admin voit toutes les parties. Les autres rôles, leur compte seulement : la page n'a pas de menu. */
-export function reglagesSections(role: Role): ReglagesSection[] {
-  return SECTIONS.filter((section) => role === "admin" || !section.admin);
+/**
+ * L'admin voit toutes les parties. Les autres rôles, leur compte seulement : la page n'a pas de menu.
+ * Fiches (FON-26) n'est là qu'une fois le rangement de la banque ouvert (`features.bank_tidy`).
+ */
+export function reglagesSections(role: Role, options: { bankTidy?: boolean } = {}): ReglagesSection[] {
+  return SECTIONS.filter(
+    (section) => (role === "admin" || !section.admin) && (section.id !== "fiches" || options.bankTidy === true),
+  );
 }
 
 export type AutomateSummary = { tone: PillarTone; title: string; detail: string };

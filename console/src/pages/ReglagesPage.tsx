@@ -1,5 +1,5 @@
 import { Tabs } from "@radix-ui/themes";
-import { Activity, CircleFadingArrowUp, RadioTower, UserRound, Users, type LucideIcon } from "lucide-react";
+import { Activity, CircleFadingArrowUp, FileSearch, RadioTower, UserRound, Users, type LucideIcon } from "lucide-react";
 import { useRef, type ReactNode } from "react";
 import { useAccount } from "../api/AccountContext";
 import { reglagesSections, type ReglagesSection, type ReglagesSectionId } from "../api/reglages";
@@ -8,6 +8,7 @@ import { useMediaQuery } from "../lib/useMediaQuery";
 import { LoadingState } from "../ui/DataState";
 import { PageHeader } from "../ui/PageHeader";
 import { AutomatePage } from "./AutomatePage";
+import { FichesReglagesPage } from "./FichesReglagesPage";
 import { MisesAJourPage } from "./MisesAJourPage";
 import { MonComptePage } from "./MonComptePage";
 import { StationPage } from "./StationPage";
@@ -17,6 +18,7 @@ import "../styles/pages/reglages.css";
 const ICON: Record<ReglagesSectionId, LucideIcon> = {
   comptes: Users,
   station: RadioTower,
+  fiches: FileSearch,
   automate: Activity,
   "mises-a-jour": CircleFadingArrowUp,
   compte: UserRound,
@@ -28,6 +30,8 @@ function panel(id: ReglagesSectionId): ReactNode {
       return <UsersPage />;
     case "station":
       return <StationPage />;
+    case "fiches":
+      return <FichesReglagesPage />;
     case "automate":
       return <AutomatePage />;
     case "mises-a-jour":
@@ -56,8 +60,8 @@ function Trigger({ section }: { section: ReglagesSection }) {
  * l'adresse (`?onglet=`).
  */
 export function ReglagesPage() {
-  const { ready, role } = useAccount();
-  const sections = reglagesSections(role);
+  const { ready, role, account } = useAccount();
+  const sections = reglagesSections(role, { bankTidy: account?.features?.bank_tidy === true });
   const [current, select] = useOnglet(sections.map((section) => section.id));
   const narrow = useMediaQuery(NARROW);
   const layout = useRef<HTMLDivElement>(null);
