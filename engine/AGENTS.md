@@ -31,6 +31,7 @@ La CI lance `pytest` avec `TZ=Europe/Paris`, sans `tests/interface` ni `tests/e2
 | `tests/fiches/` | Les cas de Hopper sur les règles et la recherche des fiches, un module par fichier. Les services y sont joués par un faux transport httpx et une horloge simulée (`fakes.py`). Ils tournent en CI |
 | `tests/interface/` | Tests Playwright des pages HTMX de l'amont. Hors CI |
 | `tests/e2e/` | Le semis des parcours de la console (`scripts/e2e.sh`). Hors pytest |
+| `tests/banque/` | Le banc de la banque (TST-16) : les gestes qui écrivent dans les fichiers, rejoués avec la vraie boucle de Beets sur une copie de vraie banque (`../scripts/verifier.sh banque`, `BUTTON_BANQUE_ECHANTILLON`). `test_banc.py` le joue sur des fichiers fabriqués, en CI : [docs/developpement.md](../docs/developpement.md#la-banque-sur-une-copie-de-vraie-banque) |
 
 ## Ajouter une route JSON
 
