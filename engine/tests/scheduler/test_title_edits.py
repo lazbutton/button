@@ -684,3 +684,40 @@ def test_clean_value_refuses(name, raw):
     with pytest.raises(DomainValidationError) as refused:
         clean_value(name, raw)
     assert refused.value.field == name
+
+
+async def test_a_gesture_notes_itself_in_the_journal(raw_app, dbsession):
+    """Ce qu'ARC-09 et FON-68 écrivent au journal pour un déplacement."""
+    entry = JournalEntry.note(
+        "move",
+        "programmatrice",
+        [
+            JournalChange(
+                beets_id=7,
+                path="/media/10-rotation/a.mp3",
+                label="Orage \u2013 Comète",
+                field="path",
+                old_value="/media/10-rotation/a.mp3",
+                new_value="/media/20-archives/nuit/a.mp3",
+                status="done",
+            ),
+            JournalChange(
+                beets_id=8,
+                path="/media/10-rotation/b.mp3",
+                field="path",
+                old_value="/media/10-rotation/b.mp3",
+                new_value="/media/20-archives/nuit/b.mp3",
+                status="done",
+            ),
+        ],
+    )
+    dbsession.add(entry)
+    await dbsession.commit()
+
+    (saved,) = await _entries(dbsession)
+    assert (saved.gesture, saved.titles) == ("move", 2)
+    assert saved.details == {"fields": ["path"]}
+    assert [c.new_value for c in await _changes(dbsession, saved.id)] == [
+        "/media/20-archives/nuit/a.mp3",
+        "/media/20-archives/nuit/b.mp3",
+    ]

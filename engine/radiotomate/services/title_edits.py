@@ -36,7 +36,7 @@ import logging
 import os
 import re
 import unicodedata
-from asyncio import get_running_loop
+from asyncio import to_thread
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -543,7 +543,6 @@ async def _write_plans(
     passe telle quelle. Dans les deux cas, les fichiers déjà écrits, et celui
     qui a échoué, reprennent d'abord leurs tags d'avant.
     """
-    loop = get_running_loop()
     written: list[_Plan] = []
     waiting: list[tuple[_Plan, str]] = []
     current: _Plan | None = None
@@ -551,14 +550,14 @@ async def _write_plans(
         for plan in plans:
             current = plan
             if not plan.touches_file:
-                await loop.run_in_executor(None, _write_file, plan)
+                await to_thread(_write_file, plan)
                 written.append(plan)
                 continue
             async with _write_lock(session):
                 busy = await busy_status(session, plan.beets_id, plan.path)
                 if busy is None:
                     try:
-                        await loop.run_in_executor(None, _write_file, plan)
+                        await to_thread(_write_file, plan)
                     except (FileOperationError, OSError) as exc:
                         raise _WriteFailed(plan, exc) from exc
             if busy is None:
@@ -568,7 +567,7 @@ async def _write_plans(
         current = None
         if written:
             try:
-                await loop.run_in_executor(None, _store, beets, written)
+                await to_thread(_store, beets, written)
             except Exception as exc:
                 raise _WriteFailed(written[-1], exc) from exc
     except Exception:
@@ -582,12 +581,11 @@ async def _write_plans(
 async def _restore(written: list[_Plan]) -> None:
     """Rend leurs tags d'avant aux fichiers écrits. Sans le verrou de la base :
     elle peut être la cause de l'échec, et ces titres n'étaient pas engagés."""
-    loop = get_running_loop()
     for plan in written:
         if not plan.snapshot:
             continue
         try:
-            await loop.run_in_executor(None, _restore_file, plan)
+            await to_thread(_restore_file, plan)
         except Exception:
             _log.exception("could not restore the tags of %s", plan.path)
 
@@ -755,10 +753,7 @@ async def edit_titles(  # noqa: PLR0913
     """
     await require_title_edits(session)
     edits = _check_edits(edits, gesture)
-    loop = get_running_loop()
-    plans, unchanged, issues = await loop.run_in_executor(
-        None, _plan_titles, beets, edits
-    )
+    plans, unchanged, issues = await to_thread(_plan_titles, beets, edits)
     outcome = EditOutcome(unchanged=unchanged)
     strict = gesture == GESTURE_EDIT
     if strict:
@@ -848,10 +843,7 @@ async def _try(
         (category.id, category.name, category.query)
         for category in await MusicCategory.all(session)
     ]
-    loop = get_running_loop()
-    outcome.selections = await loop.run_in_executor(
-        None, _selection_changes, categories, plans
-    )
+    outcome.selections = await to_thread(_selection_changes, categories, plans)
     outcome.written = [plan.beets_id for plan in plans]
     return outcome
 
@@ -1003,10 +995,7 @@ async def _apply_group(
         {row.field: row.new_value for row in group},
         {row.field: row.old_value for row in group},
     )
-    loop = get_running_loop()
-    plans, unchanged, issues = await loop.run_in_executor(
-        None, _plan_titles, beets, [edit]
-    )
+    plans, unchanged, issues = await to_thread(_plan_titles, beets, [edit])
     if issues or unchanged:
         if issues:
             _close(group, STATUS_KEPT, issues[0].reason)
@@ -1051,10 +1040,9 @@ async def _settle_pending(session: ormSession, beets: BeetsIntegration) -> None:
     )
     if not rows:
         return
-    loop = get_running_loop()
     for row in rows:
         item = (
-            await loop.run_in_executor(None, beets.lib.get_item, row.beets_id)
+            await to_thread(beets.lib.get_item, row.beets_id)
             if row.beets_id is not None
             else None
         )
