@@ -59,8 +59,9 @@ Le script lance les mêmes commandes que la CI ([`.github/workflows/`](../.githu
 | `deploy` | `docker compose config` avec `.env.example`, aussi sur le `compose.yml` d'une station, sans ses `build:`. Puis ShellCheck sur les scripts du dépôt, et les tests `bats` de `deploy/station`, comme la CI | Docker, Python 3 |
 | `version` | les tests de `scripts/version.py`, qui lisent aussi le CHANGELOG et `compose.yml`, puis les lignes du CHANGELOG ajoutées depuis `origin/main` ([plus bas](#publier-une-version)) | Python 3 |
 | `e2e` | les parcours dans un navigateur, par `scripts/e2e.sh` ([plus bas](#les-parcours-dans-un-navigateur)) | Node 22 et Poetry, `npm install` et `poetry install` faits |
+| `banque` | le banc de la banque, sur une copie de vraie banque ([plus bas](#la-banque-sur-une-copie-de-vraie-banque)) | Poetry, ffprobe, et `BUTTON_BANQUE_ECHANTILLON` |
 
-Sans argument, une partie à qui il manque un outil est sautée, et le résumé le dit. Nommée, elle échoue.
+Sans argument, une partie à qui il manque un outil est sautée, et le résumé le dit. Nommée, elle échoue. C'est vrai de `banque` quand `BUTTON_BANQUE_ECHANTILLON` manque : sautée sans argument, en échec si on la nomme, pour qu'un « vert » ne puisse pas dire qu'aucune banque n'a été essayée. La CI ne la lance pas.
 
 Sans argument, les parcours tournent aussi : la CI les lance sur chaque pull request qui touche la console ou le moteur, et un parcours cassé doit se voir avant elle. Ils prennent quelques minutes. Pour vérifier vite une partie, la nommer : `./scripts/verifier.sh moteur console`.
 
@@ -164,6 +165,36 @@ Une heure donnée avant un relais ou le premier son du banc ne dit rien de ce qu
 Le banc dure cinq à six minutes. Ses coupures tombent toutes dans l'heure où l'antenne démarre : dans les cinq dernières minutes d'une heure, il peut attendre la suivante. Il prend des ports libres, et se défait à la fin, avec ses volumes et ses images. La CI le lance avant de construire les images du moteur ([`engine.yml`](../.github/workflows/engine.yml)), sur une image du moteur qu'elle construit elle-même, avec le cache du dernier build de `main` (`RUNDOWN_ENGINE_IMAGE`).
 
 Pour voir le banc échouer, couper un interrupteur du moteur dans sa base : `python3 engine/playout/tests/rundown.py features.titles_queued_close_to_air=0` pose cette clé dans la table `settings` avant le démarrage. `--journal relevé.json` garde ce que la sonde a noté, et `--relire relevé.json` le rejuge, sans Docker : en échec, la CI joint ce relevé au job, dans l'artefact `conducteur-1`, 14 jours ; le chiffre est celui de la tentative.
+
+## La banque, sur une copie de vraie banque
+
+Corriger des tags et renommer des fichiers touche ce que l'antenne lit. Des fichiers fabriqués pour un test ne disent pas ce que font de vrais fichiers en désordre : tags anciens ou doublés, formats rares, noms en forme décomposée, doublons. Chaque geste du chantier « Ranger la banque » qui écrit dans un fichier passe donc d'abord sur le banc de la banque (TST-16), avant sa pull request :
+
+```bash
+export BUTTON_BANQUE_ECHANTILLON=/chemin/hors/du/depot/echantillon
+./scripts/verifier.sh banque
+cd engine && poetry run python -m tests.banque.banc --fabrique   # sans copie : des fichiers fabriqués
+```
+
+**La copie** est faite par la personne qui tient la station : quelques centaines de fichiers de formats variés, pris dans la rotation, les collections, l'habillage, un bac et un set de l'Agenda, avec le rangement d'une banque (`10-rotation`, `20-archives/<collection>`, `30-habillage`, `40-emissions`). Elle reste sur la machine de développement, **hors du dépôt** : le banc refuse un dossier qui y est. Rien n'en entre dans le dépôt, ni fichier, ni titre, ni chemin.
+
+**Ce que fait le banc.** Il ne touche jamais l'échantillon : il en copie les fichiers dans un dossier temporaire (`TMPDIR`), où il monte une station minimale, la vraie `init-radiotomate.sh` puis la vraie boucle `beets-import-loop.sh`, une base du moteur avec un bac qui suit un dossier de l'habillage et une diffusion de l'Agenda dont le set vient de la banque. Il indexe, puis rejoue les gestes du catalogue : déplacer trois titres de la rotation vers une collection, les ramener, en retirer. Après chaque geste, il laisse passer la boucle, et vérifie :
+
+- chaque fichier qui se lisait avant se lit encore (`ffprobe`) ;
+- aucun identifiant de Beets ne change hors des titres touchés, ni leurs champs, ni les octets de leurs fichiers ;
+- les titres retirés sont dans `90-trash` et sortent de la bibliothèque ;
+- les bacs gardent leurs sons et l'Agenda ses fichiers ;
+- les tags d'avant le déplacement reviennent avec le titre ramené ;
+- la boucle suivante ne réimporte rien ;
+- à la fin, l'échantillon est resté tel qu'il était.
+
+**Un défaut connu** se dit sans faire échouer le banc, comme `test.fixme` dans les parcours. Aujourd'hui : un titre déplacé par le catalogue change d'identifiant dans Beets, la boucle retirant l'ancien et indexant le nouveau (ARC-09). Une fois la fiche livrée, le contrôle réussit et le banc échoue, « corrigé ? » : retirer alors `connu="ARC-09"` dans `engine/tests/banque/banc.py`. Beets réutilise aussi l'identifiant d'un titre retiré pour le suivant : seul l'identifiant du départ dit si un titre est le même.
+
+**Le rapport** s'affiche à la fin et se colle dans une pull request, `--rapport FICHIER` l'écrit aussi : des nombres, jamais un titre, un chemin ou un nom de collection. Un titre y est « rotation n° 4 », une collection « collection 2 ». `--detail FICHIER` écrit, sur la machine seulement, ce que ces numéros désignent. Le banc rend 0 s'il est passé, 1 sur un échec, 64 devant un échantillon qui ne convient pas, 75 sans échantillon ni outil.
+
+**Ajouter un geste.** Une fiche qui écrit dans un fichier ajoute à `engine/tests/banque/banc.py` une fonction `geste_<nom>(banc)` : elle choisit des titres (`banc.choisir`), fait le geste, puis `banc.controler(...)`, qui passe la boucle et vérifie ce qui précède. Elle ajoute ses propres contrôles, comme « Revenir » ou « Annuler » qui rendent les valeurs d'avant. Son nom va dans `GESTES`.
+
+**Sans copie.** `engine/tests/banque/fabrique.py` fabrique une banque en désordre, au plus près de vrais fichiers : ID3v2.3 en latin-1 avec un ID3v1 qui dit autre chose, un APEv2, un artiste en double, des noms décomposés, un fichier vide, un autre tronqué, des formats FLAC, Opus, AAC et AIFF quand ffmpeg est là, une collection au nom qui finit par une virgule. Le test `engine/tests/banque/test_banc.py`, qui tourne avec les tests du moteur, y rejoue tout le banc, vérifie que le rapport ne nomme aucun titre, et que le défaut connu est dit. Il garde le banc debout jusqu'à l'arrivée de la copie : il ne dit rien d'une vraie banque.
 
 ## Aucune donnée de station
 

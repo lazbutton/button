@@ -5,8 +5,10 @@ import httpx
 from quart import Blueprint, current_app, g, request
 
 from radiotomate.auth import token_required
+from radiotomate.db import QuartAlchemy
 from radiotomate.models import MetadataLog
 from radiotomate.scheduler.metrics import runtime_metrics
+from radiotomate.services import listen_link
 from radiotomate.services.cart_draw import note_on_air
 from radiotomate.services.emissions import overlay_metadata_if_on_air
 
@@ -105,6 +107,13 @@ async def post_metadata_log():
     raw_md = await request.get_json()
     relay_copy = dict(raw_md or {})
     sound_id = relay_copy.get("radiotomate_sound_id")
+    # What a show on air would overwrite in the relayed copy: the track is the one
+    # the playout sent.
+    track = (
+        str(relay_copy.get("artist") or ""),
+        str(relay_copy.get("title") or ""),
+        relay_copy.get("source"),
+    )
     await overlay_metadata_if_on_air(g.dbsession, relay_copy)
 
     if current_app.config["RELAY_METADATA_TO"]:
@@ -119,6 +128,7 @@ async def post_metadata_log():
     if sound_id:
         await _note_draw(sound_id)
     await g.dbsession.commit()
+    await _ask_listen_link(*track, sound_id)
 
     return "", 200
 
@@ -129,3 +139,44 @@ async def _note_draw(sound_id: object) -> None:
         await note_on_air(g.dbsession, sound_id)
     except Exception:
         _log.exception("Could not note sound %r as drawn", sound_id)
+
+
+async def _ask_listen_link(artist: str, title: str, source: object, sound_id: object):
+    """FON-84: the link that opens the track on air, asked in the background. The
+    antenna never waits for it, and a fault here never loses what went on air."""
+    if not listen_link.is_music(source):
+        return
+    try:
+        settings = await listen_link.load_settings(g.dbsession)
+        if settings.active:
+            current_app.add_background_task(
+                _fetch_listen_link, settings, artist, title, sound_id
+            )
+    except Exception:
+        _log.exception("Could not ask the listening link of %r", title)
+
+
+async def _fetch_listen_link(
+    settings: listen_link.Settings, artist: str, title: str, sound_id: object
+) -> None:
+    """Asks the service, keeps the answer for the interface, and tells nowplaying."""
+    try:
+        link = await listen_link.resolve(settings, artist, title)
+        async with QuartAlchemy.get().session() as session:
+            await listen_link.keep_current(session, artist, title, link)
+            await session.commit()
+        if link:
+            from radiotomate.scheduler.live import _post_sidecar
+
+            await _post_sidecar(
+                {
+                    "listen_link": {
+                        "artist": artist,
+                        "title": title,
+                        "radiotomate_sound_id": sound_id or "",
+                        "url": link,
+                    }
+                }
+            )
+    except Exception:
+        _log.exception("Could not keep the listening link of %r", title)

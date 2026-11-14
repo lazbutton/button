@@ -7,8 +7,8 @@ Un faux beet joue Beets, sur la bibliothèque et l'historique d'import de
 BEETSDIR, dans les formats du vrai : library.db et state.pickle. Comme lui avec
 `incremental`, il saute ce que son historique connaît déjà : un dossier quand il
 importe par album, un fichier quand il importe par titre (-s). Le contenu d'un
-fichier lui tient lieu de titre. Le passage avec le vrai Beets est dans
-engine/tests/test_beets_import_loop.py.
+fichier lui tient lieu de titre, et une seconde ligne « genre=… », de genre. Le
+passage avec le vrai Beets est dans engine/tests/test_beets_import_loop.py.
 
 Le faux update fait comme le vrai, 2.5.1 : il ne relit qu'un fichier plus récent
 que la date notée, et ne note pas la nouvelle. Devant un fichier disparu, il
@@ -73,10 +73,12 @@ def open_library(beetsdir: Path) -> sqlite3.Connection:
 
 
 def read_file(path: bytes) -> dict[str, object]:
-    """Ce que le faux beet lit d'un fichier : son contenu tient lieu de titre. Il
-    n'a ni regroupement ni genre."""
-    title = Path(os.fsdecode(path)).read_bytes().decode("utf-8", "replace")
-    return {"title": title, "grouping": None, "genre": None}
+    """Ce que le faux beet lit d'un fichier : son contenu tient lieu de titre, et
+    une seconde ligne « genre=… », de genre. Il n'a pas de regroupement."""
+    content = Path(os.fsdecode(path)).read_bytes().decode("utf-8", "replace")
+    title, _, rest = content.partition("\n")
+    genre = rest.removeprefix("genre=") if rest.startswith("genre=") else None
+    return {"title": title, "grouping": None, "genre": genre}
 
 
 def under(path: bytes, top: bytes) -> bool:
@@ -182,14 +184,10 @@ def fake_beet(beetsdir: Path, args: list[str]) -> int:  # noqa: PLR0911, PLR0912
                     if not singletons:
                         album = con.execute("select coalesce(max(album_id), 0) + 1 from items").fetchone()[0]
                     for path in paths:
+                        read = read_file(os.fsencode(path))
                         con.execute(
-                            "insert into items (path, album_id, title, mtime) values (?, ?, ?, ?)",
-                            (
-                                os.fsencode(path),
-                                album,
-                                read_file(os.fsencode(path))["title"],
-                                int(os.stat(path).st_mtime),
-                            ),
+                            "insert into items (path, album_id, title, genre, mtime) values (?, ?, ?, ?, ?)",
+                            (os.fsencode(path), album, read["title"], read["genre"], int(os.stat(path).st_mtime)),
                         )
                     history.add(entry)
                     imported += 1
@@ -246,7 +244,7 @@ def fake_beet(beetsdir: Path, args: list[str]) -> int:  # noqa: PLR0911, PLR0912
             excluded.add(terms[1])
             terms = terms[2:]
         ids = id_query(terms)
-        if ids is None or excluded - {"grouping", "genre"}:
+        if ids is None or excluded - {"grouping"}:
             print(f"faux beet, update inattendu : {args}", file=sys.stderr)
             return 2
         if len(ids) > MOST_IDS:
@@ -449,12 +447,13 @@ class BeetsImportLoopTest(unittest.TestCase):
 
     def test_an_archive_bank_indexes_a_later_file_with_its_grouping(self) -> None:
         # Le nom du dossier devient le regroupement, espaces et apostrophe compris.
+        # Le genre reste celui du fichier : la boucle n'écrit plus « Archive ».
         bank = self.media / "20-archives" / "Nuit d'été 2"
         bank.mkdir()
         (bank / "Cy - Live à Orléans.flac").write_bytes(b"un")
         self.turn()
         self.turn()
-        (bank / "Dan - Live deux.flac").write_bytes(b"deux")
+        (bank / "Dan - Live deux.flac").write_bytes(b"deux\ngenre=Jazz")
         # Un dossier en _ n'est pas une banque.
         draft = self.media / "20-archives" / "_brouillon"
         draft.mkdir()
@@ -465,8 +464,8 @@ class BeetsImportLoopTest(unittest.TestCase):
         self.assertEqual(
             {path: (item["grouping"], item["genre"]) for path, item in self.items().items()},
             {
-                "20-archives/Nuit d'été 2/Cy - Live à Orléans.flac": ("Nuit d'été 2", "Archive"),
-                "20-archives/Nuit d'été 2/Dan - Live deux.flac": ("Nuit d'été 2", "Archive"),
+                "20-archives/Nuit d'été 2/Cy - Live à Orléans.flac": ("Nuit d'été 2", None),
+                "20-archives/Nuit d'été 2/Dan - Live deux.flac": ("Nuit d'été 2", "Jazz"),
             },
         )
 
@@ -486,7 +485,7 @@ class BeetsImportLoopTest(unittest.TestCase):
 
         expected = {
             "10-rotation/Ada - Un.mp3": ["rotation", None],
-            **{f"20-archives/{name}/Cy - Live.flac": [name, "Archive"] for name in names},
+            **{f"20-archives/{name}/Cy - Live.flac": [name, None] for name in names},
         }
         self.assertEqual({path: [item["grouping"], item["genre"]] for path, item in self.items().items()}, expected)
 
@@ -621,6 +620,30 @@ class BeetsImportLoopTest(unittest.TestCase):
         self.assertEqual(after.pop("10-rotation/Dan - Trois.mp3")["grouping"], "rotation")
         # Les titres déjà indexés ne sont pas réimportés : mêmes identifiants.
         self.assertEqual(after, before)
+
+    def test_a_title_marked_archive_by_the_old_loop_keeps_it(self) -> None:
+        # L'ancienne boucle posait genre=Archive sur chaque titre d'une collection.
+        bank = self.media / "20-archives" / "jazz"
+        bank.mkdir()
+        (bank / "Cy - Live.flac").write_bytes(b"live")
+        self.index_by_folder(bank, "grouping=jazz", "genre=Archive")
+        before = self.items()
+        (bank / "Dan - Live deux.flac").write_bytes(b"deux\ngenre=Jazz")
+
+        self.turn()
+        self.turn()
+
+        after = self.items()
+        dan = after.pop("20-archives/jazz/Dan - Live deux.flac")
+        self.assertEqual((dan["grouping"], dan["genre"]), ("jazz", "Jazz"))
+        self.assertEqual(after, before)
+        # Après celui de l'ancienne boucle, beet modify n'a posé que le
+        # regroupement, du seul titre nouveau.
+        calls = [json.loads(line) for line in (self.beetsdir / "beet.log").read_text(encoding="utf-8").splitlines()]
+        self.assertEqual(
+            [call for call in calls if call[:1] == ["modify"]][1:],
+            [["modify", "-y", "grouping=jazz", f"id:{dan['id']}"]],
+        )
 
     def test_a_lost_history_does_not_import_the_library_again(self) -> None:
         (self.rotation / "Ada - Un.mp3").write_bytes(b"un")
@@ -781,7 +804,7 @@ class BeetsImportLoopTest(unittest.TestCase):
         ada.write_bytes(b"un, corrige")
         later = int(time.time()) + 60
         os.utime(ada, (later, later))
-        cy.write_bytes(b"live, remasterise")
+        cy.write_bytes(b"live, remasterise\ngenre=Jazz")
         os.utime(cy, (OLD, OLD))
         self.turn()
         # Les dossiers ont bougé pendant la pause : rien n'est encore relu.
@@ -790,16 +813,16 @@ class BeetsImportLoopTest(unittest.TestCase):
 
         after = self.items()
         self.assertEqual(after["10-rotation/Ada - Un.mp3"], {**before["10-rotation/Ada - Un.mp3"], "title": "un, corrige"})
-        # Le regroupement et le genre d'une banque viennent de son dossier.
+        # Le regroupement d'une collection vient de son dossier, son genre du fichier.
         self.assertEqual(
             after["20-archives/jazz/Cy - Live.flac"],
-            {**before["20-archives/jazz/Cy - Live.flac"], "title": "live, remasterise"},
+            {**before["20-archives/jazz/Cy - Live.flac"], "title": "live, remasterise", "genre": "Jazz"},
         )
         self.assertEqual(after["10-rotation/Bea - Deux.mp3"], before["10-rotation/Bea - Deux.mp3"])
         # À aucun moment un titre relu ne quitte la sélection de l'auto-DJ.
         for selection in self.selections_seen()[seen:]:
             self.assertEqual(selection["10-rotation/Ada - Un.mp3"][0], "rotation")
-            self.assertEqual(selection["20-archives/jazz/Cy - Live.flac"], ["jazz", "Archive"])
+            self.assertEqual(selection["20-archives/jazz/Cy - Live.flac"][0], "jazz")
 
         # Relus une fois : la boucle note la date que Beets ne note pas.
         self.turn()
