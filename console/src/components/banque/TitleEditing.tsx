@@ -162,14 +162,27 @@ export function EditTitlesDialog({
   titles,
   onClose,
   onDone,
+  preset,
 }: {
   titles: BankTitle[];
   onClose: () => void;
   onDone: (outcome: EditOutcome) => void;
+  /** Fields checked and filled already: what titles dropped on a group take (FON-75). */
+  preset?: Partial<Record<FicheField, string>>;
 }) {
   const base = useId();
-  const [checked, setChecked] = useState<Partial<Record<FicheField, boolean>>>({});
-  const [form, setForm] = useState<FicheForm>({ title: "", artist: "", album: "", year: "", genre: "", famille: "" });
+  const [checked, setChecked] = useState<Partial<Record<FicheField, boolean>>>(() =>
+    Object.fromEntries(Object.keys(preset ?? {}).map((field) => [field, true])),
+  );
+  const [form, setForm] = useState<FicheForm>(() => ({
+    title: "",
+    artist: "",
+    album: "",
+    year: "",
+    genre: "",
+    famille: "",
+    ...preset,
+  }));
   const [dropped, setDropped] = useState<number[]>([]);
   const [tried, setTried] = useState<EditOutcome | null>(null);
   const [busy, setBusy] = useState(false);

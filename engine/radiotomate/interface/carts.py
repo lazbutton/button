@@ -40,7 +40,7 @@ from radiotomate.scheduler_api import (
     Scheduler,
     SchedulerUnavailableError,
 )
-from radiotomate.services import media_bank
+from radiotomate.services import cart_transfers, media_bank
 from radiotomate.services.bank_titles import require_bank_tidy, title_label
 from radiotomate.services.carts import (
     assert_cart_deletable,
@@ -808,6 +808,60 @@ async def update_sound_json(cart_id: int, sound_id: int):
     return jsonify({"cart": _cart_json(cart), "sound": _sound_json(sound)})
 
 
+@blueprint.post("/carts/<int:cart_id>/sounds/transfer.json")
+@login_required
+async def transfer_sounds_json(cart_id: int):
+    """Move or copy sounds to another cart (FON-70), behind the bank's tidying."""
+    deny = forbidden_unless("carts")
+    if deny:
+        return deny
+    await require_bank_tidy(g.dbsession)
+    data = await read_json_object()
+    raw_ids = data.get("ids")
+    if not isinstance(raw_ids, list):
+        raise BadRequest("ids list required")
+    try:
+        ids = [int(raw) for raw in raw_ids]
+        target_id = int(data.get("to"))
+    except (TypeError, ValueError) as exc:
+        raise BadRequest("ids and to are numbers") from exc
+    source = await Cart.from_id(g.dbsession, cart_id)
+    target = await Cart.from_id(g.dbsession, target_id)
+    if not source or not target:
+        raise NotFound("Ce bac n'existe plus.")
+    if source.id == target.id:
+        raise BadRequest("Choisis un autre bac que celui de départ.")
+    # Both carts' ranks, in the same order: two transfers never wait on each other.
+    first, second = sorted((source.id, target.id))
+    async with await _lock_for_cart(first), await _lock_for_cart(second):
+        outcome = await cart_transfers.transfer_sounds(
+            g.dbsession,
+            source,
+            target,
+            ids,
+            copy=data.get("copy") is True,
+            username=current_user.user.username,
+            uploader_id=current_user.user.id,
+        )
+        await g.dbsession.commit()
+    if data.get("copy") is True:
+        _queue_analysis_later(
+            [sound.id for sound in outcome.done if sound.gain is None]
+        )
+    source_json = _cart_json(await _load_cart_json(source.id))
+    target_json = _cart_json(await _load_cart_json(target.id))
+    return jsonify(
+        {
+            "cart": source_json,
+            "target": target_json,
+            "done": len(outcome.done),
+            "skipped": [
+                {"title": title, "reason": reason} for title, reason in outcome.skipped
+            ],
+        }
+    )
+
+
 @blueprint.put("/carts/<int:cart_id>/sounds/ranks.json")
 @login_required
 async def update_sound_ranks_json(cart_id: int):
@@ -821,7 +875,14 @@ async def update_sound_ranks_json(cart_id: int):
     ranks = data.get("ranks")
     if not isinstance(ranks, list) or not ranks:
         raise BadRequest("ranks list required")
+    # « Appliquer cet ordre au bac » says the view's order: noted (FON-70).
+    sorted_by = data.get("sorted_by")
+    if sorted_by is not None:
+        await require_bank_tidy(g.dbsession)
+        sorted_by = cart_transfers.check_sort(sorted_by)
     rank = 1
+    before: dict[int, int] = {}
+    moved: list[Sound] = []
     for raw_id in ranks:
         try:
             sound_id = int(raw_id)
@@ -832,8 +893,16 @@ async def update_sound_ranks_json(cart_id: int):
             raise NotFound(f"Sound {sound_id} not found")
         if sound.cart_id != cart_id:
             raise BadRequest(f"Sound {sound_id} is not in cart {cart_id}")
+        before[sound.id] = sound.rank
         sound.rank = rank
+        moved.append(sound)
         rank += 1
+    if sorted_by is not None:
+        entry = cart_transfers.note_order(
+            cart, before, moved, sorted_by, current_user.user.username
+        )
+        if entry is not None:
+            g.dbsession.add(entry)
     await g.dbsession.commit()
     cart = await _load_cart_json(cart_id)
     return jsonify({"cart": _cart_json(cart)})

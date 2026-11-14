@@ -1,6 +1,6 @@
 import { Button, Select, TextField } from "@radix-ui/themes";
 import { Disc3, Layers, Library, Music, Plus, Search, SearchX, Shapes, Tag, UserRound } from "lucide-react";
-import { useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useMemo, useRef, useState, type DragEvent, type KeyboardEvent } from "react";
 import {
   RANKINGS,
   filterGroups,
@@ -10,6 +10,7 @@ import {
   type BankFacet,
   type Ranking,
 } from "../../api/bankTitles";
+import { TITLES_TYPE, decodeIds, dropHint, takesTitles } from "../../api/titleDrag";
 
 export const RANKING_ICONS = {
   collection: Library,
@@ -36,6 +37,7 @@ export function RankingList({
   onRanking,
   onSelect,
   onCreate,
+  onDropTitles,
 }: {
   ranking: Ranking;
   /** The rankings the engine knows: not the tags before FON-74. */
@@ -50,6 +52,8 @@ export function RankingList({
   onSelect: (group: string | null) => void;
   /** Ranged by collection, an admin creates one, prefilled with what was typed. */
   onCreate?: (label: string) => void;
+  /** Titles of the table dropped on a group (FON-75): its value, and theirs ids. */
+  onDropTitles?: (value: string, label: string, ids: number[]) => void;
 }) {
   const [query, setQuery] = useState("");
   const listRef = useRef<HTMLDivElement>(null);
@@ -164,6 +168,14 @@ export function RankingList({
                   empty={!group.value}
                   selected={selected === group.value}
                   onSelect={() => onSelect(group.value)}
+                  drop={
+                    onDropTitles && takesTitles(ranking, group.value)
+                      ? {
+                          hint: dropHint(ranking, groupLabel(ranking, group.value, groups)),
+                          onDrop: (ids) => onDropTitles(group.value, groupLabel(ranking, group.value, groups), ids),
+                        }
+                      : undefined
+                  }
                 />
               ))}
             </div>
@@ -208,6 +220,7 @@ function GroupRow({
   empty = false,
   selected,
   onSelect,
+  drop,
 }: {
   index: number;
   label: string;
@@ -217,7 +230,11 @@ function GroupRow({
   empty?: boolean;
   selected: boolean;
   onSelect: () => void;
+  /** A group that takes titles dropped on it (FON-75). */
+  drop?: { hint: string; onDrop: (ids: number[]) => void };
 }) {
+  const [over, setOver] = useState(false);
+  const carries = (event: DragEvent) => event.dataTransfer.types.includes(TITLES_TYPE);
   return (
     <button
       type="button"
@@ -225,8 +242,23 @@ function GroupRow({
       aria-selected={selected}
       tabIndex={selected ? 0 : -1}
       data-group-index={index}
-      className={`bacs-row${selected ? " is-selected" : ""}${empty ? " banque-row-none" : ""}`}
+      className={`bacs-row${selected ? " is-selected" : ""}${empty ? " banque-row-none" : ""}${over ? " is-drop" : ""}`}
+      title={over && drop ? drop.hint : undefined}
       onClick={onSelect}
+      onDragOver={(event) => {
+        if (!drop || !carries(event)) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+        setOver(true);
+      }}
+      onDragLeave={() => setOver(false)}
+      onDrop={(event) => {
+        if (!drop || !carries(event)) return;
+        event.preventDefault();
+        setOver(false);
+        const ids = decodeIds(event.dataTransfer.getData(TITLES_TYPE));
+        if (ids.length) drop.onDrop(ids);
+      }}
     >
       <span className={`bacs-tile${rotation ? " is-habillage" : ""}`} aria-hidden="true">
         <Icon size={15} strokeWidth={1.75} />

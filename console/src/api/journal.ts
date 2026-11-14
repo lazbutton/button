@@ -71,6 +71,9 @@ export function journalQuery(filters: { gesture: string; username: string }, bef
 // Ce que nomment les gestes à venir : un renommage ou un déplacement change le fichier.
 const OTHER_FIELDS: Record<string, string> = { path: "fichier", label: "label", isrc: "ISRC", etiquettes: "étiquettes" };
 
+// Ce que notent les gestes sur les bacs : le bac d'un son, son rang.
+const CART_FIELDS = new Set(["cart", "rank"]);
+
 function fieldName(field: string): string {
   return (EDIT_LABELS as Record<string, string>)[field]?.toLowerCase() ?? OTHER_FIELDS[field] ?? field;
 }
@@ -83,7 +86,8 @@ function list(names: string[]): string {
 /** « Correction de 38 titres : l'album et l'année. » */
 export function entryTitle(entry: Pick<JournalEntry, "gesture_label" | "titles" | "fields">): string {
   const titles = entry.titles === 1 ? "1 titre" : `${entry.titles} titres`;
-  const fields = entry.fields.map(fieldName);
+  // Un geste sur les bacs (FON-70) dit ses bacs dans son nom, pas ses champs.
+  const fields = entry.fields.filter((field) => !CART_FIELDS.has(field)).map(fieldName);
   return fields.length ? `${entry.gesture_label} de ${titles} : ${list(fields)}` : `${entry.gesture_label} de ${titles}`;
 }
 
