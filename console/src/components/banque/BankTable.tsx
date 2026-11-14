@@ -6,6 +6,7 @@ import {
   CloudOff,
   FolderInput,
   Layers,
+  ListPlus,
   MoreHorizontal,
   Music,
   Pencil,
@@ -17,7 +18,7 @@ import {
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useAccount } from "../../api/AccountContext";
 import {
   bankShelves,
@@ -52,6 +53,8 @@ import {
   type TitleSort,
 } from "../../api/bankTitles";
 import { createBank } from "../../api/banks";
+import { roleAtLeast } from "../../api/roles";
+import { filtersFromTable, selectionLink, tableMakesSelection } from "../../api/selectionFilters";
 import { API_PREFIX, ApiRequestError, apiGet } from "../../api/client";
 import { formatClock, percentOf } from "../../api/soundsView";
 import { usePreview } from "../../lib/usePreview";
@@ -77,7 +80,7 @@ function messageOf(caught: unknown, fallback: string): string {
  * remove, move, rename and delete. The state stays in the address.
  */
 export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
-  const { isAdmin } = useAccount();
+  const { isAdmin, role } = useAccount();
   const [params, setParams] = useSearchParams();
   const state = useMemo(() => readState(params), [params]);
   const [typed, setTyped] = useState(state.q);
@@ -181,6 +184,8 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
   const shelf =
     state.ranking === "collection" && state.group ? (shelves.find((item) => item.id === state.group) ?? null) : null;
   const gestures = shelf != null;
+  // A group with a value becomes a selection of titles (FON-73), for whoever writes them.
+  const canSelect = tableMakesSelection(state) && roleAtLeast(role, "programmateur");
   const others = shelves.filter((item) => item.id !== shelf?.id);
   const busy = progress != null;
   const opened = titles.find((title) => title.id === openId) ?? null;
@@ -317,14 +322,25 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
                 ) : null}
               </p>
             </div>
-            {shelf ? (
+            {shelf || canSelect ? (
               <div className="bacs-head-actions">
-                <Button size="2" variant="soft" color="gray" disabled={busy} onClick={() => onAdd(shelf.id)}>
-                  <Upload className="ui-button-icon" />
-                  <span className="bacs-hide-narrow">Ajouter des titres</span>
-                  <span className="bacs-show-narrow">Ajouter</span>
-                </Button>
-                {isAdmin && shelf.group !== "rotation" ? (
+                {canSelect ? (
+                  <Button size="2" variant="soft" color="gray" asChild>
+                    <Link to={selectionLink(filtersFromTable(state))}>
+                      <ListPlus className="ui-button-icon" />
+                      <span className="bacs-hide-narrow">Créer une sélection</span>
+                      <span className="bacs-show-narrow">Sélection</span>
+                    </Link>
+                  </Button>
+                ) : null}
+                {shelf ? (
+                  <Button size="2" variant="soft" color="gray" disabled={busy} onClick={() => onAdd(shelf.id)}>
+                    <Upload className="ui-button-icon" />
+                    <span className="bacs-hide-narrow">Ajouter des titres</span>
+                    <span className="bacs-show-narrow">Ajouter</span>
+                  </Button>
+                ) : null}
+                {shelf && isAdmin && shelf.group !== "rotation" ? (
                   <DropdownMenu.Root modal={false}>
                     <DropdownMenu.Trigger disabled={busy}>
                       <IconButton size="2" variant="outline" color="gray" aria-label={`Actions pour la collection ${shelf.label}`}>
