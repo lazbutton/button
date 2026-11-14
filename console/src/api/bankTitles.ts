@@ -65,8 +65,10 @@ export const FIELD_LABELS: Record<FicheField, string> = {
   famille: "famille",
 };
 
-/** The columns, in order; the last one, the fiche, does not sort. */
-export const COLUMNS: Array<{ key: TitleSort | "fiche"; label: string }> = [
+export type ColumnKey = TitleSort | "fiche";
+
+/** The columns, in their own order; the last one, the fiche, does not sort. */
+export const COLUMNS: Array<{ key: ColumnKey; label: string }> = [
   { key: "title", label: "Titre" },
   { key: "artist", label: "Artiste" },
   { key: "album", label: "Album" },
@@ -91,7 +93,7 @@ export function rankingOf(id: Ranking) {
   return RANKINGS.find((item) => item.id === id) ?? RANKINGS[0];
 }
 
-/** What the table shows: a ranking, one of its groups or the whole bank (null), a text, an order. */
+/** What the table shows: a ranking, one of its groups or the whole bank (null), a text, an order, its columns. */
 export type TableState = {
   ranking: Ranking;
   /** null: the whole bank. An empty value: the titles where that field is empty. */
@@ -99,9 +101,78 @@ export type TableState = {
   q: string;
   sort: TitleSort;
   order: SortOrder;
+  /** Shown, in this order; the title always is. */
+  columns: ColumnKey[];
 };
 
-export const DEFAULT_STATE: TableState = { ranking: "collection", group: null, q: "", sort: "artist", order: "asc" };
+export const DEFAULT_COLUMNS: ColumnKey[] = COLUMNS.map((column) => column.key);
+
+export const DEFAULT_STATE: TableState = {
+  ranking: "collection",
+  group: null,
+  q: "",
+  sort: "artist",
+  order: "asc",
+  columns: DEFAULT_COLUMNS,
+};
+
+/** Columns read from anywhere: known ones once each, the title always. */
+export function cleanColumns(raw: unknown): ColumnKey[] {
+  if (!Array.isArray(raw)) return DEFAULT_COLUMNS;
+  const known = new Set<string>(DEFAULT_COLUMNS);
+  const kept: ColumnKey[] = [];
+  for (const item of raw) {
+    if (typeof item === "string" && known.has(item) && !kept.includes(item as ColumnKey)) kept.push(item as ColumnKey);
+  }
+  return kept.includes("title") ? kept : ["title", ...kept];
+}
+
+function sameColumns(a: ColumnKey[], b: ColumnKey[]): boolean {
+  return a.length === b.length && a.every((key, index) => key === b[index]);
+}
+
+/** Shows or hides a column; the title stays. A column shown again goes back at its own place. */
+export function toggleColumn(columns: ColumnKey[], key: ColumnKey): ColumnKey[] {
+  if (key === "title") return columns;
+  if (columns.includes(key)) return columns.filter((item) => item !== key);
+  const rank = (item: ColumnKey) => DEFAULT_COLUMNS.indexOf(item);
+  const next = [...columns];
+  const after = next.findIndex((item) => rank(item) > rank(key));
+  next.splice(after < 0 ? next.length : after, 0, key);
+  return next;
+}
+
+/** Moves a shown column one place up (-1) or down (+1). */
+export function moveColumn(columns: ColumnKey[], key: ColumnKey, delta: -1 | 1): ColumnKey[] {
+  const index = columns.indexOf(key);
+  const target = index + delta;
+  if (index < 0 || target < 0 || target >= columns.length) return columns;
+  const next = [...columns];
+  [next[index], next[target]] = [next[target], next[index]];
+  return next;
+}
+
+// The room each column takes, in rem, as sons.css gives it; the title at least 12.
+const COLUMN_REM: Record<ColumnKey, number> = {
+  title: 12,
+  artist: 10,
+  album: 9.5,
+  famille: 7,
+  genre: 7,
+  year: 4,
+  duration: 4.25,
+  fiche: 7.5,
+};
+
+/** Under this width the table scrolls sideways, as a spreadsheet: the play button, the columns, the gestures. */
+export function tableMinWidth(columns: ColumnKey[], gestures: boolean): number {
+  const shown = columns.reduce((total, key) => total + COLUMN_REM[key], 0);
+  return Math.round((2.9 + shown + (gestures ? 6.35 : 0)) * 100) / 100;
+}
+
+export function columnLabel(key: ColumnKey): string {
+  return COLUMNS.find((column) => column.key === key)?.label ?? key;
+}
 
 /**
  * The table's state, read from the address: `?ranger=artist&groupe=Orage&tri=year&ordre=desc`.
@@ -113,19 +184,65 @@ export function readState(params: URLSearchParams): TableState {
   if (group === null && ranking === "collection" && params.get("collection")) group = params.get("collection");
   const sort = isSort(params.get("tri")) ? (params.get("tri") as TitleSort) : DEFAULT_STATE.sort;
   const order: SortOrder = params.get("ordre") === "desc" ? "desc" : "asc";
-  return { ranking, group, q: params.get("q") ?? "", sort, order };
+  const columns = params.has("colonnes") ? cleanColumns((params.get("colonnes") ?? "").split(",")) : DEFAULT_COLUMNS;
+  return { ranking, group, q: params.get("q") ?? "", sort, order, columns };
 }
 
 /** The address of a state, keeping the other parameters (the view of the bank). */
 export function writeState(params: URLSearchParams, state: TableState): URLSearchParams {
   const next = new URLSearchParams(params);
-  for (const key of ["ranger", "groupe", "collection", "tri", "ordre", "q"]) next.delete(key);
+  for (const key of ["ranger", "groupe", "collection", "tri", "ordre", "q", "colonnes"]) next.delete(key);
   if (state.ranking !== DEFAULT_STATE.ranking) next.set("ranger", state.ranking);
   if (state.group !== null) next.set("groupe", state.group);
   if (state.sort !== DEFAULT_STATE.sort) next.set("tri", state.sort);
   if (state.order !== DEFAULT_STATE.order) next.set("ordre", state.order);
   if (state.q.trim()) next.set("q", state.q);
+  if (!sameColumns(state.columns, DEFAULT_COLUMNS)) next.set("colonnes", state.columns.join(","));
   return next;
+}
+
+/** A view an account keeps under a name (FON-65), as the engine gives it. */
+export type SavedView = { id: number; name: string; state: Partial<TableState>; modified: string | null };
+
+/** What a view keeps of the table. */
+export function viewStateOf(state: TableState): TableState {
+  return { ...state, q: state.q.trim() };
+}
+
+/** The table a view opens, whatever an older or a hand-written view lacks. */
+export function stateOfView(view: SavedView): TableState {
+  const kept = view.state ?? {};
+  return {
+    ranking: isRanking(kept.ranking ?? null) ? (kept.ranking as Ranking) : DEFAULT_STATE.ranking,
+    group: typeof kept.group === "string" ? kept.group : null,
+    q: typeof kept.q === "string" ? kept.q : "",
+    sort: isSort(kept.sort ?? null) ? (kept.sort as TitleSort) : DEFAULT_STATE.sort,
+    order: kept.order === "desc" ? "desc" : "asc",
+    columns: cleanColumns(kept.columns),
+  };
+}
+
+/** Whether the table still shows what the view keeps. */
+export function sameAsView(state: TableState, view: SavedView): boolean {
+  const kept = stateOfView(view);
+  const shown = viewStateOf(state);
+  return (
+    kept.ranking === shown.ranking &&
+    kept.group === shown.group &&
+    kept.q === shown.q &&
+    kept.sort === shown.sort &&
+    kept.order === shown.order &&
+    sameColumns(kept.columns, shown.columns)
+  );
+}
+
+/** The name typed for a view, as the engine keeps it; or why it is refused. */
+export function viewNameProblem(name: string, views: SavedView[], own: number | null = null): string {
+  const clean = name.trim().replace(/\s+/g, " ");
+  if (!clean) return "Donne un nom à la vue.";
+  if (clean.length > 60) return "Un nom de vue tient en 60 signes.";
+  if (views.some((view) => view.name === clean && view.id !== own)) return `Tu as déjà une vue « ${clean} ».`;
+  return "";
 }
 
 /** The query of `/media/titles.json` for a state and a page; with the facets of its ranking. */

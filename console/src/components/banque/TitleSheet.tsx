@@ -3,6 +3,7 @@ import { Play, Square, X } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { cell, ficheState, fileName, type BankTitle } from "../../api/bankTitles";
 import { formatClock } from "../../api/soundsView";
+import { TitlePlaysSection } from "./TitlePlays";
 
 /**
  * The fiche of a title, in a panel to the right of the table: what Beets knows
@@ -87,6 +88,7 @@ export function TitleSheet({
             ))}
           </dl>
         </section>
+        <TitlePlaysSection titleId={title.id} />
         <section className="banque-sheet-file" aria-label="Fichier">
           <h3>Fichier</h3>
           <code>{title.path}</code>

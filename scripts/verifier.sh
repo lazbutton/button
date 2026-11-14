@@ -3,16 +3,17 @@
 #   ./scripts/verifier.sh                  tout ce qui peut tourner ici
 #   ./scripts/verifier.sh moteur console   seulement ces parties
 # Parties : donnees, licences, moteur, liquidsoap, antenne, conducteur, console,
-# services, nginx, deploy, version, e2e.
+# services, nginx, deploy, version, e2e, banque.
 # Sans argument, une partie qui manque d'un outil (Docker…) est sautée.
-# Nommée, elle échoue.
+# Nommée, elle échoue. La partie banque ne tourne que sur une copie de vraie
+# banque, que BUTTON_BANQUE_ECHANTILLON désigne : sans elle, elle est sautée.
 set -euo pipefail
 
 root=$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd)
 # Homebrew (macOS) : Poetry, Node et Docker y sont souvent installés.
 [ -d /opt/homebrew/bin ] && export PATH="/opt/homebrew/bin:$PATH"
 
-all=(donnees licences moteur liquidsoap antenne conducteur console services nginx deploy version e2e)
+all=(donnees licences moteur liquidsoap antenne conducteur console services nginx deploy version e2e banque)
 # Code de sortie d'une partie à qui il manque un outil.
 absent=75
 
@@ -339,6 +340,21 @@ check_e2e() {
   "$root/scripts/e2e.sh"
 }
 
+check_banque() {
+  # Le banc de la banque (TST-16) : les gestes qui écrivent dans les fichiers,
+  # rejoués sur une copie d'un échantillon de vraie banque, avec la vraie boucle
+  # de Beets. La copie vient de la station et reste hors du dépôt : la CI ne le
+  # lance pas. Les tests du banc, sur des fichiers fabriqués, sont dans la partie
+  # moteur.
+  [ -n "${BUTTON_BANQUE_ECHANTILLON:-}" ] ||
+    missing "BUTTON_BANQUE_ECHANTILLON absente : le dossier d'une copie d'un échantillon de banque, hors du dépôt. Voir docs/developpement.md." || return
+  command -v poetry >/dev/null 2>&1 ||
+    missing "Poetry absent : https://python-poetry.org/docs/#installation" || return
+  command -v ffprobe >/dev/null 2>&1 || missing "ffprobe absent : installer ffmpeg." || return
+  cd "$root/engine"
+  TZ=Europe/Paris poetry run python -m tests.banque.banc --echantillon "$BUTTON_BANQUE_ECHANTILLON"
+}
+
 # Une partie tourne dans son propre processus : set -e l'y arrête au premier
 # échec. Dans un « || » du même processus, bash ignorerait set -e.
 if [ "${1:-}" = "--partie" ]; then
@@ -359,7 +375,7 @@ skipped=""
 failed=""
 for part in "${parts[@]}"; do
   case $part in
-    donnees | licences | moteur | liquidsoap | antenne | conducteur | console | services | nginx | deploy | version | e2e) ;;
+    donnees | licences | moteur | liquidsoap | antenne | conducteur | console | services | nginx | deploy | version | e2e | banque) ;;
     *)
       echo "Partie inconnue : $part. Parties : ${all[*]}." >&2
       exit 64

@@ -46,8 +46,9 @@ FICHE_FIELDS = ("title", "artist", "album", "year", "genre", "famille")
 # Les colonnes qui se trient, et les filtres qui prennent une valeur exacte.
 SORTS = ("title", "artist", "album", "famille", "genre", "year", "duration")
 FILTERS = ("collection", "artist", "famille", "album", "genre", "year")
-# The genre is no ranking of the table, but a selection picks it (FON-73).
-FACETS = ("collection", "artist", "famille", "album", "genre")
+# What the table ranges by; the genre is no ranking, but a selection picks it (FON-73).
+RANKINGS = ("collection", "artist", "famille", "album")
+FACETS = (*RANKINGS, "genre")
 PAGE = 100
 MAX_PAGE = 500
 # Beets garde les valeurs d'un champ multiple, comme les genres de Beets 2.14,

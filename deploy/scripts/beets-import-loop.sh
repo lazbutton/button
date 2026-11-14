@@ -248,16 +248,19 @@ print(f"{folder} : {len(changed)} fichier(s) changé(s), relu(s).")
 PY
 }
 
-# Le regroupement d'un dossier, et le genre d'une banque, se posent avec beet
-# modify, sur les seuls titres du dossier qui ne les ont pas déjà. Ils sont
-# désignés par id:, jamais par path: : Beets lit une requête à sa façon, et un
-# nom de dossier n'y passe pas tel quel. Une virgule finale y ajoute une requête
-# vide, qui prend tout : une banque « Foo, » donnait son regroupement et son genre
-# à toute la bibliothèque, et les écrivait dans tous les fichiers. Beets en
-# retire aussi les espaces des bouts, et le \ de \:. Il lit enfin une valeur
-# comme un modèle : $title ou %upper{…} y seraient remplacés. La boucle les
-# protège donc, par $$, $% et $}. Les titres qui ont déjà leurs champs ne sont
-# pas désignés : un tour sans rien de neuf ne lance pas beet modify.
+# Le regroupement d'un dossier se pose avec beet modify, sur les seuls titres du
+# dossier qui ne l'ont pas déjà. Ils sont désignés par id:, jamais par path: :
+# Beets lit une requête à sa façon, et un nom de dossier n'y passe pas tel quel.
+# Une virgule finale y ajoute une requête vide, qui prend tout : une banque
+# « Foo, » donnait son regroupement à toute la bibliothèque, et l'écrivait dans
+# tous les fichiers. Beets en retire aussi les espaces des bouts, et le \ de \:.
+# Il lit enfin une valeur comme un modèle : $title ou %upper{…} y seraient
+# remplacés. La boucle les protège donc, par $$, $% et $}. Les titres qui ont
+# déjà leurs champs ne sont pas désignés : un tour sans rien de neuf ne lance pas
+# beet modify.
+# Le genre d'un titre est celui de son fichier : la boucle n'écrit plus
+# genre=Archive dans les titres d'une collection, et ceux qui l'ont reçu le
+# gardent dans leurs tags (ADR 0020).
 set_fields() { # dossier champ=valeur…
   python3 - "$@" <<'PY'
 import os
@@ -378,9 +381,9 @@ while true; do
       ed=${dir##*/}
       case "$ed" in .*|_*) continue ;; esac
       folder_state same "$dir" || continue
-      reread "$dir" grouping genre || true
+      reread "$dir" grouping || true
       beet import -A -q -s "$dir" || true
-      set_fields "$dir" grouping="$ed" genre=Archive || true
+      set_fields "$dir" grouping="$ed" || true
     done
   else
     echo "Historique Beets : reprise impossible, l'erreur est au-dessus. Rien n'est indexé à ce tour : sans elle, Beets réimporterait des titres déjà indexés. La boucle réessaie au prochain. Si l'erreur parle de droits, relancer la station (docker compose up -d) : radiotomate-init rend le dossier de Beets au moteur." >&2
