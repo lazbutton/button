@@ -144,6 +144,7 @@ async def test_a_row_says_everything_the_table_shows(
         "collection": "nuit",
         "path": "20-archives/nuit/sub/d.flac",
         "missing": ["genre"],
+        "carts": [],
     }
 
 

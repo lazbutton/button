@@ -80,6 +80,8 @@ import { AppToast, useAppToast } from "../../ui/AppToast";
 import { ConfirmDialog } from "../../ui/ConfirmDialog";
 import { ErrorState, LoadingState } from "../../ui/DataState";
 import { EmptyState } from "../../ui/EmptyState";
+import { cartsBeforeRemoval } from "../../api/bankCarts";
+import { AddToCartDialog } from "./AddToCartDialog";
 import { ColumnsPicker } from "./ColumnsPicker";
 import { MoveDialog, RenameDialog } from "./CollectionView";
 import { CreateBankDialog } from "./CreateBankDialog";
@@ -127,6 +129,8 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
   const { isAdmin, role, account } = useAccount();
   // FON-66 : la fiche se corrige, seule ou par lot, pour le Programmateur.
   const canEdit = account?.features?.title_edits === true && (isAdmin || account.permissions.autodj === true);
+  // FON-69 : des titres de la banque dans un bac, sans copie, pour qui gère les bacs.
+  const canCart = isAdmin || account?.permissions.carts === true;
   const [params, setParams] = useSearchParams();
   const state = useMemo(() => readState(params), [params]);
   const [typed, setTyped] = useState(state.q);
@@ -149,6 +153,7 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
   const [deleting, setDeleting] = useState(false);
   const [creating, setCreating] = useState<string | null>(null);
   const [editing, setEditing] = useState<BankTitle[] | null>(null);
+  const [carting, setCarting] = useState<string[] | null>(null);
   const [editOpen, setEditOpen] = useState<number | null>(null);
   // FON-67 : une écriture du tableur qui attend sa confirmation, et ce que la page annonce.
   const [pending, setPending] = useState<{
@@ -300,7 +305,7 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
   const shelf =
     state.ranking === "collection" && state.group ? (shelves.find((item) => item.id === state.group) ?? null) : null;
   const gestures = shelf != null;
-  const selectable = gestures || canEdit;
+  const selectable = gestures || canEdit || canCart;
   // A group with a value becomes a selection of titles (FON-73), for whoever writes them.
   const canSelect = tableMakesSelection(state) && roleAtLeast(role, "programmateur");
   const others = shelves.filter((item) => item.id !== shelf?.id);
@@ -610,6 +615,18 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
                     Modifier {selected.size === 1 ? "la fiche" : `${selected.size} fiches`}
                   </Button>
                 ) : null}
+                {canCart ? (
+                  <Button
+                    size="1"
+                    variant="soft"
+                    color="gray"
+                    disabled={busy}
+                    onClick={() => setCarting(titles.filter((title) => selected.has(title.id)).map((title) => title.path))}
+                  >
+                    <ListPlus className="ui-button-icon" />
+                    Ajouter à un bac
+                  </Button>
+                ) : null}
                 {gestures ? (
                   <>
                     <Button
@@ -896,7 +913,12 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
           if (!open) setRemoving(null);
         }}
         title={removing?.length === 1 ? "Retirer ce titre ?" : `Retirer ${titlesLabel(removing?.length ?? 0).toLowerCase()} ?`}
-        description={removeNote(removing?.length ?? 0, account?.features?.bank_removals === true)}
+        description={[
+          removeNote(removing?.length ?? 0, account?.features?.bank_removals === true),
+          cartsBeforeRemoval(titles.filter((title) => removing?.includes(title.id))),
+        ]
+          .filter(Boolean)
+          .join(" ")}
         confirmLabel={removing?.length === 1 ? "Retirer le titre" : `Retirer ${titlesLabel(removing?.length ?? 0).toLowerCase()}`}
         onConfirm={() => {
           const ids = removing ?? [];
@@ -904,6 +926,18 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
           if (ids.length && shelf) void run("removed", ids, (names, onProgress) => removeBankFiles(shelf.id, names, onProgress));
         }}
       />
+
+      {carting ? (
+        <AddToCartDialog
+          paths={carting}
+          notify={show}
+          onClose={() => {
+            setCarting(null);
+            setSelected(new Set());
+            void load();
+          }}
+        />
+      ) : null}
 
       {moving && shelf ? (
         <MoveDialog

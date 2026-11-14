@@ -25,6 +25,8 @@ from radiotomate.models.sound import Sound
 from radiotomate.quart import ShutdownError, or_shutdown
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from radiotomate.db import QuartAlchemy
 
 _log = logging.getLogger(__name__)
@@ -205,6 +207,26 @@ class BeetsIntegration:
                     "ON a.entity_id = i.id AND a.key = 'famille'"
                 )
             )
+
+    async def tags_at(self, paths: list[Path]) -> dict[str, tuple[str, str]]:
+        """The artist and the title Beets has for these files, by path (FON-69).
+
+        Through Beets' own query, as text: Beets 2.14 keeps a path relative to its
+        ``directory`` when the file lies below it, absolute otherwise, and only its
+        query parser makes the path relative. A list keeps a space in one piece.
+        """
+
+        def read() -> dict[str, tuple[str, str]]:
+            found: dict[str, tuple[str, str]] = {}
+            for path in paths:
+                for item in self.lib.items([f"path:{path}"]):
+                    found[str(path)] = (
+                        item.get("artist") or "",
+                        item.get("title") or "",
+                    )
+            return found
+
+        return await get_running_loop().run_in_executor(None, read)
 
     async def get_item(self, beets_id: int) -> Item | None:
         loop = get_running_loop()
