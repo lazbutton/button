@@ -59,7 +59,7 @@ Le réglage `features.public_site_routes` de la table `settings`, à faux (`0`, 
 - nginx freine aussi `/login` et `/login.json` ensemble : 5 essais par minute et par adresse, après une rafale de 5. Il refuse en 429, et non en 503, son code par défaut, que la console prendrait pour un moteur injoignable. Sa réponse a la forme de celle du moteur : `{error:"too_many_attempts", retry_in:60}`, avec `Retry-After: 60`. Le 429 du moteur passe tel quel.
 - L'adresse comptée est celle du client. Derrière un reverse proxy, nginx la lit dans `X-Forwarded-For`, mais seulement venant des adresses de `TRUSTED_PROXIES`, une variable de l'image de la console : des adresses ou des réseaux séparés par des espaces. Par défaut, la boucle locale et les réseaux privés, où est un reverse proxy installé sur la machine ou dans Compose. Sur un réseau privé sans reverse proxy, un poste pourrait alors choisir son adresse : `TRUSTED_PROXIES=127.0.0.1` l'en empêche. nginx passe l'adresse au moteur dans `X-Real-IP`. Le moteur ne croit cet en-tête que venant de la boucle locale ou d'un réseau privé : son port n'est pas publié, seuls nginx et les services de la station le joignent.
 - `GET /logout` : ce n’est pas du JSON, c’est une redirection HTML. La console l'attend 10 s au plus, puis oublie sa session quoi qu'il arrive (`console/src/api/sessionLogout.ts`). Sans réponse dans ce délai, sur une connexion refusée, ou sur un 502, 503 ou 504 de nginx, rien ne dit que le moteur a reçu la demande. La session y est peut-être encore ouverte, et son cookie valable : un rechargement la rouvre une fois le moteur revenu. L'écran de connexion le dit.
-- `GET /account.json` → `{username, permissions:{admin, stream, live, carts, not_audio, autodj}, features:{bank_tidy}}`, tous des booléens. `features` dit ce que la console montre d'un chantier en cours : `bank_tidy`, l'interrupteur général de « Ranger la banque » (le réglage `features.bank_tidy` de la table `settings`, éteint quand il manque). Un moteur plus ancien n'envoie pas `features` : la console garde ses vues d'avant.
+- `GET /account.json` → `{username, permissions:{admin, stream, live, carts, not_audio, autodj}, features:{bank_tidy, title_edits}}`, tous des booléens. `features` dit ce que la console montre d'un chantier en cours : `bank_tidy`, l'interrupteur général de « Ranger la banque » (le réglage `features.bank_tidy` de la table `settings`, éteint quand il manque), et `title_edits`, vrai quand la fiche d'un titre se corrige : `bank_tidy` allumé, et `features.title_edits` pas coupé ([la fiche d'un titre](#la-fiche-dun-titre)). Un moteur plus ancien n'envoie pas `features` : la console garde ses vues d'avant.
 - `PUT /account.json` `{password}` → la même forme. Mot de passe vide → 400.
 
 ### Live
@@ -206,6 +206,22 @@ Jouer tout de suite, droit `live` : `POST /carts/{id}/now.json` et `POST /carts/
 - `facets` : une liste parmi `collection`, `artist`, `famille` et `album`, séparées par des virgules. Chacune rend `[{value, label, count}]` sur toute la bibliothèque, quels que soient les filtres, la valeur vide en dernier.
 
 Tant que l'interrupteur général de « Ranger la banque » est éteint, la route rend `409 {error, code:"bank_tidy_off"}`. Un tri, un ordre, une facette ou un nombre inconnus rendent `400 {error, code:"validation_error", field}`.
+
+#### La fiche d'un titre
+
+Corriger la fiche d'un titre de la bibliothèque, seul ou par lot (FON-66), pour le rôle Programmateur (`autodj`). Les règles sont dans `engine/radiotomate/services/title_edits.py`. Deux interrupteurs de la table `settings` : celui du chantier « Ranger la banque », `features.bank_tidy`, éteint quand la clé manque, et `features.title_edits`, allumé quand la clé manque. L'un des deux coupé : `409 {code:"title_edits_off"}`, et ce qui attendait ne s'écrit pas.
+
+`POST /media/titles/edit.json` (`autodj`) `{titles:[{id, values, expected?}], dry_run?}` → `{dry_run, entry, written, waiting, kept, refused, unchanged, selections}`.
+
+- `id` est l'identifiant du titre dans Beets. `values` porte les champs à écrire : `title`, `artist`, `album`, `year` (quatre chiffres, ou vide), `genre`, `famille` (le nom court d'une des quatorze familles, ou vide). `expected` porte ce que la console a montré : un champ qui vaut autre chose maintenant refuse le lot.
+- 500 titres au plus par lot : au-delà, `400 {field:"titles"}`.
+- Le fichier d'abord, par Beets, puis la bibliothèque. La famille ne va que dans la bibliothèque, jamais dans le fichier.
+- Un titre à l'antenne ou en file attend : il est dans `waiting`, avec sa raison, et s'écrit quand il est passé.
+- Un titre qui ne peut pas s'écrire refuse le lot entier, avant toute écriture : `409 {code:"titles_refused", message, titles:[{id, label, code, reason}]}`, où `code` vaut `unknown`, `missing`, `read_only`, `unreadable`, `changed` ou `failed`. Un fichier qui échoue en route rend aux fichiers déjà écrits leurs tags d'avant.
+- `dry_run` n'écrit rien : `written` compte les titres qui changeraient, `waiting` ceux qui attendraient, `refused` ceux qui refuseraient le lot, et `selections:[{id, name, gained, lost}]` les sélections de titres qui gagneraient ou perdraient des titres, d'après leurs requêtes jouées avant et après sur chaque titre.
+- Chaque lot se note au journal des gestes : `entry` est son identifiant.
+
+`POST /media/journal/{id}/undo.json` (`autodj`), « Revenir » → la même forme. Remet la valeur d'avant de chaque champ écrit par le lot, tant que personne ne l'a changée depuis : un titre changé depuis garde sa valeur, et paraît dans `kept`. Ce qui attendait encore ne s'écrit pas. Un lot déjà défait : 409. Un lot inconnu : 404.
 
 ### Système
 
