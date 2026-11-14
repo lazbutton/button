@@ -239,6 +239,7 @@ async def live_json():
 
     dirty = await attach_live_emission(g.dbsession, snapshot)
     await attach_live_carts(g.dbsession, snapshot)
+    await _attach_listen_link(g.dbsession, snapshot)
     if dirty:
         await g.dbsession.commit()
     return jsonify(snapshot)
@@ -268,6 +269,17 @@ async def watch_livedata_task():
         rendered = rendered.replace("\n", " ")  # \n\n is a separator for SSE
         for queue in list(watching_clients):
             await queue.put(rendered)
+
+
+async def _attach_listen_link(session, snapshot: dict) -> None:
+    """The link of the track on air (FON-84), when the station kept one. A fault
+    here leaves the snapshot as it was."""
+    try:
+        from radiotomate.services.listen_link import attach_to_live
+
+        await attach_to_live(session, snapshot)
+    except Exception:
+        _log.exception("listen link: could not read the link of the track on air")
 
 
 @blueprint.delete("/live")
