@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from pathlib import Path  # noqa: TC003
+from pathlib import Path
 from random import choice
 from typing import ClassVar
 
@@ -22,6 +22,7 @@ from sqlalchemy.orm.attributes import set_committed_value
 from radiotomate.db import Base
 from radiotomate.enums import CartMode, ScheduleMode
 from radiotomate.models.sound import Sound
+from radiotomate.services.media_bank import borrowed_title
 
 _log = logging.getLogger(__name__)
 
@@ -120,6 +121,31 @@ class Cart(Base):
             )
         )
 
+    @classmethod
+    async def count_missing_titles(cls, session: Session, carts: list[Cart]) -> None:
+        """The SQL count of the sounds not ready (``add_query_expressions``) does not
+        see a title of the bank whose file left it (FON-69, ``Sound.missing``). When
+        a cart borrows such a title, its count is made again from its sounds, as
+        ``postfill_query_expressions`` makes it: once, whatever was read before."""
+        ids = [cart.id for cart in carts if cart.id is not None]
+        if not ids:
+            return
+        rows = await session.execute(
+            select(Sound.cart_id, Sound.path, Sound.active, Sound.gain).where(
+                Sound.cart_id.in_(ids)
+            )
+        )
+        counts: dict[int, int] = {}
+        gone: set[int] = set()
+        for cart_id, path, active, gain in rows:
+            missing = borrowed_title(path) and not Path(path).is_file()
+            gone.update({cart_id} if missing else set())
+            not_ready = not active or gain is None or missing
+            counts[cart_id] = counts.get(cart_id, 0) + int(not_ready)
+        for cart in carts:
+            if cart.id in gone:
+                set_committed_value(cart, "inactive_sounds_count", counts[cart.id])
+
     def postfill_query_expressions(self) -> None:
         """
         Compute query-expression fields when Cart.sounds is fully loaded.
@@ -170,6 +196,8 @@ class Cart(Base):
         if load_sounds:
             for cart in carts:
                 cart.postfill_query_expressions()
+        else:
+            await cls.count_missing_titles(session, list(carts))
         return carts
 
     @classmethod
@@ -202,6 +230,8 @@ class Cart(Base):
         cart = await session.scalar(q)
         if cart and load_sounds:
             cart.postfill_query_expressions()
+        elif cart:
+            await cls.count_missing_titles(session, [cart])
         return cart
 
     @classmethod

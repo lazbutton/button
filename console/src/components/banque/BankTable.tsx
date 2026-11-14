@@ -18,7 +18,7 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useAccount } from "../../api/AccountContext";
 import {
@@ -83,6 +83,7 @@ import { ConfirmDialog } from "../../ui/ConfirmDialog";
 import { ErrorState, LoadingState } from "../../ui/DataState";
 import { EmptyState } from "../../ui/EmptyState";
 import { cartsBeforeRemoval } from "../../api/bankCarts";
+import { TITLES_TYPE, decodeIds, draggedIds, dropAction, encodeIds } from "../../api/titleDrag";
 import { AddToCartDialog } from "./AddToCartDialog";
 import { ColumnsPicker } from "./ColumnsPicker";
 import { MoveDialog, RenameDialog } from "./CollectionView";
@@ -160,6 +161,11 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
   const [editing, setEditing] = useState<BankTitle[] | null>(null);
   const [renamingFiles, setRenamingFiles] = useState<BankTitle[] | null>(null);
   const [carting, setCarting] = useState<string[] | null>(null);
+  // FON-75 : des titres glissés sur un groupe de la colonne de gauche, ou sur un bac.
+  const [dragging, setDragging] = useState<number[] | null>(null);
+  const [dropMove, setDropMove] = useState<{ ids: number[]; from: BankShelf; to: string } | null>(null);
+  const [dropEdit, setDropEdit] = useState<{ titles: BankTitle[]; preset: Partial<Record<FicheField, string>> } | null>(null);
+  const [overCart, setOverCart] = useState(false);
   const [editOpen, setEditOpen] = useState<number | null>(null);
   // FON-67 : une écriture du tableur qui attend sa confirmation, et ce que la page annonce.
   const [pending, setPending] = useState<{
@@ -327,11 +333,11 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
     setView("detail");
   };
 
-  const namesOf = (ids: number[]) =>
-    shelf
+  const namesOf = (ids: number[], from: BankShelf | null = shelf) =>
+    from
       ? ids
           .map((id) => titles.find((title) => title.id === id))
-          .map((title) => (title ? nameInShelf(title, shelf) : null))
+          .map((title) => (title ? nameInShelf(title, from) : null))
           .filter((name): name is string => Boolean(name))
       : [];
 
@@ -340,14 +346,15 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
     ids: number[],
     send: (names: string[], onProgress: (done: number, total: number) => void) => Promise<BankChange>,
     target = "",
+    from: BankShelf | null = shelf,
   ) => {
-    if (!shelf) return;
-    const names = namesOf(ids);
+    if (!from) return;
+    const names = namesOf(ids, from);
     if (preview.playingId && ids.map(String).includes(preview.playingId)) preview.stop();
     setProgress({ kind, done: 0, total: names.length });
     try {
       const change = await send(names, (done, total) => setProgress({ kind, done, total }));
-      const summary = changeSummary(kind, change, shelf.label, target);
+      const summary = changeSummary(kind, change, from.label, target);
       show(summary.text, summary.tone);
     } catch (caught) {
       show(messageOf(caught, "Le catalogue a refusé la demande."), "error");
@@ -356,6 +363,32 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
       setSelected(new Set());
       await Promise.all([load(), loadShelves()]);
     }
+  };
+
+  // FON-75 : glisser, c'est pour qui range, corrige ou garnit les bacs ; les mêmes gestes
+  // restent dans la barre de sélection, au clavier et sur téléphone.
+  const canDrag = selectable || roleAtLeast(role, "programmateur");
+  const dropTitles = (value: string, label: string, ids: number[]) => {
+    const chosen = ids.map((id) => titles.find((title) => title.id === id)).filter((title): title is BankTitle => Boolean(title));
+    const action = dropAction(state.ranking, value, label, chosen);
+    if (action.kind === "refuse") {
+      show(action.reason, "error");
+      return;
+    }
+    if (action.kind === "move") {
+      const from = shelves.find((item) => item.id === action.from);
+      if (!from) {
+        show("La collection de ces titres ne se lit pas : recharge la page.", "error");
+        return;
+      }
+      setDropMove({ ids: chosen.map((title) => title.id), from, to: action.to });
+      return;
+    }
+    if (!canEdit) {
+      show("La correction des fiches n'est pas ouverte pour ton compte : rien n'a changé.", "error");
+      return;
+    }
+    setDropEdit({ titles: chosen, preset: { [action.field]: action.value } });
   };
 
   // Après une correction : ce qui est fait, et « Revenir » tant que le message est là.
@@ -552,6 +585,7 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
           }}
           onSelect={choose}
           onCreate={isAdmin && state.ranking === "collection" ? (label) => setCreating(label) : undefined}
+          onDropTitles={canDrag ? dropTitles : undefined}
         />
 
         <section className="bacs-main" aria-label={heading}>
@@ -629,6 +663,28 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
           </header>
 
           <div className="bacs-sounds">
+            {dragging && canCart ? (
+              <div
+                className={`banque-drop-cart${overCart ? " is-over" : ""}`}
+                onDragOver={(event) => {
+                  if (!event.dataTransfer.types.includes(TITLES_TYPE)) return;
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = "copy";
+                  setOverCart(true);
+                }}
+                onDragLeave={() => setOverCart(false)}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  setOverCart(false);
+                  const ids = decodeIds(event.dataTransfer.getData(TITLES_TYPE));
+                  const paths = titles.filter((title) => ids.includes(title.id)).map((title) => title.path);
+                  if (paths.length) setCarting(paths);
+                }}
+              >
+                <ListPlus size={16} aria-hidden="true" />
+                Déposer ici pour ajouter {dragging.length === 1 ? "ce titre" : `ces ${dragging.length} titres`} à un bac, sans copie
+              </div>
+            ) : null}
             {selectable && selected.size > 0 ? (
               <div className="bacs-toolbar bacs-toolbar--selection" role="toolbar" aria-label="Sélection">
                 <strong className="bacs-selection-count">
@@ -890,6 +946,27 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
                         busy={busy}
                         canMove={others.length > 0}
                         selected={selected.has(title.id)}
+                        drag={
+                          canDrag
+                            ? {
+                                onStart: (event) => {
+                                  // Une cellule ouverte du tableur garde la souris pour son texte.
+                                  if ((event.target as HTMLElement).closest?.("input, textarea")) {
+                                    event.preventDefault();
+                                    return;
+                                  }
+                                  const ids = draggedIds(title.id, selected);
+                                  event.dataTransfer.setData(TITLES_TYPE, encodeIds(ids));
+                                  event.dataTransfer.effectAllowed = "copyMove";
+                                  setDragging(ids);
+                                },
+                                onEnd: () => {
+                                  setDragging(null);
+                                  setOverCart(false);
+                                },
+                              }
+                            : undefined
+                        }
                         opened={openId === title.id}
                         playing={preview.playingId === String(title.id)}
                         onToggle={() =>
@@ -1061,6 +1138,40 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
           onConfirm={() => void finishPending(true)}
         />
       ) : null}
+      {dropMove ? (
+        <MoveDialog
+          names={namesOf(dropMove.ids, dropMove.from)}
+          from={dropMove.from}
+          options={shelves.filter((item) => item.id !== dropMove.from.id)}
+          initial={dropMove.to}
+          onClose={() => setDropMove(null)}
+          onMove={(target) => {
+            const { ids, from } = dropMove;
+            setDropMove(null);
+            void run(
+              "moved",
+              ids,
+              (names, onProgress) => moveBankFiles(from.id, target.id, names, onProgress),
+              target.label,
+              from,
+            );
+          }}
+        />
+      ) : null}
+
+      {dropEdit ? (
+        <EditTitlesDialog
+          titles={dropEdit.titles}
+          preset={dropEdit.preset}
+          onClose={() => setDropEdit(null)}
+          onDone={(outcome) => {
+            setDropEdit(null);
+            setSelected(new Set());
+            void afterEdit(outcome);
+          }}
+        />
+      ) : null}
+
       {editing ? (
         <EditTitlesDialog
           titles={editing}
@@ -1130,6 +1241,7 @@ function TitleRow({
   busy,
   canMove,
   selected,
+  drag,
   opened,
   playing,
   onToggle,
@@ -1149,6 +1261,8 @@ function TitleRow({
   busy: boolean;
   canMove: boolean;
   selected: boolean;
+  /** The row drags its title, or the selection it is in (FON-75). */
+  drag?: { onStart: (event: DragEvent<HTMLTableRowElement>) => void; onEnd: () => void };
   opened: boolean;
   playing: boolean;
   onToggle: () => void;
@@ -1168,6 +1282,9 @@ function TitleRow({
     <tr
       className={["bacs-track-row", selected || opened ? "is-selected" : "", playing ? "is-playing" : ""].filter(Boolean).join(" ")}
       aria-selected={selectable ? selected : undefined}
+      draggable={drag != null}
+      onDragStart={drag?.onStart}
+      onDragEnd={drag?.onEnd}
     >
       {selectable ? (
         <td className="c-check">

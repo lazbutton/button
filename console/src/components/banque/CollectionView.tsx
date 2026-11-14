@@ -664,15 +664,18 @@ export function MoveDialog({
   options,
   onClose,
   onMove,
+  initial,
 }: {
   names: string[];
   from: BankShelf;
   options: BankShelf[];
   onClose: () => void;
   onMove: (target: BankDestination) => void;
+  /** The collection the titles were dropped on (FON-75). */
+  initial?: string;
 }) {
   const { account } = useAccount();
-  const [target, setTarget] = useState(options[0]?.id ?? "");
+  const [target, setTarget] = useState(initial ?? options[0]?.id ?? "");
   const value = options.find((item) => item.id === target) ?? options[0];
   const what = names.length === 1 ? "ce titre" : titlesLabel(names.length).toLowerCase();
 

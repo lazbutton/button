@@ -76,3 +76,8 @@ test("une valeur vide se dit vide, un champ par son nom", () => {
   assert.equal(changeField("path"), "Fichier");
   assert.equal(changeField("isrc"), "ISRC");
 });
+
+test("a gesture on the carts says its name, without its fields", () => {
+  assert.equal(entryTitle({ gesture_label: "Ordre d'un bac", titles: 5, fields: ["rank"] }), "Ordre d'un bac de 5 titres");
+  assert.equal(entryTitle({ gesture_label: "Copie dans un bac", titles: 1, fields: ["cart"] }), "Copie dans un bac de 1 titre");
+});
