@@ -2,9 +2,10 @@
 
 Chaque geste qui écrit se note dans `journal_entries` et `journal_changes`
 (`radiotomate.models.journal`) : la correction d'une fiche (FON-66), le déplacement
-d'un titre (ARC-09), et bientôt le renommage (FON-68) et le retrait. Ce module les
+d'un titre (ARC-09), le renommage (FON-68), et bientôt le retrait. Ce module les
 lit pour la page Journal de Sons, et défait un lot entier pendant 30 jours : un
-déplacement par `bank_moves.undo_moves`, le reste par `title_edits.undo_entry`.
+déplacement ou un renommage par `bank_moves.undo_moves`, le reste par
+`title_edits.undo_entry`.
 
 C'est le premier morceau de SEC-10 : la même table s'étendra aux horloges, aux
 réglages des bacs et aux comptes.
@@ -49,7 +50,9 @@ GESTURE_LABELS = {
     "remove": "Retrait",
 }
 # Les gestes qui savent se défaire, et comment.
-UNDOABLE = frozenset((*title_edits.GESTURES, bank_moves.GESTURE_MOVE))
+UNDOABLE = frozenset(
+    (*title_edits.GESTURES, bank_moves.GESTURE_MOVE, bank_moves.GESTURE_RENAME)
+)
 
 STATUSES = (
     title_edits.STATUS_DONE,

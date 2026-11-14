@@ -6,6 +6,7 @@ from radiotomate.interface.json_util import read_json_object
 from radiotomate.services.bank_moves import moves_on
 from radiotomate.services.bank_titles import bank_tidy_enabled
 from radiotomate.services.title_edits import title_edits_enabled
+from radiotomate.services.title_renames import renames_on
 
 blueprint = Blueprint("account", __name__, template_folder="templates")
 
@@ -24,6 +25,8 @@ async def account_json():
                 "title_edits": await title_edits_enabled(g.dbsession),
                 # ARC-09: a title moved keeps its identity.
                 "bank_moves": await moves_on(g.dbsession),
+                # FON-68: files renamed after their fiche.
+                "title_renames": await renames_on(g.dbsession),
             },
         },
     )
