@@ -97,7 +97,7 @@ async def htmx_errors_as_messages(exc: Exception):
         return (f"<pre>{radiotomate_message['text']}</pre>", exc.code)
 
 
-def app_factory(config: dict, reload: bool, beets: BeetsIntegration):
+def app_factory(config: dict, reload: bool, beets: BeetsIntegration):  # noqa: PLR0915
     app = CustomQuart(__name__)
     app.config.from_mapping(
         {
