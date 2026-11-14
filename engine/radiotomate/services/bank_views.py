@@ -27,7 +27,18 @@ if TYPE_CHECKING:
     from radiotomate.models import User
 
 # The columns of the table, in their own order; the title always shows.
-COLUMNS = ("title", "artist", "album", "famille", "genre", "year", "duration", "fiche")
+COLUMNS = (
+    "title",
+    "artist",
+    "album",
+    "famille",
+    # The station's tags (FON-74).
+    "etiquettes",
+    "genre",
+    "year",
+    "duration",
+    "fiche",
+)
 NAME_MAX = 60
 QUERY_MAX = 200
 MAX_VIEWS = 100

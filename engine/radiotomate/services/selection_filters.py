@@ -12,6 +12,8 @@ checked by ``beets_query.validate_selection_query``, as one typed by hand.
   bank is MEDIA_ROOT, ``/media`` on a station.
 - The genre is ``genres``, the list of Beets 2.14 (ARC-06), whose ``genre:`` the
   check refuses; ``genre`` still, for a library of Beets 2.5.
+- A tag of the station (FON-74) is that tag between its separators,
+  ``etiquettes:|nuit|``, which takes neither « minuit » nor « nuitamment ».
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ from dataclasses import dataclass
 from radiotomate.domain.errors import DomainValidationError
 from radiotomate.services.bank_titles import media_root_text
 from radiotomate.services.media_bank import COLLECTIONS_TOP, ROTATION_TOP
+from radiotomate.services.station_tags import clean_tag, tag_query
 
 ROTATION = "rotation"
 YEAR_MIN = 1000
@@ -35,6 +38,7 @@ class SelectionFilters:
     artist: str = ""
     album: str = ""
     genre: str = ""
+    etiquette: str = ""
     year_from: int | None = None
     year_to: int | None = None
 
@@ -59,6 +63,9 @@ class SelectionFilters:
             artist=text("artist"),
             album=text("album"),
             genre=text("genre"),
+            etiquette=clean_tag(text("etiquette"), field="etiquette")
+            if text("etiquette")
+            else "",
             year_from=year("year_from"),
             year_to=year("year_to"),
         )
@@ -78,6 +85,7 @@ class SelectionFilters:
                 self.artist,
                 self.album,
                 self.genre,
+                self.etiquette,
                 self.year_from,
                 self.year_to,
             )
@@ -114,6 +122,8 @@ def selection_query(filters: SelectionFilters, *, genre_field: str = "genres") -
         parts.append(_exact("album", filters.album))
     if filters.genre:
         parts.append(_exact(genre_field, filters.genre))
+    if filters.etiquette:
+        parts.append(tag_query(filters.etiquette))
     if filters.year_from or filters.year_to:
         # A title without a year has 0 in Beets: « until 1999 » does not take it.
         start = filters.year_from or 1

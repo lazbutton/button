@@ -32,6 +32,8 @@ TITLES = [
     ),
     ("20-archives/concerts/e.mp3", "Écho", "", "Live", 2003, "Rock", 300.0, ""),
 ]
+# The station's tags (FON-74), a flexible field: « minuit » is not « nuit ».
+TAGS = {"Été indien": "|instrumental|nuit|", "Comète": "|minuit|", "Dune": "|nuit|"}
 
 
 def _beets(tmp_path: Path) -> BeetsIntegration:
@@ -50,7 +52,9 @@ def _beets(tmp_path: Path) -> BeetsIntegration:
         lib.add(item)
         if famille:
             item["famille"] = famille
-            item.store()
+        if title in TAGS:
+            item["etiquettes"] = TAGS[title]
+        item.store()
     beets = object.__new__(BeetsIntegration)
     beets.lib = lib
     return beets
@@ -99,6 +103,7 @@ async def test_switch_off_keeps_the_table_closed(
         "title_edits": False,
         "bank_moves": False,
         "bank_removals": False,
+        "station_tags": False,
     }
 
 
@@ -125,6 +130,7 @@ async def test_a_row_says_everything_the_table_shows(
         "title_edits": True,
         "bank_moves": True,
         "bank_removals": True,
+        "station_tags": True,
     }
     payload = await _titles(client, "?q=dune")
     assert payload["total"] == len(TITLES)
@@ -139,6 +145,7 @@ async def test_a_row_says_everything_the_table_shows(
         "genre": "",
         "famille": "electro",
         "famille_label": "Électro",
+        "etiquettes": ["nuit"],
         "duration": None,
         "zone": "collections",
         "collection": "nuit",
@@ -193,6 +200,46 @@ async def test_the_table_filters_by_each_column(
     assert _names(await _titles(client, f"?q=orage ciel{sort}")) == [
         "Comète",
         "Été indien",
+    ]
+
+
+async def test_the_table_filters_and_ranges_by_tag(
+    raw_app, app_configration, dbsession, users_password, tmp_path
+):
+    client = await _client(
+        app_configration, _beets(tmp_path), dbsession, users_password
+    )
+    sort = "&sort=title"
+    # A tag is that tag alone, among the others of the title: « minuit » is not it.
+    assert _names(await _titles(client, f"?etiquette=nuit{sort}")) == [
+        "Dune",
+        "Été indien",
+    ]
+    assert _names(await _titles(client, f"?etiquette=NUIT{sort}")) == [
+        "Dune",
+        "Été indien",
+    ]
+    assert _names(await _titles(client, f"?etiquette=minuit{sort}")) == ["Comète"]
+    assert _names(await _titles(client, f"?etiquette=nui{sort}")) == []
+    # Given empty, the titles without any tag.
+    assert _names(await _titles(client, f"?etiquette={sort}")) == ["Brume", "Écho"]
+    # A title counts for each of its tags; the facet is what the console proposes.
+    payload = await _titles(client, "?facets=etiquette")
+    assert payload["facets"]["etiquette"] == [
+        {"value": "instrumental", "label": "instrumental", "count": 1},
+        {"value": "minuit", "label": "minuit", "count": 1},
+        {"value": "nuit", "label": "nuit", "count": 2},
+        {"value": "", "label": "", "count": 2},
+    ]
+
+
+def test_a_title_without_the_tags_column_reads_none():
+    row = (1, b"/media/10-rotation/a.mp3", "T", "A", "B", 0, "", 1.0, None)
+    assert bank_titles.title_of(row, "/media")["etiquettes"] == []
+    tagged = (*row, "|instrumental|nuit|")
+    assert bank_titles.title_of(tagged, "/media")["etiquettes"] == [
+        "instrumental",
+        "nuit",
     ]
 
 

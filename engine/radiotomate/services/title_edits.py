@@ -9,7 +9,7 @@ l'acceptation d'une proposition (FON-27) passent par lui.
   pas pour rien. Un fichier changé depuis sa dernière lecture est relu avant : Beets
   récrit tous les tags qu'il connaît, et ne doit pas écraser ce qu'un autre outil y a
   mis.
-- La famille, et plus tard les étiquettes (FON-74), sont des champs flexibles de
+- La famille et les étiquettes de la station (FON-74) sont des champs flexibles de
   Beets : la bibliothèque seulement, jamais le fichier.
 - Un lot prend 500 titres au plus.
 - Un titre à l'antenne ou en file attend : une ligne du conducteur engagée porte son
@@ -65,6 +65,7 @@ from radiotomate.models import (
     RundownItem,
     Setting,
 )
+from radiotomate.services import station_tags
 from radiotomate.services.bank_lock import BankBusyError, BeetsPlace, bank_lock
 from radiotomate.services.bank_titles import bank_tidy_enabled
 from radiotomate.services.beets_query import playable_query
@@ -84,7 +85,7 @@ MAX_TITLES = 500
 # Écrits dans le fichier, puis dans la bibliothèque.
 TAG_FIELDS = ("title", "artist", "album", "year", "genre", "label", "isrc")
 # Dans la bibliothèque seulement : des champs flexibles de Beets.
-FLEX_FIELDS = ("famille",)
+FLEX_FIELDS = ("famille", station_tags.FIELD)
 FIELDS = TAG_FIELDS + FLEX_FIELDS
 # Ce qu'une personne corrige dans la console.
 PERSON_FIELDS = ("title", "artist", "album", "year", "genre", "famille")
@@ -126,6 +127,7 @@ FIELD_LABELS = {
     "label": "le label",
     "isrc": "l'ISRC",
     "famille": "la famille",
+    station_tags.FIELD: "les étiquettes",
 }
 
 # Pourquoi un titre ne s'écrit pas, ou pas encore.
@@ -296,6 +298,8 @@ def clean_value(name: str, raw: object) -> object:
     """La valeur à écrire, vérifiée. Lève `DomainValidationError`."""
     if name == "year":
         return _clean_year(raw)
+    if name == station_tags.FIELD:
+        return station_tags.clean_field(raw)
     if raw is None:
         raw = ""
     if isinstance(raw, bool) or not isinstance(raw, (str, int, float)):
