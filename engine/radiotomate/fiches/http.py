@@ -162,6 +162,12 @@ POLICIES = {
     "musicbrainz.org": Policy(1, 1.1, timeout=15.0, after_response=True),
     "query.wikidata.org": Policy(1, 1.0, timeout=60.0),
     "api.acoustid.org": Policy(1, 0.34, timeout=15.0),
+    # Les sources de FON-30, comme Hopper les a réglées. Apple Music, par l'API de
+    # recherche d'iTunes : 20 requêtes par minute au plus.
+    "itunes.apple.com": Policy(5, 3.2),
+    "openapi.tidal.com": Policy(5, 0.5),
+    # Bandcamp ne publie aucune limite : deux requêtes par seconde, par politesse.
+    "bandcamp.com": Policy(4, 0.5),
 }
 # Un service sans limite connue : celles de Deezer.
 _DEFAULT_POLICY = Policy(10, 0.15)
@@ -338,12 +344,14 @@ class Http:
         *,
         headers: Mapping[str, str] | None = None,
         data: Mapping[str, str] | None = None,
+        json_body: Any = None,
     ) -> tuple[int, Any]:
         """Une requête, et son corps lu comme JSON.
 
-        Une panne passagère (réseau, 429, 5xx, réponse illisible, Deezer occupé) se
-        réessaie une fois ; une seconde compte pour le disjoncteur, et la réponse
-        revient telle quelle. Un délai dépassé ne se réessaie pas.
+        `data` : un corps de formulaire ; `json_body` : un corps JSON. Une panne
+        passagère (réseau, 429, 5xx, réponse illisible, Deezer occupé) se réessaie
+        une fois ; une seconde compte pour le disjoncteur, et la réponse revient
+        telle quelle. Un délai dépassé ne se réessaie pas.
         """
         host = urlsplit(url).hostname or ""
         breaker = self.breaker(host)
@@ -355,7 +363,12 @@ class Http:
             bucket.take()
             try:
                 response = self._client.request(
-                    method, url, headers=headers, data=data, timeout=policy.timeout
+                    method,
+                    url,
+                    headers=headers,
+                    data=data,
+                    json=json_body,
+                    timeout=policy.timeout,
                 )
             except httpx.TimeoutException:
                 breaker.failure()

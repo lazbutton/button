@@ -14,15 +14,29 @@ pas le genre qu'elle déclare.
 
 from __future__ import annotations
 
+import base64
 import json
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
-from urllib.parse import quote
+import logging
+import math
+import re
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any, ClassVar
+from urllib.parse import parse_qsl, quote, urlsplit
 
 from radiotomate.fiches.http import HttpError
 from radiotomate.fiches.loose import MbRelease
-from radiotomate.fiches.normalize import js_regex, parse_title
+from radiotomate.fiches.normalize import (
+    js_regex,
+    js_trim,
+    latin_words,
+    normalize_text,
+    parse_title,
+    search_terms,
+    split_artists,
+)
 from radiotomate.fiches.proposals import (
+    AppleDetails,
     DeezerAlbum,
     DeezerDetails,
     MusicBrainzArtist,
@@ -30,12 +44,20 @@ from radiotomate.fiches.proposals import (
     MusicBrainzMember,
     WikidataArtist,
 )
-from radiotomate.fiches.rules import Period, present_in, without_edition_mentions
+from radiotomate.fiches.rules import (
+    Period,
+    js_round,
+    present_in,
+    without_edition_mentions,
+)
+from radiotomate.fiches.variants import same_artist, token_set_similarity
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, MutableMapping
+    from collections.abc import Callable, Iterable, Mapping, MutableMapping, Sequence
 
     from radiotomate.fiches.http import Http
+
+_log = logging.getLogger(__name__)
 
 
 def component(text: str) -> str:
@@ -90,6 +112,8 @@ class DeezerCandidate:
     duration_ms: float | None = None
     isrc: str | None = None
     artist_id: str | None = None
+
+    platform: ClassVar[str] = "deezer"
 
 
 def _playable(track: object) -> bool:
@@ -903,3 +927,683 @@ def acoustid_lookup(
     if error.get("code") == _ACOUSTID_KEY:
         raise AcoustidKeyError(f"api.acoustid.org : {message}", status)
     raise HttpError(f"api.acoustid.org : {message}", status)
+
+
+# ===== Tidal, Apple Music et Bandcamp (FON-30) =====
+#
+# Les adaptateurs du site de Hopper (`lib/adapters/tidal.ts`, `apple.ts`,
+# `bandcamp.ts`), pour ce dont sa recherche se sert : la recherche d'un morceau, et
+# chez Apple Music le genre et la date d'un morceau trouvé. Chacune derrière son
+# réglage, éteint par défaut (`SourceSettings`) : une source éteinte n'est jamais
+# appelée.
+
+# Les réglages, dans la table `settings`. Une clé absente laisse la source éteinte.
+SETTING_TIDAL = "features.fiches_tidal"
+SETTING_APPLE = "features.fiches_apple_music"
+SETTING_BANDCAMP = "features.fiches_bandcamp"
+# La clé d'application Tidal de la station : un secret, que nulle route ne rend.
+SETTING_TIDAL_CLIENT_ID = "fiches.tidal_client_id"
+SETTING_TIDAL_CLIENT_SECRET = "fiches.tidal_client_secret"
+
+_SETTING_OFF = frozenset({"0", "false", "off", "non", ""})
+
+
+def _switched_on(value: object) -> bool:
+    return value is not None and str(value).strip().lower() not in _SETTING_OFF
+
+
+@dataclass(frozen=True)
+class SourceSettings:
+    """Les sources allumées, et la clé d'application Tidal de la station.
+
+    La clé ne paraît jamais dans un journal : `repr` la tait.
+    """
+
+    tidal: bool = False
+    apple: bool = False
+    bandcamp: bool = False
+    tidal_client_id: str = field(default="", repr=False)
+    tidal_client_secret: str = field(default="", repr=False)
+
+    @property
+    def tidal_key(self) -> bool:
+        """La station a-t-elle une clé d'application Tidal entière ?"""
+        return bool(self.tidal_client_id.strip() and self.tidal_client_secret.strip())
+
+    @classmethod
+    def from_settings(cls, values: Mapping[str, object]) -> SourceSettings:
+        """Les réglages lus dans la table `settings`, clé par clé."""
+        return cls(
+            tidal=_switched_on(values.get(SETTING_TIDAL)),
+            apple=_switched_on(values.get(SETTING_APPLE)),
+            bandcamp=_switched_on(values.get(SETTING_BANDCAMP)),
+            tidal_client_id=str(values.get(SETTING_TIDAL_CLIENT_ID) or ""),
+            tidal_client_secret=str(values.get(SETTING_TIDAL_CLIENT_SECRET) or ""),
+        )
+
+
+@dataclass(frozen=True)
+class Candidate:
+    """Un morceau de Tidal, d'Apple Music ou de Bandcamp, pour les trois passes.
+
+    `by_label` : chez Bandcamp, l'artiste n'est lu que dans le titre, sur le compte
+    d'un autre, un label ou un réenvoi.
+    """
+
+    platform: str
+    id: str
+    url: str
+    title: str
+    artists: tuple[str, ...]
+    album: str | None = None
+    duration_ms: float | None = None
+    isrc: str | None = None
+    release_date: str | None = None
+    artist_id: str | None = None
+    by_label: bool = False
+    kind: str = "track"
+
+
+def _coalesce(value: Any, default: Any) -> Any:
+    """Le `??` de JavaScript."""
+    return default if value is None else value
+
+
+def _template(value: object) -> str:
+    """Une valeur dans un gabarit de JavaScript, `${value}`."""
+    return _js_string(value) if not isinstance(value, str) else value
+
+
+def _optional_text(value: object) -> str | None:
+    """`value ? String(value) : undefined`."""
+    return _template(value) if _truthy_object(value) else None
+
+
+_ISO_DURATION = js_regex(
+    r"^P(?:([0-9]+)D)?T?(?:([0-9]+)H)?(?:([0-9]+)M)?(?:([0-9]+(?:\.[0-9]+)?)S)?\Z"
+)
+
+
+def iso_duration(value: object) -> int | None:
+    """Une durée ISO 8601 (« PT3M45S ») en millisecondes : Tidal l'écrit ainsi."""
+    found = _ISO_DURATION.match(value) if isinstance(value, str) else None
+    if not found:
+        return None
+    days, hours, minutes, seconds = (float(part or 0) for part in found.groups())
+    return js_round(((days * 24 + hours) * 3600 + minutes * 60 + seconds) * 1000)
+
+
+# ===== Tidal =====
+
+TIDAL = "https://openapi.tidal.com/v2"
+TIDAL_TOKEN = "https://auth.tidal.com/v1/oauth2/token"
+_TIDAL_COUNTRY = "FR"
+
+
+def _tidal_resources(document: object) -> list[dict[str, Any]]:
+    data = _object(document).get("data")
+    if isinstance(data, list):
+        return list(map(_object, data))
+    return [_object(data)] if _truthy_object(data) else []
+
+
+def _tidal_key(resource: dict[str, Any]) -> str:
+    return f"{_template(resource.get('type'))}/{_template(resource.get('id'))}"
+
+
+def _streamable(attributes: dict[str, Any]) -> bool:
+    """Un morceau non diffusable (`availability` sans STREAM) ne s'écouterait pas."""
+    availability = attributes.get("availability")
+    return not isinstance(availability, list) or "STREAM" in availability
+
+
+def tidal_candidates(
+    document: object, album: dict[str, Any] | None = None
+) -> list[Candidate]:
+    """`tidalCandidates` : les morceaux d'un document JSON:API, artistes et album lus
+    dans `included`, dans l'ordre de pertinence de la recherche.
+
+    `album` : les attributs de l'album, pour les pistes d'un album.
+    """
+    resources = _tidal_resources(document)
+    included_list = list(map(_object, _list(_object(document).get("included"))))
+    included = {_tidal_key(resource): resource for resource in included_list}
+    linkages = [
+        *(resource for resource in resources if resource.get("type") == "tracks"),
+        *(
+            _object(link)
+            for resource in resources
+            for link in _list(
+                _object(_object(resource.get("relationships")).get("tracks")).get(
+                    "data"
+                )
+            )
+        ),
+    ]
+    position = {link.get("id"): index for index, link in enumerate(linkages)}
+    seen: set[Any] = set()
+    tracks = []
+    for resource in [*resources, *included_list]:
+        attributes = resource.get("attributes")
+        if resource.get("type") != "tracks" or not _truthy_object(attributes):
+            continue
+        if resource.get("id") in seen:
+            continue
+        seen.add(resource.get("id"))
+        if _streamable(_object(attributes)):
+            tracks.append(resource)
+    tracks.sort(key=lambda resource: position.get(resource.get("id"), math.inf))
+    return [_tidal_candidate(resource, included, album) for resource in tracks]
+
+
+def _tidal_candidate(
+    resource: dict[str, Any],
+    included: dict[str, dict[str, Any]],
+    context: dict[str, Any] | None,
+) -> Candidate:
+    attributes = _object(resource.get("attributes"))
+
+    def related(name: str) -> list[dict[str, Any]]:
+        links = _object(_object(resource.get("relationships")).get(name)).get("data")
+        found = (included.get(_tidal_key(_object(link))) for link in _list(links))
+        return [one for one in found if one]
+
+    albums = related("albums")
+    album = albums[0].get("attributes") if albums else None
+    album = _object(_coalesce(album, context))
+    title = _template(_coalesce(attributes.get("title"), ""))
+    version = attributes.get("version")
+    track_id = _template(resource.get("id"))
+    return Candidate(
+        platform="tidal",
+        id=track_id,
+        url=f"https://tidal.com/browse/track/{track_id}",
+        title=f"{title} ({_template(version)})" if _truthy_object(version) else title,
+        artists=tuple(
+            _template(_coalesce(_object(artist.get("attributes")).get("name"), ""))
+            for artist in related("artists")
+        ),
+        album=_optional_text(album.get("title")),
+        duration_ms=iso_duration(attributes.get("duration")),
+        isrc=_optional_text(attributes.get("isrc")),
+        release_date=_optional_text(album.get("releaseDate")),
+    )
+
+
+class TidalKeyError(HttpError):
+    """Tidal refuse la clé d'application de la station : la source est sautée, rien
+    ne sert de réessayer."""
+
+
+class Tidal:
+    """Tidal, par son API officielle (openapi.tidal.com/v2, au format JSON:API), avec
+    la clé d'application de la station.
+
+    Le jeton se garde en mémoire jusqu'à une minute avant qu'il expire. Une clé
+    refusée saute Tidal pour toute la tâche, et le journal le dit une fois. La clé
+    ne paraît jamais dans un journal ni dans une adresse.
+    """
+
+    def __init__(self, http: Http, client_id: str, client_secret: str) -> None:
+        self._http = http
+        basic = f"{client_id.strip()}:{client_secret.strip()}".encode()
+        self._basic = base64.b64encode(basic).decode()
+        self._token: tuple[str, float] | None = None
+        self.refused = False
+
+    def __repr__(self) -> str:
+        return "Tidal()"
+
+    def _bearer(self, *, force: bool = False) -> str:
+        clock = self._http.clock
+        if not force and self._token and clock.now() < self._token[1]:
+            return self._token[0]
+        headers = {"Authorization": f"Basic {self._basic}"}
+        data = {"grant_type": "client_credentials"}
+        status, body = self._http.send("POST", TIDAL_TOKEN, headers=headers, data=data)
+        body = _object(body)
+        token = body.get("access_token")
+        if status != 200 or not isinstance(token, str) or not token:
+            error = body.get("error")
+            said = f", {error}" if _truthy_object(error) else ""
+            message = f"Tidal : jeton refusé ({status}{said})"
+            if status in (400, 401):
+                raise TidalKeyError(message, status)
+            raise HttpError(message, status)
+        expires = _coalesce(body.get("expires_in"), 3600)
+        if not isinstance(expires, (int, float)):
+            expires = 3600
+        self._token = (token, clock.now() + expires - 60)
+        return token
+
+    def _get(self, path: str) -> object:
+        """Un document de Tidal ; None pour une absence. Un jeton refusé se redemande
+        une fois."""
+        url = f"{TIDAL}{path}{'&' if '?' in path else '?'}countryCode={_TIDAL_COUNTRY}"
+        for attempt in (0, 1):
+            headers = {
+                "Authorization": f"Bearer {self._bearer(force=attempt > 0)}",
+                "Accept": "application/vnd.api+json",
+            }
+            status, body = self._http.send("GET", url, headers=headers)
+            if status == 401 and attempt == 0:
+                continue
+            if status == 429 or status >= 500:
+                raise HttpError(f"Tidal : réponse {status}", status)
+            return body if status == 200 else None
+        return None
+
+    def search(self, artist: str, title: str) -> list[Candidate]:
+        """Les morceaux d'une recherche : le premier artiste, et les mots du titre."""
+        if self.refused:
+            return []
+        first = next(iter(split_artists([artist])), "")
+        query = js_trim(f"{first} {search_terms(title)}")
+        include = component("tracks,tracks.artists,tracks.albums")
+        path = f"/searchResults?filter%5Bquery%5D={component(query)}&include={include}"
+        try:
+            return tidal_candidates(self._get(path))
+        except TidalKeyError:
+            self.refused = True
+            _log.warning("fiches : Tidal refuse la clé d'application, Tidal est sauté")
+            return []
+
+
+# ===== Apple Music =====
+
+ITUNES = "https://itunes.apple.com"
+_ITUNES_COUNTRY = "FR"
+
+
+def _form_component(text: str) -> str:
+    """Le codage `application/x-www-form-urlencoded` de `URLSearchParams`."""
+    out = []
+    for char in text:
+        if char.isascii() and (char.isalnum() or char in "*-._"):
+            out.append(char)
+        elif char == " ":
+            out.append("+")
+        else:
+            out.append("".join(f"%{byte:02X}" for byte in char.encode()))
+    return "".join(out)
+
+
+def clean_url(url: str | None, fallback: str) -> str:
+    """L'adresse Apple Music sans le paramètre de suivi « uo ».
+
+    Comme `URLSearchParams.delete`, le reste de la requête se récrit, et une requête
+    vide disparaît.
+    """
+    if not url:
+        return fallback
+    head, hash_, fragment = url.partition("#")
+    base, _, query = head.partition("?")
+    kept = [
+        (name, value)
+        for name, value in parse_qsl(query, keep_blank_values=True)
+        if name != "uo"
+    ]
+    query = "&".join(f"{_form_component(n)}={_form_component(v)}" for n, v in kept)
+    return f"{base}{'?' if query else ''}{query}{hash_}{fragment}"
+
+
+def _itunes_song(result: dict[str, Any]) -> bool:
+    return result.get("wrapperType") == "track" and result.get("kind") == "song"
+
+
+def apple_candidate(track: dict[str, Any]) -> Candidate:
+    """Un morceau de l'API d'iTunes, comme l'adaptateur Apple Music de Hopper."""
+    track_id = track.get("trackId")
+    date = track.get("releaseDate")
+    fallback = f"https://music.apple.com/fr/song/{_template(_coalesce(track_id, 0))}"
+    return Candidate(
+        platform="apple",
+        id=_js_string(track_id),
+        url=clean_url(track.get("trackViewUrl"), fallback),
+        title=_coalesce(track.get("trackName"), ""),
+        artists=(_coalesce(track.get("artistName"), ""),),
+        album=track.get("collectionName"),
+        duration_ms=track.get("trackTimeMillis"),
+        release_date=date[:10] if isinstance(date, str) else None,
+    )
+
+
+def _itunes_results(body: dict[str, Any]) -> list[dict[str, Any]]:
+    return list(map(_object, _list(body.get("results"))))
+
+
+def apple_search(http: Http, artist: str, title: str) -> list[Candidate]:
+    """Les morceaux d'une recherche d'iTunes, catalogue français : le premier artiste,
+    et les mots du titre. iTunes refuse (403) au-delà de son quota : une panne,
+    jamais une absence."""
+    first = next(iter(split_artists([artist])), "")
+    term = js_trim(f"{first} {search_terms(title)}")
+    url = (
+        f"{ITUNES}/search?term={component(term)}&entity=song&limit=10"
+        f"&country={_ITUNES_COUNTRY}"
+    )
+    results = http.fetch(url, _itunes_results) or []
+    return [apple_candidate(result) for result in results if _itunes_song(result)]
+
+
+def _prune_itunes(body: dict[str, Any]) -> AppleDetails | None:
+    result = next(iter(_itunes_results(body)), None)
+    if result is None:
+        return None
+    return AppleDetails(
+        genre=result.get("primaryGenreName"),
+        date=result.get("releaseDate"),
+        album=result.get("collectionName"),
+    )
+
+
+def apple_details(http: Http, track_id: str) -> AppleDetails | None:
+    """`appleDetails` : le genre principal d'un morceau Apple Music, sa date et son
+    album."""
+    url = f"{ITUNES}/lookup?id={component(track_id)}&country={_ITUNES_COUNTRY}"
+    return http.fetch(url, _prune_itunes)
+
+
+# ===== Bandcamp =====
+
+BANDCAMP_SEARCH = "https://bandcamp.com/api/bcsearch_public_api/1/autocomplete_elastic"
+BANDCAMP_DETAILS = "https://bandcamp.com/api/mobile/25/tralbum_details"
+# Fiches lues par recherche : la recherche rend une dizaine de résultats, la plupart
+# d'autres titres.
+BANDCAMP_DETAILED = 3
+# Un titre assez proche pour mériter la lecture de sa fiche.
+BANDCAMP_PLAUSIBLE = 0.8
+
+
+def _unqualified(name: str) -> str:
+    """« Nirvana (UK) » : la précision entre parenthèses ne fait pas un autre nom."""
+    return js_regex(r"\s*[(\[][^)\]]*[)\]]\s*\Z").sub("", name, count=1) or name
+
+
+def same_platform_artist(a: str, b: str) -> bool:
+    """Le `sameArtistName` de `score.ts`, à ne pas confondre avec celui de
+    `rules.ts` (`same_artist_name`) : deux plateformes nomment-elles le même
+    artiste ? Écrit dans deux alphabets, il se compare en latin."""
+    if same_artist(normalize_text(_unqualified(a)), normalize_text(_unqualified(b))):
+        return True
+    left = " ".join(latin_words(_unqualified(a)))
+    right = " ".join(latin_words(_unqualified(b)))
+    return bool(left) and same_artist(left, right)
+
+
+def _squashed(name: str) -> str:
+    return js_regex(r"\s+").sub(
+        "", normalize_text(js_regex(r"^the\s+", re.IGNORECASE).sub("", name, count=1))
+    )
+
+
+def same_credit(a: str, b: str) -> bool:
+    """`sameCredit` : deux noms d'artiste pour un même compte, « The » en tête ou pas,
+    ou sans espaces (« okkyunglee », nom d'utilisateur d'Okkyung Lee)."""
+    return (
+        bool(js_trim(a))
+        and bool(js_trim(b))
+        and (same_platform_artist(a, b) or _squashed(a) == _squashed(b))
+    )
+
+
+@dataclass(frozen=True)
+class Credit:
+    """Ce qu'un titre de Bandcamp dit de son artiste : le titre sans lui, l'artiste
+    crédité, et si c'est le compte qui publie."""
+
+    title: str
+    artist: str
+    by_account: bool
+
+
+_SIDE = js_regex(r"^(?:[A-D][0-9]{1,2}|[0-9]{1,2})(?:_|\.\s+|\s+[-\u2013]\s+)(?=\S)")
+_UNDERSCORED = js_regex(r"^([^_]+)_(.+)\Z")
+_PREFIXED = js_regex(r"^(.+?)\s+[-\u2013\u2014]\s+(.+)\Z")
+
+
+def credit_from_title(title: str, account: str, wanted: Sequence[str] = ()) -> Credit:
+    """`creditFromTitle` : un label, ou un compte qui réenvoie, écrit l'artiste dans
+    le titre (« Keope - Osem (Acid Coco Remix) » chez Bigamo). Le titre sans ce
+    préfixe ni son rang de face, l'artiste crédité, et si c'est le compte.
+
+    `wanted` : les artistes cherchés, seuls reconnus en préfixe.
+    """
+    text = _SIDE.sub("", js_trim(title), count=1)
+
+    def known(name: str) -> bool:
+        return same_credit(name, account) or any(
+            same_credit(name, artist) for artist in wanted
+        )
+
+    underscored = _UNDERSCORED.match(text)
+    parts = _PREFIXED.match(text) or (
+        underscored if underscored and known(underscored[1]) else None
+    )
+    if parts:
+        prefix, rest = parts[1], parts[2]
+        clean = js_trim(rest.replace("_", " "))
+        if same_credit(prefix, account):
+            return Credit(clean, account, True)
+        if any(same_credit(prefix, artist) for artist in wanted) or not wanted:
+            return Credit(clean, js_trim(prefix), False)
+    return Credit(text, account, True)
+
+
+_ALBUM_ARTIST = js_regex(r"^(.+?)\s*[-\u2013]\s*(.+)\Z")
+
+
+def _album_title(album: str | None, artist: str) -> str | None:
+    """« Pieuvre-Away From Human Behaviour » : l'album d'un label, l'artiste en
+    tête."""
+    if not album:
+        return None
+    parts = _ALBUM_ARTIST.match(album)
+    if (
+        parts
+        and token_set_similarity(parse_title(parts[1]).base, parse_title(artist).base)
+        == 1
+    ):
+        return parts[2]
+    return album
+
+
+def bandcamp_ref(url: str, kind: str) -> str | None:
+    """L'adresse d'une page → son identifiant (« pieuvres/track/home-office-2 ») ; un
+    domaine propre garde son nom complet."""
+    try:
+        parsed = urlsplit(url)
+        host = parsed.hostname
+    except ValueError:
+        return None
+    if not parsed.scheme or not host:
+        return None
+    segments = [segment for segment in parsed.path.split("/") if segment]
+    if len(segments) < 2 or segments[0] != kind:
+        return None
+    host = host.lower()
+    site = host.removesuffix(".bandcamp.com")
+    return f"{site}/{segments[0]}/{segments[1]}"
+
+
+def bandcamp_url(ref: str) -> str:
+    site, *path = ref.split("/")
+    domain = site if "." in site else f"{site}.bandcamp.com"
+    return f"https://{domain}/{'/'.join(path)}"
+
+
+def _iso_day(seconds: object) -> str | None:
+    if isinstance(seconds, bool) or not isinstance(seconds, (int, float)):
+        return None
+    if not seconds:
+        return None
+    return datetime.fromtimestamp(seconds, UTC).strftime("%Y-%m-%d")
+
+
+def bandcamp_candidate(
+    details: dict[str, Any],
+    hit: dict[str, Any] | None = None,
+    wanted: Sequence[str] = (),
+) -> Candidate | None:
+    """`bandcampCandidate` : la fiche d'un morceau ou d'un album, l'artiste lu dans le
+    titre s'il y est.
+
+    Le compte qui publie fait foi : l'artiste qu'une sortie déclare, même « Daft
+    Punk » sur un réenvoi, ne suffit pas (`by_label`).
+    """
+    hit = hit or {}
+    kind = "album" if details.get("type") == "a" else "track"
+    url = _coalesce(details.get("bandcamp_url"), hit.get("item_url_path"))
+    ref = bandcamp_ref(url, kind) if isinstance(url, str) and url else None
+    if not ref:
+        return None
+    band = details.get("band")
+    account = _coalesce(
+        _object(band).get("name") if isinstance(band, dict) else None,
+        _coalesce(details.get("tralbum_artist"), ""),
+    )
+    declared = next(
+        (
+            name
+            for name in (details.get("tralbum_artist"), hit.get("band_name"))
+            if isinstance(name, str) and name and not same_credit(name, account)
+        ),
+        None,
+    )
+    title = _coalesce(details.get("title"), "")
+    credit = credit_from_title(title, account, wanted)
+    named = (
+        credit_from_title(title, declared, wanted)
+        if credit.by_account and declared and wanted
+        else credit
+    )
+    by_label = not any(
+        same_credit(name, account) for name in split_artists(named.artist)
+    )
+    track = None
+    if kind == "track":
+        tracks = list(map(_object, _list(details.get("tracks"))))
+        track = next(
+            (one for one in tracks if one.get("track_id") == details.get("id")),
+            tracks[0] if tracks else None,
+        )
+    duration = track.get("duration") if track else None
+    return Candidate(
+        platform="bandcamp",
+        id=ref,
+        url=bandcamp_url(ref),
+        title=named.title,
+        artists=(named.artist,),
+        album=_album_title(details.get("album_title"), named.artist)
+        if kind == "track"
+        else None,
+        duration_ms=js_round(duration * 1000)
+        if isinstance(duration, (int, float)) and duration
+        else None,
+        release_date=_iso_day(details.get("release_date")),
+        by_label=by_label,
+        kind=kind,
+    )
+
+
+_SPACES = js_regex(r"\s+")
+
+
+def _unreadable(what: str, status: int, body: object) -> HttpError:
+    """Une réponse que Bandcamp ne devrait pas rendre : refus, page de vérification,
+    format changé. Une panne, jamais une absence ; le journal le dit, sans quoi
+    rien ne dirait que Bandcamp ne répond plus."""
+    if isinstance(body, str):
+        head = f" « {js_trim(_SPACES.sub(' ', body))[:160]} »"
+    elif body is None:
+        head = " (vide)"
+    else:
+        head = f" ({', '.join(list(_object(body))[:6])})"
+    _log.warning("fiches : Bandcamp, %s : réponse %s%s", what, status, head)
+    return HttpError(f"Bandcamp : réponse {status}", status)
+
+
+def _bandcamp_hits(http: Http, text: str, kind: str) -> list[dict[str, Any]]:
+    """La recherche du site, celle qu'interroge sa barre de recherche."""
+    body = {
+        "search_text": text,
+        "search_filter": kind,
+        "full_page": False,
+        "fan_id": None,
+    }
+    status, answer = http.send("POST", BANDCAMP_SEARCH, json_body=body)
+    auto = _object(answer).get("auto") if status == 200 else None
+    results = _object(auto).get("results")
+    if not isinstance(results, list):
+        raise _unreadable("recherche", status, answer)
+    return [hit for hit in map(_object, results) if hit.get("type") == kind]
+
+
+def _bandcamp_details(http: Http, hit: dict[str, Any]) -> dict[str, Any] | None:
+    """La fiche d'un résultat ; None pour une fiche retirée depuis la recherche."""
+    url = (
+        f"{BANDCAMP_DETAILS}?band_id={_template(hit.get('band_id'))}"
+        f"&tralbum_type={_template(hit.get('type'))}"
+        f"&tralbum_id={_template(hit.get('id'))}"
+    )
+    status, body = http.send("GET", url)
+    if status == 404 or (
+        status == 200 and isinstance(body, dict) and _truthy_object(body.get("error"))
+    ):
+        return None
+    if status != 200 or not isinstance(body, dict):
+        raise _unreadable("fiche", status, body)
+    return body
+
+
+def bandcamp_search(http: Http, artist: str, title: str) -> list[Candidate]:
+    """Les morceaux d'une recherche de Bandcamp, sans clé : il n'a pas d'API publique.
+
+    La recherche du site, puis la fiche des trois résultats les plus plausibles, pour
+    leur durée, leur artiste et leur album. Les comptes de label en sont, marqués
+    (`by_label`) : à la lettre près, on ne les prend pas.
+    """
+    wanted = (artist,)
+    first = next(iter(split_artists([artist])), "")
+    hits = _bandcamp_hits(http, js_trim(f"{first} {search_terms(title)}"), "t")
+    base = parse_title(title).base
+    plausible = [
+        hit
+        for hit in hits
+        if token_set_similarity(
+            parse_title(
+                credit_from_title(
+                    _coalesce(hit.get("name"), ""),
+                    _coalesce(hit.get("band_name"), ""),
+                    wanted,
+                ).title
+            ).base,
+            base,
+        )
+        >= BANDCAMP_PLAUSIBLE
+    ][:BANDCAMP_DETAILED]
+    found = []
+    for hit in plausible:
+        details = _bandcamp_details(http, hit)
+        candidate = details and bandcamp_candidate(details, hit, wanted)
+        if candidate and not (candidate.kind == "album" and candidate.by_label):
+            found.append(candidate)
+    return found
+
+
+@dataclass(frozen=True)
+class Platforms:
+    """Les sources de FON-30 allumées pour une recherche : Tidal, avec la clé de la
+    station, Apple Music et Bandcamp."""
+
+    tidal: Tidal | None = None
+    apple: bool = False
+    bandcamp: bool = False
+
+
+def deezer_by_isrc(http: Http, isrc: str) -> list[DeezerCandidate]:
+    """Le morceau Deezer qui porte cet ISRC, s'il est lisible : le même que celui de
+    Tidal."""
+    url = f"{DEEZER}/track/isrc:{component(isrc)}"
+    track = http.fetch(url, _album)
+    return [_candidate(track)] if _playable(track) else []

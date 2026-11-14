@@ -8,13 +8,17 @@ par ces étapes, dans l'ordre, et s'arrête à la première qui le trouve :
    enregistrements de MusicBrainz qui la portent, cinq au plus, d'un score de 0,5 au
    moins, comme `chroma` ; MusicBrainz donne leur titre, leurs artistes et leur
    durée, qui vérifient toujours le lien d'AcoustID.
-2. À la lettre près : les variantes du texte, chez Deezer, puis parmi les sorties de
-   l'artiste chez Deezer.
-3. La seconde passe : chez Deezer, puis dans MusicBrainz.
+2. À la lettre près : les variantes du texte, chez Deezer ; chez Tidal, puis le même
+   morceau chez Deezer par son ISRC ; chez Apple Music ; parmi les sorties de
+   l'artiste chez Deezer ; chez Bandcamp, sur le compte de l'artiste seulement.
+3. La seconde passe : chez Deezer, puis dans MusicBrainz, puis chez Bandcamp, comptes
+   de label compris.
 4. La troisième passe : le texte relu chez Deezer, les morceaux de l'artiste, l'album
-   du fichier, puis MusicBrainz en recherche floue.
+   du fichier, Tidal, MusicBrainz en recherche floue, puis Apple Music.
 
-Tidal, Apple Music et Bandcamp viendront avec FON-30 ; SoundCloud n'est pas repris.
+Tidal, Apple Music et Bandcamp (FON-30) ne sont cherchés qu'allumés, chacun par son
+réglage (`SourceSettings`) : une source éteinte n'est jamais appelée. SoundCloud n'est
+pas repris.
 
 Un titre trouvé donne ses détails, toujours par un identifiant : le morceau Deezer et
 son album, l'enregistrement MusicBrainz par son ISRC et son artiste, Wikidata par
@@ -70,12 +74,20 @@ from radiotomate.fiches.rules import (
 from radiotomate.fiches.sources import (
     DEEZER,
     AcoustidKeyError,
+    Candidate,
     DeezerHit,
     MbRecording,
+    Platforms,
+    SourceSettings,
+    Tidal,
     acoustid_lookup,
+    apple_details,
+    apple_search,
+    bandcamp_search,
     component,
     deezer_album_tracks,
     deezer_artists,
+    deezer_by_isrc,
     deezer_details,
     deezer_releases,
     deezer_search,
@@ -114,7 +126,13 @@ if TYPE_CHECKING:
     from radiotomate.fiches.proposals import Track
     from radiotomate.fiches.sources import DeezerCandidate
 
+    # Une étape de la cascade : les candidats d'une variante du texte.
+    _Step = Callable[[RadioVariant], Sequence[DeezerCandidate | Candidate]]
+
 _log = logging.getLogger(__name__)
+
+# Aucune des sources de FON-30 : Tidal, Apple Music et Bandcamp éteints.
+NONE = Platforms()
 
 
 def _first(*values: Any) -> Any:
@@ -146,10 +164,12 @@ def _milliseconds(seconds: float | None) -> float | None:
 STRICT_TIMEOUT_S = 180.0
 
 
-def _strict_match(source: str, found: DeezerCandidate, variant: RadioVariant) -> Match:
+def _strict_match(
+    source: str, found: DeezerCandidate | Candidate, variant: RadioVariant
+) -> Match:
     return Match(
         source=source,
-        platform="deezer",
+        platform=found.platform,
         id=found.id,
         url=found.url,
         title=found.title,
@@ -163,15 +183,27 @@ def _strict_match(source: str, found: DeezerCandidate, variant: RadioVariant) ->
     )
 
 
+def _meta(found: DeezerCandidate | Candidate) -> Meta:
+    return Meta(found.title, found.artists, found.duration_ms, found.album)
+
+
 def find_radio_track(
-    http: Http, track: RadioTrack, *, timeout: float = STRICT_TIMEOUT_S
+    http: Http,
+    track: RadioTrack,
+    *,
+    platforms: Platforms = NONE,
+    timeout: float = STRICT_TIMEOUT_S,
 ) -> Match | None:
     """Le morceau du fichier, à la lettre près, ou None.
 
-    Chez Deezer, chaque variante du texte ; puis parmi les sorties les plus écoutées
-    de l'artiste chez Deezer, pour un titre que sa recherche ne trouve pas sous ce
-    nom, deux variantes. Lève l'erreur d'une source qui n'a pas répondu si rien ne
-    l'a trouvé ailleurs : l'absence n'est alors pas sûre.
+    En cascade, chacune pour ce que les précédentes ont manqué : chez Deezer, chaque
+    variante du texte ; chez Tidal, trois, puis le même morceau chez Deezer par son
+    ISRC ; chez Apple Music, deux, sous son quota de 20 requêtes par minute ; parmi
+    les sorties les plus écoutées de l'artiste chez Deezer, pour un titre que sa
+    recherche ne trouve pas sous ce nom, deux ; chez Bandcamp, deux, sur le compte de
+    l'artiste seulement. Tidal, Apple Music et Bandcamp seulement allumés
+    (`platforms`). Lève l'erreur d'une source qui n'a pas répondu si rien ne l'a
+    trouvé ailleurs : l'absence n'est alors pas sûre.
     """
     deadline = http.clock.now() + timeout
     variants = radio_variants(track)
@@ -198,23 +230,54 @@ def find_radio_track(
             for found in deezer_album_tracks(http, upc)
         ]
 
-    steps: list[tuple[str, int, Callable[[RadioVariant], list[DeezerCandidate]]]] = [
-        ("deezer", len(variants), deezer),
-        ("deezer (sorties de l'artiste)", 2, releases),
-    ]
+    def tidal(variant: RadioVariant) -> list[DeezerCandidate | Candidate]:
+        """Le morceau Tidal, puis le même chez Deezer par son ISRC, jugé à son tour.
+        Deezer en panne n'y change rien : le morceau de Tidal reste."""
+        assert platforms.tidal is not None
+        found = [
+            one
+            for one in platforms.tidal.search(variant.artist, variant.title)
+            if same_radio_track(variant, _meta(one))
+        ]
+        isrc = next((one.isrc for one in found if one.isrc), None)
+        again: list[DeezerCandidate] = []
+        if isrc:
+            try:
+                again = deezer_by_isrc(http, isrc)
+            except HttpError:
+                again = []
+        same = [one for one in again if same_radio_track(variant, _meta(one))]
+        return [*same, *found]
+
+    def apple(variant: RadioVariant) -> list[Candidate]:
+        return apple_search(http, variant.artist, variant.title)
+
+    def bandcamp(variant: RadioVariant) -> list[Candidate]:
+        """Le compte de l'artiste seulement : sans album à comparer, un compte de
+        label ne prouve rien."""
+        found = bandcamp_search(http, variant.artist, variant.title)
+        return [one for one in found if not one.by_label]
+
+    steps: list[tuple[str, int, _Step]] = [("deezer", len(variants), deezer)]
+    if platforms.tidal:
+        steps.append(("tidal", 3, tidal))
+    if platforms.apple:
+        steps.append(("apple", 2, apple))
+    steps.append(("deezer (sorties de l'artiste)", 2, releases))
+    if platforms.bandcamp:
+        steps.append(("bandcamp", 2, bandcamp))
     failure: HttpError | None = None
     for source, count, find in steps:
         for variant in variants[:count]:
             if http.clock.now() > deadline:
-                raise HttpError("Deezer : recherche trop longue")
+                raise HttpError("Recherche à la lettre près trop longue")
             try:
                 candidates = find(variant)
             except HttpError as error:
                 failure = error
                 continue
             for found in candidates:
-                meta = Meta(found.title, found.artists, found.duration_ms, found.album)
-                if same_radio_track(variant, meta):
+                if same_radio_track(variant, _meta(found)):
                     return _strict_match(source, found, variant)
     if failure:
         raise failure
@@ -318,11 +381,43 @@ def _loosely_on_musicbrainz(http: Http, item: Track, first: RadioTrack) -> _Hit 
     return best(judged)
 
 
-def find_loosely(http: Http, item: Track) -> Match | None:
+def _from_platform(platform: str, found: Candidate, why: Sequence[str]) -> Match:
+    """Un morceau rapproché chez Tidal, Apple Music ou Bandcamp."""
+    return Match(
+        source="rapprochement",
+        platform=platform,
+        id=found.id,
+        url=found.url,
+        title=found.title,
+        artists=found.artists,
+        album=found.album,
+        duration_s=found.duration_ms / 1000 if found.duration_ms else None,
+        isrc=found.isrc,
+        why=tuple(why),
+        credited=", ".join(found.artists),
+        date=found.release_date,
+    )
+
+
+def _platform_candidate(found: Candidate) -> ThirdCandidate:
+    return ThirdCandidate(found.title, found.artists, found.duration_ms)
+
+
+def _loosely_on_bandcamp(http: Http, item: Track, first: RadioTrack) -> Match | None:
+    """Bandcamp, comptes de label compris : la durée tient lieu de preuve."""
+    judged: list[_Hit] = []
+    for found in bandcamp_search(http, first.artist, first.title):
+        candidate = _platform_candidate(found)
+        judged += _hit(loose_judge(item, first, candidate, item.length), found)
+    hit = best(judged)
+    return _from_platform("bandcamp", hit.found, hit.why) if hit else None
+
+
+def find_loosely(http: Http, item: Track, platforms: Platforms = NONE) -> Match | None:
     """Le morceau, rapproché : chez Deezer, deux requêtes de la recherche, plus le
     titre seul pour un artiste mal écrit ; puis dans MusicBrainz, l'enregistrement,
-    avec sa durée, sans lien d'écoute. La même version d'abord, au plus petit écart
-    de durée ; None sinon."""
+    avec sa durée, sans lien d'écoute ; puis chez Bandcamp, allumé, comptes de label
+    compris. La même version d'abord, au plus petit écart de durée ; None sinon."""
     if js_falsy(item.length):
         return None
     variants = loose_variants(item)
@@ -334,6 +429,8 @@ def find_loosely(http: Http, item: Track) -> Match | None:
     on_musicbrainz = _loosely_on_musicbrainz(http, item, variants[0])
     if on_musicbrainz:
         return _from_musicbrainz(on_musicbrainz.found, on_musicbrainz.why)
+    if platforms.bandcamp:
+        return _loosely_on_bandcamp(http, item, variants[0])
     return None
 
 
@@ -347,8 +444,15 @@ IN_RADIO_ALBUM = "dans l'album de la radio"
 class _Harder:
     """La troisième passe d'un titre : ses lectures, et ses quatre recherches."""
 
-    def __init__(self, http: Http, item: Track, every: list[Reading]) -> None:
+    def __init__(
+        self,
+        http: Http,
+        item: Track,
+        every: list[Reading],
+        platforms: Platforms = NONE,
+    ) -> None:
         self.http = http
+        self.platforms = platforms
         self.item = item
         self.every = every
         self.fixed = [reading for reading in every if reading.fix]
@@ -440,8 +544,45 @@ class _Harder:
                 return _from_deezer(found.found, why)
         return None
 
+    def _on_platform(
+        self,
+        platform: str,
+        search: Callable[[Http, str, str], list[Candidate]],
+        among: Sequence[Reading],
+    ) -> Match | None:
+        """La recherche d'une plateforme, lecture par lecture, avec les règles de la
+        troisième passe."""
+        for reading in among:
+            found = search(self.http, reading.artist, reading.title)
+            candidates = ((_platform_candidate(one), one) for one in found)
+            hit = self.judge(candidates, [reading])
+            if hit:
+                return _from_platform(platform, hit.found, hit.why)
+        return None
+
+    def tidal(self) -> Match | None:
+        """4. Tidal, allumé : les deux premières lectures, et le premier texte
+        relu."""
+        tidal = self.platforms.tidal
+        if tidal is None:
+            return None
+        among: list[Reading] = []
+        for reading in [*self.every[:2], *self.fixed[:1]]:
+            if not any(reading is other for other in among):
+                among.append(reading)
+        return self._on_platform(
+            "tidal", lambda _, artist, title: tidal.search(artist, title), among
+        )
+
+    def apple(self) -> Match | None:
+        """6. Apple Music, allumé, le plus lent : 20 recherches par minute. La
+        première lecture seulement."""
+        if not self.platforms.apple:
+            return None
+        return self._on_platform("apple", apple_search, self.every[:1])
+
     def fuzzy(self) -> Match | None:
-        """4. MusicBrainz, en recherche floue : une faute permise par mot, le titre
+        """5. MusicBrainz, en recherche floue : une faute permise par mot, le titre
         sans invité ni mention."""
         tried: list[Reading] = []
         for reading in [self.every[0], *self.fixed[:1]]:
@@ -461,22 +602,25 @@ class _Harder:
         return None
 
 
-def find_harder(http: Http, item: Track) -> Match | None:
+def find_harder(http: Http, item: Track, platforms: Platforms = NONE) -> Match | None:
     """Le morceau, cherché autrement : chez Deezer avec le texte relu, puis tous les
     morceaux de l'artiste chez Deezer, où le titre n'est plus cherché mais comparé,
-    puis l'album du fichier chez Deezer, puis MusicBrainz en recherche floue. La
-    même version d'abord, au plus petit écart ; None sinon."""
+    puis l'album du fichier chez Deezer, Tidal, MusicBrainz en recherche floue, et
+    Apple Music ; Tidal et Apple Music seulement allumés. La même version d'abord,
+    au plus petit écart ; None sinon."""
     if js_falsy(item.length):
         return None
     every = readings(RadioTrack(item.artist, item.title), item.album)
     if not every:
         return None
-    harder = _Harder(http, item, every)
+    harder = _Harder(http, item, every, platforms)
     for step in (
         harder.reread,
         harder.artist_tracks,
         harder.album_tracks,
+        harder.tidal,
         harder.fuzzy,
+        harder.apple,
     ):
         match = step()
         if match:
@@ -665,10 +809,12 @@ def _accept(match: Match, item: Track) -> Callable[[str], bool]:
 
 def details_for(http: Http, match: Match, item: Track, *, verdict: bool) -> Details:
     """Les détails d'un titre trouvé : le morceau Deezer, par son identifiant ou son
-    ISRC, et son album ; l'enregistrement MusicBrainz par son ISRC, et l'artiste,
-    par le crédit ou par sa page Deezer. Sans année dans le fichier, l'album aussi,
-    pour sa première sortie."""
+    ISRC, et son album ; trouvé chez Apple Music, son genre et sa date ;
+    l'enregistrement MusicBrainz par son ISRC, et l'artiste, par le crédit ou par sa
+    page Deezer. Sans année dans le fichier, l'album aussi, pour sa première
+    sortie."""
     deezer = deezer_details(http, match.platform, match.id, clean_isrc(match.isrc))
+    apple = apple_details(http, match.id) if match.platform == "apple" else None
     fingerprinted = match.source == FINGERPRINT
     # Sans année dans le fichier, l'album pour sa première sortie ; un enregistrement
     # trouvé par l'empreinte a déjà la sienne.
@@ -676,7 +822,9 @@ def details_for(http: Http, match: Match, item: Track, *, verdict: bool) -> Deta
     album = None
     if year_missing and not (fingerprinted and match.date):
         album = _first(
-            deezer.album.title if deezer and deezer.album else None, match.album
+            deezer.album.title if deezer and deezer.album else None,
+            apple.album if apple else None,
+            match.album,
         )
     musicbrainz = musicbrainz_details(
         http,
@@ -694,12 +842,14 @@ def details_for(http: Http, match: Match, item: Track, *, verdict: bool) -> Deta
     if fingerprinted:
         recorded = _first(match.date, musicbrainz.recording_date)
         musicbrainz = replace(musicbrainz, recording_date=recorded)
-    return Details(deezer=deezer, musicbrainz=musicbrainz)
+    return Details(deezer=deezer, apple=apple, musicbrainz=musicbrainz)
 
 
 def loose_details(http: Http, match: Match, item: Track, *, verdict: bool) -> Details:
-    """Les détails d'un titre rapproché : ceux de Deezer, comme à la lettre près ;
-    d'un enregistrement MusicBrainz, son artiste et sa première sortie."""
+    """Les détails d'un titre rapproché : ceux de Deezer, comme à la lettre près (de
+    Tidal, le même morceau chez Deezer par son ISRC ; d'Apple Music, aussi son
+    genre) ; d'un enregistrement MusicBrainz, son artiste et sa première sortie ; de
+    Bandcamp, rien de plus : MusicBrainz a déjà été cherché."""
     if match.platform in ("deezer", "tidal", "apple") or match.source == FINGERPRINT:
         return details_for(http, match, item, verdict=verdict)
     if match.platform != "musicbrainz" or not match.artist_id:
@@ -746,11 +896,14 @@ class Search:
 
 
 class Searcher:
-    """La recherche des fiches : son client, la clé AcoustID et le verdict.
+    """La recherche des fiches : son client, la clé AcoustID, le verdict, et les
+    sources de FON-30 allumées.
 
     Une seule pour toute la tâche de fond : ses seaux et ses disjoncteurs sont
-    partagés, et elle ne dit qu'une fois au journal que l'empreinte est sautée.
-    `wikidata` : les fiches Wikidata déjà lues, en mémoire seulement.
+    partagés, et elle ne dit qu'une fois au journal que l'empreinte ou Tidal est
+    sauté. `wikidata` : les fiches Wikidata déjà lues, en mémoire seulement.
+    `sources` : Tidal, Apple Music et Bandcamp, tous éteints par défaut ; Tidal
+    allumé sans clé d'application est sauté.
     """
 
     def __init__(
@@ -760,6 +913,7 @@ class Searcher:
         acoustid_key: str | None = None,
         verdict: bool = False,
         wikidata: MutableMapping[str, WikidataArtist | None] | None = None,
+        sources: SourceSettings | None = None,
     ) -> None:
         self.http = http
         self.acoustid_key = acoustid_key
@@ -768,6 +922,13 @@ class Searcher:
             {} if wikidata is None else wikidata
         )
         self._said: set[str] = set()
+        sources = sources or SourceSettings()
+        tidal = None
+        if sources.tidal and sources.tidal_key:
+            tidal = Tidal(http, sources.tidal_client_id, sources.tidal_client_secret)
+        elif sources.tidal:
+            self._once("tidal", "fiches : Tidal allumé sans clé d'application, sauté")
+        self.platforms = Platforms(tidal, sources.apple, sources.bandcamp)
         # Les clés qu'AcoustID a refusées : la passe les saute sans redemander.
         self._refused: set[str] = set()
 
@@ -828,10 +989,13 @@ class Searcher:
 
     def _text(self, item: Track, track: RadioTrack) -> tuple[str, Match] | None:
         """À la lettre près, puis la seconde et la troisième passe."""
-        match = find_radio_track(self.http, track)
+        platforms = self.platforms
+        match = find_radio_track(self.http, track, platforms=platforms)
         if match:
             return "trouvé", match
-        match = find_loosely(self.http, item) or find_harder(self.http, item)
+        match = find_loosely(self.http, item, platforms) or find_harder(
+            self.http, item, platforms
+        )
         return ("rapproché", match) if match else None
 
     def _found(
