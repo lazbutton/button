@@ -26,6 +26,7 @@ from radiotomate.interface import (
     carts,
     csrf,
     emissions,
+    fiches,
     health,
     home,
     journal,
@@ -135,6 +136,7 @@ def app_factory(config: dict, reload: bool, beets: BeetsIntegration):  # noqa: P
     app.register_blueprint(library.blueprint)
     app.register_blueprint(media.blueprint)
     app.register_blueprint(title_edits.blueprint)
+    app.register_blueprint(fiches.blueprint)
     app.register_blueprint(journal.blueprint)
     app.register_blueprint(bank_moves.blueprint)
     app.register_blueprint(bank_removals.blueprint)

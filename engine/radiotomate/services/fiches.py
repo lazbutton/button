@@ -21,9 +21,18 @@ from contextlib import closing
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
-from radiotomate.fiches.sources import BUTTON_ACOUSTID_KEY, SourceSettings
+from radiotomate.domain.errors import DomainValidationError
+from radiotomate.fiches.sources import (
+    BUTTON_ACOUSTID_KEY,
+    SETTING_APPLE,
+    SETTING_BANDCAMP,
+    SETTING_TIDAL,
+    SETTING_TIDAL_CLIENT_ID,
+    SETTING_TIDAL_CLIENT_SECRET,
+    SourceSettings,
+)
 from radiotomate.models import Setting
 
 if TYPE_CHECKING:
@@ -73,6 +82,84 @@ async def read_settings(session: ormSession) -> FichesSettings:
 
 async def set_enabled(session: ormSession, enabled: bool) -> None:
     await Setting.upsert(session, SETTING_ENABLED, "1" if enabled else "0")
+
+
+# What part of the station the search sends, as Réglages says it.
+SENT = (
+    "l'artiste, le titre, l'album et l'empreinte de ses fichiers, vers MusicBrainz, "
+    "AcoustID, Deezer et Wikidata ; l'artiste et le titre vers Tidal, Apple Music et "
+    "Bandcamp, s'ils sont allumés. Rien de l'équipe ni des auditeurs."
+)
+
+# The switches that `PUT /fiches/reglages.json` writes, by the name of its field.
+SWITCHES = {
+    "enabled": SETTING_ENABLED,
+    "verdict": SETTING_FMG,
+    "tidal": SETTING_TIDAL,
+    "apple_music": SETTING_APPLE,
+    "bandcamp": SETTING_BANDCAMP,
+}
+# The keys, written and never read back: a route says only whether one is set.
+KEYS = {
+    "acoustid_key": SETTING_ACOUSTID_KEY,
+    "tidal_client_id": SETTING_TIDAL_CLIENT_ID,
+    "tidal_client_secret": SETTING_TIDAL_CLIENT_SECRET,
+}
+KEY_MAX = 200
+
+
+async def settings_payload(session: ormSession) -> dict:
+    """The settings of the search, without the value of a key."""
+    rows = await session.scalars(
+        select(Setting).where(
+            (Setting.key.like("features.fiches%")) | (Setting.key.like("fiches.%"))
+        )
+    )
+    values = {row.key: row.value for row in rows}
+    settings = FichesSettings.from_settings(values)
+    sources = settings.sources
+    return {
+        "enabled": settings.enabled,
+        "verdict": settings.verdict,
+        "acoustid_key_set": bool(str(values.get(SETTING_ACOUSTID_KEY) or "").strip()),
+        "sources": {
+            "tidal": sources.tidal,
+            "apple_music": sources.apple,
+            "bandcamp": sources.bandcamp,
+            "tidal_key_set": sources.tidal_key,
+        },
+        "sent": SENT,
+    }
+
+
+async def write_settings(session: ormSession, data: dict) -> None:
+    """The settings that `data` names, all checked before any is written. A key
+    given empty is removed: BUTTON's AcoustID key comes back."""
+    switches, keys = {}, {}
+    for name, value in data.items():
+        if name in SWITCHES:
+            if not isinstance(value, bool):
+                raise DomainValidationError(
+                    "Coche ou décoche, sans autre valeur.", field=name
+                )
+            switches[SWITCHES[name]] = value
+        elif name in KEYS:
+            if not isinstance(value, str) or len(value.strip()) > KEY_MAX:
+                raise DomainValidationError(
+                    f"Une clé tient en {KEY_MAX} signes au plus.", field=name
+                )
+            if any(char.isspace() for char in value.strip()):
+                raise DomainValidationError(
+                    "Une clé tient sur une ligne, sans espace.", field=name
+                )
+            keys[KEYS[name]] = value.strip()
+    for key, on in switches.items():
+        await Setting.upsert(session, key, "1" if on else "0")
+    for key, value in keys.items():
+        if value:
+            await Setting.upsert(session, key, value)
+        else:
+            await session.execute(delete(Setting).where(Setting.key == key))
 
 
 @dataclass(frozen=True)
