@@ -14,6 +14,7 @@ import {
   type FicheForm,
 } from "../../api/titleEdits";
 import { FicheInput, TryReport, editTitles, messageOf, needsConfirmation } from "./TitleEditing";
+import { SheetRename, type RenameResult } from "./TitleRenaming";
 import { TitlePlaysSection } from "./TitlePlays";
 
 /**
@@ -26,10 +27,12 @@ export function TitleSheet({
   collection,
   playing,
   canEdit = false,
+  canRename = false,
   startEditing = false,
   onPlay,
   onClose,
   onSaved,
+  onRenamed,
 }: {
   title: BankTitle;
   /** The name of its collection, as the left column says it. */
@@ -42,6 +45,9 @@ export function TitleSheet({
   onPlay: () => void;
   onClose: () => void;
   onSaved?: (outcome: EditOutcome, name: string) => void;
+  /** Its file can be renamed after its fiche (FON-68). */
+  canRename?: boolean;
+  onRenamed?: (result: RenameResult) => void;
 }) {
   const headRef = useRef<HTMLHeadingElement>(null);
   const base = useId();
@@ -243,6 +249,7 @@ export function TitleSheet({
           <code>{title.path}</code>
           <p>Identifiant dans la bibliothèque : {title.id}</p>
         </section>
+        {canRename && !form && onRenamed ? <SheetRename title={title} onRenamed={onRenamed} /> : null}
       </div>
     </aside>
   );

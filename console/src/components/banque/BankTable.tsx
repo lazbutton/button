@@ -9,6 +9,7 @@ import {
   ListPlus,
   MoreHorizontal,
   Music,
+  FilePen,
   Pencil,
   Play,
   RefreshCw,
@@ -64,6 +65,7 @@ import { filtersFromTable, selectionLink, tableMakesSelection } from "../../api/
 import { API_PREFIX, ApiRequestError, apiDeleteJson, apiGet, apiPostJson, apiPut } from "../../api/client";
 import { formatClock, percentOf } from "../../api/soundsView";
 import { savedMessage, undoneMessage, type EditOutcome } from "../../api/titleEdits";
+import { renamedMessage, unrenamedMessage } from "../../api/titleRenames";
 import { usePreview } from "../../lib/usePreview";
 import { AppToast, useAppToast } from "../../ui/AppToast";
 import { ConfirmDialog } from "../../ui/ConfirmDialog";
@@ -74,6 +76,7 @@ import { MoveDialog, RenameDialog } from "./CollectionView";
 import { CreateBankDialog } from "./CreateBankDialog";
 import { RANKING_ICONS, RankingList } from "./RankingList";
 import { EditTitlesDialog, undoTitles } from "./TitleEditing";
+import { RenameTitlesDialog, type RenameResult } from "./TitleRenaming";
 import { TitleSheet } from "./TitleSheet";
 import { ViewsMenu } from "./ViewsMenu";
 
@@ -115,6 +118,8 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
   const { isAdmin, account, role } = useAccount();
   // FON-66 : la fiche se corrige, seule ou par lot, pour le Programmateur.
   const canEdit = account?.features?.title_edits === true && (isAdmin || account.permissions.autodj === true);
+  // FON-68 : les fichiers se renomment d'après leur fiche, pour le Programmateur.
+  const canRename = account?.features?.title_renames === true && (isAdmin || account.permissions.autodj === true);
   const [params, setParams] = useSearchParams();
   const state = useMemo(() => readState(params), [params]);
   const [typed, setTyped] = useState(state.q);
@@ -137,6 +142,7 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
   const [deleting, setDeleting] = useState(false);
   const [creating, setCreating] = useState<string | null>(null);
   const [editing, setEditing] = useState<BankTitle[] | null>(null);
+  const [renamingFiles, setRenamingFiles] = useState<BankTitle[] | null>(null);
   const [editOpen, setEditOpen] = useState<number | null>(null);
   const [views, setViews] = useState<SavedView[] | null>(null);
   const { toast, show, dismiss } = useAppToast();
@@ -278,7 +284,7 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
   const shelf =
     state.ranking === "collection" && state.group ? (shelves.find((item) => item.id === state.group) ?? null) : null;
   const gestures = shelf != null;
-  const selectable = gestures || canEdit;
+  const selectable = gestures || canEdit || canRename;
   // A group with a value becomes a selection of titles (FON-73), for whoever writes them.
   const canSelect = tableMakesSelection(state) && roleAtLeast(role, "programmateur");
   const others = shelves.filter((item) => item.id !== shelf?.id);
@@ -337,6 +343,36 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
         : undefined,
     );
     await load();
+  };
+
+  const afterRename = async (result: RenameResult) => {
+    const message = renamedMessage(result.titles);
+    const entries = result.entries;
+    show(
+      message.text,
+      message.tone,
+      entries.length ? { action: { label: "Annuler", onClick: () => void unrename(entries) } } : undefined,
+    );
+    await load();
+  };
+
+  // Un lot que le moteur a dû couper se défait en entier, le dernier morceau d'abord.
+  const unrename = async (entries: number[]) => {
+    let written = 0;
+    const kept: unknown[] = [];
+    try {
+      for (const entry of [...entries].reverse()) {
+        const outcome = await undoTitles(entry);
+        written += outcome.written;
+        kept.push(...outcome.kept);
+      }
+      const message = unrenamedMessage({ written, kept });
+      show(message.text, message.tone);
+    } catch (caught) {
+      show(messageOf(caught, "Les fichiers n'ont pas repris leur nom. Réessaie depuis le journal."), "error");
+    } finally {
+      await load();
+    }
   };
 
   const undo = async (entry: number) => {
@@ -508,6 +544,18 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
                   >
                     <Pencil className="ui-button-icon" />
                     Modifier {selected.size === 1 ? "la fiche" : `${selected.size} fiches`}
+                  </Button>
+                ) : null}
+                {canRename ? (
+                  <Button
+                    size="1"
+                    variant="soft"
+                    color="gray"
+                    disabled={busy}
+                    onClick={() => setRenamingFiles(titles.filter((title) => selected.has(title.id)))}
+                  >
+                    <FilePen className="ui-button-icon" />
+                    Renommer
                   </Button>
                 ) : null}
                 {gestures ? (
@@ -760,6 +808,8 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
               collection={opened.collection ? collectionLabel(opened.collection) : ""}
               playing={preview.playingId === String(opened.id)}
               canEdit={canEdit}
+              canRename={canRename}
+              onRenamed={(result) => void afterRename(result)}
               startEditing={editOpen === opened.id}
               onSaved={(outcome, name) => void afterEdit(outcome, name)}
               onPlay={() => preview.toggle(String(opened.id))}
@@ -867,6 +917,17 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
             setEditing(null);
             setSelected(new Set());
             void afterEdit(outcome);
+          }}
+        />
+      ) : null}
+      {renamingFiles ? (
+        <RenameTitlesDialog
+          titles={renamingFiles}
+          onClose={() => setRenamingFiles(null)}
+          onDone={(result) => {
+            setRenamingFiles(null);
+            setSelected(new Set());
+            void afterRename(result);
           }}
         />
       ) : null}
