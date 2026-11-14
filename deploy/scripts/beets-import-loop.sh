@@ -39,6 +39,12 @@ ROTATION_NAME=rotation
 #   Perdu ou illisible, il se refait de même.
 # - Il oublie un fichier disparu que la bibliothèque ne connaît plus : remis au
 #   même chemin, le fichier est réindexé, sous un nouvel identifiant.
+# La boucle lit les chemins absolus de la bibliothèque. Dès la 2.10, Beets range
+# relatif à sa racine, directory, le chemin d'un titre qui est dessous :
+# init-radiotomate.sh la pose donc hors de la banque. Une bibliothèque aux chemins
+# relatifs, rangée sous une autre racine, arrête l'indexation : la boucle n'y
+# reconnaîtrait aucun titre, et Beets réimporterait toute la banque sous de
+# nouveaux identifiants.
 follow_disk() { # les dossiers de tête que Beets indexe, sous la banque
   python3 - "$MEDIA" "$ROTATION" "$COLLECTIONS" <<'PY'
 import os
@@ -79,6 +85,18 @@ def missing(path):
 
 
 before = items()
+relative = [path for path in before.values() if not os.path.isabs(path)]
+if relative:
+    print(
+        f"Bibliothèque Beets : {len(relative)} titre(s) ont un chemin relatif, comme"
+        f" {os.fsdecode(relative[0])}. Beets les range ainsi quand sa racine, directory,"
+        " est la banque : sans eux, il réimporterait la banque sous de nouveaux"
+        " identifiants. Rien n'est indexé. Relancer la station, dont radiotomate-init"
+        " pose la racine hors de la banque, puis remettre la bibliothèque d'avant :"
+        " docs/deploiement.md, « La bibliothèque de Beets ».",
+        file=sys.stderr,
+    )
+    sys.exit(1)
 tops = []
 for name in map(os.fsencode, sys.argv[2:]):
     top = os.path.join(media, name, b"")
@@ -163,15 +181,16 @@ PY
 #   oublie d'ailleurs, dans l'historique, un titre changé qu'il a retiré.
 # - Un titre changé quitte d'abord son album, s'il en a un : une bibliothèque
 #   indexée par dossier fait un album de chaque dossier. Après la relecture d'un
-#   titre, beet update donne à l'album les champs d'album du premier titre, genre
+#   titre, beet update donne à l'album les champs d'album du premier titre, genres
 #   et année compris, et l'album les donne à tous ses titres.
 # - -e : les champs que la boucle pose d'après le dossier ne se relisent pas.
 #   Relu, le regroupement sortirait le titre de sa sélection jusqu'au beet modify
 #   qui suit.
 # - -d : devant un fichier disparu entre-temps, Beets efface aussi les dossiers
-#   vidés jusqu'à la racine de sa bibliothèque, la banque : une banque vidée de
-#   son dernier titre disparaîtrait, et COLLECTIONS avec elle. Avec une racine
-#   hors de la banque, il n'efface rien.
+#   vidés jusqu'à la racine de sa bibliothèque : avec la banque pour racine, une
+#   banque vidée de son dernier titre disparaîtrait, et COLLECTIONS avec elle.
+#   init-radiotomate.sh pose la racine hors de la banque ; -d l'y tient, même
+#   devant une configuration d'avant.
 # - -M : rien ne se déplace.
 # Le gain ReplayGain se relit aussi dans les tags. Un fichier remplacé qui n'en a
 # pas n'en a plus : le moteur le mesure avant de l'envoyer à l'antenne.

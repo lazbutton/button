@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import logging
 from asyncio import CancelledError, Queue, get_running_loop, sleep
-from optparse import Values
 from random import randint
 from typing import TYPE_CHECKING
 
@@ -18,6 +17,7 @@ patch_beets_term_ioctl()
 from beets.dbcore import sort_from_strings
 from beets.library import Item, Library
 from beets.ui import _setup
+from beets.ui import log as beets_log
 from beetsplug.replaygain import ReplayGainPlugin
 from quart import Quart, current_app
 
@@ -70,16 +70,12 @@ class BeetsIntegration:
     @classmethod
     def default(cls) -> BeetsIntegration:
         """
-        Instantiates Beets using its default config path
+        Instantiates Beets using its default config path (``BEETSDIR``). In
+        Beets 2.14, ``_setup`` takes no argument, and no longer sets the level of
+        its log, which Beets 2.5 set to INFO.
         """
-        options = Values(
-            {
-                "config": None,  # could be a config path
-                "exclude": None,
-                "plugins": None,
-            }
-        )
-        subcommands, lib = _setup(options, None)
+        beets_log.set_global_level(logging.INFO)
+        subcommands, lib = _setup()
         return BeetsIntegration(lib)
 
     @classmethod
