@@ -1,4 +1,5 @@
 import type { Page, Route } from "@playwright/test";
+import { verifierAccessibilite } from "./accessibilite.ts";
 import { antenne, expect, seConnecter, test } from "./banc.ts";
 
 // Le tableau de la banque (FON-64), derrière l'interrupteur général de « Ranger
@@ -60,11 +61,18 @@ const sansAccent = (text: string) =>
     .replace(/[̀-ͯ]/g, "")
     .toLowerCase();
 
-function facettes(nom: "collection" | "artist" | "famille" | "album") {
+type Facette = "collection" | "artist" | "famille" | "album" | "genre";
+
+function facettes(nom: Facette) {
   const comptes = new Map<string, number>();
   for (const entry of BIBLIOTHEQUE) comptes.set(entry[nom], (comptes.get(entry[nom]) ?? 0) + 1);
   return [...comptes]
-    .map(([value, count]) => ({ value, label: value, count }))
+    // Comme le moteur : une famille se nomme en clair.
+    .map(([value, count]) => ({
+      value,
+      label: nom === "famille" ? (BIBLIOTHEQUE.find((entry) => entry.famille === value)?.famille_label ?? value) : value,
+      count,
+    }))
     .sort((a, b) => Number(!a.value) - Number(!b.value) || a.label.localeCompare(b.label, "fr"));
 }
 
@@ -77,6 +85,19 @@ async function tableau(page: Page, statut = 200): Promise<URL[]> {
     const compte = (await reponse.json()) as Record<string, unknown>;
     await route.fulfill({ response: reponse, json: { ...compte, features: { bank_tidy: true } } });
   });
+  await page.route("**/media/titles/*/plays.json", (route: Route) =>
+    route.fulfill({
+      json: {
+        days: 90,
+        count: 2,
+        by_origin: { autodj: 1, bac: 0, agenda: 1, autre: 0 },
+        recent: [
+          { on_air: "2026-11-01T22:10+01:00", origin: "autodj", cart: null },
+          { on_air: "2026-10-30T09:00+01:00", origin: "agenda", cart: null },
+        ],
+      },
+    }),
+  );
   await page.route("**/media/titles.json*", async (route: Route) => {
     const url = new URL(route.request().url());
     demandes.push(url);
@@ -91,7 +112,7 @@ async function tableau(page: Page, statut = 200): Promise<URL[]> {
     const tri = (q.get("sort") ?? "artist") as keyof Titre;
     gardes = [...gardes].sort((a, b) => String(a[tri] ?? "").localeCompare(String(b[tri] ?? ""), "fr"));
     if (q.get("order") === "desc") gardes.reverse();
-    const facette = q.get("facets") as "collection" | "artist" | "famille" | "album";
+    const noms = (q.get("facets") ?? "").split(",").filter(Boolean) as Facette[];
     await route.fulfill({
       json: {
         titles: gardes,
@@ -101,7 +122,7 @@ async function tableau(page: Page, statut = 200): Promise<URL[]> {
         limit: 100,
         sort: tri,
         order: q.get("order") ?? "asc",
-        facets: facette ? { [facette]: facettes(facette) } : {},
+        facets: Object.fromEntries(noms.map((nom) => [nom, facettes(nom)])),
       },
     });
   });
@@ -139,6 +160,12 @@ test("toute la banque se range par artiste, se trie, et ouvre la fiche d'un titr
   const fiche = page.getByRole("complementary", { name: "Fiche de Comète" });
   await expect(fiche.getByText("Complète")).toBeVisible();
   await expect(fiche.getByText("10-rotation/1.mp3")).toBeVisible();
+  const antenneDuTitre = fiche.getByRole("region", { name: "À l'antenne" });
+  await expect(antenneDuTitre.getByText("Passé 2 fois en 90 jours")).toBeVisible();
+  await expect(antenneDuTitre.getByText("Auto-DJ 1 · Agenda 1")).toBeVisible();
+  await expect(antenneDuTitre.getByRole("list", { name: "Derniers passages" }).getByRole("listitem")).toHaveCount(2);
+  // Un titre complet : son badge vert, dans la fiche et dans le tableau, se lit.
+  await verifierAccessibilite(page, "fiche d'un titre complet");
   await page.keyboard.press("Escape");
   await expect(fiche).toHaveCount(0);
   await expect(orage.getByRole("button", { name: "Comète", exact: true })).toBeFocused();
@@ -191,4 +218,113 @@ test("devant un moteur qui n'a pas le tableau, la console demande de le mettre �
   await expect(antenne(page)).toBeVisible();
   await page.goto("/sons?onglet=importer");
   await expect(page.getByText("Mets à jour le moteur")).toBeVisible();
+});
+
+/** Les vues gardées, tenues ici comme le moteur les tient (FON-65). Rend les corps reçus. */
+async function vues(page: Page): Promise<Array<Record<string, unknown>>> {
+  const recus: Array<Record<string, unknown>> = [];
+  const gardees: Array<{ id: number; name: string; state: unknown; modified: string }> = [];
+  await page.route("**/media/views**", async (route: Route) => {
+    const requete = route.request();
+    if (requete.method() === "GET") return route.fulfill({ json: { views: gardees } });
+    const corps = requete.postDataJSON() as Record<string, unknown>;
+    recus.push(corps);
+    if (requete.method() === "POST") {
+      const vue = { id: gardees.length + 1, name: String(corps.name), state: corps.state, modified: "2026-11-14T17:00+01:00" };
+      gardees.push(vue);
+      return route.fulfill({ status: 201, json: { view: vue } });
+    }
+    return route.fulfill({ status: 404, json: { error: "not_found" } });
+  });
+  return recus;
+}
+
+test("choisir ses colonnes, garder la vue sous un nom, puis la rouvrir", async ({ page }) => {
+  await tableau(page);
+  const recus = await vues(page);
+  await seConnecter(page, "admin");
+  await expect(antenne(page)).toBeVisible();
+  await page.goto("/sons?onglet=importer&ranger=famille&groupe=jazz");
+
+  const jazz = page.getByRole("region", { name: "Jazz" });
+  await jazz.getByRole("button", { name: "Colonnes" }).click();
+  const colonnes = page.getByRole("dialog", { name: "Colonnes du tableau" });
+  await colonnes.getByRole("checkbox", { name: "Album" }).click();
+  // Au clavier : l'année monte de trois places, devant l'artiste.
+  for (let fois = 0; fois < 3; fois++) await colonnes.getByRole("button", { name: "Monter Année" }).click();
+  await page.keyboard.press("Escape");
+  await expect(jazz.getByRole("columnheader", { name: "Album" })).toHaveCount(0);
+  await expect(jazz.getByRole("columnheader").nth(2)).toHaveText("Année");
+
+  await jazz.getByRole("button", { name: "Vues" }).click();
+  await page.getByRole("menuitem", { name: "Garder cette vue…" }).click();
+  await page.getByRole("textbox", { name: "Nom" }).fill("Jazz à relire");
+  await page.getByRole("button", { name: "Garder la vue" }).click();
+  await expect(jazz.getByRole("button", { name: "Jazz à relire" })).toBeVisible();
+  expect(recus[0]).toEqual({
+    name: "Jazz à relire",
+    state: {
+      ranking: "famille",
+      group: "jazz",
+      q: "",
+      sort: "artist",
+      order: "asc",
+      columns: ["title", "year", "artist", "famille", "genre", "duration", "fiche"],
+    },
+  });
+
+  // Ailleurs dans la banque, la vue se rouvre d'un clic.
+  await page.goto("/sons?onglet=importer&ranger=album");
+  const banque = page.getByRole("region", { name: "Toute la banque" });
+  await banque.getByRole("button", { name: "Vues" }).click();
+  await page.getByRole("menuitem", { name: "Jazz à relire" }).click();
+  await expect(page.getByRole("region", { name: "Jazz" }).getByRole("columnheader", { name: "Album" })).toHaveCount(0);
+  await expect(page).toHaveURL(/ranger=famille&groupe=jazz/);
+});
+
+test("composer une sélection par filtres, depuis le tableau rangé par famille", async ({ page }) => {
+  await tableau(page);
+  const composees: URLSearchParams[] = [];
+  await page.route("**/media/selection.json*", async (route: Route) => {
+    const filtres = new URL(route.request().url()).searchParams;
+    composees.push(filtres);
+    const depuis = Number(filtres.get("year_from") ?? 0);
+    const pris = BIBLIOTHEQUE.filter(
+      (entry) => entry.famille === filtres.get("famille") && (entry.year ?? 0) >= depuis,
+    );
+    const requete = ["famille:=jazz", depuis ? `year:${depuis}..` : ""].filter(Boolean).join(" ");
+    await route.fulfill({
+      json: { query: requete, count: pris.length, sample: pris.map(({ artist, title }) => ({ artist, title })) },
+    });
+  });
+  const creees: Array<Record<string, unknown>> = [];
+  await page.route("**/autodj/categories.json", async (route: Route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    creees.push(route.request().postDataJSON() as Record<string, unknown>);
+    await route.fulfill({ status: 201, json: { category: { id: 99 } } });
+  });
+  await seConnecter(page, "admin");
+  await expect(antenne(page)).toBeVisible();
+  await page.goto("/sons?onglet=importer&ranger=famille&groupe=jazz");
+
+  await page.getByRole("region", { name: "Jazz" }).getByRole("link", { name: "Créer une sélection" }).click();
+  const fenetre = page.getByRole("dialog", { name: "Nouvelle sélection de titres" });
+  await expect(fenetre.getByRole("radio", { name: "Par filtres" })).toHaveAttribute("aria-checked", "true");
+  await expect(fenetre.getByRole("combobox", { name: "Famille" })).toContainText("Jazz");
+  await expect(fenetre.getByRole("textbox", { name: "Nom" })).toHaveValue("Jazz");
+  await expect(fenetre.getByText("2 titres")).toBeVisible();
+
+  await fenetre.getByRole("textbox", { name: "Depuis" }).fill("2016");
+  await expect(fenetre.getByText("1 titre", { exact: true })).toBeVisible();
+  await expect(fenetre.getByText("year:2016..")).toBeVisible();
+  expect(composees.at(-1)?.toString()).toBe("famille=jazz&year_from=2016");
+  await expect(fenetre.getByRole("textbox", { name: "Nom" })).toHaveValue("Jazz depuis 2016");
+
+  // « Écrire la requête à la main » reprend la requête composée.
+  await fenetre.getByRole("radio", { name: "Écrire la requête à la main" }).click();
+  await expect(fenetre.getByRole("textbox", { name: "Requête", exact: true })).toHaveValue("famille:=jazz year:2016..");
+  await fenetre.getByRole("radio", { name: "Par filtres" }).click();
+  await fenetre.getByRole("button", { name: "Créer la sélection" }).click();
+  await expect.poll(() => creees.length).toBe(1);
+  expect(creees[0]).toEqual({ name: "Jazz depuis 2016", query: "famille:=jazz year:2016..", empty_query: "" });
 });

@@ -201,11 +201,23 @@ Jouer tout de suite, droit `live` : `POST /carts/{id}/now.json` et `POST /carts/
 
 - `q` : des mots, cherchés sans accents ni casse dans le titre, l'artiste, l'album et le chemin ; tous doivent y être.
 - `collection`, `artist`, `famille`, `album`, `genre`, `year` : une valeur exacte, sans casse ni accents ; « Orage » ne prend pas « Madame Orage ». Donné vide, un filtre prend les titres où ce champ est vide.
+- `year_from`, `year_to` : des années, comprises ; un titre sans année n'est dans aucune plage.
 - `sort` : `title`, `artist` (par défaut), `album`, `famille`, `genre`, `year` ou `duration` ; `order` : `asc` ou `desc`. Les valeurs vides vont à la fin, dans les deux ordres.
 - `offset` et `limit` : 100 titres par défaut, 500 au plus.
-- `facets` : une liste parmi `collection`, `artist`, `famille` et `album`, séparées par des virgules. Chacune rend `[{value, label, count}]` sur toute la bibliothèque, quels que soient les filtres, la valeur vide en dernier.
+- `facets` : une liste parmi `collection`, `artist`, `famille`, `album` et `genre`, séparées par des virgules. Chacune rend `[{value, label, count}]` sur toute la bibliothèque, quels que soient les filtres, la valeur vide en dernier.
 
 Tant que l'interrupteur général de « Ranger la banque » est éteint, la route rend `409 {error, code:"bank_tidy_off"}`. Un tri, un ordre, une facette ou un nombre inconnus rendent `400 {error, code:"validation_error", field}`.
+
+Les vues du tableau, chacune à son compte, derrière le même interrupteur (`409 bank_tidy_off` éteint). Une vue : `{id, name, state, modified}`, où `state` vaut `{ranking, group, q, sort, order, columns}` : le rangement (`collection`, `artist`, `famille` ou `album`), son groupe (`null` pour toute la banque, `""` pour les titres sans ce champ), la recherche, le tri et son ordre comme ceux de `/media/titles.json`, et les colonnes montrées, dans leur ordre, parmi `title`, `artist`, `album`, `famille`, `genre`, `year`, `duration` et `fiche`, le titre toujours. `modified` est à l'heure de Paris.
+
+- `GET /media/views.json` (session) → `{views}` : celles du compte connecté, par nom.
+- `POST /media/views.json` `{name, state}` → `201 {view}`. Le nom, de 60 signes au plus, se tasse sur ses espaces. Un nom que le compte a déjà : `409 {error, code:"conflict", field:"name"}` ; cent vues au plus par compte, `409` au-delà. Un état inconnu, des colonnes en double ou sans le titre : `400 {code:"validation_error"}`.
+- `PUT /media/views/{id}.json` `{name?, state?}` → `{view}`. `DELETE /media/views/{id}.json` → `{ok:true}`. La vue d'un autre compte rend `404`, comme une vue effacée.
+- Un compte supprimé emporte ses vues.
+
+`GET /media/titles/{id}/plays.json` (session, même interrupteur) → `{days, count, by_origin, recent}` : les passages à l'antenne d'un titre de la bibliothèque, lus au journal d'antenne (`metadata_log`), qui les garde 90 jours. `days` vaut 90 ; `count` compte les passages, hors titres sautés avant de jouer ; `by_origin` les range en `{autodj, bac, agenda, autre}` ; `recent` donne les dix derniers, du plus récent : `{on_air, origin, cart}`, `on_air` à l'heure de Paris, `cart` `{id, title}` ou `null`. Un passage se reconnaît au fichier joué, la fin de la requête que le playout a reçue ; un passage de l'Agenda, à la ligne du conducteur qui l'a envoyé, que le conducteur garde 7 jours : plus ancien, il compte comme un bac. Un identifiant que Beets n'a plus : `404`.
+
+`GET /media/selection.json` (session, même interrupteur) → `{query, count, sample}` : une sélection de titres composée par filtres. Les filtres sont ceux du tableau, `famille`, `collection`, `artist`, `album`, `genre`, `year_from` et `year_to` ; le moteur écrit la requête Beets qui dit la même chose, la vérifie comme une requête écrite à la main, et rend son compte et dix titres `{artist, title}`. Un artiste, un album, un genre s'y écrivent en valeur exacte sans casse (`artist:=~Orage`), la famille par son nom court (`famille:=jazz`), une collection par son dossier (`path:/media/20-archives/nuit`), la rotation comme la sélection Rotation, les années en plage (`year:2015..`, `year:1..1999`). Le genre s'écrit `genres:` quand la bibliothèque de Beets a cette colonne (Beets 2.14), sinon `genre:`. Elle compte les titres comme `/media/titles.json` avec les mêmes filtres. Sans filtre, ou une année qui n'en est pas une : `400 {code:"validation_error"}`.
 
 #### La fiche d'un titre
 

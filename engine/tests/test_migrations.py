@@ -126,21 +126,73 @@ async def test_v18_encoder_token_up_then_down(tmp_path: Path):
     await db.after_serving()
 
 
-async def test_v19_journal_up_then_down(tmp_path: Path):
+async def test_v19_bank_views_up_then_down(tmp_path: Path):
     """
-    v19 adds the journal of the gestures on the bank, empty; going back to v18 takes
-    it away with what it holds, and nothing else.
+    v19 keeps the views of the bank's table, each with its account: an account
+    deleted takes its views with it, and going back to v18 takes the table away
+    without touching the accounts.
     """
     db = QuartAlchemy()
     db.init_from_config({"url": f"sqlite+aiosqlite:///{tmp_path / 'v18.db'}"}, {})
     await do_update(db.engine, target_version=18)
-    before = await _table_names(db.engine)
+    async with db.engine.connect() as conn:
+        for sql in (
+            "insert into users (id, username, password, notes, permissions) "
+            """values (1, 'nadia', 'argon2-hash', '', '{"autodj": true}')""",
+            "insert into users (id, username, password, notes, permissions) "
+            "values (2, 'samir', 'argon2-hash', '', '{}')",
+        ):
+            await conn.execute(text(sql))
+        await conn.commit()
+    users = "select * from users order by id"
+    before = await _rows(db.engine, users)
 
     await do_update(db.engine, target_version=19)
     assert await _schema_version(db.engine) == 19
+    async with db.engine.connect() as conn:
+        await conn.exec_driver_sql("PRAGMA foreign_keys=ON")
+        for sql in (
+            "insert into bank_views (user_id, name, state, created, modified) values "
+            "(1, 'Jazz', '{}', '2026-11-14 09:00:00', '2026-11-14 09:00:00'), "
+            "(2, 'Jazz', '{}', '2026-11-14 09:00:00', '2026-11-14 09:00:00')",
+        ):
+            await conn.execute(text(sql))
+        # One name per account.
+        with pytest.raises(Exception, match="UNIQUE"):
+            await conn.execute(
+                text(
+                    "insert into bank_views (user_id, name, state, created, modified) "
+                    "values (1, 'Jazz', '{}', '2026-11-14', '2026-11-14')"
+                )
+            )
+        await conn.execute(text("delete from users where id = 2"))
+        await conn.commit()
+    assert await _rows(db.engine, "select user_id, name from bank_views") == [
+        (1, "Jazz")
+    ]
+
+    await do_update(db.engine, target_version=18)
+    assert await _schema_version(db.engine) == 18
+    assert "bank_views" not in await _table_names(db.engine)
+    assert await _rows(db.engine, users) == before[:1]
+    await db.after_serving()
+
+
+async def test_v20_journal_up_then_down(tmp_path: Path):
+    """
+    v20 adds the journal of the gestures on the bank, empty; going back to v19 takes
+    it away with what it holds, and nothing else.
+    """
+    db = QuartAlchemy()
+    db.init_from_config({"url": f"sqlite+aiosqlite:///{tmp_path / 'v19.db'}"}, {})
+    await do_update(db.engine, target_version=19)
+    before = await _table_names(db.engine)
+
+    await do_update(db.engine, target_version=20)
+    assert await _schema_version(db.engine) == 20
     assert {"journal_entries", "journal_changes"} <= await _table_names(db.engine)
     async with db.engine.connect() as conn:
-        for sql in STATION_DATA[19].split(";"):
+        for sql in STATION_DATA[20].split(";"):
             if sql.strip():
                 await conn.execute(text(sql))
         await conn.commit()
@@ -154,8 +206,8 @@ async def test_v19_journal_up_then_down(tmp_path: Path):
         (2, None)
     ]
 
-    await do_update(db.engine, target_version=18)
-    assert await _schema_version(db.engine) == 18
+    await do_update(db.engine, target_version=19)
+    assert await _schema_version(db.engine) == 19
     assert await _table_names(db.engine) == before
     await db.after_serving()
 
@@ -310,6 +362,11 @@ STATION_DATA = {
         where id = 1;
     """,
     19: """
+        insert into bank_views (id, user_id, name, state, created, modified)
+        values (1, 1, 'Jazz à relire', '{"ranking": "famille", "group": "jazz"}',
+            '2026-11-14 09:00:00', '2026-11-14 10:00:00');
+    """,
+    20: """
         insert into journal_entries (id, gesture, username, created, titles, undo_of,
             details)
         values (1, 'edit', 'animateur', '2026-11-14 16:00:00', 2, null,

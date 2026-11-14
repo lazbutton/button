@@ -14,6 +14,7 @@ import {
   type FicheForm,
 } from "../../api/titleEdits";
 import { FicheInput, TryReport, editTitles, messageOf, needsConfirmation } from "./TitleEditing";
+import { TitlePlaysSection } from "./TitlePlays";
 
 /**
  * The fiche of a title, in a panel to the right of the table: what Beets knows
@@ -236,6 +237,7 @@ export function TitleSheet({
             </dl>
           </section>
         )}
+        <TitlePlaysSection titleId={title.id} />
         <section className="banque-sheet-file" aria-label="Fichier">
           <h3>Fichier</h3>
           <code>{title.path}</code>
