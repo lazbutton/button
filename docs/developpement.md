@@ -166,6 +166,8 @@ Le banc dure cinq à six minutes. Ses coupures tombent toutes dans l'heure où l
 
 Pour voir le banc échouer, couper un interrupteur du moteur dans sa base : `python3 engine/playout/tests/rundown.py features.titles_queued_close_to_air=0` pose cette clé dans la table `settings` avant le démarrage. `--journal relevé.json` garde ce que la sonde a noté, et `--relire relevé.json` le rejuge, sans Docker : en échec, la CI joint ce relevé au job, dans l'artefact `conducteur-1`, 14 jours ; le chiffre est celui de la tentative.
 
+Deux défauts connus du moteur le font encore rougir à la coupure « Coupe pile », sans rien de la branche : cinq passages sur trente en CI le 14 novembre 2026. Leurs fiches, FON-89 et FON-90, dans la [feuille de route](feuille-de-route/P2.md), disent comment les reconnaître dans la section « Échec : » du job. Un rouge qui n'est ni l'un ni l'autre vient peut-être de la branche.
+
 ## La banque, sur une copie de vraie banque
 
 Corriger des tags et renommer des fichiers touche ce que l'antenne lit. Des fichiers fabriqués pour un test ne disent pas ce que font de vrais fichiers en désordre : tags anciens ou doublés, formats rares, noms en forme décomposée, doublons. Chaque geste du chantier « Ranger la banque » qui écrit dans un fichier passe donc d'abord sur le banc de la banque (TST-16), avant sa pull request :
