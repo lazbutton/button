@@ -124,6 +124,44 @@ class NowplayingTest(unittest.TestCase):
         self.assertEqual(json.loads(body)["title"], "Song")
         self.assertEqual(Playout.calls, [])
 
+    def _hook(self, payload: dict) -> None:
+        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {SECRET}"}
+        status, _ = _call(self.base + "/hook", method="POST", data=json.dumps(payload).encode(), headers=headers)
+        self.assertEqual(status, 204)
+
+    def _now(self) -> dict:
+        return json.loads(_call(self.base + "/now.json")[1])
+
+    def test_the_listen_link_follows_its_track_only(self) -> None:
+        link = {"artist": "Ada", "title": "Lien", "radiotomate_sound_id": "7", "url": "https://liens.radio.example/abc"}
+        self._hook({"artist": "Ada", "title": "Lien", "radiotomate_sound_id": "7"})
+        self.assertNotIn("listen_url", self._now())
+        self._hook({"listen_link": link})
+        now = self._now()
+        self.assertEqual((now["title"], now["listen_url"]), ("Lien", link["url"]))
+        # Le même titre annoncé de nouveau garde son lien ; un autre titre le perd.
+        self._hook({"artist": "Ada", "title": "Lien", "radiotomate_sound_id": "7"})
+        self.assertEqual(self._now()["listen_url"], link["url"])
+        self._hook({"artist": "Bob", "title": "Autre", "radiotomate_sound_id": "8"})
+        self.assertNotIn("listen_url", self._now())
+        # Le lien d'un titre qui n'est plus à l'antenne ne se pose pas sur le titre en cours.
+        self._hook({"listen_link": link})
+        self.assertNotIn("listen_url", self._now())
+        self.assertEqual(self._now()["title"], "Autre")
+
+    def test_a_link_that_comes_before_its_track_waits_for_it(self) -> None:
+        link = {"artist": "Cléo", "title": "En avance", "url": "https://liens.radio.example/xyz"}
+        self._hook({"artist": "Ada", "title": "Avant"})
+        self._hook({"listen_link": link})
+        self._hook({"artist": "Cléo", "title": "En avance"})
+        self.assertEqual(self._now()["listen_url"], link["url"])
+
+    def test_only_a_web_link_is_kept(self) -> None:
+        self._hook({"artist": "Ada", "title": "Piège"})
+        for url in ("javascript:alert(1)", "data:text/html,x", "https://a b.example/x", "", "/relatif"):
+            self._hook({"listen_link": {"artist": "Ada", "title": "Piège", "url": url}})
+            self.assertNotIn("listen_url", self._now(), url)
+
     def test_machine_json_reads_health_without_the_playout_token(self) -> None:
         status, body = _call(self.base + "/machine.json")
         self.assertEqual(status, 200)
