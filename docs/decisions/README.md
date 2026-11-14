@@ -25,6 +25,7 @@ Une décision s'écrit quand un choix coûte cher à défaire, ou quand quelqu'u
 | [0017](0017-une-fiche-ne-s-ecrit-qu-acceptee.md) | Une fiche se propose, et ne s'écrit qu'acceptée |
 | [0018](0018-la-station-sert-son-code-source.md) | La station sert le code source de sa version |
 | [0019](0019-le-rangement-de-la-banque.md) | Le rangement de la banque, à un seul endroit par composant |
+| [0020](0020-la-banque-se-range-par-ses-fiches.md) | La banque se range par ses fiches |
 
 ## Le gabarit
 

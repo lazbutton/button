@@ -37,6 +37,9 @@ Dans la commande `station`, une fiche à la fois, maintenant que MAJ-07 est fait
 - essayer LEG-02 sur une station d'essai en `main` : un animateur y télécharge le code de la version, et sans session la même adresse répond 401 ;
 - les réglages du dépôt, et le sort des cinq images encore privées (PUB-03) ;
 - une clé d'application AcoustID pour BUTTON, avant FON-25 ;
+- une copie d'un échantillon de la banque d'une station sur la machine de développement, hors du dépôt, avant TST-16 ;
+- les droits et les conditions d'usage des pochettes des plateformes, avant FON-83 ;
+- l'adresse du service de liens d'écoute et sa clé partenaire, avant FON-84 ;
 - le nom des fichiers de l'export audio de Rivendell, avant FON-29 ;
 - le format des relevés, confirmé par écrit par la SACEM et la SPRE, avant FON-01 ;
 - avant le 29 janvier 2027, relire les onze failles acceptées de `.trivyignore.yaml` : passé cette date, le contrôle des failles échoue de nouveau.
