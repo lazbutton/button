@@ -8,7 +8,9 @@ qu'il ne prend pas reste sur le disque.
 Rien n'est effacé : un titre retiré part dans la corbeille de la banque, comme
 un son retiré d'un bac. Beets suit le disque à son tour suivant
 (deploy/scripts/beets-import-loop.sh) : un titre retiré sort de sa
-bibliothèque, un titre déplacé y revient sous un nouvel identifiant.
+bibliothèque. Un titre déplacé par le moteur garde son identifiant (ARC-09) ;
+déplacé par le catalogue, quand le moteur ne le fait pas, il y revient sous un
+nouvel identifiant.
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ import stat
 import threading
 import time
 import unicodedata
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -478,8 +481,60 @@ def remove_files(media: Path, destination: str, names: object) -> tuple[int, dic
     return 200, {"removed": removed, "failed": failed, "left": left}
 
 
-def move_files(media: Path, destination: str, target: str, names: object) -> tuple[int, dict]:
-    """Move titles to rotation or to another collection. A name already there is never replaced."""
+# What a move by the engine answers: (status, payload), or None when it leaves
+# the move to the catalogue.
+EngineMove = Callable[[list[dict]], "tuple[int, dict] | None"]
+
+
+def _moved_by_engine(
+    media: Path, source: Path, aim: Path, label: str, wanted: list[str], engine: EngineMove
+) -> tuple[int, dict] | None:
+    """Hand the moves to the engine, which keeps each title's identity (ARC-09).
+
+    A title keeps its subfolder. The engine names each move by its paths below
+    the bank: the answer names them again as the console does. None, and the
+    catalogue moves them itself, as before: an engine that does not move them.
+    """
+    failed: list[dict] = []
+    moves: list[dict] = []
+    by_path: dict[str, str] = {}
+    for name in wanted:
+        path = _file_in(source, name)
+        if path is None:
+            failed.append({"name": name, "reason": "fichier introuvable"})
+            continue
+        rel = path.relative_to(media).as_posix()
+        by_path[rel] = name
+        moves.append({"from": rel, "to": aim.joinpath(*PurePosixPath(name).parts).relative_to(media).as_posix()})
+    if not moves:
+        return 200, {"moved": [], "failed": failed, "left": []}
+    answer = engine(moves)
+    if answer is None:
+        return None
+    status, payload = answer
+    if status != 200:
+        return status, payload
+
+    def named(rows: object) -> list[str]:
+        paths = [row.get("from") if isinstance(row, dict) else row for row in rows] if isinstance(rows, list) else []
+        return [by_path[path] for path in paths if path in by_path]
+
+    for row in payload.get("failed") or []:
+        if isinstance(row, dict) and row.get("from") in by_path:
+            reason = str(row.get("reason") or "déplacement impossible")
+            if reason == "déjà là":
+                reason = f"déjà dans {label}"
+            failed.append({"name": by_path[row["from"]], "reason": reason})
+    return 200, {"moved": named(payload.get("moved")), "failed": failed, "left": named(payload.get("left"))}
+
+
+def move_files(
+    media: Path, destination: str, target: str, names: object, engine: EngineMove | None = None
+) -> tuple[int, dict]:
+    """Move titles to rotation or to another collection. A name already there is never replaced.
+
+    With ``engine``, the engine moves them first, if it does.
+    """
     source = folder_of(media, destination)
     aim = folder_of(media, target)
     if source is None or aim is None:
@@ -490,6 +545,10 @@ def move_files(media: Path, destination: str, target: str, names: object) -> tup
     if wanted is None:
         return 400, {"error": problem}
     label = destination_row(media, target)["label"]
+    if engine is not None:
+        answer = _moved_by_engine(media, source, aim, label, wanted, engine)
+        if answer is not None:
+            return answer
 
     def act(name: str) -> str | None:
         path = _file_in(source, name)

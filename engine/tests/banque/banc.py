@@ -22,15 +22,17 @@ nom de collection. Un titre y est « rotation n° 4 », une collection
 « collection 2 ». `--detail FICHIER` écrit, sur la machine seulement, ce que
 ces numéros désignent.
 
-Les gestes d'aujourd'hui sont ceux du catalogue (`services/catalog/bank_api.py`) :
-déplacer des titres vers une collection, les ramener, en retirer. Chaque fiche du
-chantier « Ranger la banque » qui écrit dans un fichier ajoute le sien :
+Les gestes du catalogue (`services/catalog/bank_api.py`) : déplacer des titres
+vers une collection, les ramener, en retirer. Le catalogue passe les déplacements
+au moteur, qui garde l'identité de chaque titre (ARC-09), comme sur une station
+où le rangement est allumé. Chaque fiche du chantier « Ranger la banque » qui
+écrit dans un fichier ajoute le sien :
 
 1. une fonction `geste_<nom>(banc)` qui fait le geste sur des titres choisis par
    `banc.choisir`, puis appelle `banc.controler(...)` ;
 2. son nom dans `GESTES`.
 
-Un défaut connu, que corrige une fiche à venir, s'écrit `connu="ARC-09"` dans
+Un défaut connu, que corrige une fiche à venir, s'écrit `connu="<fiche>"` dans
 son contrôle : le banc le dit sans échouer. Une fois la fiche livrée, le contrôle
 réussit, et le banc échoue pour qu'on en retire l'exception, comme `test.fixme`
 dans les parcours.
@@ -431,7 +433,6 @@ class Banc:
                 "un titre déplacé garde son identifiant de Beets",
                 len(same) == len(moved),
                 f"{len(same)} sur {len(moved)}",
-                connu="ARC-09",
             )
         if corrected:
             kept = [
@@ -538,10 +539,12 @@ def geste_deplacer(banc: Banc) -> None:
         new: tags_of(banc.media / old) for old, new in banc.moved.items()
     }
     banc.destination = destination
-    status, answer = bank_api.move_files(banc.media, "rotation", destination, names)
+    status, answer = bank_api.move_files(
+        banc.media, "rotation", destination, names, engine=_par_le_moteur(banc)
+    )
     banc.verdict(
         "déplacer",
-        "le catalogue déplace les titres",
+        "le catalogue et le moteur déplacent les titres",
         status == 200 and not answer.get("failed"),
         reasons(status, answer),
     )
@@ -558,11 +561,11 @@ def geste_revenir(banc: Banc) -> None:
     names = [new.rsplit("/", 1)[-1] for new in banc.moved.values()]
     avant = banc.snapshot()
     status, answer = bank_api.move_files(
-        banc.media, banc.destination, "rotation", names
+        banc.media, banc.destination, "rotation", names, engine=_par_le_moteur(banc)
     )
     banc.verdict(
         "ramener",
-        "le catalogue ramène les titres",
+        "le catalogue et le moteur ramènent les titres",
         status == 200 and not answer.get("failed"),
         reasons(status, answer),
     )
@@ -580,6 +583,91 @@ def geste_revenir(banc: Banc) -> None:
         not different,
         ", ".join(different),
     )
+
+
+def _par_le_moteur(banc: Banc):
+    """Le moteur qui reçoit les déplacements du catalogue (`engine_move`), le
+    rangement allumé : son service, sur la bibliothèque et la base du banc."""
+
+    def moves(asked: list[dict]) -> tuple[int, dict]:
+        report = asyncio.run(_deplacer(banc, [(m["from"], m["to"]) for m in asked]))
+        banc.info["lot"] = report.entry
+        return 200, report.payload()
+
+    return moves
+
+
+async def _engine_session(banc: Banc):
+    from radiotomate.db import QuartAlchemy
+    from radiotomate.models import Setting
+    from radiotomate.services import bank_titles
+
+    db = QuartAlchemy()
+    db.init_from_config({"url": f"sqlite+aiosqlite:///{banc.db_file}"}, {})
+    async with db.session() as session:
+        await Setting.upsert(session, bank_titles.SETTING_BANK_TIDY, "1")
+        await session.commit()
+    return db
+
+
+async def _deplacer(banc: Banc, moves: list[tuple[str, str]]) -> object:
+    from radiotomate.services import bank_moves
+    from radiotomate.services.bank_lock import BeetsPlace
+
+    place = BeetsPlace.of(_beets(banc).lib)
+    db = await _engine_session(banc)
+    async with db.session() as session:
+        report = await bank_moves.move_titles(session, place, moves, username="banc")
+    await db.after_serving()
+    return report
+
+
+async def _annuler(banc: Banc, entry_id: int) -> object:
+    from radiotomate.services import journal
+
+    beets = _beets(banc)
+    db = await _engine_session(banc)
+    async with db.session() as session:
+        outcome = await journal.undo(session, beets, entry_id, username="banc")
+    await db.after_serving()
+    return outcome
+
+
+def geste_annuler(banc: Banc) -> None:
+    """Des titres déplacés par le moteur, puis « Annuler » dans le journal (FON-71)."""
+    say("Geste : déplacer des titres, puis annuler le déplacement")
+    target = banc.archive()
+    titles = banc.choisir(ROTATION, MOVED)
+    if target is None or not titles:
+        say("  (rien à déplacer : il manque une collection ou des titres)")
+        return
+    moved = {rel: f"{target[1]}/{rel.rsplit('/', 1)[-1]}" for rel in titles}
+    avant = banc.snapshot()
+    report = asyncio.run(_deplacer(banc, list(moved.items())))
+    banc.verdict(
+        "annuler",
+        "le moteur déplace les titres, et note le lot au journal",
+        not report.failed and report.entry is not None,
+        ", ".join(sorted({row["reason"] for row in report.failed})),
+    )
+    if report.entry is None:
+        return
+    outcome = asyncio.run(_annuler(banc, report.entry))
+    banc.verdict(
+        "annuler",
+        "« Annuler » ramène chaque titre",
+        len(outcome.written) == len(titles) and not outcome.kept,
+        f"{len(outcome.written)} sur {len(titles)}",
+    )
+    back = [banc.ref(rel) for rel in titles if not (banc.media / rel).is_file()]
+    banc.verdict(
+        "annuler",
+        "chaque fichier est revenu à son chemin d'avant",
+        not back,
+        ", ".join(back[:5]),
+    )
+    # Entre les deux, la boucle n'a pas tourné : elle ne voit que l'aller-retour.
+    banc.controler("déplacer puis annuler", avant, {}, {}, set(titles))
 
 
 def geste_retirer(banc: Banc) -> None:
@@ -785,6 +873,7 @@ async def _garder(banc: Banc, rels: list[str]) -> object:
 GESTES = [
     geste_deplacer,
     geste_revenir,
+    geste_annuler,
     geste_retirer,
     geste_corriger,
     geste_corriger_puis_lire,
