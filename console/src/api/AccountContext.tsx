@@ -8,7 +8,13 @@ export type Account = {
   username: string;
   permissions: UserPermissions;
   /** What the engine shows of a work in progress; absent from an older engine. */
-  features?: { bank_tidy?: boolean; title_edits?: boolean; bank_moves?: boolean; bank_removals?: boolean };
+  features?: {
+    bank_tidy?: boolean;
+    title_edits?: boolean;
+    bank_moves?: boolean;
+    bank_removals?: boolean;
+    title_renames?: boolean;
+  };
 };
 
 type AccountValue = {

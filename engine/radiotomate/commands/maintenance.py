@@ -13,6 +13,8 @@ print: in French, like the rest of its output.
 * ``updates …``: the requests of the console's page « Mises à jour » (MAJ-07),
   which ``station requests`` reads and closes, and what the host tells of itself:
   ``radiotomate.services.updates``.
+* ``fiches``: where the search of the fiches stands (FON-25), and ``--allumer`` or
+  ``--couper`` to switch it on or off.
 """
 
 from __future__ import annotations
@@ -233,6 +235,47 @@ def window(config):
         return
     click.echo(f"occupée : {blocker}")
     raise SystemExit(1)
+
+
+@maintenance.command("fiches")
+@click.option("--allumer", "switch", flag_value="on", help="Allumer la recherche")
+@click.option("--couper", "switch", flag_value="off", help="Couper la recherche")
+@click.pass_obj
+def fiches(config, switch):
+    """
+    Where the search of the fiches stands; --allumer or --couper it
+    """
+    import asyncio
+    import os
+    from pathlib import Path
+
+    from sqlalchemy.engine import make_url
+
+    from radiotomate.db import QuartAlchemy
+    from radiotomate.services.fiches import (
+        describe,
+        library_count,
+        read_progress,
+        set_enabled,
+    )
+
+    if switch is not None:
+        db = QuartAlchemy()
+        db.init_from_config(config["db"], {})
+
+        async def turn() -> None:
+            try:
+                async with db.session() as session:
+                    await set_enabled(session, switch == "on")
+                    await session.commit()
+            finally:
+                await db.after_serving()
+
+        asyncio.run(turn())
+    beetsdir = os.environ.get("BEETSDIR")
+    titles = library_count(Path(beetsdir) / "library.db") if beetsdir else None
+    database = Path(make_url(config["db"]["url"]).database or "")
+    click.echo(describe(read_progress(database, titles)))
 
 
 # --- The requests of the console (MAJ-07) ---

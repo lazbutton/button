@@ -24,6 +24,7 @@ from sqlalchemy import select, update
 from werkzeug.exceptions import BadRequest, Conflict, NotFound
 
 from radiotomate.auth import current_user, login_required, permission_required
+from radiotomate.beets import BeetsIntegration
 from radiotomate.domain.errors import DomainValidationError
 from radiotomate.enums import CartMode, DayNames, ScheduleMode
 from radiotomate.interface import safe_int, safe_path, stream_form
@@ -40,6 +41,7 @@ from radiotomate.scheduler_api import (
     SchedulerUnavailableError,
 )
 from radiotomate.services import media_bank
+from radiotomate.services.bank_titles import require_bank_tidy, title_label
 from radiotomate.services.carts import (
     assert_cart_deletable,
     release_sound_file,
@@ -65,6 +67,10 @@ def _bank_http(exc: DomainValidationError) -> BadRequest:
 
 def media_root() -> Path:
     return media_bank.media_root()
+
+
+# Titles of the bank one request adds to a cart (FON-69).
+MAX_TITLES = 500
 
 
 def unlink_cart_file(path: Path | None) -> None:
@@ -256,6 +262,9 @@ def _sound_json(sound: Sound) -> dict:
         "last_played": sound.last_played.isoformat() if sound.last_played else None,
         "uploader": uploader,
         "path": _sound_bank_rel(sound),
+        # A title of the bank played where it is, and whether its file left (FON-69).
+        "borrowed": media_bank.borrowed_title(sound.path),
+        "missing": sound.missing,
     }
 
 
@@ -610,9 +619,33 @@ async def media_bank_json():
     return jsonify({"available": True, "folders": folders, "habillage": habillage})
 
 
+async def _add_bank_titles(cart_id: int, raw_titles: object) -> list[Sound]:
+    """Titles of the rotation or of a collection, played where they are (FON-69).
+
+    Behind the bank's tidying: no copy, the sound keeps the title's path, which a
+    move of the bank follows (ARC-09). « Artiste - Titre » is its name, from Beets.
+    """
+    await require_bank_tidy(g.dbsession)
+    if not isinstance(raw_titles, list) or len(raw_titles) > MAX_TITLES:
+        raise BadRequest(f"titles: a list of {MAX_TITLES} paths at most")
+    paths = [media_bank.resolve_bank_title(str(raw)) for raw in raw_titles]
+    tags = await BeetsIntegration.get().tags_at(paths)
+    uploads = [
+        {
+            "uploaded_to": path,
+            "filename": title_label(*tags.get(str(path), ("", "")), path),
+        }
+        for path in paths
+    ]
+    added = await _ingest_json_uploads(cart_id, uploads)
+    if not added:
+        raise Conflict("Ces titres sont déjà dans le bac.")
+    return added
+
+
 @blueprint.post("/carts/<int:cart_id>/sounds.json")
 @login_required
-async def add_sounds_json(cart_id: int):
+async def add_sounds_json(cart_id: int):  # noqa: PLR0912 - one way per source
     deny = forbidden_unless("carts")
     if deny:
         return deny
@@ -630,6 +663,8 @@ async def add_sounds_json(cart_id: int):
             raise BadRequest("folders list required")
         uploads = collect_bank_uploads(raw_folders)
         added_sounds = await _ingest_json_uploads(cart_id, uploads)
+    elif isinstance(body, dict) and body.get("titles"):
+        added_sounds = await _add_bank_titles(cart_id, body.get("titles"))
     elif isinstance(body, dict) and body.get("paths"):
         raw_paths = body.get("paths")
         if not isinstance(raw_paths, list) or not raw_paths:

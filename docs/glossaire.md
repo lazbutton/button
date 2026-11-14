@@ -27,6 +27,8 @@ Les mots de la radio et ceux du code. Quand la console et le code n'emploient pa
 | Dropbox | Deux choses à ne pas confondre. Le conteneur qui surveille l'inbox, range les fichiers et met à jour Beets : lui ne parle pas à Dropbox. Et le stockage en ligne, où un bac ouvert reçoit des sons | `radiotomate-dropbox` ; `cloud-sync` |
 | Émission | Un programme nommé : hebdomadaire, avec un jour, des heures et parfois un animateur ; ou de session, le direct en cours | `emissions` |
 | Encodeur | Le logiciel qui envoie le son du direct : BUTT, Mixxx… | — |
+| Famille | L'une des quatorze familles de genre des fiches, sous un nom court : `jazz`, `hip-hop`, `monde`… Elle range la banque ; le genre du fichier se montre à côté | champ flexible `famille`, `fiches/rules.py` |
+| Fiche d'un titre | Ce que la bibliothèque sait d'un titre, et ce que la recherche en ligne propose d'y corriger ou d'y ajouter | table `fiches`, `scheduler/fiches.py` |
 | Habillage | Les jingles, virgules et idents qui ponctuent l'antenne | `30-habillage` |
 | Harbor | L'entrée du direct dans Liquidsoap, port 6800 | `scheduler/harbor.py` |
 | `HOLD` | Le fichier qui bloque les mises à jour d'une station, avec sa date et sa raison, jusqu'à ce qu'une personne le retire : `station hold`, `station unhold`. Un retour arrière le pose aussi | `/opt/button/HOLD` |
@@ -45,6 +47,7 @@ Les mots de la radio et ceux du code. Quand la console et le code n'emploient pa
 | Playout | Le processus Liquidsoap qui produit le son | `engine/playout/radiotomate.liq` |
 | Position | Un élément d'une horloge : musique, jingle, son ou pub | `musique`, `jingle`, `son`, `pub` |
 | Programmateur | Le rôle qui règle la grille, les horloges et les bacs | droits `carts` et `autodj` |
+| Proposition | Un champ d'une fiche que la recherche propose de changer : la valeur d'avant, la valeur proposée, son niveau et sa source. Rien ne s'écrit sans qu'une personne l'accepte | table `fiche_propositions` |
 | Pupitre | La partie de la page Antenne où l'animateur prépare et lance ce qui passe | `scheduler/desk.py`, `AntenneDesk` |
 | Relais | Le flux d'une autre radio, repris à l'antenne | cart en mode `relay` |
 | Retour arrière | Revenir à la version d'avant une mise à jour : ses fichiers, ses images, et la base d'avant la mise à jour si le schéma a migré. `station update` le fait seule quand la mise à jour échoue, `station rollback` à la main | `update_undo`, `cmd_rollback`, `updates.log` |
@@ -53,6 +56,7 @@ Les mots de la radio et ceux du code. Quand la console et le code n'emploient pa
 | Set | Une émission enregistrée de l'Agenda, souvent déposée par un invité | `kind:"set"` |
 | Station | Une radio installée : sa machine, ses données, sa marque | — |
 | tus, tusd | Le protocole et le serveur d'envoi reprenable des fichiers | service `tusd` |
+| Verdict | Si l'artiste d'un titre est une femme, une minorité de genre, ou un groupe qui en compte plus de la moitié, d'après ce que MusicBrainz et Wikidata déclarent : `oui`, `mixte` ou `non`. Éteint par défaut | champ flexible `fmg`, `features.fiches_fmg` |
 | Version | Une version publiée de BUTTON, numérotée `X.Y.Z`, avec ses sept images. `stable` désigne la plus haute | tag git `vX.Y.Z`, `BUTTON_VERSION`, `version.yml` |
 | Volume Finder | Le dossier partagé de la banque, ouvert depuis le Finder ou l'Explorateur | service `share` |
 | Zone | Où est un titre ou le dossier d'un bac, sans nommer le dossier : `rotation`, `collections`, `habillage`, `emissions` ou `bacs`. L'API la donne à la console, qui ne lit plus les chemins | `zone` de la recherche, `bank_zone` d'un bac |

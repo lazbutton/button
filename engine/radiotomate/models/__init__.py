@@ -22,6 +22,7 @@ from radiotomate.models.execution import (
     ProgrammingVersion,
     RundownItem,
 )
+from radiotomate.models.fiche import Fiche, FicheDecision, FicheProposition
 from radiotomate.models.journal import JournalChange, JournalEntry
 from radiotomate.models.metadata_log import MetadataLog
 from radiotomate.models.music_category import MusicCategory
@@ -41,6 +42,9 @@ __all__ = [
     "Clock",
     "ClockPosition",
     "Emission",
+    "Fiche",
+    "FicheDecision",
+    "FicheProposition",
     "JournalChange",
     "JournalEntry",
     "LoggedOutUser",
