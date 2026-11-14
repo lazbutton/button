@@ -263,6 +263,28 @@ export function moveNote(count: number, destination: string, keepsIdentity: bool
   );
 }
 
+/**
+ * What « Retirer » says before removing titles. With `noted`, the engine removes
+ * them, takes them out of the library at once and notes them in the journal,
+ * where they come back (FON-71); without it, the catalogue removes them, and
+ * the indexing lets them go at its next round.
+ */
+export function removeNote(count: number, noted: boolean): string {
+  const one = count === 1;
+  const start = `${one ? "Le fichier part" : "Les fichiers partent"} dans la corbeille de la banque, sur la machine de la station : rien n'est effacé.`;
+  if (noted) {
+    return (
+      `${start} L'auto-DJ ne ${one ? "le" : "les"} joue plus. Le retrait se note dans Sons → Journal, ` +
+      `d'où il s'annule pendant 30 jours. ${one ? "À l'antenne ou en file, il reste" : "Un titre à l'antenne ou en file reste"} ` +
+      "où il est : retire-le après son passage. Une diffusion de l'Agenda qui joue un de ces fichiers ne le trouvera plus."
+    );
+  }
+  return (
+    `${start} L'auto-DJ ne ${one ? "le" : "les"} joue plus après le prochain passage de l'indexation, environ une ` +
+    "minute. Une diffusion de l'Agenda qui joue un de ces fichiers ne le trouvera plus."
+  );
+}
+
 export function titlesLabel(count: number): string {
   return count === 0 ? "Aucun titre" : plural(count, "titre", "titres");
 }
