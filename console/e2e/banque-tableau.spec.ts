@@ -1,6 +1,6 @@
 import type { Page, Route } from "@playwright/test";
 import { verifierAccessibilite } from "./accessibilite.ts";
-import { antenne, expect, seConnecter, test } from "./banc.ts";
+import { antenne, avis, expect, seConnecter, test } from "./banc.ts";
 
 // Le tableau de la banque (FON-64), derrière l'interrupteur général de « Ranger
 // la banque ». Le moteur du banc le garde éteint, comme une station : le parcours
@@ -403,4 +403,29 @@ test("un bac prend des titres de la banque, et dit qu'ils viennent de la banque"
   await expect(fenetre).toHaveCount(0);
   expect(recus).toEqual([{ titles: ["20-archives/nuit/4.mp3"] }]);
   await expect(bac.getByText("Banque", { exact: true })).toBeVisible();
+});
+
+test("un titre glissé sur la zone des bacs s'y ajoute, sans copie", async ({ page }) => {
+  await tableau(page);
+  const recus = await ajoutsAuBac(page);
+  await seConnecter(page, "admin");
+  await expect(antenne(page)).toBeVisible();
+  await page.goto("/sons?onglet=importer&ranger=artist&groupe=Orage");
+  const orage = page.getByRole("region", { name: "Orage" });
+
+  // La zone n'existe qu'une fois le glisser commencé : la souris le mène.
+  await orage.locator("tbody tr").filter({ hasText: "Comète" }).hover();
+  await page.mouse.down();
+  await page.mouse.move(400, 500, { steps: 5 });
+  const zone = orage.getByText(/Déposer ici pour ajouter ce titre à un bac/);
+  await expect(zone).toBeVisible();
+  await zone.hover();
+  await page.mouse.up();
+
+  const fenetre = page.getByRole("dialog", { name: "Ajouter ce titre à un bac" });
+  await fenetre.getByRole("combobox", { name: "Bac" }).click();
+  await page.getByRole("option", { name: /Musique de démo/ }).click();
+  await fenetre.getByRole("button", { name: "Ajouter à « Musique de démo »" }).click();
+  await expect(avis(page, "1 titre de la banque ajouté au bac « Musique de démo », sans copie.")).toBeVisible();
+  expect(recus).toEqual([{ titles: ["10-rotation/1.mp3"] }]);
 });
