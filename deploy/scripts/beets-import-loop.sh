@@ -27,7 +27,9 @@ ROTATION_NAME=rotation
 # C'est un flock sur le descripteur 9, ouvert une fois, que prend et rend un
 # Python enfant : le verrou suit la description ouverte, que le shell garde.
 LOCK="${BEETSDIR:-/data/Beets}/banque.lock"
-if { : >>"$LOCK"; } 2>/dev/null; then
+# L'essai d'ouverture se fait dans un sous-shell : dans dash, le sh de l'image,
+# une redirection ratée sur un builtin spécial comme : ou exec arrête le shell.
+if (: >>"$LOCK") 2>/dev/null; then
   exec 9>>"$LOCK"
   LOCKED=yes
 else
