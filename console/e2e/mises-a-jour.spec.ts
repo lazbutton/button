@@ -100,7 +100,7 @@ test("un admin met la station à jour d’un bouton, et la page suit la demande 
   });
   await ouvrirLesMisesAJour(page);
 
-  await expect(page.getByRole("heading", { name: "La 0.2.0 est publiée" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "La 0.2.0 est disponible" })).toBeVisible();
   await expect(page.getByText("0.0.9 → 0.1.0 : faite")).toBeVisible();
   await expect(page.getByText("Aujourd’hui à 04:01. Redémarrée et contrôlée en 21 s.")).toBeVisible();
   // Les notes de la version, sans HTML : d'abord ce qu'elle demande, puis le
@@ -110,6 +110,10 @@ test("un admin met la station à jour d’un bouton, et la page suit la demande 
   await expect(page.getByText("Un correctif, avec")).toBeHidden();
   await page.getByText("Le détail de la 0.2.0 : 1 changement").click();
   await expect(page.getByText("Un correctif, avec")).toBeVisible();
+  await expect(page.getByRole("link", { name: "La 0.2.0 sur GitHub" })).toHaveAttribute(
+    "href",
+    "https://github.com/lazbutton/button/releases/tag/v0.2.0",
+  );
   // Les mises à jour de la nuit ne tournent pas encore : la machine le dit, avec ce qu'elle a réglé.
   await expect(page.locator(".reglages-fact", { hasText: "Mises à jour la nuit" })).toContainText("pas encore");
   await expect(page.locator("code", { hasText: "sudo station config --updates manual" })).toBeVisible();
@@ -121,15 +125,26 @@ test("un admin met la station à jour d’un bouton, et la page suit la demande 
   expect(demande).toEqual({});
   await expect(page.getByRole("heading", { name: "Demandée, vers la 0.2.0" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Mettre à jour maintenant" })).toHaveCount(0);
+  // Les étapes de la demande, chacune dite en toutes lettres : l'icône ne se lit pas.
+  const etapes = page.getByRole("list", { name: "Étapes de la mise à jour" });
+  await expect(etapes.getByRole("listitem")).toHaveText([
+    "Demandée : faite · 14:05, par admin",
+    "Prise par la machine : en cours · dans la minute",
+    "Sauvegarde et images : à venir · pendant que l’antenne joue",
+    "Redémarrage et contrôle : à venir · l’antenne se coupe quelques secondes",
+    "Résultat : à venir",
+  ]);
 
   // La machine la lance : la page se relit seule, toutes les 5 s.
   courant = etat({ request: { ...DEMANDE, state: "running", started_at: "2026-11-12T14:06+01:00" } });
   await expect(page.getByRole("heading", { name: "En cours depuis 14:06, vers la 0.2.0" })).toBeVisible({ timeout: 12_000 });
   await expect(page.getByRole("button", { name: "Retirer la demande" })).toHaveCount(0);
+  await expect(etapes.getByRole("listitem").nth(2)).toHaveText(/^Sauvegarde et images : en cours/);
 
   // Le moteur redémarre : la page le dit, au lieu d'une erreur.
   courant = 502;
   await expect(page.getByRole("heading", { name: "La station redémarre" })).toBeVisible({ timeout: 25_000 });
+  await expect(etapes.getByRole("listitem").nth(3)).toHaveText(/^Redémarrage et contrôle : en cours/);
 
   // De retour, en 0.2.0 : le résultat, et de quoi prendre la console nouvelle.
   courant = etat({
@@ -152,6 +167,9 @@ test("un admin met la station à jour d’un bouton, et la page suit la demande 
   await expect(page.getByText("Aujourd’hui à 14:09. Redémarrée et contrôlée en 18 s.")).toBeVisible();
   await expect(page.getByRole("heading", { name: "À jour", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Recharger la page" })).toBeVisible();
+  // À jour, le bouton ne pourrait rien demander : il n'est pas là.
+  await expect(page.getByRole("button", { name: "Mettre à jour maintenant" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Notes de version" })).toHaveCount(0);
 });
 
 test("une demande qui attend dit pourquoi, et se retire", async ({ page }) => {
@@ -210,7 +228,8 @@ test("HOLD, une majeure, des demandes coupées : pas de bouton, mais pourquoi et
     },
   });
   await page.getByRole("button", { name: "Vérifier les versions" }).click();
-  await expect(page.getByRole("heading", { name: "La 1.0.0 : une version majeure" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "La 1.0.0 demande une action d’abord" })).toBeVisible();
+  await expect(page.getByText("Mise en service de la 1.0.0")).toBeVisible();
   await expect(page.getByText("sudo station update --major", { exact: false }).first()).toBeVisible();
   await expect(page.getByRole("button", { name: "Mettre à jour maintenant" })).toHaveCount(0);
 

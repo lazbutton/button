@@ -1,5 +1,21 @@
 import { Button } from "@radix-ui/themes";
-import { ChevronRight, CircleAlert, CircleCheck, CircleHelp, CircleX, RefreshCw, type LucideIcon } from "lucide-react";
+import {
+  Check,
+  ChevronRight,
+  Circle,
+  CircleAlert,
+  CircleArrowUp,
+  CircleCheck,
+  CircleDot,
+  CircleHelp,
+  CircleX,
+  Clock,
+  ExternalLink,
+  LoaderCircle,
+  Lock,
+  RefreshCw,
+  type LucideIcon,
+} from "lucide-react";
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   ApiAuthError,
@@ -24,14 +40,16 @@ import {
   pollDelay,
   readFailureMessage,
   releaseKind,
-  requestLine,
   splitNotes,
-  unreachableLine,
-  versionLine,
+  statusOf,
   withCommands,
   type Inline,
   type Line,
   type NoteBlock,
+  type Status,
+  type StatusKind,
+  type Step,
+  type StepState,
   type Tone,
   type UpdateRelease,
   type UpdatesState,
@@ -42,11 +60,43 @@ import { ConfirmDialog } from "../ui/ConfirmDialog";
 import { LoadingState } from "../ui/DataState";
 import "../styles/pages/reglages.css";
 
+/** L'icône d'un ton, pour une ligne de l'historique ou la dernière demande. */
 const ICON: Record<Tone, LucideIcon> = {
   ok: CircleCheck,
   warn: CircleAlert,
   alert: CircleX,
   off: CircleHelp,
+  info: CircleArrowUp,
+};
+
+/** L'icône de la carte d'état : une flèche pour une version à prendre, une roue pour ce qui avance, une horloge pour ce qui attend. */
+const STATUS_ICON: Record<StatusKind, LucideIcon> = {
+  available: CircleArrowUp,
+  uptodate: CircleCheck,
+  blocked: CircleAlert,
+  pending: Clock,
+  waiting: Clock,
+  unseen: CircleX,
+  running: LoaderCircle,
+  restarting: LoaderCircle,
+  unreachable: CircleX,
+};
+
+const STEP_ICON: Record<StepState, LucideIcon> = {
+  done: Check,
+  current: CircleDot,
+  waiting: Clock,
+  stuck: CircleX,
+  todo: Circle,
+};
+
+/** Ce qu'un lecteur d'écran entend de chaque étape, l'icône ne se lisant pas. */
+const STEP_SAID: Record<StepState, string> = {
+  done: "faite",
+  current: "en cours",
+  waiting: "en attente",
+  stuck: "bloquée",
+  todo: "à venir",
 };
 
 /**
@@ -75,10 +125,11 @@ function problemOf(caught: unknown): Problem {
 }
 
 /**
- * Réglages → Mises à jour, pour un admin : la version de la station et la plus
- * haute publiée, ses notes, la demande en cours et la dernière, et « Mettre à
- * jour maintenant ». La console ne touche jamais la machine : le bouton écrit
- * une demande dans le moteur, et la machine la prend dans la minute.
+ * Réglages → Mises à jour, pour un admin : où en est la station, d'une carte,
+ * de la version publiée jusqu'à la demande en cours, puis les notes, les
+ * dernières mises à jour et la machine. La console ne touche jamais la machine :
+ * « Mettre à jour maintenant » écrit une demande dans le moteur, et la machine
+ * la prend dans la minute.
  */
 export function MisesAJourPage() {
   const [state, setState] = useState<UpdatesState | null>(null);
@@ -89,6 +140,9 @@ export function MisesAJourPage() {
   // La version de la station quand la page s'est ouverte : une autre, et la
   // console en service a peut-être changé aussi.
   const opened = useRef<string | null | undefined>(undefined);
+  // La demande pendant laquelle la page a vu le moteur se taire : son
+  // redémarrage est passé, même une fois le moteur revenu.
+  const restartedFor = useRef<string | null>(null);
 
   const load = useCallback(async (refresh = false): Promise<UpdatesState | Problem> => {
     try {
@@ -121,6 +175,10 @@ export function MisesAJourPage() {
       document.removeEventListener("visibilitychange", onVisible);
     };
   }, [delay, load]);
+
+  useEffect(() => {
+    if (unreachable && state?.request?.state === "running") restartedFor.current = state.request.id;
+  }, [unreachable, state]);
 
   // Un échec s'annonce, toujours : jamais un bouton qui ne fait rien.
   const fail = (caught: unknown, fallback: string) => {
@@ -183,9 +241,7 @@ export function MisesAJourPage() {
     <div className="reglages-section reglages-updates">
       <SettingsHead
         title="Mises à jour"
-        description={
-          <Said text="La version de la station, la plus haute publiée, et la mise à jour, d’un bouton. La machine la fait elle-même, dans la minute, comme sudo station update : une sauvegarde d’abord, et si la nouvelle version ne repart pas, la station revient seule à la sienne." />
-        }
+        description="La station se met à jour d’un bouton : une sauvegarde d’abord, et si la nouvelle version ne repart pas, elle revient seule à la sienne."
         actions={
           <Button variant="soft" color="gray" disabled={busy != null || state == null} onClick={() => void check()}>
             <RefreshCw className="ui-button-icon" aria-hidden="true" />
@@ -218,6 +274,7 @@ export function MisesAJourPage() {
           <UpdatesView
             state={state}
             unreachable={unreachable}
+            restarted={state.request != null && restartedFor.current === state.request.id}
             changed={opened.current !== undefined && opened.current !== state.installed}
             busy={busy}
             confirming={confirming}
@@ -235,6 +292,7 @@ export function MisesAJourPage() {
 function UpdatesView({
   state,
   unreachable,
+  restarted,
   changed,
   busy,
   confirming,
@@ -244,6 +302,7 @@ function UpdatesView({
 }: {
   state: UpdatesState;
   unreachable: boolean;
+  restarted: boolean;
   changed: boolean;
   busy: "ask" | "withdraw" | "check" | null;
   confirming: boolean;
@@ -251,101 +310,34 @@ function UpdatesView({
   onAsk: () => Promise<void>;
   onWithdraw: () => Promise<void>;
 }) {
-  // « aujourd’hui », « hier » : relus à chaque lecture de la page, au moins une fois la minute.
+  // « aujourd’hui », « hier », le temps écoulé : relus à chaque lecture de la page,
+  // toutes les 5 s pendant une demande, au moins une fois la minute sinon.
   const now = new Date();
-  const version = versionLine(state, now);
-  // Une demande ouverte a sa carte ; « À jour » se dit déjà dans le titre.
-  const blocked = state.blocked && !["open", "up_to_date"].includes(state.blocked.code) ? state.blocked : null;
+  const status = statusOf(state, { unreachable, restarted, now });
   return (
     <>
-      {unreachable ? <Summary line={unreachableLine(state)} live /> : null}
-      {changed && !unreachable ? (
-        <section className="reglages-card reglages-notice" role="status">
-          <p>
-            La station est passée en {state.installed ?? "?"} depuis l’ouverture de cette page : la console en service
-            a peut-être changé aussi. Recharge la page pour la prendre.
-          </p>
-          <div>
-            <Button variant="soft" onClick={() => window.location.reload()}>
-              Recharger la page
-            </Button>
-          </div>
-        </section>
-      ) : null}
+      <StatusCard
+        state={state}
+        status={status}
+        now={now}
+        unreachable={unreachable}
+        changed={changed}
+        busy={busy}
+        confirming={confirming}
+        onConfirming={onConfirming}
+        onAsk={onAsk}
+        onWithdraw={onWithdraw}
+      />
 
-      <Summary line={version}>
-        {state.request ? null : blocked ? (
-          <p className="reglages-updates-blocked">
-            <Said text={blocked.message} />
-          </p>
-        ) : (
-          <ConfirmDialog
-            open={confirming}
-            onOpenChange={onConfirming}
-            title={`Mettre la station à jour, en ${state.latest} ?`}
-            description={`La station passe de ${state.installed} à ${state.latest}. La machine prend la demande dans la minute : une sauvegarde d’abord, puis les images, pendant que l’antenne joue, puis le redémarrage, qui coupe l’antenne quelques secondes. Elle attend la fin d’un direct ou d’une diffusion de l’Agenda. Si la ${state.latest} ne repart pas, la station revient seule à la ${state.installed}.`}
-            confirmLabel="Mettre à jour"
-            busy={busy === "ask"}
-            onConfirm={onAsk}
-            trigger={
-              <Button disabled={busy != null || unreachable} highContrast>
-                Mettre à jour maintenant
-              </Button>
-            }
-          />
-        )}
-      </Summary>
-
-      {state.request ? (
-        <Summary line={requestLine(state.request, now)} live>
-          {state.request.state === "pending" ? (
-            <Button variant="soft" color="gray" disabled={busy != null || unreachable} onClick={() => void onWithdraw()}>
-              {busy === "withdraw" ? "Retrait…" : "Retirer la demande"}
-            </Button>
-          ) : null}
-        </Summary>
-      ) : null}
-
-      {!state.request && state.last ? (
-        <Summary line={lastLine(state.last, now)} heading="La dernière demande" live />
-      ) : null}
-
-      {state.host?.hold ? (
-        <SettingsCard
-          title="Bloquées sur la machine"
-          description={
-            <Said text="HOLD bloque toute mise à jour, d’ici comme de la machine. Pour les débloquer, une fois la cause trouvée, sur la machine : sudo station unhold." />
-          }
-        >
-          <pre className="reglages-updates-hold">{state.host.hold}</pre>
-        </SettingsCard>
-      ) : null}
-
-      {state.major ? (
-        <SettingsCard
-          title={`La ${state.major.version} : une version majeure`}
-          description={
-            <Said text="Elle demande une action à la station avant de la prendre : elle ne part pas de la console. Une fois l’action faite, sur la machine : sudo station update --major." />
-          }
-        >
-          <Notes text={state.major.action} empty="Ses notes ne se lisent pas ici." />
-          <p className="reglages-note">
-            <a href={state.major.url} target="_blank" rel="noreferrer">
-              Les notes de la {state.major.version}, sur GitHub
-            </a>
-          </p>
-        </SettingsCard>
-      ) : null}
-
-      <SettingsCard title="Notes de version" description={notesIntro(state.releases)}>
-        {state.releases.length ? (
+      {state.releases.length ? (
+        <SettingsCard title="Notes de version" description={notesIntro(state.releases)}>
           <div className="reglages-updates-releases">
             {state.releases.map((release) => (
               <Release key={release.version} release={release} now={now} />
             ))}
           </div>
-        ) : null}
-      </SettingsCard>
+        </SettingsCard>
+      ) : null}
 
       <SettingsCard
         title="Les dernières mises à jour"
@@ -355,12 +347,9 @@ function UpdatesView({
           <ul className="reglages-updates-history">
             {state.history.map((entry) => {
               const line = historyLine(entry, now);
-              const Icon = ICON[line.tone];
               return (
-                <li key={`${entry.started_at}-${entry.from}-${entry.to}`} className={`tone-${line.tone}`}>
-                  <span className="reglages-updates-history-icon" aria-hidden="true">
-                    <Icon />
-                  </span>
+                <li key={`${entry.started_at}-${entry.from}-${entry.to}`}>
+                  <Dot tone={line.tone} />
                   <div className="reglages-updates-history-copy">
                     <p className="reglages-updates-history-title">{line.title}</p>
                     <p className="reglages-updates-history-detail">{line.detail}</p>
@@ -413,6 +402,206 @@ function UpdatesView({
 }
 
 /**
+ * Où en est la station, d'une carte : sa phase, avec son icône, ce qu'il faut en
+ * savoir, les étapes d'une demande ouverte, puis le geste qu'elle permet, et la
+ * dernière demande close. `HOLD` et l'action d'une majeure y sont dits une fois.
+ */
+function StatusCard({
+  state,
+  status,
+  now,
+  unreachable,
+  changed,
+  busy,
+  confirming,
+  onConfirming,
+  onAsk,
+  onWithdraw,
+}: {
+  state: UpdatesState;
+  status: Status;
+  now: Date;
+  unreachable: boolean;
+  changed: boolean;
+  busy: "ask" | "withdraw" | "check" | null;
+  confirming: boolean;
+  onConfirming: (open: boolean) => void;
+  onAsk: () => Promise<void>;
+  onWithdraw: () => Promise<void>;
+}) {
+  const code = status.kind === "blocked" ? state.blocked?.code : undefined;
+  const Icon =
+    code === "hold"
+      ? Lock
+      : status.kind === "blocked" && status.tone === "alert"
+        ? CircleX
+        : status.kind === "blocked" && status.tone === "off"
+          ? CircleHelp
+          : STATUS_ICON[status.kind];
+  const spinning = status.kind === "running" || status.kind === "restarting";
+  const hold = state.host?.hold ?? null;
+  const last = !state.request && state.last ? lastLine(state.last, now) : null;
+  return (
+    <section className={`reglages-card reglages-summary reglages-updates-status tone-${status.tone}`}>
+      <span className="reglages-summary-icon" aria-hidden="true">
+        <Icon className={spinning ? "reglages-updates-spin" : undefined} />
+      </span>
+      <div className="reglages-summary-copy">
+        <div role="status">
+          <h3 className="reglages-summary-title">{status.title}</h3>
+          {status.detail ? (
+            <p className="reglages-summary-detail">
+              <Said text={status.detail} />
+            </p>
+          ) : null}
+        </div>
+        {status.versions ? <Versions versions={status.versions} /> : null}
+        {status.since ? <p className="reglages-updates-meta">{status.since}</p> : null}
+      </div>
+
+      {status.steps ? <Steps steps={status.steps} /> : null}
+
+      {hold ? (
+        <div className="reglages-updates-extra">
+          <p className="reglages-updates-kicker">HOLD, sur la machine</p>
+          <pre className="reglages-updates-hold">{hold}</pre>
+          {state.blocked?.code === "hold" ? null : (
+            <p className="reglages-updates-blocked">
+              <Said text="Pour débloquer les mises à jour, une fois la cause trouvée, sur la machine : sudo station unhold." />
+            </p>
+          )}
+        </div>
+      ) : null}
+
+      {state.major ? (
+        <div className="reglages-updates-extra">
+          <p className="reglages-updates-kicker">Mise en service de la {state.major.version}</p>
+          {state.blocked?.code === "major" ? null : (
+            <p className="reglages-updates-blocked">
+              <Said
+                text={`La ${state.major.version}, une majeure, demande une action à la station avant de la prendre : elle ne part pas de la console. Une fois l’action faite, sur la machine : sudo station update --major.`}
+              />
+            </p>
+          )}
+          <Notes text={state.major.action} empty="Ses notes ne se lisent pas ici." />
+          <p className="reglages-note">
+            <a href={state.major.url} target="_blank" rel="noreferrer">
+              Les notes de la {state.major.version}, sur GitHub
+            </a>
+          </p>
+        </div>
+      ) : null}
+
+      {status.action === "ask" ? (
+        <div className="reglages-updates-action">
+          <ConfirmDialog
+            open={confirming}
+            onOpenChange={onConfirming}
+            title={`Mettre la station à jour, en ${state.latest} ?`}
+            description={`La station passe de ${state.installed} à ${state.latest}. La machine prend la demande dans la minute : une sauvegarde d’abord, puis les images, pendant que l’antenne joue, puis le redémarrage, qui coupe l’antenne quelques secondes. Elle attend la fin d’un direct ou d’une diffusion de l’Agenda. Si la ${state.latest} ne repart pas, la station revient seule à la ${state.installed}.`}
+            confirmLabel="Mettre à jour"
+            busy={busy === "ask"}
+            onConfirm={onAsk}
+            trigger={
+              <Button disabled={busy != null} highContrast>
+                Mettre à jour maintenant
+              </Button>
+            }
+          />
+        </div>
+      ) : status.action === "withdraw" ? (
+        <div className="reglages-updates-action">
+          <Button variant="soft" color="gray" disabled={busy != null || unreachable} onClick={() => void onWithdraw()}>
+            {busy === "withdraw" ? "Retrait…" : "Retirer la demande"}
+          </Button>
+        </div>
+      ) : null}
+
+      {changed && !unreachable ? (
+        <div className="reglages-updates-extra reglages-updates-reload" role="status">
+          <p>
+            La station est passée en {state.installed ?? "?"} depuis l’ouverture de cette page : la console en service
+            a peut-être changé aussi. Recharge la page pour la prendre.
+          </p>
+          <div>
+            <Button variant="soft" onClick={() => window.location.reload()}>
+              Recharger la page
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
+      {last ? <LastResult line={last} /> : null}
+    </section>
+  );
+}
+
+/** La version de la station et la plus haute publiée : « 1.0.1 → 1.5.0 », lu « 1.0.1 vers 1.5.0 ». */
+function Versions({ versions }: { versions: NonNullable<Status["versions"]> }) {
+  if (!versions.arrow) return <p className="reglages-updates-meta">{versions.said}</p>;
+  const [from, to] = versions.arrow;
+  return (
+    <p className="reglages-updates-meta">
+      <span className="reglages-updates-version">{from}</span>
+      <span aria-hidden="true"> → </span>
+      <span className="ui-visually-hidden"> vers </span>
+      <span className="reglages-updates-version">{to}</span>
+      {versions.said ? ` · ${versions.said}` : null}
+    </p>
+  );
+}
+
+/** Les étapes d'une demande : une liste ordonnée, chaque état dit en toutes lettres, l'icône ne se lisant pas. */
+function Steps({ steps }: { steps: Step[] }) {
+  return (
+    <ol className="reglages-updates-steps" aria-label="Étapes de la mise à jour">
+      {steps.map((step) => {
+        const Icon = STEP_ICON[step.state];
+        const active = step.state === "current" || step.state === "waiting" || step.state === "stuck";
+        return (
+          <li key={step.label} className={`is-${step.state}`} aria-current={active ? "step" : undefined}>
+            <span className="reglages-updates-step-icon" aria-hidden="true">
+              <Icon />
+            </span>
+            <span className="reglages-updates-step-copy">
+              <span className="reglages-updates-step-label">{step.label}</span>
+              <span className="ui-visually-hidden"> : {STEP_SAID[step.state]}</span>
+              {step.meta ? <span className="reglages-updates-step-meta"> · {step.meta}</span> : null}
+            </span>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+/** La dernière demande close, au pied de la carte d'état : son résultat, quand, et ce qu'en a dit la machine. */
+function LastResult({ line }: { line: Line }) {
+  return (
+    <div className="reglages-updates-last">
+      <Dot tone={line.tone} />
+      <div role="status">
+        <p className="reglages-updates-kicker">La dernière demande</p>
+        <h4 className="reglages-updates-last-title">{line.title}</h4>
+        <p className="reglages-updates-history-detail">
+          <Said text={line.detail} />
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/** Une petite icône de ton, pour une ligne de l'historique ou la dernière demande. */
+function Dot({ tone }: { tone: Tone }) {
+  const Icon = ICON[tone];
+  return (
+    <span className={`reglages-updates-dot tone-${tone}`} aria-hidden="true">
+      <Icon />
+    </span>
+  );
+}
+
+/**
  * Une version que la mise à jour apporte : son numéro, ce qu'elle est, sa date,
  * puis la tête de ses notes, qui dit ce qu'elle demande à la station, et le
  * détail de ses changements, à déplier.
@@ -437,8 +626,15 @@ function Release({ release, now }: { release: UpdateRelease; now: Date }) {
           ) : null}
         </h4>
         {release.url ? (
-          <a href={release.url} target="_blank" rel="noreferrer">
-            La {release.version} sur GitHub
+          <a
+            className="reglages-updates-release-link"
+            href={release.url}
+            target="_blank"
+            rel="noreferrer"
+            aria-label={`La ${release.version} sur GitHub`}
+            title={`La ${release.version} sur GitHub`}
+          >
+            <ExternalLink aria-hidden="true" />
           </a>
         ) : null}
       </div>
@@ -454,36 +650,6 @@ function Release({ release, now }: { release: UpdateRelease; now: Date }) {
       ) : null}
       {!lead.length && !detail.length ? <p className="reglages-empty">Pas de notes.</p> : null}
     </article>
-  );
-}
-
-/** Un état en une phrase, avec son icône, puis ce qu'on peut y faire. `live` : un lecteur d'écran l'entend changer. */
-function Summary({
-  line,
-  heading,
-  live = false,
-  children,
-}: {
-  line: Line;
-  heading?: string;
-  live?: boolean;
-  children?: ReactNode;
-}) {
-  const Icon = ICON[line.tone];
-  return (
-    <section className={`reglages-card reglages-summary tone-${line.tone}`}>
-      <span className="reglages-summary-icon" aria-hidden="true">
-        <Icon />
-      </span>
-      <div className="reglages-summary-copy" role={live ? "status" : undefined}>
-        {heading ? <p className="reglages-updates-kicker">{heading}</p> : null}
-        <h3 className="reglages-summary-title">{line.title}</h3>
-        <p className="reglages-summary-detail">
-          <Said text={line.detail} />
-        </p>
-      </div>
-      {children ? <div className="reglages-updates-action">{children}</div> : null}
-    </section>
   );
 }
 

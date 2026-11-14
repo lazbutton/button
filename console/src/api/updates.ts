@@ -95,8 +95,45 @@ export type UpdatesState = {
   blocked: { code: string; message: string } | null;
 };
 
-export type Tone = "ok" | "warn" | "alert" | "off";
+/** Le ton d'un état : `info`, une mise à jour à prendre ou qui avance, sans rien d'anormal. */
+export type Tone = "ok" | "warn" | "alert" | "off" | "info";
 export type Line = { tone: Tone; title: string; detail: string };
+
+/** Où en est une étape d'une mise à jour demandée. */
+export type StepState = "done" | "current" | "waiting" | "stuck" | "todo";
+export type Step = { label: string; meta: string | null; state: StepState };
+
+/** La phase que dit la carte d'état, en haut de la page : elle choisit son icône. */
+export type StatusKind =
+  | "available"
+  | "uptodate"
+  | "blocked"
+  | "pending"
+  | "waiting"
+  | "unseen"
+  | "running"
+  | "restarting"
+  | "unreachable";
+
+/**
+ * La carte d'état : une seule phase à la fois, de la version publiée jusqu'à la
+ * demande en cours, à la place de cartes empilées qui se répétaient.
+ */
+export type Status = {
+  kind: StatusKind;
+  tone: Tone;
+  title: string;
+  /** Ce qu'il faut en savoir, ou faire : la commande à taper n'y est dite qu'une fois. */
+  detail: string | null;
+  /** La version de la station et la plus haute publiée : `arrow` les montre côte à côte, quand l'une remplace l'autre. */
+  versions: { arrow: [string, string] | null; said: string } | null;
+  /** Les étapes d'une demande ouverte. */
+  steps: Step[] | null;
+  /** « Depuis la demande : 2 min. » */
+  since: string | null;
+  /** Le geste de la carte : demander la mise à jour, ou retirer la demande. */
+  action: "ask" | "withdraw" | null;
+};
 
 /**
  * « 2026-11-12T14:03+01:00 », déjà à l'heure de Paris, dit d'après le jour de
@@ -115,6 +152,12 @@ export function formatWhen(iso: string | null | undefined, now: Date = new Date(
   return today.startsWith(`${year}-`) ? `le ${day}/${month} à ${at}` : `le ${day}/${month}/${year} à ${at}`;
 }
 
+/** L'heure seule, aujourd'hui : « 14:03 » ; un autre jour, comme formatWhen. */
+export function formatClock(iso: string | null | undefined, now: Date = new Date()): string {
+  const said = formatWhen(iso, now);
+  return said.startsWith("aujourd’hui à ") ? said.slice("aujourd’hui à ".length) : said;
+}
+
 /** L'heure seule : « 14:03 ». */
 export function formatTime(iso: string | null | undefined): string {
   const found = /T(\d{2}):(\d{2})/.exec(iso ?? "");
@@ -128,63 +171,188 @@ function sentence(text: string | null | undefined): string {
   return /[.!?…:]$/.test(capital) ? capital : `${capital}.`;
 }
 
-/** Le haut de la page : la version de la station face à la plus haute publiée. */
-export function versionLine(state: UpdatesState, now: Date = new Date()): Line {
-  const installed = state.installed ?? "inconnue";
-  const checked = state.check.at ? `vérifiée ${formatWhen(state.check.at, now)}` : "pas encore vérifiée";
-  if (state.latest == null) {
-    const why = state.check.error
-      ? `La plus haute version publiée ne se lit pas : ${sentence(state.check.error)}`
-      : "La plus haute version publiée se lit sur GitHub…";
-    return { tone: "off", title: `Version ${installed}`, detail: why };
-  }
-  const versions = `Installée : ${installed}. Plus haute publiée : ${state.latest}, ${checked}.`;
-  switch (state.blocked?.code) {
-    case "up_to_date":
-      return { tone: "ok", title: "À jour", detail: versions };
-    case "major":
-      return {
-        tone: "warn",
-        title: `La ${state.latest} est publiée : une majeure`,
-        detail: `${versions} Elle demande une action à la station avant de la prendre : voir plus bas.`,
-      };
-    case "main":
-      return { tone: "off", title: "La station suit main", detail: versions };
-    default:
-      return { tone: "warn", title: `La ${state.latest} est publiée`, detail: versions };
-  }
+/** Le temps écoulé depuis une heure de l'API : « moins d’une minute », « 2 min », « 1 h 05 ». */
+export function elapsed(iso: string | null | undefined, now: Date = new Date()): string {
+  const since = Date.parse(iso ?? "");
+  if (!Number.isFinite(since)) return "?";
+  const minutes = Math.max(0, Math.floor((now.getTime() - since) / 60_000));
+  if (minutes < 1) return "moins d’une minute";
+  if (minutes < 60) return `${minutes} min`;
+  return `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, "0")}`;
 }
+
+// Le moteur ne rend les notes que de dix versions au plus (NOTES_MAX).
+const NOTES_SHOWN = 10;
+
+function versionsOf(state: UpdatesState, kind: "available" | "uptodate" | "blocked", now: Date): Status["versions"] {
+  const checked = state.check.at ? `vérifiée ${formatWhen(state.check.at, now)}` : "pas encore vérifiée";
+  const installed = state.installed ?? "inconnue";
+  if (kind === "available" && state.installed && state.latest) {
+    const count = state.releases.length;
+    const brought = count >= NOTES_SHOWN ? `au moins ${NOTES_SHOWN} versions` : count > 1 ? `${count} versions` : "";
+    return { arrow: [state.installed, state.latest], said: [brought, checked].filter(Boolean).join(" · ") };
+  }
+  if (kind === "uptodate") return { arrow: null, said: `${installed}, la plus haute version publiée · ${checked}` };
+  if (state.latest == null) return { arrow: null, said: `Installée : ${installed}` };
+  return { arrow: null, said: `Installée : ${installed} · plus haute publiée : ${state.latest} · ${checked}` };
+}
+
+const UNREACHABLE =
+  "La page relit son état seule. Si ça dure, regarder sur la machine : sudo station status. Ce qui suit date de la dernière lecture.";
 
 const SAY_AGAIN =
   "La machine réessaie chaque minute : la mise à jour part dès que ni direct ni diffusion de l’Agenda n’est à l’antenne ou ne commence dans les 30 minutes, et qu’aucune autre commande ne tourne sur la machine.";
 
-/** La demande ouverte : où elle en est, en une phrase, puis ce qu'il faut en savoir. */
-export function requestLine(request: UpdateRequest, now: Date = new Date()): Line {
-  const asked = `Demandée ${formatWhen(request.requested_at, now)}${request.requested_by ? ` par ${request.requested_by}` : ""}`;
-  const toward = request.target ? `, vers la ${request.target}` : "";
-  if (request.state === "running") {
+/** Pourquoi le bouton ne demande pas, par code du moteur : le titre de la carte, et son ton. Le moteur en dit la raison. */
+const BLOCKED: Record<string, { tone: Tone; title: (state: UpdatesState) => string }> = {
+  hold: { tone: "warn", title: () => "Mises à jour bloquées sur la machine" },
+  // La première majeure que la mise à jour passe, pas forcément la plus haute publiée.
+  major: { tone: "warn", title: (state) => `La ${state.major?.version ?? state.latest} demande une action d’abord` },
+  requests_off: { tone: "warn", title: () => "Demandes de la console coupées" },
+  host_silent: { tone: "alert", title: () => "La machine ne donne plus de nouvelles" },
+  no_host: { tone: "off", title: () => "La machine ne prend pas encore les demandes" },
+  main: { tone: "off", title: () => "La station suit main" },
+  unknown_version: { tone: "off", title: () => "Version de la station inconnue" },
+  latest_unknown: { tone: "off", title: (state) => `Version ${state.installed ?? "inconnue"}` },
+};
+
+/**
+ * La carte d'état : ce que la page dit d'abord. Une demande ouverte l'emporte,
+ * puis un moteur qui ne répond pas, puis ce que dit le moteur du bouton : à
+ * prendre, à jour, ou pourquoi il ne demande pas. `restarted` : la page a vu le
+ * moteur se taire pendant cette demande, le redémarrage est passé.
+ */
+export function statusOf(
+  state: UpdatesState,
+  { unreachable = false, restarted = false, now = new Date() }: { unreachable?: boolean; restarted?: boolean; now?: Date } = {},
+): Status {
+  if (state.request) return requestStatus(state.request, unreachable, restarted, now);
+  const quiet = { steps: null, since: null };
+  if (unreachable) {
     return {
-      tone: "warn",
-      title: `En cours depuis ${formatTime(request.started_at)}${toward}`,
-      detail:
-        "Une sauvegarde d’abord, puis les images, pendant que l’antenne joue, puis le redémarrage : l’antenne se coupe quelques secondes, et la console perd le contact avec le moteur le temps qu’il redémarre. La page reprend seule.",
+      ...quiet,
+      kind: "unreachable",
+      tone: "alert",
+      title: "Le moteur ne répond pas",
+      detail: UNREACHABLE,
+      versions: null,
+      action: null,
     };
+  }
+  const blocked = state.blocked;
+  if (blocked == null && state.latest != null) {
+    return {
+      ...quiet,
+      kind: "available",
+      tone: "info",
+      title: `La ${state.latest} est disponible`,
+      detail: null,
+      versions: versionsOf(state, "available", now),
+      action: "ask",
+    };
+  }
+  if (blocked?.code === "up_to_date") {
+    return { ...quiet, kind: "uptodate", tone: "ok", title: "À jour", detail: null, versions: versionsOf(state, "uptodate", now), action: null };
+  }
+  const known = BLOCKED[blocked?.code ?? "latest_unknown"];
+  const unread = state.check.error
+    ? `La plus haute version publiée ne se lit pas : ${sentence(state.check.error)}`
+    : "La plus haute version publiée se lit sur GitHub…";
+  return {
+    ...quiet,
+    kind: "blocked",
+    tone: known?.tone ?? "warn",
+    title: known ? known.title(state) : "La mise à jour ne part pas d’ici",
+    detail: blocked?.message ?? unread,
+    versions: versionsOf(state, "blocked", now),
+    action: null,
+  };
+}
+
+function requestStatus(request: UpdateRequest, unreachable: boolean, restarted: boolean, now: Date): Status {
+  const toward = request.target ? `, vers la ${request.target}` : "";
+  const base = {
+    versions: null,
+    steps: stepsOf(request, unreachable, restarted, now),
+    since: `Depuis la demande : ${elapsed(request.requested_at, now)}.`,
+  };
+  if (request.state === "running") {
+    return unreachable
+      ? {
+          ...base,
+          kind: "restarting",
+          tone: "info",
+          title: "La station redémarre",
+          detail:
+            "La mise à jour recrée les services du moteur : la console a perdu le contact avec lui. La page reprend seule dès qu’il répond, et dit le résultat.",
+          action: null,
+        }
+      : {
+          ...base,
+          kind: "running",
+          tone: "info",
+          title: `En cours depuis ${formatTime(request.started_at)}${toward}`,
+          detail: "Au redémarrage, la console perd le contact avec le moteur quelques instants : la page reprend seule.",
+          action: null,
+        };
+  }
+  // Muet avant que la machine ne la lance : rien d'attendu, la page le dit, avec les étapes qu'elle connaissait.
+  if (unreachable) {
+    return { ...base, kind: "unreachable", tone: "alert", title: "Le moteur ne répond pas", detail: UNREACHABLE, action: null };
   }
   if (request.unseen) {
     return {
+      ...base,
+      kind: "unseen",
       tone: "alert",
       title: "La machine ne prend pas la demande",
-      detail: `${asked}${toward}. La machine ne l’a pas regardée depuis ${formatTime(request.seen_at ?? request.requested_at)} : son minuteur ne tourne peut-être plus. Sur la machine : sudo station status. La demande peut se retirer.`,
+      detail: `La machine ne l’a pas regardée depuis ${formatTime(request.seen_at ?? request.requested_at)} : son minuteur ne tourne peut-être plus. Sur la machine : sudo station status. La demande peut se retirer.`,
+      action: "withdraw",
     };
   }
   if (request.waiting) {
-    return { tone: "warn", title: "En attente", detail: `${sentence(request.waiting)} ${SAY_AGAIN}` };
+    return {
+      ...base,
+      kind: "waiting",
+      tone: "info",
+      title: "En attente",
+      detail: `${sentence(request.waiting)} ${SAY_AGAIN}`,
+      action: "withdraw",
+    };
   }
-  return {
-    tone: "warn",
-    title: `Demandée${toward}`,
-    detail: `${asked}. La machine la prend dans la minute.`,
-  };
+  return { ...base, kind: "pending", tone: "info", title: `Demandée${toward}`, detail: null, action: "withdraw" };
+}
+
+/**
+ * Les étapes d'une demande, d'après ce que dit le moteur : demandée, prise par
+ * la machine, puis la sauvegarde et les images, pendant que l'antenne joue,
+ * puis le redémarrage, que la page voit au silence du moteur, et le résultat.
+ */
+export function stepsOf(request: UpdateRequest, unreachable = false, restarted = false, now: Date = new Date()): Step[] {
+  const running = request.state === "running";
+  const restarting = running && (unreachable || restarted);
+  const taken: Step = running
+    ? { label: "Prise par la machine", meta: request.started_at ? formatClock(request.started_at, now) : null, state: "done" }
+    : request.unseen
+      ? { label: "Prise par la machine", meta: "pas encore : la machine ne la regarde pas", state: "stuck" }
+      : request.waiting
+        ? { label: "Prise par la machine", meta: "en attente", state: "waiting" }
+        : { label: "Prise par la machine", meta: "dans la minute", state: "current" };
+  return [
+    {
+      label: "Demandée",
+      meta: `${formatClock(request.requested_at, now)}${request.requested_by ? `, par ${request.requested_by}` : ""}`,
+      state: "done",
+    },
+    taken,
+    {
+      label: "Sauvegarde et images",
+      meta: "pendant que l’antenne joue",
+      state: !running ? "todo" : restarting ? "done" : "current",
+    },
+    { label: "Redémarrage et contrôle", meta: "l’antenne se coupe quelques secondes", state: restarting ? "current" : "todo" },
+    { label: "Résultat", meta: null, state: "todo" },
+  ];
 }
 
 /** La dernière demande close : son résultat, et quoi faire ensuite. */
@@ -203,8 +371,9 @@ export function lastLine(last: UpdateLast, now: Date = new Date()): Line {
       return {
         tone: "alert",
         title: last.from ? `Annulée : la station est revenue en ${last.from}` : "Annulée",
+        // HOLD, que pose le retour arrière, et sa commande : la carte d'état les dit.
         detail: said(
-          `La mise à jour${last.to ? ` vers la ${last.to}` : ""} a échoué, et la station est revenue seule à la version d’avant${detail ? ` : ${detail.charAt(0).toLocaleLowerCase("fr-FR")}${detail.slice(1)}` : "."} Les mises à jour sont bloquées sur la machine : une fois la cause trouvée, sudo station unhold les débloque.`,
+          `La mise à jour${last.to ? ` vers la ${last.to}` : ""} a échoué, et la station est revenue seule à la version d’avant${detail ? ` : ${detail.charAt(0).toLocaleLowerCase("fr-FR")}${detail.slice(1)}` : "."}`,
         ),
       };
     case "failed":
@@ -274,24 +443,6 @@ export function pollDelay(state: UpdatesState | null, unreachable: boolean): num
   if (state?.request) return 5_000;
   if (unreachable) return 10_000;
   return 60_000;
-}
-
-/** Ce que la page dit quand le moteur ne répond pas : pendant une mise à jour, c'est attendu. */
-export function unreachableLine(state: UpdatesState | null): Line {
-  if (state?.request?.state === "running") {
-    return {
-      tone: "warn",
-      title: "La station redémarre",
-      detail:
-        "La mise à jour recrée les services du moteur : la console a perdu le contact avec lui. La page reprend seule dès qu’il répond, et dit le résultat.",
-    };
-  }
-  return {
-    tone: "alert",
-    title: "Le moteur ne répond pas",
-    detail:
-      "La page relit son état seule. Si ça dure, regarder sur la machine : sudo station status. Ce qui suit date de la dernière lecture.",
-  };
 }
 
 /**

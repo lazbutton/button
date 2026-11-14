@@ -1184,13 +1184,12 @@
   border-top: 1px solid var(--app-border);
 }
 
-/* Le numéro, ce qu'est la version et sa date ; son lien, à droite, ou dessous quand la carte se resserre. */
+/* Le numéro, ce qu'est la version et sa date ; son lien vers GitHub, une icône à droite de la première ligne. */
 .reglages-updates-release-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 0.2rem 0.75rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 0 0.5rem;
   margin-bottom: 0.4rem;
 }
 
@@ -1210,11 +1209,30 @@
   font-weight: 500;
 }
 
-.reglages-updates-release-head > a {
+/* 40 px de cible, comme partout sur téléphone, sans grandir la ligne. */
+.reglages-updates-release-link {
+  display: grid;
+  place-items: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  margin: -0.65rem -0.55rem -0.65rem 0;
+  border-radius: var(--app-radius-md);
+  color: var(--app-text-muted);
+}
+
+.reglages-updates-release-link:hover {
+  background: var(--app-surface-hover);
   color: var(--app-text);
-  font-size: 0.74rem;
-  text-decoration: underline;
-  text-underline-offset: 2px;
+}
+
+.reglages-updates-release-link:focus-visible {
+  outline: 2px solid var(--app-focus);
+  outline-offset: -2px;
+}
+
+.reglages-updates-release-link svg {
+  width: 1rem;
+  height: 1rem;
 }
 
 /* Correctif, mineure ou majeure : une étiquette ; une majeure à l'encre orange, elle demande une action. */
@@ -1353,6 +1371,193 @@
   font-size: 0.78rem;
 }
 
+/* La carte d'état : une version à prendre ou une demande qui avance, à l'encre de l'accent, sans l'orange d'une alerte. */
+.reglages-summary.tone-info .reglages-summary-icon {
+  background: var(--app-accent-soft);
+  color: var(--app-accent);
+}
+
+.reglages-updates-spin {
+  animation: reglages-updates-spin 1.2s linear infinite;
+}
+
+@keyframes reglages-updates-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reglages-updates-spin {
+    animation: none;
+  }
+}
+
+.reglages-updates-meta {
+  margin: 0.3rem 0 0;
+  color: var(--app-text-muted);
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+
+/* « 1.0.1 → 1.5.0 » : les deux versions en étiquettes. */
+.reglages-updates-version {
+  padding: 0.05rem 0.35rem;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-sm);
+  background: var(--app-surface-2);
+  color: var(--app-text);
+  font-family: var(--code-font-family);
+  font-size: 0.92em;
+  font-weight: 600;
+}
+
+/* Ce que la carte ajoute sous sa phrase : HOLD, l'action d'une majeure, de quoi recharger la page. */
+.reglages-updates-extra {
+  grid-column: 2 / -1;
+  display: grid;
+  gap: 0.45rem;
+  margin-top: 0.85rem;
+}
+
+.reglages-updates-extra > .reglages-updates-kicker,
+.reglages-updates-extra > .reglages-note {
+  margin: 0;
+}
+
+.reglages-updates-reload p {
+  margin: 0;
+  color: var(--app-text);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+/* Les étapes d'une demande, leurs icônes dans la colonne de celle de la carte. */
+.reglages-updates-steps {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 0.15rem;
+  margin: 0.85rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.reglages-updates-steps li {
+  display: grid;
+  grid-template-columns: 2.25rem minmax(0, 1fr);
+  align-items: start;
+  gap: 0 0.85rem;
+  min-height: 1.75rem;
+}
+
+.reglages-updates-step-icon {
+  display: grid;
+  place-items: center;
+  justify-self: center;
+  width: 1.4rem;
+  height: 1.4rem;
+  border-radius: 999px;
+  color: var(--app-text-muted);
+}
+
+.reglages-updates-step-icon svg {
+  width: 0.95rem;
+  height: 0.95rem;
+  stroke-width: 2.2;
+}
+
+.reglages-updates-steps .is-done .reglages-updates-step-icon {
+  background: color-mix(in srgb, var(--app-ok) 16%, transparent);
+  color: var(--app-ok-ink);
+}
+
+.reglages-updates-steps .is-current .reglages-updates-step-icon,
+.reglages-updates-steps .is-waiting .reglages-updates-step-icon {
+  background: var(--app-accent-soft);
+  color: var(--app-accent);
+}
+
+.reglages-updates-steps .is-stuck .reglages-updates-step-icon {
+  background: color-mix(in srgb, var(--app-danger) 16%, transparent);
+  color: var(--app-danger-ink);
+}
+
+.reglages-updates-step-copy {
+  min-width: 0;
+  padding-top: 0.1rem;
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.reglages-updates-step-label {
+  color: var(--app-text);
+  font-weight: 560;
+}
+
+.reglages-updates-steps .is-todo .reglages-updates-step-label {
+  color: var(--app-text-muted);
+  font-weight: 500;
+}
+
+.reglages-updates-step-meta {
+  color: var(--app-text-muted);
+}
+
+/* Le pied de la carte : la dernière demande close. */
+.reglages-updates-last {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 2.25rem minmax(0, 1fr);
+  align-items: start;
+  gap: 0 0.85rem;
+  margin-top: 0.95rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--app-border);
+}
+
+.reglages-updates-last > .reglages-updates-dot {
+  justify-self: center;
+}
+
+.reglages-updates-last-title {
+  margin: 0;
+  color: var(--app-text);
+  font-size: 0.84rem;
+  font-weight: 650;
+}
+
+/* Une petite icône de ton : une ligne de updates.log, ou la dernière demande. */
+.reglages-updates-dot {
+  display: grid;
+  place-items: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 999px;
+  background: var(--app-surface-2);
+  color: var(--app-text-muted);
+}
+
+.reglages-updates-dot svg {
+  width: 0.95rem;
+  height: 0.95rem;
+  stroke-width: 2;
+}
+
+.reglages-updates-dot.tone-ok {
+  background: color-mix(in srgb, var(--app-ok) 16%, transparent);
+  color: var(--app-ok-ink);
+}
+
+.reglages-updates-dot.tone-warn {
+  background: color-mix(in srgb, var(--app-vu-hot) 16%, transparent);
+  color: var(--app-warn-ink);
+}
+
+.reglages-updates-dot.tone-alert {
+  background: color-mix(in srgb, var(--app-danger) 16%, transparent);
+  color: var(--app-danger-ink);
+}
+
 /* updates.log : une ligne par mise à jour, son résultat d'un coup d'œil, puis quand et ce que la machine en a dit. */
 .reglages-updates-history {
   display: grid;
@@ -1377,37 +1582,6 @@
 
 .reglages-updates-history li:last-child {
   padding-bottom: 0;
-}
-
-.reglages-updates-history-icon {
-  display: grid;
-  place-items: center;
-  width: 1.6rem;
-  height: 1.6rem;
-  border-radius: 999px;
-  background: var(--app-surface-2);
-  color: var(--app-text-muted);
-}
-
-.reglages-updates-history-icon svg {
-  width: 0.95rem;
-  height: 0.95rem;
-  stroke-width: 2;
-}
-
-.reglages-updates-history .tone-ok .reglages-updates-history-icon {
-  background: color-mix(in srgb, var(--app-ok) 16%, transparent);
-  color: var(--app-ok-ink);
-}
-
-.reglages-updates-history .tone-warn .reglages-updates-history-icon {
-  background: color-mix(in srgb, var(--app-vu-hot) 16%, transparent);
-  color: var(--app-warn-ink);
-}
-
-.reglages-updates-history .tone-alert .reglages-updates-history-icon {
-  background: color-mix(in srgb, var(--app-danger) 16%, transparent);
-  color: var(--app-danger-ink);
 }
 
 .reglages-updates-history-copy {

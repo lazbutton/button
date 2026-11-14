@@ -6,6 +6,8 @@ Le détail des changements du moteur par rapport à l'amont : [docs/moteur/chang
 
 ## Non publié
 
+- La page **Réglages → Mises à jour** dit où en est la station d'une seule carte : une version à prendre, à jour, bloquée, ou la demande en cours, chacune avec son icône, au lieu de cartes empilées sous le même « ! » orange. Pendant une mise à jour, ses étapes se cochent au fil de l'eau, de la demande au résultat, avec le temps écoulé depuis la demande, et ne reculent pas quand le moteur revient de son redémarrage. Corrigé : une station à jour gardait le bouton « Mettre à jour maintenant », que le moteur refusait. La commande à taper sur la machine n'est plus dite qu'une fois, là où il y en avait jusqu'à trois après un retour arrière ; la carte des notes ne s'affiche plus vide ; l'en-tête tient en une phrase ; le lien vers les notes d'une version, sur GitHub, devient une icône. Rien à faire sur une station : la page vient avec l'image de la console.
+
 ## 1.5.0
 
 Une mineure : rien d'autre que la mise à jour habituelle, voir [docs/deploiement.md](docs/deploiement.md#mettre-à-jour). Le schéma de la base reste en v18 : aucune migration.
