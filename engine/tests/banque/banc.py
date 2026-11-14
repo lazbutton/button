@@ -723,7 +723,12 @@ def _beets(banc: Banc) -> object:
 
     beets_config.set_file(str(banc.library.parent / "config.yaml"))
     beets = object.__new__(BeetsIntegration)
-    beets.lib = Library(str(banc.library), directory=str(banc.media))
+    # La racine que pose init-radiotomate.sh, comme sur une station : le dossier
+    # de Beets depuis ARC-06, et la banque avant. Beets 2.14 lit une requête par
+    # chemin relative à elle.
+    beets.lib = Library(
+        str(banc.library), directory=beets_config["directory"].as_filename()
+    )
     return beets
 
 
