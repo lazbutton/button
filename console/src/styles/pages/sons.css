@@ -2808,6 +2808,10 @@
   width: 7.5rem;
 }
 
+.banque-titles .c-etiquettes {
+  width: 9rem;
+}
+
 .banque-sort {
   display: inline-flex;
   align-items: center;
@@ -2875,7 +2879,7 @@
     min-width: 0 !important;
   }
 
-  .banque-titles :is(.c-artist, .c-album, .c-genre, .c-year, .c-fiche, .c-duration) {
+  .banque-titles :is(.c-artist, .c-album, .c-etiquettes, .c-genre, .c-year, .c-fiche, .c-duration) {
     display: none;
   }
 
@@ -3279,6 +3283,118 @@
 
   .banque-edit-error {
     grid-column: 1;
+  }
+}
+
+/* The station's tags (FON-74): small chips, in a cell and in their dialog. */
+.banque-tags-cell {
+  display: flex;
+  gap: 0.25rem;
+  overflow: hidden;
+}
+
+.banque-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex: none;
+  max-width: 100%;
+  padding: 0.05rem 0.45rem;
+  overflow: hidden;
+  border: 1px solid var(--app-border);
+  border-radius: 999px;
+  background: var(--gray-a2);
+  color: var(--app-text);
+  font: inherit;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+button.banque-tag {
+  min-height: 2rem;
+  padding: 0.2rem 0.65rem;
+  cursor: pointer;
+}
+
+button.banque-tag:hover {
+  border-color: var(--app-border-strong);
+}
+
+button.banque-tag:focus-visible {
+  outline: 2px solid var(--app-focus);
+  outline-offset: 1px;
+}
+
+.banque-tag small {
+  color: var(--app-text-muted);
+  font-size: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
+.banque-tag.is-chosen {
+  padding-right: 0.15rem;
+  background: var(--app-accent-soft);
+}
+
+.banque-tags-part {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 0.85rem;
+}
+
+.banque-tags-heading {
+  margin: 0;
+  color: var(--app-text);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.banque-tags-add {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.banque-tags-add .ui-field-control {
+  flex: 1;
+}
+
+.banque-tags-chosen,
+.banque-tags-suggest ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.banque-tags-worn {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.banque-tags-worn small {
+  color: var(--app-text-muted);
+}
+
+.banque-tags-suggest {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.banque-tags-hint {
+  margin: 0;
+  color: var(--app-text-muted);
+  font-size: 0.78rem;
+}
+
+@media (max-width: 520px) {
+  button.banque-tag {
+    min-height: 2.5rem;
   }
 }
 

@@ -1,3 +1,4 @@
+import { parseTags } from "./stationTags.ts";
 import { EDIT_LABELS } from "./titleEdits.ts";
 import { formatWhen } from "./updates.ts";
 
@@ -68,7 +69,7 @@ export function journalQuery(filters: { gesture: string; username: string }, bef
 }
 
 // Ce que nomment les gestes à venir : un renommage ou un déplacement change le fichier.
-const OTHER_FIELDS: Record<string, string> = { path: "fichier", label: "label", isrc: "ISRC" };
+const OTHER_FIELDS: Record<string, string> = { path: "fichier", label: "label", isrc: "ISRC", etiquettes: "étiquettes" };
 
 // Ce que notent les gestes sur les bacs : le bac d'un son, son rang.
 const CART_FIELDS = new Set(["cart", "rank"]);
@@ -118,9 +119,10 @@ export function undoQuestion(entry: Pick<JournalEntry, "titles" | "counts">): st
   return entry.counts.waiting ? `${back} Ce qui attend encore ne s'écrira pas.` : back;
 }
 
-/** Une valeur d'avant ou d'après, telle qu'une personne la lit. */
-export function changeValue(value: unknown): string {
+/** Une valeur d'avant ou d'après, telle qu'une personne la lit : les étiquettes, une par une. */
+export function changeValue(value: unknown, field = ""): string {
   if (value === null || value === undefined || value === "" || value === 0) return "vide";
+  if (field === "etiquettes") return parseTags(String(value)).join(", ") || "vide";
   return String(value);
 }
 

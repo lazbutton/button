@@ -13,6 +13,8 @@ export type Account = {
     title_edits?: boolean;
     bank_moves?: boolean;
     bank_removals?: boolean;
+    /** FON-74: the table gives the station's tags. */
+    station_tags?: boolean;
     title_renames?: boolean;
     bank_health?: boolean;
   };

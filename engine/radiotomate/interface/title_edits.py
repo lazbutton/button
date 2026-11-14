@@ -1,8 +1,10 @@
 """Corriger la fiche d'un titre ou d'un lot (FON-66), pour le Programmateur.
 
 `POST /media/titles/edit.json` écrit un lot, ou l'essaie (`dry_run`) : ce qui
-s'écrirait, ce qui attendrait, et les sélections de titres touchées. « Revenir »
-passe par le journal (`radiotomate.interface.journal`).
+s'écrirait, ce qui attendrait, et les sélections de titres touchées.
+`POST /media/titles/tags.json` pose et retire des étiquettes de la station sur un
+lot (FON-74), par le même service. « Revenir » passe par le journal
+(`radiotomate.interface.journal`).
 
 Les règles sont dans `radiotomate.services.title_edits`.
 """
@@ -26,6 +28,7 @@ from radiotomate.services.title_edits import (
     has_waiting,
     parse_person_edits,
 )
+from radiotomate.services.title_tags import tag_titles
 
 if TYPE_CHECKING:
     from radiotomate.db import QuartAlchemy
@@ -64,6 +67,29 @@ async def edit_json():
             g.dbsession,
             BeetsIntegration.get(),
             edits,
+            username=current_user.user.username,
+            dry_run=dry_run,
+        )
+    except TitlesRefused as exc:
+        return refused_response(exc)
+    return jsonify({"dry_run": dry_run, **outcome.payload()})
+
+
+@blueprint.post("/media/titles/tags.json")
+@login_required
+async def tags_json():
+    denied = forbidden_unless("autodj")
+    if denied is not None:
+        return denied
+    data = await read_json_object()
+    dry_run = data.get("dry_run") is True
+    try:
+        outcome = await tag_titles(
+            g.dbsession,
+            BeetsIntegration.get(),
+            data.get("ids"),
+            data.get("add"),
+            data.get("remove"),
             username=current_user.user.username,
             dry_run=dry_run,
         )

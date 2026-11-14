@@ -14,6 +14,8 @@ test("a group with a name takes titles; « Sans … » and the whole bank do not
   assert.equal(takesTitles("famille", "jazz"), true);
   assert.equal(takesTitles("famille", ""), false);
   assert.equal(takesTitles("collection", null), false);
+  // Les étiquettes de la station (FON-74) ne sont pas une cible de dépôt.
+  assert.equal(takesTitles("etiquette", "nuit"), false);
 });
 
 test("on a family, the lot of fiches; on a collection, a move from one collection", () => {

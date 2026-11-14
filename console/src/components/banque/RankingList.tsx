@@ -1,5 +1,5 @@
 import { Button, Select, TextField } from "@radix-ui/themes";
-import { Disc3, Layers, Library, Music, Plus, Search, SearchX, Shapes, UserRound } from "lucide-react";
+import { Disc3, Layers, Library, Music, Plus, Search, SearchX, Shapes, Tag, UserRound } from "lucide-react";
 import { useMemo, useRef, useState, type DragEvent, type KeyboardEvent } from "react";
 import {
   RANKINGS,
@@ -12,7 +12,13 @@ import {
 } from "../../api/bankTitles";
 import { TITLES_TYPE, decodeIds, dropHint, takesTitles } from "../../api/titleDrag";
 
-export const RANKING_ICONS = { collection: Library, artist: UserRound, famille: Shapes, album: Disc3 } as const;
+export const RANKING_ICONS = {
+  collection: Library,
+  artist: UserRound,
+  famille: Shapes,
+  album: Disc3,
+  etiquette: Tag,
+} as const;
 // The whole bank, then one row per group: a long list of artists is only drawn this far.
 const SHOWN = 400;
 
@@ -23,6 +29,7 @@ const SHOWN = 400;
  */
 export function RankingList({
   ranking,
+  rankings,
   groups,
   total,
   selected,
@@ -33,6 +40,8 @@ export function RankingList({
   onDropTitles,
 }: {
   ranking: Ranking;
+  /** The rankings the engine knows: not the tags before FON-74. */
+  rankings?: Ranking[];
   groups: BankFacet[];
   /** Every title of the bank. */
   total: number | null;
@@ -97,7 +106,7 @@ export function RankingList({
           >
             <Select.Trigger variant="soft" color="gray" aria-label="Ranger par" className="banque-rank-trigger" />
             <Select.Content variant="soft" position="popper">
-              {RANKINGS.map((item) => (
+              {RANKINGS.filter((item) => !rankings || rankings.includes(item.id)).map((item) => (
                 <Select.Item key={item.id} value={item.id}>
                   {item.label}
                 </Select.Item>

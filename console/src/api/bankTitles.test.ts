@@ -5,6 +5,7 @@ import {
   DEFAULT_COLUMNS,
   DEFAULT_STATE,
   cleanColumns,
+  columnsFor,
   moveColumn,
   sameAsView,
   stateOfView,
@@ -18,6 +19,7 @@ import {
   groupsOf,
   nameInShelf,
   nextSort,
+  rankingsFor,
   readState,
   titlesCount,
   titlesQuery,
@@ -150,15 +152,35 @@ test("columns read from anywhere keep the known ones once, and the title", () =>
 
 test("a column hides, comes back at its own place, and moves; the title stays", () => {
   const some = toggleColumn(toggleColumn(DEFAULT_COLUMNS, "album"), "genre");
-  assert.deepEqual(some, ["title", "artist", "famille", "year", "duration", "fiche"]);
-  assert.deepEqual(toggleColumn(some, "album"), ["title", "artist", "album", "famille", "year", "duration", "fiche"]);
+  assert.deepEqual(some, ["title", "artist", "famille", "etiquettes", "year", "duration", "fiche"]);
+  assert.deepEqual(toggleColumn(some, "album"), [
+    "title",
+    "artist",
+    "album",
+    "famille",
+    "etiquettes",
+    "year",
+    "duration",
+    "fiche",
+  ]);
   assert.equal(toggleColumn(some, "title"), some);
   assert.deepEqual(moveColumn(["title", "artist", "year"], "year", -1), ["title", "year", "artist"]);
   assert.deepEqual(moveColumn(["title", "artist"], "title", -1), ["title", "artist"]);
 });
 
+test("an engine before FON-74: no tags to range by, nor their column", () => {
+  assert.deepEqual(rankingsFor(true), ["collection", "artist", "famille", "album", "etiquette"]);
+  assert.deepEqual(rankingsFor(false), ["collection", "artist", "famille", "album"]);
+  assert.deepEqual(columnsFor(["title", "etiquettes", "year"], false), ["title", "year"]);
+  assert.deepEqual(columnsFor(["title", "etiquettes"], true), ["title", "etiquettes"]);
+  assert.equal(
+    titlesQuery({ ...DEFAULT_STATE, ranking: "etiquette", group: "nuit" }),
+    "?etiquette=nuit&sort=artist&order=asc&limit=100&facets=etiquette",
+  );
+});
+
 test("the table's room follows its columns", () => {
-  assert.equal(tableMinWidth(DEFAULT_COLUMNS, false), 64.15);
+  assert.equal(tableMinWidth(DEFAULT_COLUMNS, false), 73.15);
   assert.equal(tableMinWidth(["title", "famille"], true), 28.25);
 });
 

@@ -14,11 +14,12 @@ import {
   Play,
   RefreshCw,
   Search,
+  Tag,
   Trash2,
   Upload,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useAccount } from "../../api/AccountContext";
 import {
@@ -33,16 +34,20 @@ import {
   type BankShelf,
 } from "../../api/bankContent";
 import {
+  DEFAULT_COLUMNS,
   TITLES_PAGE,
   cell,
   columnLabel,
+  columnsFor,
   ficheState,
   fileName,
   groupLabel,
   groupsOf,
+  isSort,
   nameInShelf,
   nextSort,
   rankingOf,
+  rankingsFor,
   readState,
   sameAsView,
   stateOfView,
@@ -65,6 +70,7 @@ import { roleAtLeast } from "../../api/roles";
 import { filtersFromTable, selectionLink, tableMakesSelection } from "../../api/selectionFilters";
 import { API_PREFIX, ApiRequestError, apiDeleteJson, apiGet, apiPostJson, apiPut } from "../../api/client";
 import { formatClock, percentOf } from "../../api/soundsView";
+import { taggedMessage } from "../../api/stationTags";
 import {
   needsConfirmationText,
   savedMessage,
@@ -92,6 +98,7 @@ import { RANKING_ICONS, RankingList } from "./RankingList";
 import { GridCell } from "./GridCell";
 import { ConfirmLotDialog, EditTitlesDialog, editTitles, needsConfirmation, undoTitles } from "./TitleEditing";
 import { RenameTitlesDialog, type RenameResult } from "./TitleRenaming";
+import { TagTitlesDialog } from "./TitleTags";
 import { TitleSheet } from "./TitleSheet";
 import { ViewsMenu } from "./ViewsMenu";
 
@@ -133,12 +140,15 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
   const { isAdmin, role, account } = useAccount();
   // FON-66 : la fiche se corrige, seule ou par lot, pour le Programmateur.
   const canEdit = account?.features?.title_edits === true && (isAdmin || account.permissions.autodj === true);
+  // FON-74 : les étiquettes de la station, qu'un moteur plus ancien ne connaît pas.
+  const tagsKnown = account?.features?.station_tags === true;
   // FON-68 : les fichiers se renomment d'après leur fiche, pour le Programmateur.
   const canRename = account?.features?.title_renames === true && (isAdmin || account.permissions.autodj === true);
   // FON-69 : des titres de la banque dans un bac, sans copie, pour qui gère les bacs.
   const canCart = isAdmin || account?.permissions.carts === true;
   const [params, setParams] = useSearchParams();
   const state = useMemo(() => readState(params), [params]);
+  const columns = columnsFor(state.columns, tagsKnown);
   const [typed, setTyped] = useState(state.q);
   const [page, setPage] = useState<BankTitlesPage | null>(null);
   const [titles, setTitles] = useState<BankTitle[]>([]);
@@ -159,6 +169,7 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
   const [deleting, setDeleting] = useState(false);
   const [creating, setCreating] = useState<string | null>(null);
   const [editing, setEditing] = useState<BankTitle[] | null>(null);
+  const [tagging, setTagging] = useState<BankTitle[] | null>(null);
   const [renamingFiles, setRenamingFiles] = useState<BankTitle[] | null>(null);
   const [carting, setCarting] = useState<string[] | null>(null);
   // FON-75 : des titres glissés sur un groupe de la colonne de gauche, ou sur un bac.
@@ -392,8 +403,8 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
   };
 
   // Après une correction : ce qui est fait, et « Revenir » tant que le message est là.
-  const afterEdit = async (outcome: EditOutcome, name?: string) => {
-    const message = savedMessage(outcome, name);
+  const afterEdit = async (outcome: EditOutcome, name?: string, said = savedMessage(outcome, name)) => {
+    const message = said;
     const entry = outcome.entry;
     show(
       message.text,
@@ -503,7 +514,7 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
   };
 
   // Les cellules du tableur suivent les colonnes affichées, dans leur ordre (FON-65).
-  const gridColumns = state.columns.filter(isGridField);
+  const gridColumns = columns.filter(isGridField);
   const moveCell = (row: number, column: number, move: Move) => {
     const target = nextCell({ row, column }, move, titles.length, gridColumns.length);
     if (target) document.querySelector<HTMLElement>(`[data-grid="${target.row}:${target.column}"]`)?.focus();
@@ -575,6 +586,7 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
       >
         <RankingList
           ranking={state.ranking}
+          rankings={rankingsFor(tagsKnown)}
           groups={rankingGroups}
           total={page?.total ?? null}
           selected={state.group}
@@ -707,6 +719,18 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
                     Modifier {selected.size === 1 ? "la fiche" : `${selected.size} fiches`}
                   </Button>
                 ) : null}
+                {canEdit && tagsKnown ? (
+                  <Button
+                    size="1"
+                    variant="soft"
+                    color="gray"
+                    disabled={busy}
+                    onClick={() => setTagging(titles.filter((title) => selected.has(title.id)))}
+                  >
+                    <Tag className="ui-button-icon" />
+                    Étiquettes
+                  </Button>
+                ) : null}
                 {canRename ? (
                   <Button
                     size="1"
@@ -771,7 +795,11 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
                 <span className="bacs-muted bacs-hide-narrow" aria-live="polite">
                   {page ? (state.q.trim() ? `${titlesCount(page.matched)} trouvés` : titlesCount(page.matched)) : ""}
                 </span>
-                <ColumnsPicker columns={state.columns} onChange={(columns) => update({ columns })} />
+                <ColumnsPicker
+                  columns={columns}
+                  known={columnsFor(DEFAULT_COLUMNS, tagsKnown)}
+                  onChange={(next) => update({ columns: next })}
+                />
                 {views ? (
                   <ViewsMenu
                     views={views}
@@ -880,7 +908,7 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
               ) : (
                 <table
                   className="bacs-table banque-titles"
-                  style={{ minWidth: `${tableMinWidth(state.columns, selectable)}rem` }}
+                  style={{ minWidth: `${tableMinWidth(columns, selectable)}rem` }}
                   aria-rowcount={count}
                 >
                   <thead>
@@ -901,9 +929,9 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
                       <th className="c-play">
                         <span className="ui-visually-hidden">Écouter</span>
                       </th>
-                      {state.columns.map((key) =>
-                        key === "fiche" ? (
-                          <th key={key} className="c-fiche">
+                      {columns.map((key) =>
+                        !isSort(key) ? (
+                          <th key={key} className={`c-${key}`}>
                             {columnLabel(key)}
                           </th>
                         ) : (
@@ -940,7 +968,7 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
                               }
                             : undefined
                         }
-                        columns={state.columns}
+                        columns={columns}
                         gestures={gestures}
                         selectable={selectable}
                         busy={busy}
@@ -992,6 +1020,7 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
                               }
                             : undefined
                         }
+                        onTag={canEdit && tagsKnown ? () => setTagging([title]) : undefined}
                       />
                     ))}
                   </tbody>
@@ -1138,6 +1167,17 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
           onConfirm={() => void finishPending(true)}
         />
       ) : null}
+      {tagging ? (
+        <TagTitlesDialog
+          titles={tagging}
+          onClose={() => setTagging(null)}
+          onDone={(outcome, add, remove) => {
+            setTagging(null);
+            setSelected(new Set());
+            void afterEdit(outcome, undefined, taggedMessage(outcome, add, remove));
+          }}
+        />
+      ) : null}
       {dropMove ? (
         <MoveDialog
           names={namesOf(dropMove.ids, dropMove.from)}
@@ -1250,6 +1290,7 @@ function TitleRow({
   onMove,
   onRemove,
   onEdit,
+  onTag,
 }: {
   title: BankTitle;
   /** The cells open like a spreadsheet's (FON-67). */
@@ -1272,6 +1313,8 @@ function TitleRow({
   onRemove: () => void;
   /** Opens the fiche, ready to correct. */
   onEdit?: () => void;
+  /** Puts or takes off the station's tags (FON-74). */
+  onTag?: () => void;
 }) {
   const name = title.title || fileName(title.path);
   const fiche = ficheState(title.missing);
@@ -1356,6 +1399,24 @@ function TitleRow({
                 {length || "—"}
               </td>
             );
+          case "etiquettes":
+            return (
+              <td key={key} className="c-etiquettes">
+                {title.etiquettes?.length ? (
+                  <span className="banque-tags-cell" title={title.etiquettes.join(", ")}>
+                    {title.etiquettes.map((tag, index) => (
+                      <Fragment key={tag}>
+                        {/* Une espace entre deux étiquettes, pour qui les écoute. */}
+                        {index ? " " : null}
+                        <span className="banque-tag">{tag}</span>
+                      </Fragment>
+                    ))}
+                  </span>
+                ) : (
+                  "—"
+                )}
+              </td>
+            );
           case "fiche":
             return (
               <td key={key} className="c-fiche">
@@ -1391,6 +1452,12 @@ function TitleRow({
                 <DropdownMenu.Item onSelect={onEdit}>
                   <Pencil size={14} aria-hidden="true" />
                   Corriger la fiche
+                </DropdownMenu.Item>
+              ) : null}
+              {onTag ? (
+                <DropdownMenu.Item onSelect={onTag}>
+                  <Tag size={14} aria-hidden="true" />
+                  Étiquettes…
                 </DropdownMenu.Item>
               ) : null}
               {gestures ? (
