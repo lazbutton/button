@@ -1,4 +1,5 @@
 import type { Page, Route } from "@playwright/test";
+import { verifierAccessibilite } from "./accessibilite.ts";
 import { antenne, expect, seConnecter, test } from "./banc.ts";
 
 // Le tableau de la banque (FON-64), derrière l'interrupteur général de « Ranger
@@ -156,6 +157,8 @@ test("toute la banque se range par artiste, se trie, et ouvre la fiche d'un titr
   await expect(antenneDuTitre.getByText("Passé 2 fois en 90 jours")).toBeVisible();
   await expect(antenneDuTitre.getByText("Auto-DJ 1 · Agenda 1")).toBeVisible();
   await expect(antenneDuTitre.getByRole("list", { name: "Derniers passages" }).getByRole("listitem")).toHaveCount(2);
+  // Un titre complet : son badge vert, dans la fiche et dans le tableau, se lit.
+  await verifierAccessibilite(page, "fiche d'un titre complet");
   await page.keyboard.press("Escape");
   await expect(fiche).toHaveCount(0);
   await expect(orage.getByRole("button", { name: "Comète", exact: true })).toBeFocused();
