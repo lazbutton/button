@@ -48,6 +48,10 @@ GESTURE_LABELS = {
     "rename": "Renommage",
     "move": "Déplacement",
     "remove": "Retrait",
+    # FON-70: they are noted, and do not undo yet.
+    "cart_move": "Déplacement entre bacs",
+    "cart_copy": "Copie dans un bac",
+    "cart_order": "Ordre d'un bac",
 }
 # Les gestes qui savent se défaire, et comment.
 UNDOABLE = frozenset(
