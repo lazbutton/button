@@ -3,6 +3,7 @@ from werkzeug.exceptions import BadRequest
 
 from radiotomate.auth import current_user, login_required
 from radiotomate.interface.json_util import read_json_object
+from radiotomate.services.bank_health import health_on
 from radiotomate.services.bank_moves import moves_on
 from radiotomate.services.bank_removals import removals_on
 from radiotomate.services.bank_titles import bank_tidy_enabled
@@ -30,6 +31,8 @@ async def account_json():
                 "bank_removals": await removals_on(g.dbsession),
                 # FON-68: files renamed after their fiche.
                 "title_renames": await renames_on(g.dbsession),
+                # FON-72: what is wrong in the bank, counted.
+                "bank_health": await health_on(g.dbsession),
             },
         },
     )
