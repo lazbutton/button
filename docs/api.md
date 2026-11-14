@@ -300,6 +300,26 @@ Le panneau « Passer en direct », ouvert à tout compte, lit `GET /station/harb
 
 La politique de sécurité du contenu (CSP) de la console ne suit pas ces réglages. Les origines du flux et de `now.json` y viennent de `CSP_MEDIA_SRC` et `CSP_CONNECT_SRC`, deux variables de l'image de la console. Changer l'adresse du flux dans l'onglet Station ne les change pas : le navigateur signale alors l'écart dans sa console, sans rien bloquer tant que la CSP reste en `Report-Only`. Voir [les en-têtes de sécurité](deploiement.md#les-en-têtes-de-sécurité).
 
+### Lien d'écoute (« Retrouver ce titre »)
+
+Un auditeur qui aime le titre en cours l'ouvre sur sa plateforme d'un toucher. Un service de liens, que la station règle, rend pour un artiste et un titre un lien qui ouvre le morceau chez chacun. Le logiciel n'en nomme aucun : l'adresse et la clé sont des réglages de la station, éteints par défaut ([FON-84](feuille-de-route/P2.md#fon-84--retrouver-ce-titre-par-hopper)).
+
+- `GET /listen-link.json`, admin seulement → `{enabled, url, key_set}`. `enabled` vaut `false` tant que la station ne l'a pas allumé, `url` `null` sans adresse. `key_set` dit seulement qu'une clé partenaire est posée : **aucune route ne rend la clé**.
+- `PUT /listen-link.json`, admin seulement, avec le jeton CSRF → la même forme que `GET`. Seules les clés présentes changent : `enabled` (booléen), `url` (une adresse en `http://` ou `https://`, sans identifiant ni mot de passe, de 500 caractères au plus), `key` (une ligne, sans espace, de 200 caractères au plus). Une adresse ou une clé vide ou `null` efface le réglage. C'est tout ou rien : une valeur refusée répond 400 `validation_error` avec son `field`, et rien n'est écrit. Changer l'adresse ou la clé oublie ce que l'ancien service avait répondu.
+
+Les réglages sont les clés `features.listen_link` (l'interrupteur, absent = éteint), `listen_link.url` et `listen_link.key` de la table `settings`. Un moteur plus ancien n'a pas la route : la console dit de le mettre à jour.
+
+Allumé, quand un titre de musique passe à l'antenne (source `autodj` ou `carts`, jamais un direct ni un relais), le scheduler le demande au service en tâche de fond, après avoir répondu au playout :
+
+- `POST {adresse}/api/resolve`, corps `{"track": {"artist", "title"}}`, avec `X-Hopper-Key: {clé}` si la station en a une. Réponse `200 {id, url}` : le lien. `422` : rien n'est sûr à la lettre près, donc aucun lien. Tout le reste (panne, 4xx ou 5xx, réponse illisible, adresse qui n'est pas web) donne aussi aucun lien.
+- Le délai est de 3 s, sans nouvel essai. Trois pannes de suite : plus rien ne part pendant une minute. Une réponse sûre est gardée en mémoire une semaine, un « pas sûr » un jour : un titre rejoué n'est pas redemandé. **Une panne ou un délai du service ne retarde jamais l'antenne** : la demande ne s'attend pas, et le titre passe sans lien.
+- Ce qui part de la station : l'artiste et le titre qui passent, et la clé. Rien d'autre.
+
+Le lien arrive ensuite, quand le service a répondu :
+
+- `now.json` (service nowplaying) porte `listen_url` seulement quand le lien est sûr et que c'est celui du titre en cours. Le scheduler le relaie par un second `POST /hook` `{"listen_link": {artist, title, radiotomate_sound_id, url}}` que nowplaying pose sur le titre en cours, ou garde pour le titre qui va arriver. Le titre suivant le perd. nowplaying ne garde qu'une adresse web d'une ligne, de 500 caractères au plus.
+- `GET /live.json` porte le même `listen_url`, que la console montre en lien « Retrouver ce titre » dans le titre en cours de la barre du haut. Le scheduler et l'interface sont deux processus : le scheduler garde le lien du titre en cours dans la clé `listen_link.current` de la table `settings`, que l'interface relit. Éteint, ou pour un autre titre, le champ est absent.
+
 ### Catalogue (service à part du moteur)
 
 Le catalogue demande une session sur toutes ses routes, sauf `/health`, `/health/live` et `/tus-hook`, qu'appelle tusd. La recherche et la pré-écoute, `GET /library/media/{id}` avec requêtes Range, sont ouvertes à tous les rôles, comme la lecture du contenu de la banque. Les routes `POST` demandent un admin, sauf le retrait et le déplacement de titres, ouverts au droit de dépôt (admin, bacs ou auto-DJ). nginx vérifie la session devant `/library/` (`auth_request`) : sans session, il rend `401`, et `500` si le moteur ne répond pas. Le catalogue la vérifie aussi, par `/account.json`, car son port se joint sans nginx : `401 {error}` sans session, `502 {error}` si le moteur ne répond pas. Quand une pré-écoute échoue, la console redemande la même adresse en `HEAD` : l'élément audio ne donne pas le statut, et un `401` y veut dire que la session a expiré.

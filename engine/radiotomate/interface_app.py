@@ -29,6 +29,7 @@ from radiotomate.interface import (
     home,
     journal,
     library,
+    listen_link,
     live,
     login,
     media,
@@ -137,6 +138,7 @@ def app_factory(config: dict, reload: bool, beets: BeetsIntegration):
     app.register_blueprint(bank_moves.blueprint)
     app.register_blueprint(csrf.blueprint)
     app.register_blueprint(station.blueprint)
+    app.register_blueprint(listen_link.blueprint)
     app.register_blueprint(station_public.blueprint)
     spa.register(app)
 
