@@ -771,6 +771,11 @@ def main(argv: list[str] | None = None) -> int:
             f"Pas d'échantillon : donner un dossier à --echantillon, ou {VARIABLE}.\n"
         )
         return ABSENT
+    if source is not None:
+        problem = check_source(source)
+        if problem:
+            sys.stderr.write(problem + "\n")
+            return 64
     if shutil.which("beet") is None:
         sys.stderr.write("beet absent : lancer le banc par « poetry run ».\n")
         return ABSENT
@@ -781,10 +786,6 @@ def main(argv: list[str] | None = None) -> int:
         sys.stderr.write("ffprobe absent : installer ffmpeg.\n")
         return ABSENT
     if source is not None:
-        problem = check_source(source)
-        if problem:
-            sys.stderr.write(problem + "\n")
-            return 64
         free = shutil.disk_usage(tempfile.gettempdir()).free
         size = sum(path.stat().st_size for path in source.rglob("*") if path.is_file())
         if size * 2 > free:
