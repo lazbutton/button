@@ -1008,7 +1008,7 @@ async def test_category_query_with_extra_comma_is_refused(
             json={
                 "name": "Jazz",
                 "query": "grouping:jazz",
-                "empty_query": ", genre:Jazz",
+                "empty_query": ", genres:Jazz",
             },
         ),
         "empty_query",
@@ -1030,7 +1030,7 @@ async def test_category_query_with_extra_comma_is_refused(
     )
     await refused(
         await client.put(
-            f"/autodj/categories/{cat_id}.json", json={"empty_query": "genre:Jazz,"}
+            f"/autodj/categories/{cat_id}.json", json={"empty_query": "genres:Jazz,"}
         ),
         "empty_query",
     )

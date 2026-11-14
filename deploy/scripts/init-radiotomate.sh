@@ -315,8 +315,18 @@ if path.exists():
     data = yaml.load(path) or {}
 else:
     data = {}
-data["directory"] = media
+# La racine de la bibliothèque, hors de la banque : le dossier de Beets. Dès la
+# 2.10, Beets range relatif à sa racine le chemin d'un titre qui est dessous ; un
+# titre de la banque garde ainsi son chemin absolu. Beets 2.5, l'image d'avant, la
+# relit alors après un retour arrière, et la boucle d'import la lit telle quelle
+# (beets-import-loop.sh). La boucle importe sur place, sans copie ni déplacement :
+# rien ne s'écrit sous cette racine.
+data["directory"] = beetsdir
 data["library"] = str(Path(beetsdir) / "library.db")
+# Beets copie sa bibliothèque dans son dossier avant chaque migration, onze fois
+# pour passer de la 2.5 à la 2.14, et chaque sauvegarde emporterait ces copies. Ce
+# script la copie lui-même, une fois, avec les copies de la base : plus bas.
+data["create_backup_before_migrations"] = False
 imp = data.setdefault("import", {})
 imp["move"] = False
 imp["copy"] = False
@@ -348,6 +358,56 @@ else:
     print("unchanged beets", path)
 os.chmod(path, 0o640)
 PY
+
+# Une version nouvelle de Beets migre sa bibliothèque quand il l'ouvre, sans
+# retour : de la 2.5 à la 2.14, le genre devient une liste, genres. La
+# bibliothèque se copie d'abord dans backups/, comme la base avant une migration,
+# puis Beets l'ouvre ici, une fois, avant que le moteur et la boucle d'import ne
+# l'ouvrent ensemble. Pour revenir à celle d'avant : docs/deploiement.md, « La
+# bibliothèque de Beets ».
+python3 - <<'PY'
+import os
+import sqlite3
+import sys
+from contextlib import closing
+from datetime import UTC, datetime
+from pathlib import Path
+
+from beets.library import Library
+
+library = Path(os.environ["BEETSDIR"]) / "library.db"
+if not library.is_file():
+    sys.exit(0)
+with closing(sqlite3.connect(library)) as con:
+    tables = {name for (name,) in con.execute("select name from sqlite_master where type = 'table'")}
+    if "items" not in tables:
+        sys.exit(0)
+    done = set()
+    if "migrations" in tables:
+        done = set(con.execute("select name, table_name from migrations"))
+# Beets 2.5 n'a pas de migrations : rien à copier. Les scripts d'une version
+# peuvent tourner sur l'image d'avant, comme dans les bancs de la CI.
+migrations = getattr(Library, "_migrations", ())
+due = {(migration.name, model._table) for migration, models in migrations for model in models}
+if due <= done:
+    sys.exit(0)
+backups = Path(os.environ.get("RADIOTOMATE_DATA", "/data")) / "backups"
+backups.mkdir(mode=0o700, exist_ok=True)
+stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+copy = backups / f"beets-avant-migration-{stamp}.db"
+partial = copy.with_name(f"{copy.name}.part")
+with closing(sqlite3.connect(library)) as source, closing(sqlite3.connect(partial)) as target:
+    source.backup(target)
+    # un seul fichier, lisible sans son -wal ni son -shm
+    target.execute("PRAGMA journal_mode=DELETE")
+partial.chmod(0o600)
+partial.replace(copy)
+print(f"Bibliothèque Beets copiée avant sa migration : {copy}")
+PY
+beet ls id:0 || {
+  echo "Bibliothèque Beets : Beets ne l'ouvre pas, l'erreur est au-dessus. Le moteur et la boucle d'import ne démarreront pas sur elle. Pour revenir à celle d'avant : docs/deploiement.md, « La bibliothèque de Beets »." >&2
+  exit 1
+}
 
 RT_ADMIN_USER="${RT_ADMIN_USER:-button}"
 RT_ADMIN_PASSWORD="${RT_ADMIN_PASSWORD:-}"

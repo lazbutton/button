@@ -550,6 +550,19 @@ Avec une migration, d'abord redescendre le schéma, ou remettre la copie de la b
 
 Une station qui suit `main` ne revient pas à un tag daté : il n'existe que pour les images reconstruites ce jour-là, pas pour les sept. Elle revient à une version publiée, de la même façon.
 
+### La bibliothèque de Beets
+
+Une version qui monte Beets peut migrer sa bibliothèque, `RT_DATA/Beets/library.db`, sans retour : en 2.14, le genre d'un titre devient une liste, `genres`. Au démarrage, avant que le moteur et la boucle d'import ne l'ouvrent, `radiotomate-init` copie la bibliothèque dans `RT_DATA/backups/`, en `beets-avant-migration-AAAAMMJJTHHMMSSZ.db`, l'heure en UTC, puis la fait migrer par Beets. Son journal nomme la copie, puis ce que Beets migre. La copie reste : l'effacer une fois la station vérifiée.
+
+Les chemins de la bibliothèque restent absolus : la racine de Beets, `directory`, est son propre dossier, hors de la banque. L'image d'avant, en Beets 2.5, relit donc la bibliothèque migrée, et un retour arrière, seul ou par `station rollback`, n'a pas à y toucher. Un seul écart : pour elle, les titres indexés depuis la mise à jour n'ont pas de genre, et une sélection `genre:Jazz` ne les prend pas.
+
+Pour retrouver la bibliothèque d'avant, avec ses genres, mais sans les titres indexés depuis :
+
+1. arrêter le moteur et la boucle d'import : `docker compose stop radiotomate-scheduler radiotomate-interface radiotomate-playout radiotomate-dropbox` ;
+2. mettre la copie à la place de `RT_DATA/Beets/library.db`, et retirer `library.db-wal` et `library.db-shm` s'ils sont là ;
+3. retirer `RT_DATA/Beets/state.pickle`, l'historique d'import : la boucle le refait d'après la bibliothèque, et indexe de nouveau les titres arrivés depuis la mise à jour, sinon elle les sauterait ;
+4. reposer la version d'avant, puis `docker compose up -d`. `radiotomate-init` rend le dossier au moteur. Restée sur la nouvelle version, la station refait la copie, et la migration.
+
 ## Exploiter
 
 | Fiche | Pour |
