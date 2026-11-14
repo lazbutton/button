@@ -3,6 +3,8 @@ from werkzeug.exceptions import BadRequest
 
 from radiotomate.auth import current_user, login_required
 from radiotomate.interface.json_util import read_json_object
+from radiotomate.services.bank_moves import moves_on
+from radiotomate.services.bank_removals import removals_on
 from radiotomate.services.bank_titles import bank_tidy_enabled
 from radiotomate.services.title_edits import title_edits_enabled
 
@@ -21,6 +23,10 @@ async def account_json():
             "features": {
                 "bank_tidy": await bank_tidy_enabled(g.dbsession),
                 "title_edits": await title_edits_enabled(g.dbsession),
+                # ARC-09: a title moved keeps its identity.
+                "bank_moves": await moves_on(g.dbsession),
+                # FON-71: a title removed is noted, and comes back from the trash.
+                "bank_removals": await removals_on(g.dbsession),
             },
         },
     )

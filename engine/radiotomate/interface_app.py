@@ -21,6 +21,8 @@ from radiotomate.interface import (
     account,
     agenda,
     autodj,
+    bank_moves,
+    bank_removals,
     carts,
     csrf,
     emissions,
@@ -96,7 +98,7 @@ async def htmx_errors_as_messages(exc: Exception):
         return (f"<pre>{radiotomate_message['text']}</pre>", exc.code)
 
 
-def app_factory(config: dict, reload: bool, beets: BeetsIntegration):
+def app_factory(config: dict, reload: bool, beets: BeetsIntegration):  # noqa: PLR0915
     app = CustomQuart(__name__)
     app.config.from_mapping(
         {
@@ -134,6 +136,8 @@ def app_factory(config: dict, reload: bool, beets: BeetsIntegration):
     app.register_blueprint(media.blueprint)
     app.register_blueprint(title_edits.blueprint)
     app.register_blueprint(journal.blueprint)
+    app.register_blueprint(bank_moves.blueprint)
+    app.register_blueprint(bank_removals.blueprint)
     app.register_blueprint(csrf.blueprint)
     app.register_blueprint(station.blueprint)
     app.register_blueprint(listen_link.blueprint)

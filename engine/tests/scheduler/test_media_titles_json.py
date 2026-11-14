@@ -94,7 +94,12 @@ async def test_switch_off_keeps_the_table_closed(
     assert response.status_code == 409
     assert (await response.get_json())["code"] == "bank_tidy_off"
     account = await (await client.get("/account.json")).get_json()
-    assert account["features"] == {"bank_tidy": False, "title_edits": False}
+    assert account["features"] == {
+        "bank_tidy": False,
+        "title_edits": False,
+        "bank_moves": False,
+        "bank_removals": False,
+    }
 
 
 @pytest.mark.parametrize("value", ["0", "false", "off", ""])
@@ -115,7 +120,12 @@ async def test_a_row_says_everything_the_table_shows(
         app_configration, _beets(tmp_path), dbsession, users_password
     )
     account = await (await client.get("/account.json")).get_json()
-    assert account["features"] == {"bank_tidy": True, "title_edits": True}
+    assert account["features"] == {
+        "bank_tidy": True,
+        "title_edits": True,
+        "bank_moves": True,
+        "bank_removals": True,
+    }
     payload = await _titles(client, "?q=dune")
     assert payload["total"] == len(TITLES)
     assert payload["matched"] == 1

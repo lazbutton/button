@@ -551,19 +551,44 @@ class Engine(BaseHTTPRequestHandler):
         "session=admin": {"admin": True},
     }
     down = False
+    # How it answers POST /media/move.json: unknown, as an engine before ARC-09
+    # (None), or a function of the moves it receives, which it notes.
+    moves = None
+    # How it answers POST /media/remove.json: unknown, as an engine before FON-71.
+    removals = None
+    received: list = []
 
-    def do_GET(self) -> None:  # noqa: N802
-        rights = Engine.rights.get(self.headers.get("Cookie") or "")
-        if Engine.down or self.path != "/account.json" or rights is None:
-            self.send_response(503 if Engine.down else 401)
-            self.end_headers()
-            return
-        data = json.dumps({"username": "cam", "permissions": rights}).encode()
-        self.send_response(200)
+    def answer(self, status: int, payload: dict | None = None) -> None:
+        data = json.dumps(payload or {}).encode()
+        self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
+
+    def do_GET(self) -> None:  # noqa: N802
+        rights = Engine.rights.get(self.headers.get("Cookie") or "")
+        if Engine.down or rights is None:
+            self.answer(503 if Engine.down else 401)
+        elif self.path == "/account.json":
+            self.answer(200, {"username": "cam", "permissions": rights})
+        elif self.path == "/csrf.json":
+            self.answer(200, {"csrf_token": "jeton-" + self.headers["Cookie"]})
+        else:
+            self.answer(404)
+
+    def do_POST(self) -> None:  # noqa: N802
+        body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+        cookie = self.headers.get("Cookie") or ""
+        routes = {"/media/move.json": ("moves", Engine.moves), "/media/remove.json": ("paths", Engine.removals)}
+        key, act = routes.get(self.path, ("", None))
+        if act is None:
+            self.answer(404, {"error": "Not Found"})
+        elif self.headers.get("X-CSRF-Token") != "jeton-" + cookie:
+            self.answer(403, {"error": "csrf_invalid"})
+        else:
+            Engine.received.append(body[key])
+            self.answer(*act(body[key]))
 
     def log_message(self, fmt: str, *args) -> None:
         return
@@ -584,6 +609,9 @@ class RoutesTest(Bank):
     def setUp(self) -> None:
         super().setUp()
         Engine.down = False
+        Engine.moves = None
+        Engine.removals = None
+        Engine.received = []
         patches = [
             mock.patch.object(catalog, "AUTOMATE_URL", self.engine),
             mock.patch.object(catalog, "MEDIA_ROOT", self.media),
@@ -674,6 +702,162 @@ class RoutesTest(Bank):
         )
         self.assertEqual((self.names(), self.names("jazz")), (["Bea - Live.wav"], []))
         self.assertEqual([path.name for path in self.trash.iterdir()], ["Ada - Song.wav"])
+
+    def engine_moves(self, refused: dict | None = None):
+        """The engine of ARC-09: it moves each file, or refuses it with its reason."""
+
+        def moves(asked: list[dict]) -> tuple[int, dict]:
+            moved, failed = [], []
+            for move in asked:
+                reason = (refused or {}).get(move["from"])
+                if reason:
+                    failed.append({"from": move["from"], "reason": reason})
+                    continue
+                target = self.media / move["to"]
+                target.parent.mkdir(parents=True, exist_ok=True)
+                (self.media / move["from"]).rename(target)
+                moved.append({"from": move["from"], "to": move["to"], "beets_ids": [7]})
+            return 200, {"moved": moved, "failed": failed, "left": []}
+
+        return moves
+
+    def test_the_engine_moves_a_title_and_keeps_its_subfolder(self) -> None:
+        sound(self.jazz / "live" / "Cy - Live.wav")
+        Engine.moves = self.engine_moves()
+        move = {"id": "jazz", "to": "rotation", "names": ["Bea - Live.wav", "live/Cy - Live.wav", "absent.wav"]}
+
+        status, payload = self.json("/collection/move.json", cookie="session=programmateur", payload=move)
+
+        self.assertEqual(
+            (status, payload),
+            (
+                200,
+                {
+                    "moved": ["Bea - Live.wav", "live/Cy - Live.wav"],
+                    "failed": [{"name": "absent.wav", "reason": "fichier introuvable"}],
+                    "left": [],
+                },
+            ),
+        )
+        self.assertEqual(
+            Engine.received,
+            [
+                [
+                    {"from": "20-archives/jazz/Bea - Live.wav", "to": "10-rotation/Bea - Live.wav"},
+                    {"from": "20-archives/jazz/live/Cy - Live.wav", "to": "10-rotation/live/Cy - Live.wav"},
+                ]
+            ],
+        )
+        self.assertEqual(self.names(), ["Ada - Song.wav", "Bea - Live.wav", "live/Cy - Live.wav"])
+
+    def test_the_engine_says_why_a_title_stays(self) -> None:
+        Engine.moves = self.engine_moves(
+            {
+                "10-rotation/Ada - Song.wav": "déjà là",
+            }
+        )
+        move = {"id": "rotation", "to": "jazz", "names": ["Ada - Song.wav"]}
+        self.assertEqual(
+            self.json("/collection/move.json", payload=move),
+            (200, {"moved": [], "failed": [{"name": "Ada - Song.wav", "reason": "déjà dans Jazz d'été"}], "left": []}),
+        )
+        Engine.moves = self.engine_moves({"10-rotation/Ada - Song.wav": "à l'antenne en ce moment"})
+        self.assertEqual(
+            self.json("/collection/move.json", payload=move)[1]["failed"],
+            [{"name": "Ada - Song.wav", "reason": "à l'antenne en ce moment"}],
+        )
+        self.assertEqual(self.names(), ["Ada - Song.wav"])
+
+    def test_with_its_switch_off_the_engine_leaves_the_move_to_the_catalogue(self) -> None:
+        Engine.moves = lambda asked: (409, {"error": "x", "code": "bank_moves_off", "message": "x"})
+        sound(self.jazz / "live" / "Cy - Live.wav")
+        move = {"id": "jazz", "to": "rotation", "names": ["live/Cy - Live.wav"]}
+        self.assertEqual(self.json("/collection/move.json", payload=move)[0], 200)
+        # As before ARC-09: the title lands at the root of its destination.
+        self.assertEqual(self.names(), ["Ada - Song.wav", "Cy - Live.wav"])
+        self.assertEqual(len(Engine.received), 1)
+        # The general switch of the bank's tidying off, as FON-64 says it.
+        Engine.moves = lambda asked: (409, {"error": "x", "code": "bank_tidy_off", "message": "x"})
+        move = {"id": "rotation", "to": "jazz", "names": ["Cy - Live.wav"]}
+        self.assertEqual(self.json("/collection/move.json", payload=move)[0], 200)
+        self.assertEqual(self.names("jazz"), ["Bea - Live.wav", "Cy - Live.wav"])
+
+    def test_a_busy_engine_moves_nothing(self) -> None:
+        message = "La banque est en cours d'indexation : rien n'a bougé. Réessaie dans une minute."
+        Engine.moves = lambda asked: (409, {"error": message, "code": "bank_busy", "message": message})
+        move = {"id": "rotation", "to": "jazz", "names": ["Ada - Song.wav"]}
+        self.assertEqual(self.json("/collection/move.json", payload=move), (409, {"error": message}))
+        Engine.moves = lambda asked: (500, {"error": "server_error"})
+        self.assertEqual(
+            self.json("/collection/move.json", payload=move),
+            (502, {"error": "automate injoignable : rien n'a été déplacé."}),
+        )
+        self.assertEqual((self.names(), self.names("jazz")), (["Ada - Song.wav"], ["Bea - Live.wav"]))
+
+    def engine_removals(self, refused: dict | None = None):
+        """The engine of FON-71: it sends each file to the trash, or says why not."""
+
+        def removals(asked: list[str]) -> tuple[int, dict]:
+            removed, failed = [], []
+            for rel in asked:
+                reason = (refused or {}).get(rel)
+                if reason:
+                    failed.append({"from": rel, "reason": reason})
+                    continue
+                self.trash.mkdir(exist_ok=True)
+                (self.media / rel).rename(self.trash / Path(rel).name)
+                removed.append(rel)
+            return 200, {"removed": removed, "failed": failed, "left": [], "entry": 3}
+
+        return removals
+
+    def test_the_engine_removes_and_notes_the_titles(self) -> None:
+        sound(self.jazz / "live" / "Cy - Live.wav")
+        Engine.removals = self.engine_removals({"20-archives/jazz/Bea - Live.wav": "à l'antenne en ce moment"})
+        remove = {"id": "jazz", "names": ["Bea - Live.wav", "live/Cy - Live.wav", "absent.wav"]}
+
+        status, payload = self.json("/collection/remove.json", cookie="session=programmateur", payload=remove)
+
+        self.assertEqual(
+            (status, payload),
+            (
+                200,
+                {
+                    "removed": ["live/Cy - Live.wav"],
+                    "failed": [
+                        {"name": "absent.wav", "reason": "fichier introuvable"},
+                        {"name": "Bea - Live.wav", "reason": "à l'antenne en ce moment"},
+                    ],
+                    "left": [],
+                },
+            ),
+        )
+        self.assertEqual(Engine.received, [["20-archives/jazz/Bea - Live.wav", "20-archives/jazz/live/Cy - Live.wav"]])
+        self.assertEqual(self.names("jazz"), ["Bea - Live.wav"])
+
+    def test_with_its_switch_off_the_engine_leaves_the_removal_to_the_catalogue(self) -> None:
+        for code in ("bank_removals_off", "bank_tidy_off"):
+            Engine.removals = lambda asked, code=code: (409, {"error": "x", "code": code, "message": "x"})
+            sound(self.rotation / "Ada - Song.wav", artist="Ada", title="Song")
+            remove = {"id": "rotation", "names": ["Ada - Song.wav"]}
+            self.assertEqual(
+                self.json("/collection/remove.json", payload=remove),
+                (200, {"removed": ["Ada - Song.wav"], "failed": [], "left": []}),
+            )
+            self.assertEqual(self.names(), [])
+        self.assertEqual(len(Engine.received), 2)
+
+    def test_a_busy_engine_removes_nothing(self) -> None:
+        message = "La banque est en cours d'indexation : rien n'a changé. Réessaie dans une minute."
+        Engine.removals = lambda asked: (409, {"error": message, "code": "bank_busy", "message": message})
+        remove = {"id": "rotation", "names": ["Ada - Song.wav"]}
+        self.assertEqual(self.json("/collection/remove.json", payload=remove), (409, {"error": message}))
+        Engine.removals = lambda asked: (500, {"error": "server_error"})
+        self.assertEqual(
+            self.json("/collection/remove.json", payload=remove),
+            (502, {"error": "automate injoignable : rien n'a été retiré."}),
+        )
+        self.assertEqual(self.names(), ["Ada - Song.wav"])
 
     def test_a_collection_changes_for_an_admin(self) -> None:
         rename = {"id": "jazz", "label": "Jazz du soir"}

@@ -763,9 +763,17 @@ class CatalogHandler(BaseHTTPRequestHandler):
             return
         key = str(body.get("id") or "")
         if path == "/collection/remove.json":
-            status, payload = bank_api.remove_files(MEDIA_ROOT, key, body.get("names"))
+            status, payload = bank_api.remove_files(
+                MEDIA_ROOT, key, body.get("names"), engine=lambda paths: engine_remove(cookie, paths)
+            )
         elif path == "/collection/move.json":
-            status, payload = bank_api.move_files(MEDIA_ROOT, key, str(body.get("to") or ""), body.get("names"))
+            status, payload = bank_api.move_files(
+                MEDIA_ROOT,
+                key,
+                str(body.get("to") or ""),
+                body.get("names"),
+                engine=lambda moves: engine_move(cookie, moves),
+            )
         elif path == "/collection/rename.json":
             status, payload = inbox_api.rename_bank(MEDIA_ROOT, key, body.get("label", ""))
         else:
@@ -998,6 +1006,102 @@ def fetch_users(cookie: str) -> tuple[list | None, str]:
     if not isinstance(users, list):
         return None, "automate injoignable"
     return users, ""
+
+
+# A move by the engine waits for the import loop, then stops at 20 s: under the
+# 30 s nginx waits for the catalogue.
+ENGINE_MOVE_WAIT = 28
+ENGINE_DOWN = "automate injoignable : rien n'a été déplacé."
+
+
+def _engine_json(req: urllib.request.Request, timeout: float) -> tuple[int, dict]:
+    """The engine's status and JSON answer. 0 when it does not answer."""
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            status, raw = resp.status, resp.read()
+    except urllib.error.HTTPError as exc:
+        with exc:
+            status, raw = exc.code, exc.read()
+    except OSError:
+        return 0, {}
+    try:
+        payload = json.loads(raw.decode() or "{}")
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        payload = {}
+    return status, payload if isinstance(payload, dict) else {}
+
+
+def _engine_gesture(
+    cookie: str, route: str, body: dict, off: set[str], down: str, nothing: str
+) -> tuple[int, dict] | None:
+    """Hand a gesture on the bank to the engine, as the person behind the cookie.
+
+    None when the engine leaves it to the catalogue: an engine from before,
+    which does not know the route, or one of whose switches in `off` is off.
+    """
+    if not AUTOMATE_URL:
+        return None
+    status, payload = _engine_json(urllib.request.Request(f"{AUTOMATE_URL}/csrf.json", headers={"Cookie": cookie}), 4)
+    if status in {401, 403}:
+        return 401, {"error": "session expirée"}
+    token = payload.get("csrf_token")
+    if status != 200 or not isinstance(token, str):
+        return 502, {"error": down}
+    req = urllib.request.Request(
+        f"{AUTOMATE_URL}{route}",
+        data=json.dumps(body).encode(),
+        headers={"Cookie": cookie, "X-CSRF-Token": token, "Content-Type": "application/json"},
+        method="POST",
+    )
+    status, payload = _engine_json(req, ENGINE_MOVE_WAIT)
+    if status == 404 or (status == 409 and payload.get("code") in off):
+        return None
+    if status == 200:
+        return 200, payload
+    if status == 401:
+        return 401, {"error": "session expirée"}
+    if status == 403:
+        return 403, {"error": "droit insuffisant"}
+    if status == 400:
+        return 400, {"error": f"Le moteur a refusé la demande : {nothing}"}
+    if status == 409:
+        return 409, {"error": str(payload.get("message") or f"La banque est occupée : {nothing}")}
+    return 502, {"error": down}
+
+
+def engine_move(cookie: str, moves: list[dict]) -> tuple[int, dict] | None:
+    """Hand moves to the engine, as the person behind the cookie (ARC-09).
+
+    The engine moves a title of the bank keeping its identity: its Beets id,
+    its place in the carts and in the Agenda. None when it leaves the move to
+    the catalogue: an engine from before, which does not know the route, or
+    whose switch is off.
+    """
+    return _engine_gesture(
+        cookie,
+        "/media/move.json",
+        {"moves": moves},
+        {"bank_moves_off", "bank_tidy_off"},
+        ENGINE_DOWN,
+        "rien n'a été déplacé.",
+    )
+
+
+def engine_remove(cookie: str, paths: list[str]) -> tuple[int, dict] | None:
+    """Hand removals to the engine, as the person behind the cookie (FON-71).
+
+    The engine sends each title to the trash, takes it out of Beets at once and
+    notes it in the journal of the gestures, where it can be undone. None when
+    it leaves the removal to the catalogue, as before.
+    """
+    return _engine_gesture(
+        cookie,
+        "/media/remove.json",
+        {"paths": paths},
+        {"bank_removals_off", "bank_tidy_off"},
+        "automate injoignable : rien n'a été retiré.",
+        "rien n'a été retiré.",
+    )
 
 
 def session_admin(cookie: str) -> tuple[bool, str]:

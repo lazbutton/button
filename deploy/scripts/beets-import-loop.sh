@@ -17,6 +17,35 @@ COLLECTIONS=20-archives
 # dossier.
 ROTATION_NAME=rotation
 
+# Le verrou de la bibliothèque, à côté de library.db. Le moteur le prend pour
+# déplacer, renommer un titre ou écrire ses tags (engine/radiotomate/services/
+# bank_lock.py) : il change le fichier, puis son chemin dans Beets. La boucle le
+# prend pour suivre le disque et pour indexer un dossier : elle ne voit jamais un
+# fichier à son nouveau nom avant que la bibliothèque l'ait, ni l'ancien chemin
+# disparu avant qu'elle l'ait oublié. Sans lui, un titre déplacé pendant un tour
+# sortirait de la bibliothèque, puis y reviendrait sous un nouvel identifiant.
+# C'est un flock sur le descripteur 9, ouvert une fois, que prend et rend un
+# Python enfant : le verrou suit la description ouverte, que le shell garde.
+LOCK="${BEETSDIR:-/data/Beets}/banque.lock"
+# L'essai d'ouverture se fait dans un sous-shell : dans dash, le sh de l'image,
+# une redirection ratée sur un builtin spécial comme : ou exec arrête le shell.
+if (: >>"$LOCK") 2>/dev/null; then
+  exec 9>>"$LOCK"
+  LOCKED=yes
+else
+  echo "Verrou de la bibliothèque : $LOCK ne s'ouvre pas. La boucle tourne sans lui : un titre que le moteur déplace pendant un tour peut revenir sous un nouvel identifiant. Vérifier les droits du dossier de Beets." >&2
+  LOCKED=no
+fi
+lock() {
+  [ "$LOCKED" = yes ] || return 0
+  python3 -c 'import fcntl; fcntl.flock(9, fcntl.LOCK_EX)' ||
+    echo "Verrou de la bibliothèque : impossible de le prendre, l'erreur est au-dessus. Ce tour continue sans lui." >&2
+}
+unlock() {
+  [ "$LOCKED" = yes ] || return 0
+  python3 -c 'import fcntl; fcntl.flock(9, fcntl.LOCK_UN)' || true
+}
+
 # Beets note ce qu'il a importé (import.incremental) et ne le relit plus. La
 # boucle importe par titre (-s) : l'historique retient alors chaque fichier.
 # Par dossier, il ne retenait que le dossier, et un titre déposé ensuite, à plat
@@ -386,11 +415,17 @@ while true; do
   if [ -f /refresh_volume.py ]; then
     python3 /refresh_volume.py || true
   fi
+  lock
   if follow_disk; then
-    if [ -d "$MEDIA/$ROTATION" ] && folder_state same "$MEDIA/$ROTATION"; then
-      reread "$MEDIA/$ROTATION" grouping || true
-      beet import -A -q -s "$MEDIA/$ROTATION" || true
-      set_fields "$MEDIA/$ROTATION" grouping="$ROTATION_NAME" || true
+    unlock
+    if [ -d "$MEDIA/$ROTATION" ]; then
+      lock
+      if folder_state same "$MEDIA/$ROTATION"; then
+        reread "$MEDIA/$ROTATION" grouping || true
+        beet import -A -q -s "$MEDIA/$ROTATION" || true
+        set_fields "$MEDIA/$ROTATION" grouping="$ROTATION_NAME" || true
+      fi
+      unlock
     fi
     # Chaque dossier de COLLECTIONS est une collection ; son nom, tel quel, devient le grouping.
     for dir in "$MEDIA/$COLLECTIONS"/*/; do
@@ -399,12 +434,16 @@ while true; do
       # Pas de basename : $(…) retirerait un retour à la ligne final.
       ed=${dir##*/}
       case "$ed" in .*|_*) continue ;; esac
-      folder_state same "$dir" || continue
-      reread "$dir" grouping || true
-      beet import -A -q -s "$dir" || true
-      set_fields "$dir" grouping="$ed" || true
+      lock
+      if folder_state same "$dir"; then
+        reread "$dir" grouping || true
+        beet import -A -q -s "$dir" || true
+        set_fields "$dir" grouping="$ed" || true
+      fi
+      unlock
     done
   else
+    unlock
     echo "Historique Beets : reprise impossible, l'erreur est au-dessus. Rien n'est indexé à ce tour : sans elle, Beets réimporterait des titres déjà indexés. La boucle réessaie au prochain. Si l'erreur parle de droits, relancer la station (docker compose up -d) : radiotomate-init rend le dossier de Beets au moteur." >&2
   fi
   if [ -f "$PROMOTE" ]; then

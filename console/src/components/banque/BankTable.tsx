@@ -26,6 +26,7 @@ import {
   deleteCollection,
   moveBankFiles,
   removeBankFiles,
+  removeNote,
   titlesLabel,
   type BankChange,
   type BankShelf,
@@ -895,14 +896,7 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
           if (!open) setRemoving(null);
         }}
         title={removing?.length === 1 ? "Retirer ce titre ?" : `Retirer ${titlesLabel(removing?.length ?? 0).toLowerCase()} ?`}
-        description={
-          <>
-            {removing?.length === 1 ? "Le fichier part" : "Les fichiers partent"} dans la corbeille de la banque, sur la
-            machine de la station : rien n'est effacé. L'auto-DJ ne {removing?.length === 1 ? "le" : "les"} joue plus
-            après le prochain passage de l'indexation, environ une minute. Une diffusion de l'Agenda qui joue un de ces
-            fichiers ne le trouvera plus.
-          </>
-        }
+        description={removeNote(removing?.length ?? 0, account?.features?.bank_removals === true)}
         confirmLabel={removing?.length === 1 ? "Retirer le titre" : `Retirer ${titlesLabel(removing?.length ?? 0).toLowerCase()}`}
         onConfirm={() => {
           const ids = removing ?? [];
