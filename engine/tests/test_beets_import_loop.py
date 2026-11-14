@@ -5,7 +5,9 @@ that is already indexed enters the library, a library indexed folder by folder,
 as the loop did before, is not imported again, a file that is still being
 copied waits, and a WAV that holds MP3 stays as it is. The library follows
 the disk: a removed file leaves it, and comes back when put back at the same
-path, and a changed file is read again, under the same Beets id.
+path, and a changed file is read again, under the same Beets id. A track of a
+collection takes the name of its folder as its grouping, and keeps the genre of
+its file.
 The loop also runs against a fake `beet` in
 `services/catalog/test_beets_import_loop.py`, which the CI runs when the script
 changes.
@@ -187,8 +189,8 @@ def test_a_track_dropped_in_an_indexed_folder_is_indexed(tmp_path: Path):
     assert {name: fields[2:4] for name, fields in items.items()} == {
         "Ada - Un.mp3": ("rotation", ""),
         "Bea - Deux.mp3": ("rotation", ""),
-        "Cy - Live à Orléans.mp3": ("jazz", "Archive"),
-        "Dan - Live deux.mp3": ("jazz", "Archive"),
+        "Cy - Live à Orléans.mp3": ("jazz", ""),
+        "Dan - Live deux.mp3": ("jazz", ""),
     }
     assert {name: items[name] for name in first} == first
 
@@ -225,7 +227,7 @@ def test_a_bank_named_like_a_beets_query_keeps_its_name_and_its_own_tracks(
 
     expected = {
         "Ada - Un.mp3": ("rotation", ""),
-        **{f"{name} - Live.mp3": (name, "Archive") for name in names},
+        **{f"{name} - Live.mp3": (name, "") for name in names},
     }
     assert {name: fields[2:4] for name, fields in _items(tmp_path).items()} == expected
 
@@ -236,6 +238,44 @@ def test_a_bank_named_like_a_beets_query_keeps_its_name_and_its_own_tracks(
     _turn(tmp_path)
     assert {name: fields[2:4] for name, fields in _items(tmp_path).items()} == expected
     assert {track: track.stat().st_mtime_ns for track in tracks} == dates
+
+
+def test_a_collection_keeps_the_genre_of_its_files(tmp_path: Path):
+    media = _station(tmp_path)
+    jazz = media / "20-archives" / "jazz"
+    # what the loop wrote into each track of a collection, up to FON-77
+    marked = jazz / "Ada - Live.mp3"
+    shutil.copy(TRACK, marked)
+    _beet(tmp_path, "import", "-A", "-q", str(jazz))
+    _beet(tmp_path, "modify", "-y", "grouping=jazz", "genre=Archive", f"path:{jazz}")
+    assert MediaFile(marked).genre == "Archive"
+    dropped = jazz / "Bea - Live.mp3"
+    shutil.copy(TRACK, dropped)
+    _retag(dropped, OLD, genre="Jazz")
+    _turn(tmp_path)
+    _turn(tmp_path)
+
+    items = _items(tmp_path)
+    assert {name: fields[2:4] for name, fields in items.items()} == {
+        "Ada - Live.mp3": ("jazz", "Archive"),
+        "Bea - Live.mp3": ("jazz", "Jazz"),
+    }
+    assert MediaFile(dropped).genre == "Jazz"
+
+    # a tag fixed in place: the marked track reads Archive again, from its
+    # tags, out of the album that its folder made, under the same id
+    _retag(marked, int(time.time()) + 60, title="Live, corrigé")
+    _turn(tmp_path)
+    _turn(tmp_path)
+    ada = items["Ada - Live.mp3"]
+    assert _items(tmp_path)["Ada - Live.mp3"] == (
+        ada[0],
+        None,
+        "jazz",
+        "Archive",
+        ada[4],
+        "Live, corrigé",
+    )
 
 
 def test_a_file_still_being_copied_waits(tmp_path: Path):
@@ -382,7 +422,7 @@ def test_a_removed_track_leaves_the_library_and_comes_back_when_put_back(
     }
     assert {name: fields[2:4] for name, fields in items.items()} == {
         "Bea - Deux.mp3": ("rotation", ""),
-        "Cy - Live.mp3": ("jazz", "Archive"),
+        "Cy - Live.mp3": ("jazz", ""),
     }
 
 
@@ -403,7 +443,7 @@ def test_a_changed_track_is_read_again_once_and_keeps_its_id(tmp_path: Path):
     later = int(time.time()) + 60
     # a tag fixed in place, a while later
     _retag(rotation / "Ada - Un.mp3", later, title="Un, corrigé", genre="Jazz")
-    # a bank sets its own genre
+    # a track of a collection keeps the genre of its file
     _retag(jazz / "Dan - Live.mp3", later, title="Live, remasterisé", genre="Rock")
     # a file replaced by another one, copied with its own date, older than the
     # one Beets noted: no gain in its tags
@@ -421,7 +461,7 @@ def test_a_changed_track_is_read_again_once_and_keeps_its_id(tmp_path: Path):
         # the engine measures a gain that is missing
         "Bea - Deux.mp3": (*bea[:4], None, ""),
         "Cy - Trois.mp3": cy,
-        "Dan - Live.mp3": (*dan[:5], "Live, remasterisé"),
+        "Dan - Live.mp3": (*dan[:3], "Rock", -3.25, "Live, remasterisé"),
     }
     # Beets 2.5.1 does not note the date of what it reads: the loop does, so a
     # file is read once, and not at every turn

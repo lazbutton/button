@@ -1,6 +1,8 @@
-"""The journal of the gestures on the bank (FON-66): one row per lot, one per change.
+"""The saved views of the bank's table (FON-65): each account keeps its own.
 
-Instants in these tables are naive UTC (see radiotomate.models.journal).
+A view is a name and what the table shows: its columns, its order, its ranking and
+its filters, as JSON. It goes with its account. Its times are naive UTC, like the new
+tables.
 """
 
 from sqlalchemy import text
@@ -10,54 +12,23 @@ async def upgrade(conn):
     await conn.execute(
         text(
             """
-            CREATE TABLE journal_entries (
+            CREATE TABLE bank_views (
                 id INTEGER NOT NULL PRIMARY KEY,
-                gesture VARCHAR NOT NULL,
-                username VARCHAR NOT NULL,
+                user_id INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+                name VARCHAR NOT NULL,
+                state JSON NOT NULL,
                 created DATETIME NOT NULL,
-                titles INTEGER NOT NULL DEFAULT 0,
-                undo_of INTEGER REFERENCES journal_entries (id) ON DELETE SET NULL,
-                details JSON NOT NULL DEFAULT '{}'
+                modified DATETIME NOT NULL,
+                CONSTRAINT uq_bank_views_user_name UNIQUE (user_id, name)
             )
             """
         )
     )
     await conn.execute(
-        text(
-            """
-            CREATE TABLE journal_changes (
-                id INTEGER NOT NULL PRIMARY KEY,
-                entry_id INTEGER NOT NULL
-                    REFERENCES journal_entries (id) ON DELETE CASCADE,
-                beets_id INTEGER,
-                path VARCHAR NOT NULL DEFAULT '',
-                label VARCHAR NOT NULL DEFAULT '',
-                field VARCHAR NOT NULL,
-                old_value JSON,
-                new_value JSON,
-                status VARCHAR NOT NULL DEFAULT 'pending',
-                reason VARCHAR,
-                applied_at DATETIME
-            )
-            """
-        )
+        text("CREATE INDEX ix_bank_views_user_id ON bank_views (user_id)")
     )
-    for column in ("gesture", "username", "created", "undo_of"):
-        await conn.execute(
-            text(
-                f"CREATE INDEX ix_journal_entries_{column} "
-                f"ON journal_entries ({column})"
-            )
-        )
-    for column in ("entry_id", "beets_id", "status"):
-        await conn.execute(
-            text(
-                f"CREATE INDEX ix_journal_changes_{column} "
-                f"ON journal_changes ({column})"
-            )
-        )
 
 
 async def downgrade(conn):
-    await conn.execute(text("DROP TABLE journal_changes"))
-    await conn.execute(text("DROP TABLE journal_entries"))
+    await conn.execute(text("DROP INDEX ix_bank_views_user_id"))
+    await conn.execute(text("DROP TABLE bank_views"))
