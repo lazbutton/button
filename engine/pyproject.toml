@@ -113,3 +113,8 @@ ignore = [
     # missing-trailing-comma - ruff format takes care of this
     "COM812",
 ]
+
+[tool.ruff.lint.isort]
+# beetsplug is the namespace of Beets: its plugins, like replaygain, are not ours,
+# though our plugin of the fiches lives in it (beetsplug/fiches.py).
+known-third-party = ["beetsplug"]
