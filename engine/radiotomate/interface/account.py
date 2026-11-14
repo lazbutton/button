@@ -3,6 +3,7 @@ from werkzeug.exceptions import BadRequest
 
 from radiotomate.auth import current_user, login_required
 from radiotomate.interface.json_util import read_json_object
+from radiotomate.services.bank_titles import bank_tidy_enabled
 
 blueprint = Blueprint("account", __name__, template_folder="templates")
 
@@ -15,6 +16,8 @@ async def account_json():
         {
             "username": user.username,
             "permissions": user.permissions_payload(),
+            # What the console shows of the work in progress (ADR 0009).
+            "features": {"bank_tidy": await bank_tidy_enabled(g.dbsession)},
         },
     )
 
