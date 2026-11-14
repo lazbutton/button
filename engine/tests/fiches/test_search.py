@@ -3,9 +3,9 @@
 Les cas de recherche de Hopper : « la cascade » de `tests/radio.test.ts`, et, de
 `tests/radio-catalogue.test.ts`, « cherche chez Deezer, puis MusicBrainz, puis
 Bandcamp » et « cherche avec le texte relu, l'album de la radio, Tidal, puis
-MusicBrainz en recherche floue ». Bandcamp, Tidal et Apple Music viendront avec
-FON-30 : leurs cas ne trouvent rien ici. Puis l'empreinte, le verdict, les pannes et
-les preuves gardées.
+MusicBrainz en recherche floue ». Tidal, Apple Music et Bandcamp (FON-30) y sont
+joués par leurs vraies réponses, réduites ; éteints, ils ne sont jamais appelés. Puis
+l'empreinte, le verdict, les pannes et les preuves gardées.
 """
 
 import dataclasses
@@ -20,6 +20,7 @@ from radiotomate.fiches.proposals import (
     FINGERPRINT,
     OTHER_PIECE,
     OTHER_VERSION,
+    AppleDetails,
     Track,
     build_row,
     proposals,
@@ -31,7 +32,16 @@ from radiotomate.fiches.search import (
     find_loosely,
     find_radio_track,
 )
-from radiotomate.fiches.sources import ACOUSTID, component
+from radiotomate.fiches.sources import (
+    ACOUSTID,
+    BANDCAMP_DETAILS,
+    BANDCAMP_SEARCH,
+    TIDAL_TOKEN,
+    Platforms,
+    SourceSettings,
+    Tidal,
+    component,
+)
 from radiotomate.fiches.third import SWAPPED
 from radiotomate.fiches.variants import RadioTrack
 from tests.fiches.fakes import Services, fake_fpcalc, http
@@ -220,7 +230,7 @@ def _loose(answers, artist, title, seconds):
 def test_looks_on_deezer_then_musicbrainz():
     answers = Answers()
     # Le « G » est passé du titre à l'artiste : Hopper le trouve sur un compte de
-    # label Bandcamp, que FON-30 ajoutera.
+    # label Bandcamp, ici éteint.
     assert _loose(answers, "MR SWEETY", "G AT THE PLACE TO BE", 305) is None
 
     answers.musicbrainz = [
@@ -439,7 +449,7 @@ def test_looks_with_the_reread_text_the_files_album_then_a_fuzzy_musicbrainz():
         "dans l'album de la radio",
     )
 
-    # Hopper trouve « Stars » de Moiré chez Tidal, que FON-30 ajoutera.
+    # Hopper trouve « Stars » de Moiré chez Tidal, ici éteint.
     answers.albums = []
     assert _harder(answers, "Moiri", "Stars", 314) is None
 
@@ -1062,3 +1072,354 @@ def test_the_loose_and_third_judges_agree_on_the_swapped_reason():
     from radiotomate.fiches.loose import _SWAPPED
 
     assert _SWAPPED == SWAPPED
+
+
+# ===== Tidal, Apple Music et Bandcamp (FON-30) =====
+
+TIDAL_API = "https://openapi.tidal.com/v2/searchResults?"
+
+
+def _tidal_document(*tracks):
+    """La réponse d'une recherche de Tidal, au format JSON:API : chaque morceau,
+    son artiste et son album dans `included`."""
+    included = []
+    for track in tracks:
+        number = track["id"]
+        attributes = {
+            "title": track["title"],
+            "duration": track.get("duration", "PT4M"),
+            **({"isrc": track["isrc"]} if track.get("isrc") else {}),
+        }
+        included += [
+            {
+                "id": number,
+                "type": "tracks",
+                "attributes": attributes,
+                "relationships": {
+                    "artists": {"data": [{"id": f"a{number}", "type": "artists"}]},
+                    "albums": {"data": [{"id": f"b{number}", "type": "albums"}]},
+                },
+            },
+            {
+                "id": f"a{number}",
+                "type": "artists",
+                "attributes": {"name": track["artist"]},
+            },
+            {
+                "id": f"b{number}",
+                "type": "albums",
+                "attributes": {
+                    "title": track.get("album", "Album"),
+                    "releaseDate": track.get("date"),
+                },
+            },
+        ]
+    links = [{"id": track["id"], "type": "tracks"} for track in tracks]
+    return {
+        "data": {
+            "id": "q",
+            "type": "searchResults",
+            "relationships": {"tracks": {"data": links}},
+        },
+        "included": included,
+    }
+
+
+class Platforms3:
+    """Les réponses de Tidal, d'Apple Music et de Bandcamp, en plus de celles de
+    Deezer et de MusicBrainz, qui ne trouvent rien par défaut."""
+
+    def __init__(self) -> None:
+        self.deezer: dict | None = None
+        self.tidal: list = []
+        self.isrc: dict = {}
+        self.itunes: list = []
+        self.bandcamp: list = []
+        self.pages: dict = {}
+        self.recordings: list = []
+
+    def __call__(self, url):  # noqa: PLR0911
+        if url == TIDAL_TOKEN:
+            return {"access_token": "jeton", "expires_in": 3600}
+        if url.startswith(TIDAL_API):
+            return _tidal_document(*self.tidal)
+        if url.startswith(f"{DEEZER}/track/isrc:"):
+            return self.isrc.get(url.rsplit(":", 1)[1])
+        if url.startswith(DEEZER):
+            return self.deezer or {"data": []}
+        if url.startswith("https://itunes.apple.com/search"):
+            return {"results": self.itunes}
+        if url == BANDCAMP_SEARCH:
+            return {"auto": {"results": self.bandcamp}}
+        if url.startswith(BANDCAMP_DETAILS):
+            return self.pages.get(url.rsplit("=", 1)[1])
+        if url.startswith(MB):
+            return {"recordings": self.recordings}
+        return None
+
+
+def _platforms(client, *, tidal=False, apple=False, bandcamp=False):
+    return Platforms(
+        Tidal(client, "id-test", "secret-test") if tidal else None, apple, bandcamp
+    )
+
+
+def _host(url):
+    return url.split("/")[2]
+
+
+def test_tidal_then_the_same_track_on_deezer_by_its_isrc():
+    answers = Platforms3()
+    answers.tidal = [
+        {
+            "id": "7",
+            "title": "Swarm Behaviour",
+            "artist": "Seleem",
+            "isrc": "QZ1234567890",
+        }
+    ]
+    answers.isrc = {"QZ1234567890": _deezer_track(42, isrc="QZ1234567890")}
+    client = http(Services(answer=answers))
+    found = find_radio_track(client, SELEEM, platforms=_platforms(client, tidal=True))
+    assert found is not None
+    assert (found.source, found.platform, found.id) == ("tidal", "deezer", "42")
+
+
+def test_tidal_found_alone_keeps_its_own_link():
+    answers = Platforms3()
+    answers.tidal = [{"id": "7", "title": "Swarm Behaviour", "artist": "Seleem"}]
+    client = http(Services(answer=answers))
+    found = find_radio_track(client, SELEEM, platforms=_platforms(client, tidal=True))
+    assert (found.source, found.platform, found.id) == ("tidal", "tidal", "7")
+    assert found.url == "https://tidal.com/browse/track/7"
+
+
+def test_a_source_down_does_not_keep_another_from_finding():
+    """Deezer ne répond pas, Tidal trouve : la panne d'une source n'empêche rien."""
+    answers = Platforms3()
+    answers.deezer = (503, None)
+    answers.tidal = [{"id": "7", "title": "Swarm Behaviour", "artist": "Seleem"}]
+    client = http(Services(answer=answers))
+    found = find_radio_track(client, SELEEM, platforms=_platforms(client, tidal=True))
+    assert found.source == "tidal"
+
+
+def test_bandcamp_at_the_letter_never_takes_a_label_account():
+    """Sans album à comparer, un compte de label ne prouve rien."""
+    answers = Platforms3()
+    answers.bandcamp = [
+        {"type": "t", "id": 1, "band_id": 2, "name": "Seleem - Swarm Behaviour"}
+    ]
+    answers.pages = {
+        "1": {
+            "id": 1,
+            "type": "t",
+            "title": "Seleem - Swarm Behaviour",
+            "band": {"band_id": 2, "name": "Bigamo"},
+            "bandcamp_url": "https://bigamo.bandcamp.com/track/seleem-swarm-behaviour",
+            "tracks": [{"track_id": 1, "duration": 240}],
+        }
+    }
+    client = http(Services(answer=answers))
+    platforms = _platforms(client, bandcamp=True)
+    assert find_radio_track(client, SELEEM, platforms=platforms) is None
+    # Sur le compte de l'artiste, le même morceau est le bon.
+    answers.pages["1"] = {
+        **answers.pages["1"],
+        "title": "Swarm Behaviour",
+        "band": {"band_id": 2, "name": "Seleem"},
+        "bandcamp_url": "https://seleem.bandcamp.com/track/swarm-behaviour",
+    }
+    answers.bandcamp[0]["name"] = "Swarm Behaviour"
+    client = http(Services(answer=answers))
+    platforms = _platforms(client, bandcamp=True)
+    found = find_radio_track(client, SELEEM, platforms=platforms)
+    assert (found.source, found.platform) == ("bandcamp", "bandcamp")
+    assert found.url == "https://seleem.bandcamp.com/track/swarm-behaviour"
+
+
+def test_apple_music_found_at_the_letter_gives_its_genre():
+    answers = Platforms3()
+    answers.itunes = [
+        {
+            "wrapperType": "track",
+            "kind": "song",
+            "trackId": 99,
+            "artistName": "Seleem",
+            "trackName": "Swarm Behaviour",
+            "collectionName": "Swarm",
+            "trackTimeMillis": 240_000,
+        }
+    ]
+    services = Services(
+        {
+            "https://itunes.apple.com/lookup?id=99&country=FR": {
+                "results": [
+                    {
+                        "primaryGenreName": "Electronic",
+                        "releaseDate": "2020-03-06T08:00:00Z",
+                        "collectionName": "Swarm",
+                    }
+                ]
+            }
+        },
+        answer=answers,
+    )
+    searcher = Searcher(http(services), sources=SourceSettings(apple=True))
+    item = Track(title="Swarm Behaviour", artist="Seleem", length=240)
+    found = searcher.search(item)
+    assert found.result.status == "trouvé"
+    assert (found.result.match.source, found.result.match.id) == ("apple", "99")
+    assert found.result.details.apple == AppleDetails(
+        genre="Electronic", date="2020-03-06T08:00:00Z", album="Swarm"
+    )
+    row = build_row(item, found.result, {})
+    assert row.found_at == "Apple Music"
+    assert row.genres == "Apple Music : Electronic"
+
+
+def test_the_cascade_asks_each_source_in_its_turn():
+    """Deezer, toutes les variantes ; Tidal, trois ; Apple Music, deux ; les sorties
+    de l'artiste chez Deezer ; Bandcamp, deux."""
+    services = Services(answer=Platforms3())
+    client = http(services)
+    platforms = _platforms(client, tidal=True, apple=True, bandcamp=True)
+    track = RadioTrack("Seleem & Moth", "Swarm Behaviour")
+    assert find_radio_track(client, track, platforms=platforms) is None
+    hosts = [_host(url) for url in services.asked]
+    turns = list(dict.fromkeys(hosts))
+    assert turns == [
+        "api.deezer.com",
+        "auth.tidal.com",
+        "openapi.tidal.com",
+        "itunes.apple.com",
+        "bandcamp.com",
+    ]
+    assert hosts.count("openapi.tidal.com") == 3
+    assert hosts.count("itunes.apple.com") == 2
+    assert hosts.count("bandcamp.com") == 2
+    # Les sorties de l'artiste, entre Apple Music et Bandcamp.
+    artists = hosts.index("api.deezer.com", hosts.index("itunes.apple.com"))
+    assert hosts.index("itunes.apple.com") < artists < hosts.index("bandcamp.com")
+    assert "search/artist" in services.asked[artists]
+
+
+def test_a_source_off_is_never_called(caplog):
+    """Par défaut, Tidal, Apple Music et Bandcamp sont éteints ; Tidal allumé sans
+    clé d'application est sauté, et le journal le dit une fois."""
+    for sources in (None, SourceSettings(tidal=True)):
+        services = Services(answer=Platforms3())
+        with caplog.at_level(logging.WARNING):
+            searcher = Searcher(http(services), sources=sources)
+            item = Track(title="Swarm Behaviour", artist="Seleem", length=240)
+            assert searcher.search(item).result.status == "rien"
+            assert searcher.search(item).result.status == "rien"
+        hosts = {_host(url) for url in services.asked}
+        assert hosts == {"api.deezer.com", "musicbrainz.org"}
+    assert [record.message for record in caplog.records] == [
+        "fiches : Tidal allumé sans clé d'application, sauté"
+    ]
+
+
+def test_looks_on_bandcamp_last_label_accounts_included():
+    """Le cas de Hopper : le « G » est passé du titre à l'artiste, et le morceau
+    n'est que sur le compte d'un label ; la durée tient lieu de preuve."""
+    answers = Platforms3()
+    answers.bandcamp = [
+        {
+            "type": "t",
+            "id": 5,
+            "band_id": 6,
+            "name": "At The Place To Be",
+            "band_name": "Label Records",
+        }
+    ]
+    answers.pages = {
+        "5": {
+            "id": 5,
+            "type": "t",
+            "title": "At The Place To Be",
+            "tralbum_artist": 'Mr. Sweety "G"',
+            "band": {"band_id": 6, "name": "Label Records"},
+            "release_date": 1463702400,
+            "bandcamp_url": "https://label.bandcamp.com/track/at-the-place-to-be",
+            "tracks": [{"track_id": 5, "duration": 307}],
+        }
+    }
+    services = Services(answer=answers)
+    client = http(services)
+    item = Track(title="G AT THE PLACE TO BE", artist="MR SWEETY", length=305)
+    assert find_loosely(client, item) is None
+    found = find_loosely(client, item, _platforms(client, bandcamp=True))
+    assert found is not None
+    assert (found.source, found.platform) == ("rapprochement", "bandcamp")
+    assert found.date == "2016-05-20"
+    assert found.why == (
+        "artiste à une faute près",
+        "titre à une faute près",
+        "durée à 2 s",
+    )
+    assert found.credited == 'Mr. Sweety "G"'
+    # Bandcamp après Deezer et MusicBrainz.
+    hosts = [_host(url) for url in services.asked]
+    assert hosts[-2:] == ["bandcamp.com", "bandcamp.com"]
+    assert "musicbrainz.org" in hosts[:-2]
+
+
+def test_looks_on_tidal_after_the_files_album():
+    """Le cas de Hopper : « Stars » de Moiré, chez Tidal ; puis MusicBrainz en
+    recherche floue, et Apple Music en dernier."""
+    answers = Platforms3()
+    answers.tidal = [
+        {
+            "id": "30324729",
+            "title": "Stars",
+            "artist": "Moiré",
+            "duration": "PT5M15S",
+            "isrc": "GBX721400123",
+            "date": "2014-03-17",
+        }
+    ]
+    services = Services(answer=answers)
+    client = http(services)
+    item = Track(title="Stars", artist="Moiri", length=314)
+    found = find_harder(client, item, _platforms(client, tidal=True))
+    assert found is not None
+    assert (found.platform, found.isrc, found.date) == (
+        "tidal",
+        "GBX721400123",
+        "2014-03-17",
+    )
+    assert found.credited == "Moiré"
+    assert not any(_host(url) == "musicbrainz.org" for url in services.asked)
+
+    answers.tidal = []
+    services = Services(answer=answers)
+    client = http(services)
+    platforms = _platforms(client, tidal=True, apple=True)
+    assert find_harder(client, item, platforms) is None
+    hosts = [_host(url) for url in services.asked]
+    last_tidal = len(hosts) - 1 - hosts[::-1].index("openapi.tidal.com")
+    assert last_tidal < hosts.index("musicbrainz.org") < hosts.index("itunes.apple.com")
+    assert hosts.count("itunes.apple.com") == 1
+
+
+def test_apple_music_is_the_third_passs_last_resort():
+    answers = Platforms3()
+    answers.itunes = [
+        {
+            "wrapperType": "track",
+            "kind": "song",
+            "trackId": 31,
+            "artistName": "Moiré",
+            "trackName": "Stars",
+            "collectionName": "Shelter",
+            "trackTimeMillis": 315_000,
+            "releaseDate": "2014-03-17T07:00:00Z",
+        }
+    ]
+    client = http(Services(answer=answers))
+    item = Track(title="Stars", artist="Moiri", length=314)
+    found = find_harder(client, item, _platforms(client, apple=True))
+    assert (found.platform, found.id, found.date) == ("apple", "31", "2014-03-17")
+    assert found.album == "Shelter"
