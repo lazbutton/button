@@ -190,7 +190,7 @@ L’image du playout passe `apt-get upgrade` sur celle de Liquidsoap, que ses au
 
 `brand.json` et `brand.py` portent le nom affiché (`INTERFACE_NAME`), le logo et les libellés, ceux du logiciel : le `brand.json` du paquet ne donne aucune adresse. Le nom de la station, les adresses de son flux et de son direct, et le lien de son code source se règlent dans la console : des clés `station.*` de la table `settings` (`services/station.py`), sans migration. La console les pose sur son `brand.json`, qui reste le repli. L'adresse du direct se lit aussi par tout compte, pour « Passer en direct » : `GET /station/harbor.json`. Les pages HTMX gardent le nom de `brand.json`. `layout.jinja` est en `lang=fr`, avec `suite.css`. La feuille `sass/_suite.scss` est la charte noir et blanc du pupitre. Les pages HTMX d’origine (live, carts, auto-DJ, utilisateurs) restent servies par le même processus.
 
-## Schéma, de v7 à v18
+## Schéma, de v7 à v19
 
 L’amont s’arrête à v6. Les versions suivantes :
 
@@ -208,6 +208,7 @@ L’amont s’arrête à v6. Les versions suivantes :
 | v16 | `carts.ident_pads` |
 | v17 | Agenda : diffusions datées, invités, fichiers des sets, jours annulés des émissions hebdo |
 | v18 | `users.stream_token_hash` et `users.stream_token_created_at` : le jeton d’encodeur |
+| v19 | `bank_views` : les vues du tableau de la banque que chaque compte garde (FON-65), effacées avec leur compte |
 
 `radiotomate update --target-version` redescend le schéma. `engine/tests/test_migrations.py` monte puis redescend chaque version sur une base remplie : la descente rend tout ce qui existait avant la montée, sauf pour quatre versions. v7 remet aux créneaux de minuit le titre et la couleur par défaut, pas les leurs. v9 remet `grouping:rotation` à une Rotation qui cherchait déjà `path:/media/10-rotation` avant elle. v13 rend aux carts sortis du cron leur mode `TIMED`, mais pas leur `schedule_correct` ni leur tâche APScheduler. v14 ne défait rien : ses carts restent en `CLOCK`, et les tables APScheduler ne reviennent pas. Le test remonte ensuite chaque version : la montée repasse, et rend les mêmes tables, sauf pour deux versions dont la descente laisse ce que la montée a créé. Celle de v1 garde la table `metadata_log`, et la montée bute dessus ; celle de v12 ne fait rien, et la montée bute sur la colonne `carts.bank_folder`, restée. La 0.1.0, première version publiée, est déjà en v18 : revenir à une version publiée ne passe jamais par ces descentes.
 
@@ -223,7 +224,7 @@ Interface : `account.py`, `csrf.py`, `emissions.py`, `integrity.py`, `json_util.
 
 Agenda : `models/agenda.py`, `domain/agenda.py`, `services/agenda.py`, `scheduler/agenda.py`, `interface/agenda.py`, `interface/public.py`. Banque : `services/media_bank.py`, `services/bank_titles.py`, `services/bank_plays.py`.
 
-Fiches de la bibliothèque : `fiches/`, les règles de l’outil de catalogue de Hopper (texte normalisé, variantes d’un titre, règles, seconde et troisième passes, propositions), sans Quart, sans Beets, sans réseau ; et la recherche d’un titre en ligne, par httpx, chez Deezer, MusicBrainz, Wikidata et AcoustID, avec un seau et un disjoncteur par service (`http.py`, `sources.py`, `search.py`), et son empreinte par `fpcalc` (`fingerprint.py`).
+Fiches de la bibliothèque : `fiches/`, les règles de l’outil de catalogue de Hopper (texte normalisé, variantes d’un titre, règles, seconde et troisième passes, propositions), sans Quart, sans Beets, sans réseau ; et la recherche d’un titre en ligne, par httpx, chez Deezer, MusicBrainz, Wikidata et AcoustID, et, chacune allumée par son réglage, chez Tidal, Apple Music et Bandcamp, avec un seau et un disjoncteur par service (`http.py`, `sources.py`, `search.py`), et son empreinte par `fpcalc` (`fingerprint.py`).
 
 Les tests nouveaux couvrent l’horloge, le conducteur, les alertes, le harbor, la rétention, le CSRF, les JSON d’admin, le tick filtré, l’Agenda et la banque. `liquidsoap --check` sur `playout/radiotomate.liq` fait partie de la vérification.
 

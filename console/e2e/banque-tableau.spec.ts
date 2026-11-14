@@ -212,3 +212,65 @@ test("devant un moteur qui n'a pas le tableau, la console demande de le mettre �
   await page.goto("/sons?onglet=importer");
   await expect(page.getByText("Mets à jour le moteur")).toBeVisible();
 });
+
+/** Les vues gardées, tenues ici comme le moteur les tient (FON-65). Rend les corps reçus. */
+async function vues(page: Page): Promise<Array<Record<string, unknown>>> {
+  const recus: Array<Record<string, unknown>> = [];
+  const gardees: Array<{ id: number; name: string; state: unknown; modified: string }> = [];
+  await page.route("**/media/views**", async (route: Route) => {
+    const requete = route.request();
+    if (requete.method() === "GET") return route.fulfill({ json: { views: gardees } });
+    const corps = requete.postDataJSON() as Record<string, unknown>;
+    recus.push(corps);
+    if (requete.method() === "POST") {
+      const vue = { id: gardees.length + 1, name: String(corps.name), state: corps.state, modified: "2026-11-14T17:00+01:00" };
+      gardees.push(vue);
+      return route.fulfill({ status: 201, json: { view: vue } });
+    }
+    return route.fulfill({ status: 404, json: { error: "not_found" } });
+  });
+  return recus;
+}
+
+test("choisir ses colonnes, garder la vue sous un nom, puis la rouvrir", async ({ page }) => {
+  await tableau(page);
+  const recus = await vues(page);
+  await seConnecter(page, "admin");
+  await expect(antenne(page)).toBeVisible();
+  await page.goto("/sons?onglet=importer&ranger=famille&groupe=jazz");
+
+  const jazz = page.getByRole("region", { name: "Jazz" });
+  await jazz.getByRole("button", { name: "Colonnes" }).click();
+  const colonnes = page.getByRole("dialog", { name: "Colonnes du tableau" });
+  await colonnes.getByRole("checkbox", { name: "Album" }).click();
+  // Au clavier : l'année monte de trois places, devant l'artiste.
+  for (let fois = 0; fois < 3; fois++) await colonnes.getByRole("button", { name: "Monter Année" }).click();
+  await page.keyboard.press("Escape");
+  await expect(jazz.getByRole("columnheader", { name: "Album" })).toHaveCount(0);
+  await expect(jazz.getByRole("columnheader").nth(2)).toHaveText("Année");
+
+  await jazz.getByRole("button", { name: "Vues" }).click();
+  await page.getByRole("menuitem", { name: "Garder cette vue…" }).click();
+  await page.getByRole("textbox", { name: "Nom" }).fill("Jazz à relire");
+  await page.getByRole("button", { name: "Garder la vue" }).click();
+  await expect(jazz.getByRole("button", { name: "Jazz à relire" })).toBeVisible();
+  expect(recus[0]).toEqual({
+    name: "Jazz à relire",
+    state: {
+      ranking: "famille",
+      group: "jazz",
+      q: "",
+      sort: "artist",
+      order: "asc",
+      columns: ["title", "year", "artist", "famille", "genre", "duration", "fiche"],
+    },
+  });
+
+  // Ailleurs dans la banque, la vue se rouvre d'un clic.
+  await page.goto("/sons?onglet=importer&ranger=album");
+  const banque = page.getByRole("region", { name: "Toute la banque" });
+  await banque.getByRole("button", { name: "Vues" }).click();
+  await page.getByRole("menuitem", { name: "Jazz à relire" }).click();
+  await expect(page.getByRole("region", { name: "Jazz" }).getByRole("columnheader", { name: "Album" })).toHaveCount(0);
+  await expect(page).toHaveURL(/ranger=famille&groupe=jazz/);
+});

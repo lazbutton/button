@@ -31,6 +31,7 @@ La CI lance `pytest` avec `TZ=Europe/Paris`, sans `tests/interface` ni `tests/e2
 | `tests/fiches/` | Les cas de Hopper sur les règles et la recherche des fiches, un module par fichier. Les services y sont joués par un faux transport httpx et une horloge simulée (`fakes.py`). Ils tournent en CI |
 | `tests/interface/` | Tests Playwright des pages HTMX de l'amont. Hors CI |
 | `tests/e2e/` | Le semis des parcours de la console (`scripts/e2e.sh`). Hors pytest |
+| `tests/banque/` | Le banc de la banque (TST-16) : les gestes qui écrivent dans les fichiers, rejoués avec la vraie boucle de Beets sur une copie de vraie banque (`../scripts/verifier.sh banque`, `BUTTON_BANQUE_ECHANTILLON`). `test_banc.py` le joue sur des fichiers fabriqués, en CI : [docs/developpement.md](../docs/developpement.md#la-banque-sur-une-copie-de-vraie-banque) |
 
 ## Ajouter une route JSON
 
@@ -41,7 +42,7 @@ La CI lance `pytest` avec `TZ=Europe/Paris`, sans `tests/interface` ni `tests/e2
 
 ## Migrations
 
-- Une migration est `radiotomate/commands/update/vNN.py`, avec `async def upgrade(conn)` et `async def downgrade(conn)`. La dernière est v18. Prendre le numéro libre au moment d'écrire, et le vérifier encore avant de fusionner : deux branches peuvent prendre le même.
+- Une migration est `radiotomate/commands/update/vNN.py`, avec `async def upgrade(conn)` et `async def downgrade(conn)`. La dernière est v19. Prendre le numéro libre au moment d'écrire, et le vérifier encore avant de fusionner : deux branches peuvent prendre le même.
 - Une migration publiée ne se modifie jamais, même pour un nom ou un commentaire.
 - `radiotomate update` applique les migrations, et `--target-version N` redescend. `radiotomate-init` lance `update` à chaque démarrage de la station. La version du schéma est la clé `SCHEMA_VERSION` de la table `settings`.
 - Chaque version passe dans sa propre transaction, avec la mise à jour de `SCHEMA_VERSION` : celle qui échoue ne laisse rien. Une migration ne termine donc jamais la transaction : ni `commit`, ni `rollback`, ni `VACUUM`, ni changement de `journal_mode`. `tests/test_update_atomic.py` le vérifie pour chaque version.
