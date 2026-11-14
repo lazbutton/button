@@ -385,7 +385,10 @@ with closing(sqlite3.connect(library)) as con:
     done = set()
     if "migrations" in tables:
         done = set(con.execute("select name, table_name from migrations"))
-due = {(migration.name, model._table) for migration, models in Library._migrations for model in models}
+# Beets 2.5 n'a pas de migrations : rien à copier. Les scripts d'une version
+# peuvent tourner sur l'image d'avant, comme dans les bancs de la CI.
+migrations = getattr(Library, "_migrations", ())
+due = {(migration.name, model._table) for migration, models in migrations for model in models}
 if due <= done:
     sys.exit(0)
 backups = Path(os.environ.get("RADIOTOMATE_DATA", "/data")) / "backups"

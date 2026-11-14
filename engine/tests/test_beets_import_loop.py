@@ -606,7 +606,13 @@ def test_the_engine_opens_the_library_of_the_station(tmp_path: Path):
     assert not list((tmp_path / "data").rglob("*.bak"))
     assert not list((tmp_path / "data").glob("backups/beets-*"))
 
-    # BeetsIntegration.default() sets Beets up as the interface and the scheduler do
+    # BeetsIntegration.default() sets Beets up as the interface and the scheduler do.
+    # Its ReplayGain plugin asks ffmpeg for its filters, and measures nothing here.
+    ffmpeg = tmp_path / "bin" / "ffmpeg"
+    ffmpeg.write_text(
+        "#!/bin/sh\necho 'configuration: --enable-libebur128'\n", encoding="utf-8"
+    )
+    ffmpeg.chmod(0o755)
     opened = _run(
         tmp_path,
         sys.executable,
