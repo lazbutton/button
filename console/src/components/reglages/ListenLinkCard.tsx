@@ -220,7 +220,7 @@ export function ListenLinkCard() {
         <div className="reglages-actions">
           <Button type="submit" highContrast aria-busy={busy}>
             {busy ? <Spinner size="1" /> : null}
-            Enregistrer
+            Valider le lien d’écoute
           </Button>
         </div>
       </div>
