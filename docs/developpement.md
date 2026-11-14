@@ -178,13 +178,14 @@ cd engine && poetry run python -m tests.banque.banc --fabrique   # sans copie : 
 
 **La copie** est faite par la personne qui tient la station : quelques centaines de fichiers de formats variés, pris dans la rotation, les collections, l'habillage, un bac et un set de l'Agenda, avec le rangement d'une banque (`10-rotation`, `20-archives/<collection>`, `30-habillage`, `40-emissions`). Elle reste sur la machine de développement, **hors du dépôt** : le banc refuse un dossier qui y est. Rien n'en entre dans le dépôt, ni fichier, ni titre, ni chemin.
 
-**Ce que fait le banc.** Il ne touche jamais l'échantillon : il en copie les fichiers dans un dossier temporaire (`TMPDIR`), où il monte une station minimale, la vraie `init-radiotomate.sh` puis la vraie boucle `beets-import-loop.sh`, une base du moteur avec un bac qui suit un dossier de l'habillage et une diffusion de l'Agenda dont le set vient de la banque. Il indexe, puis rejoue les gestes du catalogue : déplacer trois titres de la rotation vers une collection, les ramener, en retirer. Après chaque geste, il laisse passer la boucle, et vérifie :
+**Ce que fait le banc.** Il ne touche jamais l'échantillon : il en copie les fichiers dans un dossier temporaire (`TMPDIR`), où il monte une station minimale, la vraie `init-radiotomate.sh` puis la vraie boucle `beets-import-loop.sh`, une base du moteur avec un bac qui suit un dossier de l'habillage et une diffusion de l'Agenda dont le set vient de la banque. Il indexe, puis rejoue les gestes du catalogue : déplacer trois titres de la rotation vers une collection, les ramener, en retirer. Puis ceux du moteur : corriger les fiches de quelques titres de la rotation et d'une collection, puis « Revenir », et corriger un lot qu'il garde (FON-66). Après chaque geste, il laisse passer la boucle, et vérifie :
 
 - chaque fichier qui se lisait avant se lit encore (`ffprobe`) ;
 - aucun identifiant de Beets ne change hors des titres touchés, ni leurs champs, ni les octets de leurs fichiers ;
 - les titres retirés sont dans `90-trash` et sortent de la bibliothèque ;
 - les bacs gardent leurs sons et l'Agenda ses fichiers ;
 - les tags d'avant le déplacement reviennent avec le titre ramené ;
+- une fiche corrigée est dans les tags du fichier et dans la bibliothèque, famille comprise, que le fichier ne porte jamais ; le titre garde son identifiant, et « Revenir » rend les tags d'avant ;
 - la boucle suivante ne réimporte rien ;
 - à la fin, l'échantillon est resté tel qu'il était.
 
