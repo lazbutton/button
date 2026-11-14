@@ -242,6 +242,27 @@ function plural(count: number, one: string, many: string): string {
   return `${count} ${count === 1 ? one : many}`;
 }
 
+/**
+ * What the « Déplacer » window says will follow the move. With `keepsIdentity`,
+ * the engine moves the titles, which keep what they are (ARC-09); without it,
+ * the catalogue moves them, and Beets reads them again as new titles.
+ */
+export function moveNote(count: number, destination: string, keepsIdentity: boolean): string {
+  const one = count === 1;
+  if (keepsIdentity) {
+    return one
+      ? "Il garde sa fiche, son volume mesuré, son sous-dossier, et sa place dans les bacs et dans l'Agenda. " +
+          "À l'antenne ou en file, il reste où il est : déplace-le après son passage."
+      : "Ils gardent leur fiche, leur volume mesuré, leur sous-dossier, et leur place dans les bacs et dans " +
+          "l'Agenda. Un titre à l'antenne ou en file reste où il est : déplace-le après son passage.";
+  }
+  return (
+    `L'auto-DJ ${one ? "le" : "les"} retrouve dans ${destination} au prochain passage de l'indexation, environ ` +
+    `une minute : Beets ${one ? "le relit" : "les relit"} comme ${one ? "un titre nouveau" : "des titres nouveaux"}. ` +
+    "Une diffusion de l'Agenda qui joue un de ces fichiers ne le trouvera plus."
+  );
+}
+
 export function titlesLabel(count: number): string {
   return count === 0 ? "Aucun titre" : plural(count, "titre", "titres");
 }
