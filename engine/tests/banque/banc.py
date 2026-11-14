@@ -272,7 +272,8 @@ class Banc:
             ).fetchone():
                 return {}
             rows = con.execute(
-                "select path, id, album_id, grouping, genre, rg_track_gain, title "
+                # Beets 2.14 range le genre dans une liste, genres (ARC-06).
+                "select path, id, album_id, grouping, genres, rg_track_gain, title "
                 "from items"
             ).fetchall()
         return {
