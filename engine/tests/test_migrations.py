@@ -241,6 +241,61 @@ async def test_v20_categories_search_genres(tmp_path: Path):
     await db.after_serving()
 
 
+async def test_v21_fiches_up_then_down(tmp_path: Path):
+    """
+    v21 keeps the fiches of the library: a fiche takes its propositions with it, a
+    decision outlives them, and going back to v20 takes the three tables away
+    without touching the rest.
+    """
+    db = QuartAlchemy()
+    db.init_from_config({"url": f"sqlite+aiosqlite:///{tmp_path / 'v20.db'}"}, {})
+    await do_update(db.engine, target_version=20)
+    before = await _table_names(db.engine)
+    tables = {"fiches", "fiche_propositions", "fiche_decisions"}
+
+    await do_update(db.engine, target_version=21)
+    assert await _schema_version(db.engine) == 21
+    assert tables <= await _table_names(db.engine)
+    async with db.engine.connect() as conn:
+        await conn.execute(text("PRAGMA foreign_keys = ON"))
+        for sql in (
+            "insert into fiches (id, beets_id, key, text_key, status, level, reasons,"
+            " rules_version, searched_at, created, modified) values (1, 7, 'k', 't',"
+            " 'trouvé', 'sûr', '[]', 1, '2026-11-14', '2026-11-14', '2026-11-14')",
+            "insert into fiche_propositions (fiche_id, field, before, value, level,"
+            " state, created, modified) values (1, 'title', 'a', 'A', 'sûr',"
+            " 'proposée', '2026-11-14', '2026-11-14')",
+            "insert into fiche_decisions (key, field, value, decision, username,"
+            " decided_at) values ('k', 'album', 'Live', 'refusée', 'nadia',"
+            " '2026-11-14')",
+        ):
+            await conn.execute(text(sql))
+        # a fiche twice for one Beets id, a decision twice: refused
+        for sql in (
+            "insert into fiches (beets_id, key, text_key, status, level, reasons,"
+            " rules_version, searched_at, created, modified) values (7, 'k', 't',"
+            " 'trouvé', 'sûr', '[]', 1, '2026-11-14', '2026-11-14', '2026-11-14')",
+            "insert into fiche_decisions (key, field, value, decision, username,"
+            " decided_at) values ('k', 'album', 'Live', 'acceptée', 'samir',"
+            " '2026-11-14')",
+        ):
+            with pytest.raises(Exception, match="UNIQUE"):
+                await conn.execute(text(sql))
+        await conn.execute(text("delete from fiches where id = 1"))
+        assert (
+            await conn.execute(text("select count(*) from fiche_propositions"))
+        ).scalar_one() == 0
+        assert (
+            await conn.execute(text("select count(*) from fiche_decisions"))
+        ).scalar_one() == 1
+        await conn.commit()
+
+    await do_update(db.engine, target_version=20)
+    assert await _schema_version(db.engine) == 20
+    assert await _table_names(db.engine) == before
+    await db.after_serving()
+
+
 # What a station writes at each version, once its database reached it: each migration
 # finds a full database at the version before. Every column of every table holds a
 # value that is neither NULL nor its default, as the tests check, so that losing it
@@ -396,6 +451,25 @@ STATION_DATA = {
             '2026-11-14 09:00:00', '2026-11-14 10:00:00');
         insert into music_categories (name, query, empty_query)
         values ('Jazz', 'genre:Jazz year:1950..1969', '-genre:Rock genre:Jazz');
+    """,
+    21: """
+        insert into fiches (id, beets_id, key, text_key, status, level, reasons,
+            source, url, rules_version, evidence, attempts, error, searched_at,
+            next_at, created, modified)
+        values (1, 42, 'empreinte:abc', 'texte:nina simone|feeling good|172',
+            'erreur', 'erreur', '["MusicBrainz : 503"]', 'deezer',
+            'https://www.deezer.com/track/1', 2, '{"result": {"status": "erreur"}}',
+            3, 'service indisponible', '2026-11-14 09:00:00', '2026-11-14 09:08:00',
+            '2026-11-14 08:00:00', '2026-11-14 09:00:00');
+        insert into fiche_propositions (id, fiche_id, field, before, value, level,
+            why, source, state, error, created, modified)
+        values (1, 1, 'year', '0', '1965', 'à revoir', 'une compilation',
+            'MusicBrainz', 'en erreur', 'fichier en lecture seule',
+            '2026-11-14 09:00:00', '2026-11-14 09:05:00');
+        insert into fiche_decisions (id, key, field, value, decision, username,
+            decided_at)
+        values (1, 'empreinte:abc', 'title', 'Feeling Good', 'refusée', 'nadia',
+            '2026-11-14 10:00:00');
     """,
 }
 

@@ -52,8 +52,8 @@ jobs:
         run: poetry install --no-interaction
       - name: Ruff
         run: |
-          poetry run ruff check radiotomate tests
-          poetry run ruff format --check radiotomate tests
+          poetry run ruff check radiotomate beetsplug tests
+          poetry run ruff format --check radiotomate beetsplug tests
       - name: Pytest
         run: >
           poetry run pytest -q -p no:cacheprovider -o addopts=""

@@ -17,6 +17,10 @@ classifiers = [
 "Source" = "https://github.com/lazbutton/button"
 "Upstream" = "https://git.sr.ht/~martink/radiotomate"
 
+[tool.poetry]
+# The engine, and its plugin of the fiches in the beetsplug namespace of Beets.
+packages = [{ include = "radiotomate" }, { include = "beetsplug" }]
+
 [tool.poetry.dependencies]
 python = ">=3.11,<3.15" # beets 2.14 asks for <3.15
 click = "~8.2.0" # switch to ^8.3.1 once released, because of https://github.com/pallets/click/pull/3068
