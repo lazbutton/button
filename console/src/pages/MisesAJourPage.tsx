@@ -1,6 +1,6 @@
 import { Button } from "@radix-ui/themes";
-import { CircleAlert, CircleCheck, CircleHelp, CircleX, RefreshCw, type LucideIcon } from "lucide-react";
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { ChevronRight, CircleAlert, CircleCheck, CircleHelp, CircleX, RefreshCw, type LucideIcon } from "lucide-react";
+import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   ApiAuthError,
   ApiForbiddenError,
@@ -14,19 +14,26 @@ import { SessionGate } from "../api/SessionGate";
 import {
   UPDATES_JSON,
   UPDATES_REQUEST_JSON,
+  detailLabel,
   formatWhen,
   historyLine,
   lastLine,
   nightlyLine,
+  notesIntro,
   parseNotes,
   pollDelay,
   readFailureMessage,
+  releaseKind,
   requestLine,
+  splitNotes,
   unreachableLine,
   versionLine,
+  withCommands,
   type Inline,
   type Line,
+  type NoteBlock,
   type Tone,
+  type UpdateRelease,
   type UpdatesState,
 } from "../api/updates";
 import { SettingsCard, SettingsHead } from "../components/reglages/SettingsCard";
@@ -173,10 +180,12 @@ export function MisesAJourPage() {
   }
 
   return (
-    <div className="reglages-section">
+    <div className="reglages-section reglages-updates">
       <SettingsHead
         title="Mises à jour"
-        description="La version de la station, la plus haute publiée, et la mise à jour, d’un bouton. La machine la fait elle-même, dans la minute, comme sudo station update : une sauvegarde d’abord, et si la nouvelle version ne repart pas, la station revient seule à la sienne."
+        description={
+          <Said text="La version de la station, la plus haute publiée, et la mise à jour, d’un bouton. La machine la fait elle-même, dans la minute, comme sudo station update : une sauvegarde d’abord, et si la nouvelle version ne repart pas, la station revient seule à la sienne." />
+        }
         actions={
           <Button variant="soft" color="gray" disabled={busy != null || state == null} onClick={() => void check()}>
             <RefreshCw className="ui-button-icon" aria-hidden="true" />
@@ -187,7 +196,9 @@ export function MisesAJourPage() {
       <div className="reglages-stack reglages-stack--narrow">
         {problem?.kind === "error" ? (
           <section className="reglages-card reglages-notice" role="alert">
-            <p>{problem.message}</p>
+            <p>
+              <Said text={problem.message} />
+            </p>
             <div>
               <Button variant="soft" color="gray" disabled={busy != null} onClick={() => void load()}>
                 Réessayer
@@ -199,8 +210,7 @@ export function MisesAJourPage() {
           <Notice>Réservé à un admin : ce compte ne voit pas les mises à jour.</Notice>
         ) : problem?.kind === "outdated" ? (
           <Notice>
-            Mets à jour le moteur pour avoir cette page : le sien ne connaît pas encore les mises à jour depuis la
-            console. Sur la machine : sudo station update.
+            <Said text="Mets à jour le moteur pour avoir cette page : le sien ne connaît pas encore les mises à jour depuis la console. Sur la machine : sudo station update." />
           </Notice>
         ) : state == null ? (
           problem?.kind === "error" ? null : <LoadingState label="Lecture des mises à jour…" />
@@ -241,7 +251,9 @@ function UpdatesView({
   onAsk: () => Promise<void>;
   onWithdraw: () => Promise<void>;
 }) {
-  const version = versionLine(state);
+  // « aujourd’hui », « hier » : relus à chaque lecture de la page, au moins une fois la minute.
+  const now = new Date();
+  const version = versionLine(state, now);
   // Une demande ouverte a sa carte ; « À jour » se dit déjà dans le titre.
   const blocked = state.blocked && !["open", "up_to_date"].includes(state.blocked.code) ? state.blocked : null;
   return (
@@ -263,7 +275,9 @@ function UpdatesView({
 
       <Summary line={version}>
         {state.request ? null : blocked ? (
-          <p className="reglages-updates-blocked">{blocked.message}</p>
+          <p className="reglages-updates-blocked">
+            <Said text={blocked.message} />
+          </p>
         ) : (
           <ConfirmDialog
             open={confirming}
@@ -283,7 +297,7 @@ function UpdatesView({
       </Summary>
 
       {state.request ? (
-        <Summary line={requestLine(state.request)} live>
+        <Summary line={requestLine(state.request, now)} live>
           {state.request.state === "pending" ? (
             <Button variant="soft" color="gray" disabled={busy != null || unreachable} onClick={() => void onWithdraw()}>
               {busy === "withdraw" ? "Retrait…" : "Retirer la demande"}
@@ -292,12 +306,16 @@ function UpdatesView({
         </Summary>
       ) : null}
 
-      {!state.request && state.last ? <Summary line={lastLine(state.last)} heading="La dernière demande" live /> : null}
+      {!state.request && state.last ? (
+        <Summary line={lastLine(state.last, now)} heading="La dernière demande" live />
+      ) : null}
 
       {state.host?.hold ? (
         <SettingsCard
           title="Bloquées sur la machine"
-          description="HOLD bloque toute mise à jour, d’ici comme de la machine. Pour les débloquer, une fois la cause trouvée, sur la machine : sudo station unhold."
+          description={
+            <Said text="HOLD bloque toute mise à jour, d’ici comme de la machine. Pour les débloquer, une fois la cause trouvée, sur la machine : sudo station unhold." />
+          }
         >
           <pre className="reglages-updates-hold">{state.host.hold}</pre>
         </SettingsCard>
@@ -306,13 +324,11 @@ function UpdatesView({
       {state.major ? (
         <SettingsCard
           title={`La ${state.major.version} : une version majeure`}
-          description="Elle demande une action à la station avant de la prendre : elle ne part pas de la console. Une fois l’action faite, sur la machine : sudo station update --major."
+          description={
+            <Said text="Elle demande une action à la station avant de la prendre : elle ne part pas de la console. Une fois l’action faite, sur la machine : sudo station update --major." />
+          }
         >
-          {state.major.action ? (
-            <Notes text={state.major.action} />
-          ) : (
-            <p className="reglages-empty">Ses notes ne se lisent pas ici.</p>
-          )}
+          <Notes text={state.major.action} empty="Ses notes ne se lisent pas ici." />
           <p className="reglages-note">
             <a href={state.major.url} target="_blank" rel="noreferrer">
               Les notes de la {state.major.version}, sur GitHub
@@ -321,32 +337,11 @@ function UpdatesView({
         </SettingsCard>
       ) : null}
 
-      <SettingsCard
-        title="Notes de version"
-        description={
-          state.releases.length
-            ? "Ce que la mise à jour apporte, de la plus récente à la plus ancienne."
-            : "Aucune version plus récente que celle de la station."
-        }
-      >
+      <SettingsCard title="Notes de version" description={notesIntro(state.releases)}>
         {state.releases.length ? (
           <div className="reglages-updates-releases">
             {state.releases.map((release) => (
-              <article key={release.version} className="reglages-updates-release">
-                <h4>
-                  {release.version}
-                  {release.major ? " · majeure" : ""}
-                  {release.published_at ? <span> · publiée le {formatWhen(release.published_at)}</span> : null}
-                </h4>
-                <Notes text={release.notes} />
-                {release.url ? (
-                  <p className="reglages-note">
-                    <a href={release.url} target="_blank" rel="noreferrer">
-                      La {release.version} sur GitHub
-                    </a>
-                  </p>
-                ) : null}
-              </article>
+              <Release key={release.version} release={release} now={now} />
             ))}
           </div>
         ) : null}
@@ -357,13 +352,19 @@ function UpdatesView({
         description="Celles de la console comme celles de la machine, d’après updates.log."
       >
         {state.history.length ? (
-          <ul className="reglages-list">
+          <ul className="reglages-updates-history">
             {state.history.map((entry) => {
-              const line = historyLine(entry);
+              const line = historyLine(entry, now);
+              const Icon = ICON[line.tone];
               return (
-                <li key={`${entry.started_at}-${entry.from}-${entry.to}`}>
-                  <span className="reglages-list-when">{line.when}</span>{" "}
-                  <span className="reglages-list-what">{line.what}</span>
+                <li key={`${entry.started_at}-${entry.from}-${entry.to}`} className={`tone-${line.tone}`}>
+                  <span className="reglages-updates-history-icon" aria-hidden="true">
+                    <Icon />
+                  </span>
+                  <div className="reglages-updates-history-copy">
+                    <p className="reglages-updates-history-title">{line.title}</p>
+                    <p className="reglages-updates-history-detail">{line.detail}</p>
+                  </div>
                 </li>
               );
             })}
@@ -373,25 +374,28 @@ function UpdatesView({
         )}
       </SettingsCard>
 
-      <SettingsCard title="Automatique, la nuit">
-        <p className="reglages-empty">{nightlyLine(state.host)}</p>
-      </SettingsCard>
-
       <SettingsCard title="La machine">
         <dl className="reglages-facts">
           <Fact label="Demandes de la console">
             {state.host == null ? "pas encore prises" : state.host.requests ? "prises chaque minute" : "coupées"}
           </Fact>
           <Fact label="Nouvelles de la machine">
-            {state.host?.seen_at ? `le ${formatWhen(state.host.seen_at)}` : "aucune"}
+            {state.host?.seen_at ? formatWhen(state.host.seen_at, now) : "aucune"}
           </Fact>
           <Fact label="Commande station">{state.host?.command ?? "inconnue"}</Fact>
+          <Fact label="Mises à jour la nuit">pas encore</Fact>
         </dl>
+        <p className="reglages-note">
+          <Said text={nightlyLine(state.host)} />
+        </p>
         {state.services.length ? (
-          <details className="reglages-updates-services">
+          <details className="reglages-updates-fold reglages-updates-services">
             <summary>
-              La version de chaque service
-              {state.recorded_at ? `, relevée le ${formatWhen(state.recorded_at)}` : ""}
+              <ChevronRight className="reglages-updates-chevron" aria-hidden="true" />
+              <span>
+                La version de chaque service
+                {state.recorded_at ? `, relevée ${formatWhen(state.recorded_at, now)}` : ""}
+              </span>
             </summary>
             <ul className="reglages-list">
               {state.services.map((item) => (
@@ -405,6 +409,51 @@ function UpdatesView({
         ) : null}
       </SettingsCard>
     </>
+  );
+}
+
+/**
+ * Une version que la mise à jour apporte : son numéro, ce qu'elle est, sa date,
+ * puis la tête de ses notes, qui dit ce qu'elle demande à la station, et le
+ * détail de ses changements, à déplier.
+ */
+function Release({ release, now }: { release: UpdateRelease; now: Date }) {
+  const { lead, detail, changes } = splitNotes(parseNotes(release.notes));
+  const kind = releaseKind(release.version);
+  return (
+    <article className="reglages-updates-release">
+      <div className="reglages-updates-release-head">
+        <h4>
+          {release.version}{" "}
+          {kind ? (
+            <>
+              <span className={kind === "majeure" ? "reglages-updates-kind is-major" : "reglages-updates-kind"}>
+                {kind}
+              </span>{" "}
+            </>
+          ) : null}
+          {release.published_at ? (
+            <span className="reglages-updates-release-date">publiée {formatWhen(release.published_at, now)}</span>
+          ) : null}
+        </h4>
+        {release.url ? (
+          <a href={release.url} target="_blank" rel="noreferrer">
+            La {release.version} sur GitHub
+          </a>
+        ) : null}
+      </div>
+      {lead.length ? <NoteBlocks blocks={lead} /> : null}
+      {detail.length ? (
+        <details className="reglages-updates-fold reglages-updates-detail">
+          <summary>
+            <ChevronRight className="reglages-updates-chevron" aria-hidden="true" />
+            <span>{detailLabel(release.version, changes)}</span>
+          </summary>
+          <NoteBlocks blocks={detail} />
+        </details>
+      ) : null}
+      {!lead.length && !detail.length ? <p className="reglages-empty">Pas de notes.</p> : null}
+    </article>
   );
 }
 
@@ -429,7 +478,9 @@ function Summary({
       <div className="reglages-summary-copy" role={live ? "status" : undefined}>
         {heading ? <p className="reglages-updates-kicker">{heading}</p> : null}
         <h3 className="reglages-summary-title">{line.title}</h3>
-        <p className="reglages-summary-detail">{line.detail}</p>
+        <p className="reglages-summary-detail">
+          <Said text={line.detail} />
+        </p>
       </div>
       {children ? <div className="reglages-updates-action">{children}</div> : null}
     </section>
@@ -453,6 +504,11 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
+/** Un texte de la page ou du moteur, ses commandes à taper sur la machine en police de code. */
+function Said({ text }: { text: string }) {
+  return <Inlines items={withCommands(text)} />;
+}
+
 function Inlines({ items }: { items: Inline[] }) {
   return (
     <>
@@ -462,6 +518,18 @@ function Inlines({ items }: { items: Inline[] }) {
             return <strong key={index}>{item.text}</strong>;
           case "code":
             return <code key={index}>{item.text}</code>;
+          case "command":
+            // Coupée entre ses mots seulement : « -- » se lit mal seul en fin de ligne.
+            return (
+              <code key={index} className="reglages-updates-command">
+                {item.text.split(" ").map((word, at) => (
+                  <Fragment key={at}>
+                    {at ? " " : null}
+                    <span>{word}</span>
+                  </Fragment>
+                ))}
+              </code>
+            );
           case "link":
             return (
               <a key={index} href={item.href} target="_blank" rel="noreferrer">
@@ -476,10 +544,14 @@ function Inlines({ items }: { items: Inline[] }) {
   );
 }
 
-/** Les notes d'une version : un peu de Markdown, rendu sans HTML. */
-function Notes({ text }: { text: string | null }) {
+/** Des notes de version : un peu de Markdown, rendu sans HTML. */
+function Notes({ text, empty = "Pas de notes." }: { text: string | null; empty?: string }) {
   const blocks = parseNotes(text);
-  if (!blocks.length) return <p className="reglages-empty">Pas de notes.</p>;
+  if (!blocks.length) return <p className="reglages-empty">{empty}</p>;
+  return <NoteBlocks blocks={blocks} />;
+}
+
+function NoteBlocks({ blocks }: { blocks: NoteBlock[] }) {
   return (
     <div className="reglages-updates-notes">
       {blocks.map((block, index) => {

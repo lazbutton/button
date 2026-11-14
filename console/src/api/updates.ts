@@ -5,6 +5,8 @@
  * elle y écrit le résultat. Pur : pas de React, testable en node.
  */
 
+import { addDays, parisWall } from "./agendaView.ts";
+
 export const UPDATES_JSON = "/system/updates.json";
 export const UPDATES_REQUEST_JSON = "/system/updates/request.json";
 
@@ -96,12 +98,21 @@ export type UpdatesState = {
 export type Tone = "ok" | "warn" | "alert" | "off";
 export type Line = { tone: Tone; title: string; detail: string };
 
-/** « 2026-11-12T14:03+01:00 », déjà à l'heure de Paris : « 12/11/2026 à 14:03 ». */
-export function formatWhen(iso: string | null | undefined): string {
+/**
+ * « 2026-11-12T14:03+01:00 », déjà à l'heure de Paris, dit d'après le jour de
+ * `now` à Paris, quel que soit le fuseau du navigateur : « aujourd’hui à 14:03 »,
+ * « hier à 14:03 », « le 12/11 à 14:03 », et l'année quand ce n'est pas celle-ci.
+ */
+export function formatWhen(iso: string | null | undefined, now: Date = new Date()): string {
   const found = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(iso ?? "");
-  if (!found) return "?";
+  if (!found) return "le ?";
   const [, year, month, day, hour, minute] = found;
-  return `${day}/${month}/${year} à ${hour}:${minute}`;
+  const at = `${hour}:${minute}`;
+  const today = parisWall(now).day;
+  const date = `${year}-${month}-${day}`;
+  if (date === today) return `aujourd’hui à ${at}`;
+  if (date === addDays(today, -1)) return `hier à ${at}`;
+  return today.startsWith(`${year}-`) ? `le ${day}/${month} à ${at}` : `le ${day}/${month}/${year} à ${at}`;
 }
 
 /** L'heure seule : « 14:03 ». */
@@ -118,9 +129,9 @@ function sentence(text: string | null | undefined): string {
 }
 
 /** Le haut de la page : la version de la station face à la plus haute publiée. */
-export function versionLine(state: UpdatesState): Line {
+export function versionLine(state: UpdatesState, now: Date = new Date()): Line {
   const installed = state.installed ?? "inconnue";
-  const checked = state.check.at ? `vérifiée le ${formatWhen(state.check.at)}` : "pas encore vérifiée";
+  const checked = state.check.at ? `vérifiée ${formatWhen(state.check.at, now)}` : "pas encore vérifiée";
   if (state.latest == null) {
     const why = state.check.error
       ? `La plus haute version publiée ne se lit pas : ${sentence(state.check.error)}`
@@ -148,8 +159,8 @@ const SAY_AGAIN =
   "La machine réessaie chaque minute : la mise à jour part dès que ni direct ni diffusion de l’Agenda n’est à l’antenne ou ne commence dans les 30 minutes, et qu’aucune autre commande ne tourne sur la machine.";
 
 /** La demande ouverte : où elle en est, en une phrase, puis ce qu'il faut en savoir. */
-export function requestLine(request: UpdateRequest): Line {
-  const asked = `Demandée le ${formatWhen(request.requested_at)}${request.requested_by ? ` par ${request.requested_by}` : ""}`;
+export function requestLine(request: UpdateRequest, now: Date = new Date()): Line {
+  const asked = `Demandée ${formatWhen(request.requested_at, now)}${request.requested_by ? ` par ${request.requested_by}` : ""}`;
   const toward = request.target ? `, vers la ${request.target}` : "";
   if (request.state === "running") {
     return {
@@ -177,8 +188,8 @@ export function requestLine(request: UpdateRequest): Line {
 }
 
 /** La dernière demande close : son résultat, et quoi faire ensuite. */
-export function lastLine(last: UpdateLast): Line {
-  const when = last.finished_at ? `Le ${formatWhen(last.finished_at)}.` : "";
+export function lastLine(last: UpdateLast, now: Date = new Date()): Line {
+  const when = last.finished_at ? sentence(formatWhen(last.finished_at, now)) : "";
   const detail = sentence(last.detail);
   const said = (text: string) => [when, text].filter(Boolean).join(" ");
   switch (last.result) {
@@ -209,37 +220,48 @@ export function lastLine(last: UpdateLast): Line {
   }
 }
 
-const HISTORY: Record<UpdateHistoryEntry["result"], string> = {
-  done: "faite",
-  stopped: "arrêtée par l’antenne",
-  rolled_back: "annulée, revenue à la version d’avant",
-  failed: "échouée",
-  rollback: "défaite à la main",
-  rollback_failed: "retour arrière échoué",
-  other: "",
+/**
+ * Ce que dit chaque résultat de updates.log, et son ton. Le détail de la ligne
+ * dit déjà « pendant le contrôle ; revenue en 1.2.0 », ou « à la main » : le
+ * résultat ne le redit pas, et `alone` le remplace quand la ligne n'en a pas.
+ */
+const HISTORY: Record<UpdateHistoryEntry["result"], { tone: Tone; label: string; alone?: string }> = {
+  done: { tone: "ok", label: "faite" },
+  stopped: { tone: "warn", label: "arrêtée par l’antenne" },
+  rolled_back: { tone: "alert", label: "annulée", alone: "Revenue à la version d’avant." },
+  failed: { tone: "alert", label: "échouée" },
+  rollback: { tone: "warn", label: "retour arrière", alone: "Fait à la main." },
+  rollback_failed: { tone: "alert", label: "retour arrière échoué" },
+  other: { tone: "off", label: "" },
 };
 
-/** Une ligne de updates.log, en français. */
-export function historyLine(entry: UpdateHistoryEntry): { when: string; what: string } {
-  const result = HISTORY[entry.result] || entry.label || "?";
+/**
+ * Une ligne de updates.log, en français : les versions et le résultat, avec son
+ * ton, puis quand, et ce que la machine en a dit.
+ */
+export function historyLine(entry: UpdateHistoryEntry, now: Date = new Date()): Line {
+  const said = HISTORY[entry.result];
+  const result = said.label || entry.label || "?";
+  const when = entry.started_at ? sentence(formatWhen(entry.started_at, now)) : "";
   return {
-    when: formatWhen(entry.started_at),
-    what: `${entry.from} → ${entry.to} : ${result}${entry.detail ? `, ${entry.detail}` : ""}`,
+    tone: said.tone,
+    title: `${entry.from} → ${entry.to} : ${result}`,
+    detail: [when, sentence(entry.detail) || said.alone].filter(Boolean).join(" "),
   };
 }
 
 /**
- * Les mises à jour de la nuit (MAJ-06) ne tournent pas encore : la page dit ce
- * que la machine a réglé, sans interrupteur mort.
+ * Les mises à jour de la nuit (MAJ-06) ne tournent pas encore : la carte de la
+ * machine le dit, avec ce qu'elle a réglé, sans interrupteur mort.
  */
 export function nightlyLine(host: UpdateHost | null): string {
   const later =
-    "Les mises à jour automatiques, chaque nuit, viennent avec une prochaine version de BUTTON. D’ici là : ce bouton, ou sudo station update sur la machine.";
+    "Les mises à jour de la nuit viennent avec une prochaine version de BUTTON. D’ici là : ce bouton, ou sudo station update sur la machine.";
   if (host?.nightly === "auto") {
-    return `${later} La machine est réglée pour les prendre, à ${host.time ?? "04:00"} (${host.zone ?? "Europe/Paris"}) : station config --updates manual l’arrêtera.`;
+    return `${later} La machine est réglée pour les prendre à ${host.time ?? "04:00"} (${host.zone ?? "Europe/Paris"}) : sudo station config --updates manual l’arrêtera.`;
   }
   if (host?.nightly === "manual") {
-    return `${later} La machine est réglée pour s’en passer : station config --updates auto les prendra.`;
+    return `${later} La machine est réglée pour s’en passer : sudo station config --updates auto les prendra.`;
   }
   return later;
 }
@@ -291,6 +313,8 @@ export type Inline =
   | { kind: "text"; text: string }
   | { kind: "strong"; text: string }
   | { kind: "code"; text: string }
+  /** Une commande à taper sur la machine : elle ne se coupe qu'entre ses mots. */
+  | { kind: "command"; text: string }
   | { kind: "link"; text: string; href: string };
 
 export type NoteBlock =
@@ -377,4 +401,65 @@ export function parseNotes(notes: string | null | undefined): NoteBlock[] {
   if (code != null) blocks.push({ kind: "code", text: code.join("\n") });
   flush();
   return blocks;
+}
+
+/**
+ * Les notes d'une version en deux. D'abord ce qu'il faut savoir avant de la
+ * prendre : la tête des notes, qui dit ce que la version demande à la station
+ * (docs/developpement.md, « Publier une version »). Puis le détail des
+ * changements, à déplier : de la première liste, avec le titre qui la précède,
+ * jusqu'à la fin. Sans liste, tout se lit d'emblée.
+ */
+export function splitNotes(blocks: NoteBlock[]): { lead: NoteBlock[]; detail: NoteBlock[]; changes: number } {
+  let cut = blocks.findIndex((block) => block.kind === "list");
+  if (cut < 0) return { lead: blocks, detail: [], changes: 0 };
+  if (cut > 0 && blocks[cut - 1].kind === "heading") cut -= 1;
+  const detail = blocks.slice(cut);
+  const changes = detail.reduce((count, block) => count + (block.kind === "list" ? block.items.length : 0), 0);
+  return { lead: blocks.slice(0, cut), detail, changes };
+}
+
+/** Ce qui déplie le détail d'une version, nommée : la page en montre plusieurs. */
+export function detailLabel(version: string, changes: number): string {
+  return `Le détail de la ${version} : ${changes} changement${changes > 1 ? "s" : ""}`;
+}
+
+/** Correctif, mineure ou majeure, d'après le numéro : la règle des versions, dans docs/developpement.md. */
+export function releaseKind(version: string): "correctif" | "mineure" | "majeure" | null {
+  const found = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
+  if (!found) return null;
+  if (found[3] !== "0") return "correctif";
+  return found[2] !== "0" ? "mineure" : "majeure";
+}
+
+/** Ce que dit la carte des notes, d'après le nombre de versions que la mise à jour apporte. */
+export function notesIntro(releases: UpdateRelease[]): string {
+  if (!releases.length) return "Aucune version plus récente que celle de la station.";
+  if (releases.length === 1) return `Ce que la ${releases[0].version} apporte.`;
+  return `Les ${releases.length} versions que la mise à jour apporte, de la plus récente à la plus ancienne.`;
+}
+
+// --- Les commandes à taper sur la machine ---
+
+/**
+ * Une commande de la machine dans un texte de la page ou du moteur : station,
+ * avec ou sans sudo, l'une de ses commandes, ses options et leur valeur, et le
+ * service que lit logs. La suite de la phrase n'en fait pas partie : « sudo
+ * station unhold les débloque ».
+ */
+const COMMAND =
+  /(?<![\w-])(?:sudo )?station (?:update|rollback|unhold|hold|status|config|logs|backup|restore|requests)(?![\w-])(?: --[a-z][a-z-]*(?: (?:yes|no|auto|manual)(?![\w-]))?)*(?: (?:radiotomate-[a-z]+|console|catalog|nowplaying|icecast|tusd)(?![\w-]))?/g;
+
+/** Un texte de la page, ses commandes à taper sur la machine en police de code. */
+export function withCommands(text: string): Inline[] {
+  const out: Inline[] = [];
+  let last = 0;
+  for (const found of text.matchAll(COMMAND)) {
+    const at = found.index ?? 0;
+    if (at > last) out.push({ kind: "text", text: text.slice(last, at) });
+    out.push({ kind: "command", text: found[0] });
+    last = at + found[0].length;
+  }
+  if (last < text.length) out.push({ kind: "text", text: text.slice(last) });
+  return out;
 }

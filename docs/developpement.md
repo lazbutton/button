@@ -301,7 +301,7 @@ Les stations installent des versions publiées, pas `main` : voir la décision [
 
 Pour publier :
 
-1. Une pull request renomme « Non publié » en `## X.Y.Z` dans le [CHANGELOG](../CHANGELOG.md), et rouvre au-dessus un « Non publié » vide. En tête des notes, ce que la version demande : la version du schéma quand elle migre, l'action pour une majeure. L'action d'une majeure est un paragraphe qui commence par `**Mise en service.**` : `station update` s'arrête devant une majeure, et le cite, d'après le `CHANGELOG.md` que la version joint à ses fichiers de station. Pour voir les notes telles qu'elles seront publiées : `python3 scripts/version.py notes X.Y.Z`.
+1. Une pull request renomme « Non publié » en `## X.Y.Z` dans le [CHANGELOG](../CHANGELOG.md), et rouvre au-dessus un « Non publié » vide. En tête des notes, ce que la version demande : la version du schéma quand elle migre, l'action pour une majeure. La page **Réglages → Mises à jour** de la console montre cette tête, jusqu'à la première liste, et replie la suite : ce qu'une station doit savoir avant de prendre la version va donc dans les paragraphes du début, pas dans la liste. L'action d'une majeure est un paragraphe qui commence par `**Mise en service.**` : `station update` s'arrête devant une majeure, et le cite, d'après le `CHANGELOG.md` que la version joint à ses fichiers de station. Pour voir les notes telles qu'elles seront publiées : `python3 scripts/version.py notes X.Y.Z`.
 2. Une fois la pull request fusionnée, poser le tag sur son commit de fusion, puis le pousser. Un tag à la fois : attendre la fin du job « release, X.Y and stable » avant le suivant.
 
    ```bash
