@@ -479,3 +479,51 @@ def test_updates_command_refuses_what_it_does_not_read(config_path: Path):
     assert _updates(config_path, "host", stdin="[1]").returncode == 1
     unknown = _updates(config_path, "finish", "0123456789ab", "réussie")
     assert unknown.returncode == 2
+
+
+def _fiches(config_path: Path, *options: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["radiotomate", "-c", str(config_path), "maintenance", "fiches", *options],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={key: value for key, value in os.environ.items() if key != "BEETSDIR"},
+    )
+
+
+def _fiche(beets_id: int, status: str) -> str:
+    return (
+        "insert into fiches (beets_id, key, text_key, status, level, reasons,"
+        " rules_version, searched_at, created, modified)"
+        f" values ({beets_id}, 'k{beets_id}', 't{beets_id}', '{status}', '{status}',"
+        " '[]', 1, '2026-11-14', '2026-11-14', '2026-11-14')"
+    )
+
+
+async def test_fiches_says_where_the_search_stands_and_switches_it(config_path: Path):
+    await _database(
+        config_path.parent / "radiotomate.db",
+        _fiche(1, "trouvé"),
+        _fiche(2, "trouvé"),
+        _fiche(3, "erreur"),
+        "insert into fiche_propositions (fiche_id, field, before, value, level,"
+        " state, created, modified) values (1, 'title', 'a', 'A', 'sûr',"
+        " 'proposée', '2026-11-14', '2026-11-14')",
+    )
+
+    shown = _fiches(config_path)
+    assert shown.returncode == 0, shown.stderr
+    assert shown.stdout.splitlines()[:4] == [
+        "Recherche des fiches : coupée.",
+        "3 titre(s) cherché(s).",
+        "Dont 2 trouvé, 1 erreur.",
+        "1 proposition(s) à relire.",
+    ]
+    assert "--allumer" in shown.stdout
+
+    on = _fiches(config_path, "--allumer")
+    assert on.returncode == 0, on.stderr
+    assert on.stdout.startswith("Recherche des fiches : allumée.")
+    assert "--allumer" not in on.stdout
+    off = _fiches(config_path, "--couper")
+    assert off.stdout.startswith("Recherche des fiches : coupée.")
