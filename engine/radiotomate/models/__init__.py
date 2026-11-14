@@ -13,6 +13,7 @@ from radiotomate.models.agenda import (
     AgendaGuest,
 )
 from radiotomate.models.autodj_slot import AutoDJSlot
+from radiotomate.models.bank_view import BankView
 from radiotomate.models.cart import Cart
 from radiotomate.models.clock import Clock, ClockPosition
 from radiotomate.models.emission import Emission
@@ -35,6 +36,7 @@ __all__ = [
     "AgendaFile",
     "AgendaGuest",
     "AutoDJSlot",
+    "BankView",
     "Cart",
     "Clock",
     "ClockPosition",

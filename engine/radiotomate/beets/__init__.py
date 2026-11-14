@@ -184,11 +184,23 @@ class BeetsIntegration:
         loop = get_running_loop()
         return await loop.run_in_executor(None, self._title_rows)
 
+    def _genre_column(self, tx) -> str:
+        """Beets 2.14 keeps the genres of a title in `genres` (ARC-06)."""
+        columns = {row[1] for row in tx.query("PRAGMA table_info(items)")}
+        return "genres" if "genres" in columns else "genre"
+
+    async def genre_field(self) -> str:
+        """The genre's field in a query: `genre`, or `genres` with Beets 2.14."""
+
+        def read() -> str:
+            with self.lib.transaction() as tx:
+                return self._genre_column(tx)
+
+        return await get_running_loop().run_in_executor(None, read)
+
     def _title_rows(self) -> list[tuple]:
         with self.lib.transaction() as tx:
-            columns = {row[1] for row in tx.query("PRAGMA table_info(items)")}
-            # Beets 2.14 keeps the genres of a title in `genres` (ARC-06).
-            genre = "genres" if "genres" in columns else "genre"
+            genre = self._genre_column(tx)
             return list(
                 tx.query(
                     "SELECT i.id, i.path, i.title, i.artist, i.album, i.year, "
