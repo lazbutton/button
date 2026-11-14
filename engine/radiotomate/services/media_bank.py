@@ -39,6 +39,7 @@ AUDIO_SUFFIXES = {
 # ones: services/catalog/test_layout.py compares them.
 INBOX_TOP = "00-inbox"
 ROTATION_TOP = "10-rotation"
+COLLECTIONS_TOP = "20-archives"
 HABILLAGE_TOP = "30-habillage"
 EMISSIONS_TOP = "40-emissions"
 CART_DROP_TOP = "50-carts"

@@ -59,7 +59,7 @@ Le réglage `features.public_site_routes` de la table `settings`, à faux (`0`, 
 - nginx freine aussi `/login` et `/login.json` ensemble : 5 essais par minute et par adresse, après une rafale de 5. Il refuse en 429, et non en 503, son code par défaut, que la console prendrait pour un moteur injoignable. Sa réponse a la forme de celle du moteur : `{error:"too_many_attempts", retry_in:60}`, avec `Retry-After: 60`. Le 429 du moteur passe tel quel.
 - L'adresse comptée est celle du client. Derrière un reverse proxy, nginx la lit dans `X-Forwarded-For`, mais seulement venant des adresses de `TRUSTED_PROXIES`, une variable de l'image de la console : des adresses ou des réseaux séparés par des espaces. Par défaut, la boucle locale et les réseaux privés, où est un reverse proxy installé sur la machine ou dans Compose. Sur un réseau privé sans reverse proxy, un poste pourrait alors choisir son adresse : `TRUSTED_PROXIES=127.0.0.1` l'en empêche. nginx passe l'adresse au moteur dans `X-Real-IP`. Le moteur ne croit cet en-tête que venant de la boucle locale ou d'un réseau privé : son port n'est pas publié, seuls nginx et les services de la station le joignent.
 - `GET /logout` : ce n’est pas du JSON, c’est une redirection HTML. La console l'attend 10 s au plus, puis oublie sa session quoi qu'il arrive (`console/src/api/sessionLogout.ts`). Sans réponse dans ce délai, sur une connexion refusée, ou sur un 502, 503 ou 504 de nginx, rien ne dit que le moteur a reçu la demande. La session y est peut-être encore ouverte, et son cookie valable : un rechargement la rouvre une fois le moteur revenu. L'écran de connexion le dit.
-- `GET /account.json` → `{username, permissions:{admin, stream, live, carts, not_audio, autodj}}`, tous des booléens.
+- `GET /account.json` → `{username, permissions:{admin, stream, live, carts, not_audio, autodj}, features:{bank_tidy}}`, tous des booléens. `features` dit ce que la console montre d'un chantier en cours : `bank_tidy`, l'interrupteur général de « Ranger la banque » (le réglage `features.bank_tidy` de la table `settings`, éteint quand il manque). Un moteur plus ancien n'envoie pas `features` : la console garde ses vues d'avant.
 - `PUT /account.json` `{password}` → la même forme. Mot de passe vide → 400.
 
 ### Live
@@ -196,6 +196,16 @@ Jouer tout de suite, droit `live` : `POST /carts/{id}/now.json` et `POST /carts/
 ### Banque
 
 `GET /media/bank.json` (session) → `{available, folders:[{path, count}], habillage:[…]}` : les dossiers de la banque qu'un cart peut rattacher. `available` est faux si la banque n'est pas montée. `habillage` donne les dossiers d'habillage qu'un bac peut suivre, même vides, et même sans banque : la console les propose à la création d'un bac d'habillage, et n'en nomme aucun. Un moteur plus ancien ne l'envoie pas : la console prend alors sa liste d'avant.
+
+`GET /media/titles.json` (session) → `{titles, total, matched, offset, limit, sort, order, facets}` : le tableau de la banque, lu dans la bibliothèque de Beets, qui ne connaît que la rotation et les collections. Un titre : `{id, title, artist, album, year, genre, famille, famille_label, duration, zone, collection, path, missing}`. `id` est son identifiant dans Beets ; `year` et `duration` valent `null` quand Beets n'en a pas ; `genre` est le genre écrit dans le fichier ; `famille`, le nom court de sa famille, vide tant que personne ne l'a posée, et `famille_label`, son nom en clair ; `collection` vaut `rotation` ou le dossier de sa collection ; `path` est son chemin sous la banque ; `missing` nomme les champs vides de sa fiche, parmi `title`, `artist`, `album`, `year`, `genre` et `famille`. `total` compte toute la bibliothèque, `matched` les titres gardés par les filtres.
+
+- `q` : des mots, cherchés sans accents ni casse dans le titre, l'artiste, l'album et le chemin ; tous doivent y être.
+- `collection`, `artist`, `famille`, `album`, `genre`, `year` : une valeur exacte, sans casse ni accents ; « Orage » ne prend pas « Madame Orage ». Donné vide, un filtre prend les titres où ce champ est vide.
+- `sort` : `title`, `artist` (par défaut), `album`, `famille`, `genre`, `year` ou `duration` ; `order` : `asc` ou `desc`. Les valeurs vides vont à la fin, dans les deux ordres.
+- `offset` et `limit` : 100 titres par défaut, 500 au plus.
+- `facets` : une liste parmi `collection`, `artist`, `famille` et `album`, séparées par des virgules. Chacune rend `[{value, label, count}]` sur toute la bibliothèque, quels que soient les filtres, la valeur vide en dernier.
+
+Tant que l'interrupteur général de « Ranger la banque » est éteint, la route rend `409 {error, code:"bank_tidy_off"}`. Un tri, un ordre, une facette ou un nombre inconnus rendent `400 {error, code:"validation_error", field}`.
 
 ### Système
 
