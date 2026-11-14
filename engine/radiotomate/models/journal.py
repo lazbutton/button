@@ -59,6 +59,33 @@ class JournalEntry(Base):
     async def from_id(cls, session: ormSession, entry_id: int) -> JournalEntry | None:
         return await session.scalar(select(cls).where(cls.id == entry_id))
 
+    @classmethod
+    def note(
+        cls,
+        gesture: str,
+        username: str,
+        changes: list[JournalChange],
+        *,
+        undo_of: int | None = None,
+        details: dict | None = None,
+    ) -> JournalEntry:
+        """A gesture to add to the session: its changes, and how many titles they
+        touch. The caller adds it and commits, with what the gesture wrote.
+
+        A move or a rename (ARC-09, FON-68) notes one change per title, field
+        ``path``, from the old path to the new one, status ``done``.
+        """
+        titles = {change.beets_id or change.path for change in changes}
+        fields = sorted({change.field for change in changes})
+        return cls(
+            gesture=gesture,
+            username=username,
+            titles=len(titles),
+            undo_of=undo_of,
+            details={"fields": fields, **(details or {})},
+            changes=changes,
+        )
+
 
 class JournalChange(Base):
     """One field of one title, in one gesture."""
