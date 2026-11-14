@@ -166,6 +166,13 @@ export type StationSettings = PublicStation & {
   timezone: string;
 };
 
+/** `GET` et `PUT /listen-link.json` : le lien d'écoute (FON-84). La clé partenaire ne se relit jamais. */
+export type ListenLinkSettings = {
+  enabled: boolean;
+  url: string | null;
+  key_set: boolean;
+};
+
 export type RundownItem = {
   id?: string;
   at: string;
@@ -311,6 +318,8 @@ export type LiveSnapshot = {
   on_air?: string;
   initial_uri?: string;
   radiotomate_sound_id?: string;
+  /** Le lien qui ouvre ce titre sur la plateforme de chacun, seulement quand le service en est sûr (FON-84). */
+  listen_url?: string;
   /** Le bac du son à l'antenne, null hors d'un bac. Absent d'un moteur plus ancien. */
   cart_id?: number | null;
   next_autodj?: Cue | null;

@@ -178,8 +178,56 @@ def _merge_clock(out: dict, incoming: dict) -> None:
         out.pop("duration", None)
 
 
+# Le lien d'écoute (FON-84) arrive après le titre, quand le service a répondu : un
+# lien qui devance son titre attend ici le hook du titre. Un seul, le dernier.
+PENDING_LINK: dict = {}
+
+
+def _link_url(value: object) -> str:
+    """Un lien http(s) d'une ligne, ou rien : un `now.json` se lit sans compte, et son
+    lien s'ouvre d'un toucher."""
+    text = str(value or "").strip()
+    parts = urlparse(text)
+    if parts.scheme not in ("http", "https") or not parts.netloc or len(text) > 500:
+        return ""
+    if any(ch.isspace() or ord(ch) < 32 or ord(ch) == 127 for ch in text):
+        return ""
+    return text
+
+
+def _names(data: dict) -> tuple[str, str]:
+    data = unpack_playlist_as_artist(data)
+    return (
+        " ".join(str(data.get("artist") or "").split()).casefold(),
+        " ".join(str(data.get("title") or "").split()).casefold(),
+    )
+
+
+def _same_track(current: dict, link: dict) -> bool:
+    """Le même artiste et le même titre, à la casse et aux espaces près."""
+    return _names(current) == _names(link) != ("", "")
+
+
+def apply_listen_link(current: dict, incoming: dict) -> dict:
+    """Pose `listen_url` sur le titre en cours quand le lien est le sien, sinon le garde
+    pour le titre qui va arriver. Rien d'autre ne change : ni le titre, ni l'horloge."""
+    link = incoming.get("listen_link")
+    url = _link_url(link.get("url")) if isinstance(link, dict) else ""
+    if not url:
+        return current
+    PENDING_LINK.clear()
+    if _same_track(current, link):
+        out = dict(current)
+        out["listen_url"] = url
+        return out
+    PENDING_LINK.update(link, url=url)
+    return current
+
+
 def apply_hook(current: dict, incoming: dict) -> dict:
     payload = dict(incoming)
+    if isinstance(payload.get("listen_link"), dict):
+        return apply_listen_link(current, payload)
     payload["received_at"] = datetime.now(timezone.utc).isoformat()
     if is_sidecar_merge(payload):
         out = dict(current)
@@ -207,6 +255,13 @@ def apply_hook(current: dict, incoming: dict) -> dict:
             payload[key] = current.get(key)
     _merge_clock(payload, current)
     _merge_clock(payload, incoming)
+    payload.pop("listen_url", None)
+    if _identity(current) == _identity(payload) and current.get("listen_url"):
+        # Le même titre annoncé de nouveau garde son lien.
+        payload["listen_url"] = current["listen_url"]
+    elif PENDING_LINK and _same_track(payload, PENDING_LINK):
+        payload["listen_url"] = PENDING_LINK["url"]
+    PENDING_LINK.clear()
     return payload
 
 

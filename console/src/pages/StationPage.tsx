@@ -20,6 +20,7 @@ import {
   type StationForm,
 } from "../api/station";
 import type { StationSettings } from "../api/types";
+import { ListenLinkCard } from "../components/reglages/ListenLinkCard";
 import { SettingsHead } from "../components/reglages/SettingsCard";
 import type { Brand } from "../lib/brand";
 import { useStationBinding } from "../lib/BrandContext";
@@ -321,6 +322,9 @@ export function StationPage() {
           </div>
         </div>
       </form>
+      <div className="reglages-stack reglages-stack--form">
+        <ListenLinkCard />
+      </div>
     </div>
   );
 }
