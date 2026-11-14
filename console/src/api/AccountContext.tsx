@@ -14,6 +14,7 @@ export type Account = {
     bank_moves?: boolean;
     bank_removals?: boolean;
     title_renames?: boolean;
+    bank_health?: boolean;
   };
 };
 

@@ -1,24 +1,38 @@
 import { SegmentedControl } from "@radix-ui/themes";
 import { useSearchParams } from "react-router-dom";
+import { useAccount } from "../api/AccountContext";
+import { BankHealthView } from "../components/banque/BankHealth";
 import { BankContent } from "../components/banque/BankContent";
 import { StationFolder } from "../components/banque/StationFolder";
 import { ImporterPage, presetDestination } from "./ImporterPage";
 
-type Vue = "contenu" | "ajouter";
+type Vue = "contenu" | "ajouter" | "sante";
 
 /**
- * Sons → Banque : ce qu'elle contient, ou l'envoi de fichiers. La vue ouverte
- * reste dans l'adresse (`?vue=ajouter`), comme l'onglet.
+ * Sons → Banque : ce qu'elle contient, l'envoi de fichiers, ou sa santé (FON-72),
+ * une fois le rangement de la banque ouvert. La vue ouverte reste dans
+ * l'adresse (`?vue=ajouter`), comme l'onglet.
  */
 export function BanquePage() {
   const [params, setParams] = useSearchParams();
-  const vue: Vue = params.get("vue") === "ajouter" ? "ajouter" : "contenu";
+  const { account } = useAccount();
+  const health = account?.features?.bank_health === true;
+  const asked = params.get("vue");
+  const vue: Vue = asked === "ajouter" ? "ajouter" : asked === "sante" && health ? "sante" : "contenu";
 
   const open = (next: Vue) => {
     const updated = new URLSearchParams(params);
     if (next === "contenu") updated.delete("vue");
     else updated.set("vue", next);
     setParams(updated, { replace: true });
+  };
+
+  // From the Santé view, the table ranged or searched as it says.
+  const openTable = (table: Record<string, string>) => {
+    const updated = new URLSearchParams(params);
+    for (const key of ["vue", "ranger", "groupe", "collection", "q"]) updated.delete(key);
+    for (const [key, value] of Object.entries(table)) updated.set(key, value);
+    setParams(updated);
   };
 
   return (
@@ -32,6 +46,7 @@ export function BanquePage() {
         >
           <SegmentedControl.Item value="contenu">Contenu</SegmentedControl.Item>
           <SegmentedControl.Item value="ajouter">Ajouter</SegmentedControl.Item>
+          {health ? <SegmentedControl.Item value="sante">Santé</SegmentedControl.Item> : null}
         </SegmentedControl.Root>
         {/* The upload view has it in its own header. */}
         {vue === "contenu" ? (
@@ -42,6 +57,8 @@ export function BanquePage() {
       </div>
       {vue === "ajouter" ? (
         <ImporterPage />
+      ) : vue === "sante" ? (
+        <BankHealthView onOpenTable={openTable} />
       ) : (
         <BankContent
           onAdd={(id) => {

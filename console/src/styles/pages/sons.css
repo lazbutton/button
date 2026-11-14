@@ -3449,6 +3449,143 @@
   }
 }
 
+/* ---------- The health of the bank (FON-72) ---------- */
+
+.banque-health {
+  display: grid;
+  gap: 1rem;
+  max-width: 60rem;
+}
+
+.banque-health-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.banque-health-head h2 {
+  margin: 0;
+  color: var(--app-text);
+  font-size: 1.05rem;
+}
+
+.banque-health-when {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.2rem 0 0;
+  color: var(--app-text-muted);
+  font-size: 0.8rem;
+}
+
+.banque-health-problem {
+  margin: 0;
+  color: var(--app-danger-ink);
+  font-size: 0.85rem;
+}
+
+.banque-health-figures,
+.banque-health-section {
+  display: grid;
+  gap: 0.6rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+}
+
+.banque-health-figures h3,
+.banque-health-section h3 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+  color: var(--app-text);
+  font-size: 0.92rem;
+}
+
+.banque-health-figures dl {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: 0.75rem;
+  margin: 0;
+}
+
+.banque-health-figures dt {
+  color: var(--app-text-muted);
+  font-size: 0.76rem;
+}
+
+.banque-health-figures dd {
+  margin: 0.15rem 0 0;
+  color: var(--app-text);
+  font-size: 0.9rem;
+}
+
+.banque-health-list {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.banque-health-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.5rem 0;
+  border-top: 1px solid var(--app-border);
+}
+
+.banque-health-list li:first-child {
+  border-top: 0;
+}
+
+.banque-health-list li > div {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.banque-health-list strong {
+  color: var(--app-text);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.banque-health-list span,
+.banque-health-note,
+.banque-health-more {
+  margin: 0;
+  color: var(--app-text-muted);
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
+.banque-health-more:empty {
+  display: none;
+}
+
+.banque-health-names {
+  display: grid;
+  gap: 0.2rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--app-text);
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
+.banque-health-section .rt-Button {
+  min-height: 2.5rem;
+}
+
 /* ---------- Narrow screens ---------- */
 
 @container bacs (max-width: 699px) {
