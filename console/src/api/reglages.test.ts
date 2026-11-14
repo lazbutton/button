@@ -17,6 +17,17 @@ test("l'admin voit la station, puis son compte ; les autres rôles, leur compte 
   }
 });
 
+test("Fiches paraît pour l'admin, une fois le rangement de la banque ouvert", () => {
+  assert.deepEqual(
+    reglagesSections("admin", { bankTidy: true }).map((section) => section.id),
+    ["comptes", "station", "fiches", "automate", "mises-a-jour", "compte"],
+  );
+  assert.deepEqual(
+    reglagesSections("programmateur", { bankTidy: true }).map((section) => section.id),
+    ["compte"],
+  );
+});
+
 function state(over: Partial<AntenneState> = {}): AntenneState {
   return {
     at: "2026-11-10T11:18:00",

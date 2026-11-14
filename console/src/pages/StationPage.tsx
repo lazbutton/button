@@ -8,6 +8,7 @@ import {
   apiGet,
   apiPut,
 } from "../api/client";
+import { useAccount } from "../api/AccountContext";
 import { sourceLink, type SourceArchive } from "../api/sourceCode";
 import {
   HARBOR_DEFAULTS,
@@ -130,6 +131,8 @@ function outdated(caught: unknown): boolean {
 /** Réglages → Station, pour un admin : le nom, les adresses de l'écoute et du direct, le code source. */
 export function StationPage() {
   const { imageBrand, applyStation } = useStationBinding();
+  const { account } = useAccount();
+  const bankTidy = account?.features?.bank_tidy === true;
   const { archive } = useSourceArchive();
   const [loaded, setLoaded] = useState<Loaded>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
@@ -322,9 +325,12 @@ export function StationPage() {
           </div>
         </div>
       </form>
-      <div className="reglages-stack reglages-stack--form">
-        <ListenLinkCard />
-      </div>
+      {/* Le rangement de la banque ouvert, le lien d'écoute passe dans Réglages → Fiches (FON-26). */}
+      {bankTidy ? null : (
+        <div className="reglages-stack reglages-stack--form">
+          <ListenLinkCard />
+        </div>
+      )}
     </div>
   );
 }
