@@ -125,6 +125,16 @@ async def test_a_view_is_renamed_changed_and_deleted(
     )
     assert changed.status_code == 200
     assert (await changed.get_json())["view"]["state"] == state
+    # Ranged by the station's tags, their column shown (FON-74).
+    tagged = {
+        **JAZZ,
+        "ranking": "etiquette",
+        "group": "nuit",
+        "columns": ["title", "etiquettes"],
+    }
+    kept = await client.put(f"/media/views/{view_id}.json", json={"state": tagged})
+    assert kept.status_code == 200, await kept.get_data()
+    assert (await kept.get_json())["view"]["state"] == tagged
 
     assert (await client.delete(f"/media/views/{view_id}.json")).status_code == 200
     views = (await (await client.get("/media/views.json")).get_json())["views"]

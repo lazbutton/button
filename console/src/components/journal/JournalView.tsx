@@ -302,8 +302,8 @@ function ChangeTable({ detail }: { detail: JournalDetail }) {
             <tr key={`${change.id}-${change.field}-${index}`}>
               <td>{change.label || change.path}</td>
               <td>{changeField(change.field)}</td>
-              <td>{changeValue(change.old)}</td>
-              <td>{changeValue(change.new)}</td>
+              <td>{changeValue(change.old, change.field)}</td>
+              <td>{changeValue(change.new, change.field)}</td>
               <td title={change.reason ?? undefined}>{STATUS_LABELS[change.status] ?? change.status}</td>
             </tr>
           ))}

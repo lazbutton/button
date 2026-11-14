@@ -11,6 +11,8 @@ export type SelectionFilters = {
   artist: string;
   album: string;
   genre: string;
+  /** A tag of the station (FON-74): that tag alone, not « minuit » for « nuit ». */
+  etiquette: string;
   year_from: string;
   year_to: string;
 };
@@ -21,6 +23,7 @@ export const NO_FILTERS: SelectionFilters = {
   artist: "",
   album: "",
   genre: "",
+  etiquette: "",
   year_from: "",
   year_to: "",
 };
@@ -108,6 +111,7 @@ export function suggestedName(
     filters.genre.trim(),
     filters.artist.trim(),
     filters.album.trim(),
+    filters.etiquette.trim(),
   ].filter(Boolean);
   if (head.length) parts.push(head.join(", "));
   const from = filters.year_from.trim();

@@ -36,6 +36,9 @@ async def _client(app_configration, beets, dbsession, users_password):
         ({"year_from": "2015", "year_to": "2019"}, "year:2015..2019"),
         ({"year_to": "1999"}, "year:1..1999"),
         ({"artist": "Earth, Wind,"}, "'artist::(?i)^Earth\\,\\ Wind\\,$'"),
+        ({"etiquette": "nuit"}, "etiquettes:|nuit|"),
+        ({"etiquette": " Fin  de Soirée "}, "'etiquettes:|fin de soirée|'"),
+        ({"etiquette": "l'été"}, "'etiquettes:|l'\"'\"'été|'"),
         (
             {"famille": "jazz", "year_from": "2015", "collection": "nuit"},
             "famille:=jazz path:/media/20-archives/nuit year:2015..",
@@ -60,6 +63,8 @@ def test_the_genre_follows_the_version_of_beets():
         {"year_from": "15"},
         {"year_from": "2020", "year_to": "2010"},
         {"collection": "../x"},
+        {"etiquette": "nuit,"},
+        {"etiquette": "a|b"},
     ],
 )
 def test_a_wrong_composition_is_refused(args):
@@ -82,6 +87,8 @@ async def test_the_selection_counts_as_the_table(
         "genre=Jazz&year_from=2010&year_to=2016",
         "collection=rotation",
         "album=Ciel",
+        "etiquette=nuit",
+        "etiquette=minuit&collection=nuit",
     ):
         composed = await (await client.get(f"/media/selection.json?{args}")).get_json()
         table = await (
@@ -108,6 +115,31 @@ async def test_an_artist_whose_name_is_in_another(
     payload = await (await client.get("/media/selection.json?artist=Orage")).get_json()
     assert payload["query"] == "artist:=~Orage"
     assert sorted(row["artist"] for row in payload["sample"]) == ["Orage", "Orage"]
+
+
+async def test_a_selection_by_tag_takes_that_tag_alone(
+    raw_app, app_configration, dbsession, users_password, tmp_path
+):
+    """The acceptance of FON-74: « nuit » takes neither « minuit » nor
+    « nuitamment »."""
+    beets = _beets(tmp_path)
+    for title, tags in (("Brume", "|nuitamment|"), ("Écho", "|nuit blanche|")):
+        (item,) = beets.lib.items(f"title:{title}")
+        item["etiquettes"] = tags
+        item.store()
+    client = await _client(app_configration, beets, dbsession, users_password)
+
+    payload = await (
+        await client.get("/media/selection.json?etiquette=nuit")
+    ).get_json()
+
+    assert payload["query"] == "etiquettes:|nuit|"
+    assert payload["count"] == 2
+    assert sorted(row["title"] for row in payload["sample"]) == ["Dune", "Été indien"]
+    blanche = await (
+        await client.get("/media/selection.json?etiquette=nuit%20blanche")
+    ).get_json()
+    assert [row["title"] for row in blanche["sample"]] == ["Écho"]
 
 
 async def test_no_filter_is_refused(

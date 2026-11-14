@@ -75,6 +75,8 @@ export function TitleSheet({
     ["Année", cell(title.year)],
     ["Genre", cell(title.genre)],
     ["Famille", cell(title.famille_label)],
+    // FON-74 : les étiquettes de la station, qu'un moteur plus ancien ne donne pas.
+    ...(title.etiquettes ? ([["Étiquettes", cell(title.etiquettes.join(", "))]] as Array<[string, string]>) : []),
     ["Durée", title.duration ? formatClock(title.duration) : "—"],
     ["Collection", cell(collection)],
   ];

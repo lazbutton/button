@@ -13,10 +13,19 @@ import {
  * ones come first, in their order, each moved with its arrows; the hidden ones
  * after, in their own order. The title always shows.
  */
-export function ColumnsPicker({ columns, onChange }: { columns: ColumnKey[]; onChange: (columns: ColumnKey[]) => void }) {
-  const hidden = DEFAULT_COLUMNS.filter((key) => !columns.includes(key));
+export function ColumnsPicker({
+  columns,
+  known = DEFAULT_COLUMNS,
+  onChange,
+}: {
+  columns: ColumnKey[];
+  /** The columns the engine fills: not the tags before FON-74. */
+  known?: ColumnKey[];
+  onChange: (columns: ColumnKey[]) => void;
+}) {
+  const hidden = known.filter((key) => !columns.includes(key));
   const rows = [...columns, ...hidden];
-  const changed = columns.join(",") !== DEFAULT_COLUMNS.join(",");
+  const changed = columns.join(",") !== known.join(",");
 
   return (
     <Popover.Root>

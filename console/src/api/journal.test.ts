@@ -71,6 +71,9 @@ test("une valeur vide se dit vide, un champ par son nom", () => {
   assert.equal(changeValue(0), "vide");
   assert.equal(changeValue(null), "vide");
   assert.equal(changeValue(2019), "2019");
+  assert.equal(changeValue("|instrumental|nuit|", "etiquettes"), "instrumental, nuit");
+  assert.equal(changeValue("", "etiquettes"), "vide");
+  assert.equal(changeField("etiquettes"), "Étiquettes");
   assert.equal(changeField("year"), "Année");
   assert.equal(changeField("famille"), "Famille");
   assert.equal(changeField("path"), "Fichier");

@@ -1,5 +1,6 @@
 """Le tableau de la banque (FON-64) : les titres de la bibliothèque de Beets, triés,
-filtrés et rangés par collection, artiste, famille ou album. Sans Quart.
+filtrés et rangés par collection, artiste, famille, album ou étiquette de la
+station (FON-74). Sans Quart.
 
 La bibliothèque de Beets est la source du tableau : elle a l'album, le genre,
 l'année et les champs flexibles, que l'index de la recherche n'a pas
@@ -27,6 +28,7 @@ from radiotomate.services.media_bank import (
     ROTATION_TOP,
     media_root,
 )
+from radiotomate.services.station_tags import parse_tags
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
@@ -45,9 +47,9 @@ FAMILY_LABELS = {family.name: family.label for family in FAMILIES}
 FICHE_FIELDS = ("title", "artist", "album", "year", "genre", "famille")
 # Les colonnes qui se trient, et les filtres qui prennent une valeur exacte.
 SORTS = ("title", "artist", "album", "famille", "genre", "year", "duration")
-FILTERS = ("collection", "artist", "famille", "album", "genre", "year")
+FILTERS = ("collection", "artist", "famille", "album", "genre", "year", "etiquette")
 # What the table ranges by; the genre is no ranking, but a selection picks it (FON-73).
-RANKINGS = ("collection", "artist", "famille", "album")
+RANKINGS = ("collection", "artist", "famille", "album", "etiquette")
 FACETS = (*RANKINGS, "genre")
 PAGE = 100
 MAX_PAGE = 500
@@ -130,7 +132,7 @@ def place_of(rel: str) -> tuple[str, str]:
 
 def title_of(row: tuple, root: str | None = None) -> dict:
     """One row of the table, from one row of `BeetsIntegration.title_rows`."""
-    beets_id, path, title, artist, album, year, genre, length, famille = row
+    beets_id, path, title, artist, album, year, genre, length, famille, *more = row
     rel = bank_rel(path, root)
     zone, collection = place_of(rel)
     try:
@@ -151,6 +153,8 @@ def title_of(row: tuple, root: str | None = None) -> dict:
         "genre": _genre(genre),
         "famille": family,
         "famille_label": FAMILY_LABELS.get(family, family),
+        # The station's tags (FON-74), a flexible field: |instrumental|nuit|.
+        "etiquettes": parse_tags(more[0] if more else None),
         "duration": duration,
         "zone": zone,
         "collection": collection,
@@ -229,7 +233,12 @@ def _value(entry: dict, name: str) -> str:
 
 def _matches(entry: dict, query: TitleQuery, words: list[str]) -> bool:
     for name, wanted in query.filters.items():
-        if fold(_value(entry, name)) != fold(wanted):
+        if name == "etiquette":
+            # One tag among those of the title; given empty, the titles without any.
+            tags = [fold(tag) for tag in entry["etiquettes"]]
+            if (fold(wanted) not in tags) if wanted else bool(tags):
+                return False
+        elif fold(_value(entry, name)) != fold(wanted):
             return False
     start, end = query.years
     if start is not None or end is not None:
@@ -265,15 +274,23 @@ def _ordered(entries: list[dict], query: TitleQuery) -> list[dict]:
     return ordered
 
 
+def _facet_values(entry: dict, name: str) -> list[str]:
+    """What a title counts for in a facet: its value, or each of its tags."""
+    if name == "etiquette":
+        return entry["etiquettes"] or [""]
+    return [_value(entry, name)]
+
+
 def facet_counts(entries: Iterable[dict], name: str) -> list[dict]:
-    """The values of a column, each with its number of titles; the empty one last."""
+    """The values of a column, each with its number of titles; the empty one last.
+    A title with several tags counts for each."""
     counts: dict[str, int] = {}
     labels: dict[str, str] = {}
     for entry in entries:
-        value = _value(entry, name)
-        key = fold(value)
-        counts[key] = counts.get(key, 0) + 1
-        labels.setdefault(key, value)
+        for value in _facet_values(entry, name):
+            key = fold(value)
+            counts[key] = counts.get(key, 0) + 1
+            labels.setdefault(key, value)
     rows = [
         {
             "value": labels[key],
