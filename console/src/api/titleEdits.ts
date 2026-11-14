@@ -205,3 +205,10 @@ export function undoneMessage(outcome: EditOutcome): { text: string; tone: Tone 
       : `${kept} titres ont gardé la leur : leurs fiches ont changé depuis.`;
   return { text: `${back} ${changed}`, tone: "info" };
 }
+
+/** Pourquoi un essai refuse d'écrire, en une phrase : le premier titre en cause. */
+export function needsConfirmationText(outcome: EditOutcome): string {
+  const first = outcome.refused[0];
+  if (!first) return "";
+  return `Rien n'a été écrit. ${first.reason}`;
+}

@@ -3133,6 +3133,61 @@
   font-size: 0.76rem;
 }
 
+/* ---------- The table as a spreadsheet (FON-67) ---------- */
+
+.banque-titles td.c-grid {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.banque-cell {
+  display: block;
+  width: 100%;
+  min-height: 2.5rem;
+  padding: 0 0.35rem;
+  margin: 0 -0.35rem;
+  border: 0;
+  border-radius: var(--app-radius-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: text;
+}
+
+.banque-cell:hover {
+  background: var(--gray-a3);
+}
+
+.banque-cell:focus-visible {
+  outline: 2px solid var(--accent-8);
+  outline-offset: -2px;
+}
+
+.banque-cell:disabled {
+  cursor: default;
+}
+
+.banque-cell-input {
+  width: 100%;
+  min-height: 2.25rem;
+  margin: 0.15rem -0.35rem;
+  padding: 0 0.35rem;
+  border: 1px solid var(--accent-8);
+  border-radius: var(--app-radius-sm);
+  background: var(--app-surface-1);
+  color: var(--app-text);
+  font: inherit;
+}
+
+.banque-cell-input:focus {
+  outline: 2px solid var(--accent-8);
+  outline-offset: 1px;
+}
+
 /* ---------- Correcting a fiche (FON-66) ---------- */
 
 .banque-sheet-form {
