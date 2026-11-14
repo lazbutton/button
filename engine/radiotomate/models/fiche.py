@@ -1,4 +1,4 @@
-"""The fiches of the library (FON-25, v21): see `commands/update/v21.py`."""
+"""The fiches of the library (FON-25, v22): see `commands/update/v22.py`."""
 
 from __future__ import annotations
 

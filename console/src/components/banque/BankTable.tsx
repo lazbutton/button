@@ -63,6 +63,17 @@ import { roleAtLeast } from "../../api/roles";
 import { filtersFromTable, selectionLink, tableMakesSelection } from "../../api/selectionFilters";
 import { API_PREFIX, ApiRequestError, apiDeleteJson, apiGet, apiPostJson, apiPut } from "../../api/client";
 import { formatClock, percentOf } from "../../api/soundsView";
+import {
+  needsConfirmationText,
+  savedMessage,
+  titleName,
+  undoneMessage,
+  yearProblem,
+  type EditLot,
+  type EditOutcome,
+} from "../../api/titleEdits";
+import { cellLot, isGridField, nextCell, pasteLot, pasteQuestion, type Move } from "../../api/titleGrid";
+import type { FicheField } from "../../api/bankTitles";
 import { usePreview } from "../../lib/usePreview";
 import { AppToast, useAppToast } from "../../ui/AppToast";
 import { ConfirmDialog } from "../../ui/ConfirmDialog";
@@ -72,6 +83,8 @@ import { ColumnsPicker } from "./ColumnsPicker";
 import { MoveDialog, RenameDialog } from "./CollectionView";
 import { CreateBankDialog } from "./CreateBankDialog";
 import { RANKING_ICONS, RankingList } from "./RankingList";
+import { GridCell } from "./GridCell";
+import { ConfirmLotDialog, EditTitlesDialog, editTitles, needsConfirmation, undoTitles } from "./TitleEditing";
 import { TitleSheet } from "./TitleSheet";
 import { ViewsMenu } from "./ViewsMenu";
 
@@ -110,7 +123,9 @@ function messageOf(caught: unknown, fallback: string): string {
  * remove, move, rename and delete. The state stays in the address.
  */
 export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
-  const { isAdmin, role } = useAccount();
+  const { isAdmin, role, account } = useAccount();
+  // FON-66 : la fiche se corrige, seule ou par lot, pour le Programmateur.
+  const canEdit = account?.features?.title_edits === true && (isAdmin || account.permissions.autodj === true);
   const [params, setParams] = useSearchParams();
   const state = useMemo(() => readState(params), [params]);
   const [typed, setTyped] = useState(state.q);
@@ -132,6 +147,18 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [creating, setCreating] = useState<string | null>(null);
+  const [editing, setEditing] = useState<BankTitle[] | null>(null);
+  const [editOpen, setEditOpen] = useState<number | null>(null);
+  // FON-67 : une écriture du tableur qui attend sa confirmation, et ce que la page annonce.
+  const [pending, setPending] = useState<{
+    question: string;
+    lot: EditLot;
+    outcome: EditOutcome;
+    name?: string;
+    done: (ok: boolean) => void;
+  } | null>(null);
+  const [writing, setWriting] = useState(false);
+  const [announce, setAnnounce] = useState("");
   const [views, setViews] = useState<SavedView[] | null>(null);
   const { toast, show, dismiss } = useAppToast();
   const ticket = useRef(0);
@@ -272,13 +299,14 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
   const shelf =
     state.ranking === "collection" && state.group ? (shelves.find((item) => item.id === state.group) ?? null) : null;
   const gestures = shelf != null;
+  const selectable = gestures || canEdit;
   // A group with a value becomes a selection of titles (FON-73), for whoever writes them.
   const canSelect = tableMakesSelection(state) && roleAtLeast(role, "programmateur");
   const others = shelves.filter((item) => item.id !== shelf?.id);
   const busy = progress != null;
   const opened = titles.find((title) => title.id === openId) ?? null;
-  const allSelected = gestures && titles.length > 0 && titles.every((title) => selected.has(title.id));
-  const someSelected = gestures && !allSelected && titles.some((title) => selected.has(title.id));
+  const allSelected = selectable && titles.length > 0 && titles.every((title) => selected.has(title.id));
+  const someSelected = selectable && !allSelected && titles.some((title) => selected.has(title.id));
   const collectionLabel = (id: string) => shelves.find((item) => item.id === id)?.label || id;
 
   const choose = (group: string | null) => {
@@ -316,6 +344,109 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
       setSelected(new Set());
       await Promise.all([load(), loadShelves()]);
     }
+  };
+
+  // Après une correction : ce qui est fait, et « Revenir » tant que le message est là.
+  const afterEdit = async (outcome: EditOutcome, name?: string) => {
+    const message = savedMessage(outcome, name);
+    const entry = outcome.entry;
+    show(
+      message.text,
+      message.tone,
+      entry != null && outcome.written + outcome.waiting.length > 0
+        ? { action: { label: "Revenir", onClick: () => void undo(entry) } }
+        : undefined,
+    );
+    await load();
+  };
+
+  const undo = async (entry: number) => {
+    try {
+      const message = undoneMessage(await undoTitles(entry));
+      show(message.text, message.tone);
+    } catch (caught) {
+      show(messageOf(caught, "Le lot n'a pas été défait. Réessaie."), "error");
+    } finally {
+      await load();
+    }
+  };
+
+  // Le tableur (FON-67) : une cellule passe par l'essai du lot de FON-66, et ne
+  // demande confirmation que si l'essai a quelque chose à dire. Un collage sur
+  // plusieurs titres sélectionnés la demande toujours.
+  const writeLot = async (lot: EditLot, name?: string): Promise<boolean> => {
+    try {
+      await afterEdit(await editTitles(lot, false), name);
+      return true;
+    } catch (caught) {
+      show(messageOf(caught, "La fiche n'a pas été corrigée. Réessaie."), "error");
+      return false;
+    }
+  };
+
+  const tryLot = async (lot: EditLot, question: string, always: boolean, name?: string): Promise<boolean> => {
+    let outcome: EditOutcome;
+    try {
+      outcome = await editTitles(lot, true);
+    } catch (caught) {
+      show(messageOf(caught, "L'essai n'a pas abouti. Réessaie."), "error");
+      return false;
+    }
+    if (outcome.refused.length && !always) {
+      show(needsConfirmationText(outcome), "error");
+      return false;
+    }
+    if (!always && !needsConfirmation(outcome)) return writeLot(lot, name);
+    return new Promise<boolean>((resolve) => setPending({ question, lot, outcome, name, done: resolve }));
+  };
+
+  const saveCell = async (title: BankTitle, field: FicheField, value: string): Promise<boolean> => {
+    const lot = cellLot(title, field, value);
+    if (!lot) return true;
+    const problem = field === "year" ? yearProblem(value) : "";
+    if (problem) {
+      show(problem, "error");
+      return false;
+    }
+    return tryLot(lot, `Corriger la fiche de « ${titleName(title)} » ?`, false, titleName(title));
+  };
+
+  const pasteCell = (title: BankTitle, field: FicheField, text: string) => {
+    const many = selected.has(title.id) && selected.size > 1;
+    if (!many) {
+      const value = text.replace(/\r\n?/g, "\n").split("\n")[0];
+      void saveCell(title, field, value);
+      return;
+    }
+    const chosen = titles.filter((item) => selected.has(item.id));
+    const pasted = pasteLot(chosen, field, text);
+    if ("problem" in pasted) {
+      show(pasted.problem, "error");
+      return;
+    }
+    void tryLot(pasted.lot, pasteQuestion(field, pasted.value, chosen.length), true);
+  };
+
+  // Les cellules du tableur suivent les colonnes affichées, dans leur ordre (FON-65).
+  const gridColumns = state.columns.filter(isGridField);
+  const moveCell = (row: number, column: number, move: Move) => {
+    const target = nextCell({ row, column }, move, titles.length, gridColumns.length);
+    if (target) document.querySelector<HTMLElement>(`[data-grid="${target.row}:${target.column}"]`)?.focus();
+  };
+
+  const finishPending = async (ok: boolean) => {
+    if (!pending) return;
+    const { lot, name, done } = pending;
+    if (!ok) {
+      setPending(null);
+      done(false);
+      return;
+    }
+    setWriting(true);
+    const written = await writeLot(lot, name);
+    setWriting(false);
+    setPending(null);
+    done(written);
   };
 
   const confirmDeletion = async () => {
@@ -456,7 +587,7 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
           </header>
 
           <div className="bacs-sounds">
-            {gestures && selected.size > 0 ? (
+            {selectable && selected.size > 0 ? (
               <div className="bacs-toolbar bacs-toolbar--selection" role="toolbar" aria-label="Sélection">
                 <strong className="bacs-selection-count">
                   {titlesLabel(selected.size)} sélectionné{selected.size === 1 ? "" : "s"}
@@ -466,20 +597,36 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
                   <X className="ui-button-icon" />
                   Désélectionner
                 </Button>
-                <Button
-                  size="1"
-                  variant="soft"
-                  color="gray"
-                  disabled={busy || others.length === 0}
-                  onClick={() => setMoving([...selected])}
-                >
-                  <FolderInput className="ui-button-icon" />
-                  Déplacer
-                </Button>
-                <Button size="1" color="red" variant="soft" highContrast disabled={busy} onClick={() => setRemoving([...selected])}>
-                  <Trash2 className="ui-button-icon" />
-                  Retirer
-                </Button>
+                {canEdit ? (
+                  <Button
+                    size="1"
+                    variant="soft"
+                    color="gray"
+                    disabled={busy}
+                    onClick={() => setEditing(titles.filter((title) => selected.has(title.id)))}
+                  >
+                    <Pencil className="ui-button-icon" />
+                    Modifier {selected.size === 1 ? "la fiche" : `${selected.size} fiches`}
+                  </Button>
+                ) : null}
+                {gestures ? (
+                  <>
+                    <Button
+                      size="1"
+                      variant="soft"
+                      color="gray"
+                      disabled={busy || others.length === 0}
+                      onClick={() => setMoving([...selected])}
+                    >
+                      <FolderInput className="ui-button-icon" />
+                      Déplacer
+                    </Button>
+                    <Button size="1" color="red" variant="soft" highContrast disabled={busy} onClick={() => setRemoving([...selected])}>
+                      <Trash2 className="ui-button-icon" />
+                      Retirer
+                    </Button>
+                  </>
+                ) : null}
               </div>
             ) : (
               <div className="bacs-toolbar" role="toolbar" aria-label="Titres">
@@ -539,6 +686,10 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
                 ) : null}
               </div>
             )}
+
+            <p className="ui-visually-hidden" aria-live="polite">
+              {announce}
+            </p>
 
             {progress ? (
               <div className="bacs-import" role="status" aria-live="polite">
@@ -607,12 +758,12 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
               ) : (
                 <table
                   className="bacs-table banque-titles"
-                  style={{ minWidth: `${tableMinWidth(state.columns, gestures)}rem` }}
+                  style={{ minWidth: `${tableMinWidth(state.columns, selectable)}rem` }}
                   aria-rowcount={count}
                 >
                   <thead>
                     <tr>
-                      {gestures ? (
+                      {selectable ? (
                         <th className="c-check">
                           <Checkbox
                             size="1"
@@ -643,7 +794,7 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
                           />
                         ),
                       )}
-                      {gestures ? (
+                      {selectable ? (
                         <th className="c-more">
                           <span className="ui-visually-hidden">Actions</span>
                         </th>
@@ -651,12 +802,25 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {titles.map((title) => (
+                    {titles.map((title, row) => (
                       <TitleRow
                         key={title.id}
                         title={title}
+                        grid={
+                          canEdit
+                            ? {
+                                row,
+                                busy: busy || writing || pending != null,
+                                save: (field, value) => saveCell(title, field, value),
+                                move: (column, move) => moveCell(row, column, move),
+                                paste: (field, text) => pasteCell(title, field, text),
+                                announce: setAnnounce,
+                              }
+                            : undefined
+                        }
                         columns={state.columns}
                         gestures={gestures}
+                        selectable={selectable}
                         busy={busy}
                         canMove={others.length > 0}
                         selected={selected.has(title.id)}
@@ -670,10 +834,21 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
                             return next;
                           })
                         }
-                        onOpen={() => setOpenId(title.id)}
+                        onOpen={() => {
+                          setOpenId(title.id);
+                          setEditOpen(null);
+                        }}
                         onPlay={() => preview.toggle(String(title.id))}
                         onMove={() => setMoving([title.id])}
                         onRemove={() => setRemoving([title.id])}
+                        onEdit={
+                          canEdit
+                            ? () => {
+                                setOpenId(title.id);
+                                setEditOpen(title.id);
+                              }
+                            : undefined
+                        }
                       />
                     ))}
                   </tbody>
@@ -699,10 +874,14 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
               title={opened}
               collection={opened.collection ? collectionLabel(opened.collection) : ""}
               playing={preview.playingId === String(opened.id)}
+              canEdit={canEdit}
+              startEditing={editOpen === opened.id}
+              onSaved={(outcome, name) => void afterEdit(outcome, name)}
               onPlay={() => preview.toggle(String(opened.id))}
               onClose={() => {
                 const id = opened.id;
                 setOpenId(null);
+                setEditOpen(null);
                 requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-title-open="${id}"]`)?.focus());
               }}
             />
@@ -795,6 +974,26 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
           show(`Collection « ${created.label} » créée. « Ajouter des titres » y envoie des fichiers.`, "success");
         }}
       />
+      {pending ? (
+        <ConfirmLotDialog
+          question={pending.question}
+          outcome={pending.outcome}
+          busy={writing}
+          onCancel={() => void finishPending(false)}
+          onConfirm={() => void finishPending(true)}
+        />
+      ) : null}
+      {editing ? (
+        <EditTitlesDialog
+          titles={editing}
+          onClose={() => setEditing(null)}
+          onDone={(outcome) => {
+            setEditing(null);
+            setSelected(new Set());
+            void afterEdit(outcome);
+          }}
+        />
+      ) : null}
       <AppToast toast={toast} onDismiss={dismiss} />
     </div>
   );
@@ -823,10 +1022,22 @@ function SortHeader({
   );
 }
 
+/** Ce qu'une ligne passe à ses cellules du tableur (FON-67). */
+type GridHandlers = {
+  row: number;
+  busy: boolean;
+  save: (field: FicheField, value: string) => Promise<boolean>;
+  move: (column: number, move: Move) => void;
+  paste: (field: FicheField, text: string) => void;
+  announce: (text: string) => void;
+};
+
 function TitleRow({
   title,
+  grid,
   columns,
   gestures,
+  selectable,
   busy,
   canMove,
   selected,
@@ -837,10 +1048,15 @@ function TitleRow({
   onPlay,
   onMove,
   onRemove,
+  onEdit,
 }: {
   title: BankTitle;
+  /** The cells open like a spreadsheet's (FON-67). */
+  grid?: GridHandlers;
   columns: ColumnKey[];
   gestures: boolean;
+  /** A checkbox, for the gestures of a collection or to correct the fiches (FON-66). */
+  selectable: boolean;
   busy: boolean;
   canMove: boolean;
   selected: boolean;
@@ -851,16 +1067,20 @@ function TitleRow({
   onPlay: () => void;
   onMove: () => void;
   onRemove: () => void;
+  /** Opens the fiche, ready to correct. */
+  onEdit?: () => void;
 }) {
   const name = title.title || fileName(title.path);
   const fiche = ficheState(title.missing);
+  // Le rang d'une cellule du tableur parmi celles de la ligne : les flèches s'y fient.
+  const gridKeys = columns.filter(isGridField);
   const length = title.duration ? formatClock(title.duration) : "";
   return (
     <tr
       className={["bacs-track-row", selected || opened ? "is-selected" : "", playing ? "is-playing" : ""].filter(Boolean).join(" ")}
-      aria-selected={gestures ? selected : undefined}
+      aria-selected={selectable ? selected : undefined}
     >
-      {gestures ? (
+      {selectable ? (
         <td className="c-check">
           <Checkbox size="1" checked={selected} disabled={busy} aria-label={`Sélectionner ${name}`} onCheckedChange={onToggle} />
         </td>
@@ -884,6 +1104,25 @@ function TitleRow({
         </button>
       </td>
       {columns.map((key) => {
+        if (grid && isGridField(key)) {
+          const column = gridKeys.indexOf(key);
+          return (
+            <td key={key} className={`c-${key} c-grid`}>
+              <GridCell
+                title={title}
+                field={key}
+                row={grid.row}
+                column={column}
+                busy={grid.busy}
+                onSave={(value) => grid.save(key, value)}
+                onMove={(move) => grid.move(column, move)}
+                onPaste={(text) => grid.paste(key, text)}
+                onToggle={selectable ? onToggle : undefined}
+                onAnnounce={grid.announce}
+              />
+            </td>
+          );
+        }
         switch (key) {
           case "title":
             return (
@@ -929,7 +1168,7 @@ function TitleRow({
             );
         }
       })}
-      {gestures ? (
+      {selectable ? (
         <td className="c-more">
           <DropdownMenu.Root modal={false}>
             <DropdownMenu.Trigger disabled={busy}>
@@ -942,15 +1181,25 @@ function TitleRow({
                 <Play size={14} aria-hidden="true" />
                 {playing ? "Arrêter la pré-écoute" : "Pré-écouter"}
               </DropdownMenu.Item>
-              <DropdownMenu.Item disabled={!canMove} onSelect={onMove}>
-                <FolderInput size={14} aria-hidden="true" />
-                Déplacer vers…
-              </DropdownMenu.Item>
-              <DropdownMenu.Separator />
-              <DropdownMenu.Item color="red" onSelect={onRemove}>
-                <Trash2 size={14} aria-hidden="true" />
-                Retirer…
-              </DropdownMenu.Item>
+              {onEdit ? (
+                <DropdownMenu.Item onSelect={onEdit}>
+                  <Pencil size={14} aria-hidden="true" />
+                  Corriger la fiche
+                </DropdownMenu.Item>
+              ) : null}
+              {gestures ? (
+                <>
+                  <DropdownMenu.Item disabled={!canMove} onSelect={onMove}>
+                    <FolderInput size={14} aria-hidden="true" />
+                    Déplacer vers…
+                  </DropdownMenu.Item>
+                  <DropdownMenu.Separator />
+                  <DropdownMenu.Item color="red" onSelect={onRemove}>
+                    <Trash2 size={14} aria-hidden="true" />
+                    Retirer…
+                  </DropdownMenu.Item>
+                </>
+              ) : null}
             </DropdownMenu.Content>
           </DropdownMenu.Root>
         </td>

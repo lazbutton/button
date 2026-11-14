@@ -39,6 +39,7 @@ dans les parcours.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import hashlib
 import os
 import shutil
@@ -82,6 +83,11 @@ TURNS_MAX = 8
 # Les titres de chaque geste : peu, le banc compte la durée de la boucle.
 MOVED = 3
 REMOVED = 2
+CORRECTED = 4
+# Ce que le banc écrit dans les fiches corrigées : rien d'une station.
+CORRECTION = {"album": "Banc", "year": "1999", "genre": "Banc", "famille": "jazz"}
+# Ce que la bibliothèque en garde.
+CORRECTED_FICHE = {"album": "Banc", "year": 1999, "genre": "Banc", "famille": "jazz"}
 
 
 def reasons(status: int, answer: dict) -> str:
@@ -360,17 +366,19 @@ class Banc:
         avant: dict[str, tuple],
         moved: dict[str, str],
         removed: dict[str, str],
+        corrected: set[str] | frozenset[str] = frozenset(),
     ) -> None:
         """Ce que doit être vrai après un geste, une fois la boucle passée.
 
         `moved` : ancien chemin → nouveau. `removed` : ancien chemin → empreinte.
+        `corrected` : les titres dont la fiche a changé, qui restent à leur place.
         """
         for old, new in moved.items():
             self.refs[new] = self.refs.get(old, "un titre déplacé")
         self.turns()
         apres = self.snapshot()
-        touched = set(moved) | set(removed)
-        gone = [self.ref(rel) for rel in touched if rel in apres]
+        touched = set(moved) | set(removed) | set(corrected)
+        gone = [self.ref(rel) for rel in set(moved) | set(removed) if rel in apres]
         self.verdict(
             geste,
             "les anciens chemins sont sortis de la bibliothèque",
@@ -426,6 +434,18 @@ class Banc:
                 f"{len(same)} sur {len(moved)}",
                 connu="ARC-09",
             )
+        if corrected:
+            kept = [
+                rel
+                for rel in corrected
+                if rel in apres and avant.get(rel, (None,))[0] == apres[rel][0]
+            ]
+            self.verdict(
+                geste,
+                "un titre corrigé garde son identifiant de Beets",
+                len(kept) == len(corrected),
+                f"{len(kept)} sur {len(corrected)}",
+            )
         if removed:
             in_trash = {
                 sha(path) for path in (self.media / TRASH).iterdir() if path.is_file()
@@ -452,8 +472,8 @@ class Banc:
         for old in removed:
             self.hashes.pop(old, None)
             self.readable.discard(old)
-        # Les titres déplacés ont reçu des tags : leurs octets ont changé.
-        for new in moved.values():
+        # Les titres déplacés ou corrigés ont reçu des tags : leurs octets ont changé.
+        for new in [*moved.values(), *corrected]:
             if new in files:
                 self.hashes[new] = sha(files[new])
         unreadable = [
@@ -594,7 +614,182 @@ def geste_retirer(banc: Banc) -> None:
     banc.controler("retirer", avant, {}, removed)
 
 
-GESTES = [geste_deplacer, geste_revenir, geste_retirer]
+def fiche_of(path: Path) -> dict[str, object]:
+    """Ce que les tags d'un fichier disent des champs que FON-66 corrige."""
+    track = MediaFile(path)
+    return {
+        "album": track.album or "",
+        "year": track.year or 0,
+        "genre": track.genre or "",
+        "title": track.title or "",
+        "artist": track.artist or "",
+    }
+
+
+def _beets(banc: Banc) -> object:
+    """La bibliothèque du banc, écrite avec les réglages de Beets de sa station."""
+    from beets import config as beets_config
+    from beets.library import Library
+
+    from radiotomate.beets import BeetsIntegration
+
+    beets_config.set_file(str(banc.library.parent / "config.yaml"))
+    beets = object.__new__(BeetsIntegration)
+    beets.lib = Library(str(banc.library), directory=str(banc.media))
+    return beets
+
+
+async def _corriger(banc: Banc, rels: list[str]) -> tuple[object, object, dict]:
+    """Corrige les fiches par le service du moteur, puis « Revenir » : rend les
+    deux réponses, et ce que la bibliothèque disait après la correction."""
+    from radiotomate.db import QuartAlchemy
+    from radiotomate.models import Setting
+    from radiotomate.services import bank_titles, title_edits
+
+    beets = _beets(banc)
+    db = QuartAlchemy()
+    db.init_from_config({"url": f"sqlite+aiosqlite:///{banc.db_file}"}, {})
+    ids = {rel: row[0] for rel, row in banc.snapshot().items() if rel in rels}
+    async with db.session() as session:
+        await Setting.upsert(session, bank_titles.SETTING_BANK_TIDY, "1")
+        await session.commit()
+        edits = []
+        for beets_id in ids.values():
+            item = beets.lib.get_item(beets_id)
+            expected = {
+                name: title_edits.current_value(item, name) for name in CORRECTION
+            }
+            edits.append(title_edits.TitleEdit(beets_id, CORRECTION, expected))
+        outcome = await title_edits.edit_titles(session, beets, edits, username="banc")
+        library = {
+            rel: {
+                name: title_edits.current_value(beets.lib.get_item(beets_id), name)
+                for name in CORRECTION
+            }
+            for rel, beets_id in ids.items()
+        }
+        undone = None
+        if outcome.entry_id is not None:
+            undone = await title_edits.undo_entry(
+                session, beets, outcome.entry_id, username="banc"
+            )
+    await db.after_serving()
+    return outcome, undone, library
+
+
+def geste_corriger(banc: Banc) -> None:
+    """Un lot de fiches corrigé par le service du moteur (FON-66), puis « Revenir »."""
+    say("Geste : corriger un lot de fiches, puis revenir")
+    target = banc.archive()
+    titles = banc.choisir(ROTATION, CORRECTED)
+    titles += banc.choisir(target[1], 2) if target else []
+    if not titles:
+        say("  (rien à corriger dans cet échantillon)")
+        return
+    avant = banc.snapshot()
+    before = {rel: fiche_of(banc.media / rel) for rel in titles}
+    outcome, undone, library = asyncio.run(_corriger(banc, titles))
+    banc.verdict(
+        "corriger",
+        "le moteur écrit tout le lot",
+        len(outcome.written) == len(titles)
+        and not outcome.waiting
+        and not outcome.refused,
+        f"{len(outcome.written)} sur {len(titles)}",
+    )
+    in_library = [
+        banc.ref(rel) for rel, values in library.items() if values != CORRECTED_FICHE
+    ]
+    banc.verdict(
+        "corriger",
+        "la bibliothèque porte la correction, famille comprise",
+        not in_library,
+        ", ".join(in_library[:5]),
+    )
+    # « Revenir » a déjà rendu les tags : la correction se lit dans le journal,
+    # et ce que dit le fichier se compare à l'avant.
+    after = {rel: fiche_of(banc.media / rel) for rel in titles}
+    banc.verdict(
+        "revenir",
+        "« Revenir » remet le lot entier",
+        undone is not None and len(undone.written) == len(titles) and not undone.kept,
+        f"{len(undone.written) if undone else 0} sur {len(titles)}",
+    )
+    different = [banc.ref(rel) for rel in titles if after[rel] != before[rel]]
+    banc.verdict(
+        "revenir",
+        "les tags d'avant la correction reviennent",
+        not different,
+        ", ".join(different[:5]),
+    )
+    famille = [
+        banc.ref(rel)
+        for rel in titles
+        if "famille"
+        in " ".join(map(str, (MutagenFile(banc.media / rel).tags or {}))).lower()
+    ]
+    banc.verdict(
+        "corriger",
+        "la famille ne va jamais dans le fichier",
+        not famille,
+        ", ".join(famille[:5]),
+    )
+    banc.controler("corriger et revenir", avant, {}, {}, set(titles))
+
+
+def geste_corriger_puis_lire(banc: Banc) -> None:
+    """Une correction gardée : le fichier la porte, et la boucle n'y voit rien."""
+    say("Geste : corriger un lot de fiches, et le garder")
+    titles = banc.choisir(ROTATION, CORRECTED)
+    if not titles:
+        return
+    avant = banc.snapshot()
+    outcome = asyncio.run(_garder(banc, titles))
+    tags = {rel: fiche_of(banc.media / rel) for rel in titles}
+    wrong = [
+        banc.ref(rel)
+        for rel, values in tags.items()
+        if (values["album"], values["year"], values["genre"])
+        != (CORRECTED_FICHE["album"], 1999, CORRECTED_FICHE["genre"])
+    ]
+    banc.verdict(
+        "corriger",
+        "les tags du fichier portent la correction",
+        len(outcome.written) == len(titles) and not wrong,
+        ", ".join(wrong[:5]),
+    )
+    banc.controler("corriger", avant, {}, {}, set(titles))
+
+
+async def _garder(banc: Banc, rels: list[str]) -> object:
+    from radiotomate.db import QuartAlchemy
+    from radiotomate.models import Setting
+    from radiotomate.services import bank_titles, title_edits
+
+    beets = _beets(banc)
+    db = QuartAlchemy()
+    db.init_from_config({"url": f"sqlite+aiosqlite:///{banc.db_file}"}, {})
+    ids = [row[0] for rel, row in banc.snapshot().items() if rel in rels]
+    async with db.session() as session:
+        await Setting.upsert(session, bank_titles.SETTING_BANK_TIDY, "1")
+        await session.commit()
+        outcome = await title_edits.edit_titles(
+            session,
+            beets,
+            [title_edits.TitleEdit(beets_id, CORRECTION) for beets_id in ids],
+            username="banc",
+        )
+    await db.after_serving()
+    return outcome
+
+
+GESTES = [
+    geste_deplacer,
+    geste_revenir,
+    geste_retirer,
+    geste_corriger,
+    geste_corriger_puis_lire,
+]
 
 
 def tags_of(path: Path) -> dict[str, object]:
