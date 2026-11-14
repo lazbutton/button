@@ -10,8 +10,8 @@ checked by ``beets_query.validate_selection_query``, as one typed by hand.
 - A collection is its folder, ``path:`` and the folder under MEDIA_ROOT, as the
   table reads it; the rotation its own folder, as the Rotation selection. The
   bank is MEDIA_ROOT, ``/media`` on a station.
-- The genre is ``genre`` with Beets 2.5, ``genres`` once Beets keeps several
-  (Beets 2.14, ARC-06).
+- The genre is ``genres``, the list of Beets 2.14 (ARC-06), whose ``genre:`` the
+  check refuses; ``genre`` still, for a library of Beets 2.5.
 """
 
 from __future__ import annotations
@@ -93,7 +93,7 @@ def _exact(field: str, value: str) -> str:
     return f"{field}:=~{value}"
 
 
-def selection_query(filters: SelectionFilters, *, genre_field: str = "genre") -> str:
+def selection_query(filters: SelectionFilters, *, genre_field: str = "genres") -> str:
     """The Beets query of these filters, each part quoted for Beets' shell split."""
     if filters.empty():
         raise DomainValidationError(
