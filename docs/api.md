@@ -201,11 +201,23 @@ Jouer tout de suite, droit `live` : `POST /carts/{id}/now.json` et `POST /carts/
 
 - `q` : des mots, cherchés sans accents ni casse dans le titre, l'artiste, l'album et le chemin ; tous doivent y être.
 - `collection`, `artist`, `famille`, `album`, `genre`, `year` : une valeur exacte, sans casse ni accents ; « Orage » ne prend pas « Madame Orage ». Donné vide, un filtre prend les titres où ce champ est vide.
+- `year_from`, `year_to` : des années, comprises ; un titre sans année n'est dans aucune plage.
 - `sort` : `title`, `artist` (par défaut), `album`, `famille`, `genre`, `year` ou `duration` ; `order` : `asc` ou `desc`. Les valeurs vides vont à la fin, dans les deux ordres.
 - `offset` et `limit` : 100 titres par défaut, 500 au plus.
-- `facets` : une liste parmi `collection`, `artist`, `famille` et `album`, séparées par des virgules. Chacune rend `[{value, label, count}]` sur toute la bibliothèque, quels que soient les filtres, la valeur vide en dernier.
+- `facets` : une liste parmi `collection`, `artist`, `famille`, `album` et `genre`, séparées par des virgules. Chacune rend `[{value, label, count}]` sur toute la bibliothèque, quels que soient les filtres, la valeur vide en dernier.
 
 Tant que l'interrupteur général de « Ranger la banque » est éteint, la route rend `409 {error, code:"bank_tidy_off"}`. Un tri, un ordre, une facette ou un nombre inconnus rendent `400 {error, code:"validation_error", field}`.
+
+Les vues du tableau, chacune à son compte, derrière le même interrupteur (`409 bank_tidy_off` éteint). Une vue : `{id, name, state, modified}`, où `state` vaut `{ranking, group, q, sort, order, columns}` : le rangement (`collection`, `artist`, `famille` ou `album`), son groupe (`null` pour toute la banque, `""` pour les titres sans ce champ), la recherche, le tri et son ordre comme ceux de `/media/titles.json`, et les colonnes montrées, dans leur ordre, parmi `title`, `artist`, `album`, `famille`, `genre`, `year`, `duration` et `fiche`, le titre toujours. `modified` est à l'heure de Paris.
+
+- `GET /media/views.json` (session) → `{views}` : celles du compte connecté, par nom.
+- `POST /media/views.json` `{name, state}` → `201 {view}`. Le nom, de 60 signes au plus, se tasse sur ses espaces. Un nom que le compte a déjà : `409 {error, code:"conflict", field:"name"}` ; cent vues au plus par compte, `409` au-delà. Un état inconnu, des colonnes en double ou sans le titre : `400 {code:"validation_error"}`.
+- `PUT /media/views/{id}.json` `{name?, state?}` → `{view}`. `DELETE /media/views/{id}.json` → `{ok:true}`. La vue d'un autre compte rend `404`, comme une vue effacée.
+- Un compte supprimé emporte ses vues.
+
+`GET /media/titles/{id}/plays.json` (session, même interrupteur) → `{days, count, by_origin, recent}` : les passages à l'antenne d'un titre de la bibliothèque, lus au journal d'antenne (`metadata_log`), qui les garde 90 jours. `days` vaut 90 ; `count` compte les passages, hors titres sautés avant de jouer ; `by_origin` les range en `{autodj, bac, agenda, autre}` ; `recent` donne les dix derniers, du plus récent : `{on_air, origin, cart}`, `on_air` à l'heure de Paris, `cart` `{id, title}` ou `null`. Un passage se reconnaît au fichier joué, la fin de la requête que le playout a reçue ; un passage de l'Agenda, à la ligne du conducteur qui l'a envoyé, que le conducteur garde 7 jours : plus ancien, il compte comme un bac. Un identifiant que Beets n'a plus : `404`.
+
+`GET /media/selection.json` (session, même interrupteur) → `{query, count, sample}` : une sélection de titres composée par filtres. Les filtres sont ceux du tableau, `famille`, `collection`, `artist`, `album`, `genre`, `year_from` et `year_to` ; le moteur écrit la requête Beets qui dit la même chose, la vérifie comme une requête écrite à la main, et rend son compte et dix titres `{artist, title}`. Un artiste, un album, un genre s'y écrivent en valeur exacte sans casse (`artist:=~Orage`), la famille par son nom court (`famille:=jazz`), une collection par son dossier (`path:/media/20-archives/nuit`), la rotation comme la sélection Rotation, les années en plage (`year:2015..`, `year:1..1999`). Le genre s'écrit `genres:` quand la bibliothèque de Beets a cette colonne (Beets 2.14), sinon `genre:`. Elle compte les titres comme `/media/titles.json` avec les mêmes filtres. Sans filtre, ou une année qui n'en est pas une : `400 {code:"validation_error"}`.
 
 #### La fiche d'un titre
 
@@ -287,6 +299,26 @@ La console ne prend aucune adresse en repli, et le `brand.json` de son image n'e
 Le panneau « Passer en direct », ouvert à tout compte, lit `GET /station/harbor.json` à chaque ouverture. Sans hôte réglé, il cache les réglages de l'encodeur et dit qu'un admin le règle dans Réglages → Station. Face à un moteur sans la route (404), il dit de mettre à jour le moteur.
 
 La politique de sécurité du contenu (CSP) de la console ne suit pas ces réglages. Les origines du flux et de `now.json` y viennent de `CSP_MEDIA_SRC` et `CSP_CONNECT_SRC`, deux variables de l'image de la console. Changer l'adresse du flux dans l'onglet Station ne les change pas : le navigateur signale alors l'écart dans sa console, sans rien bloquer tant que la CSP reste en `Report-Only`. Voir [les en-têtes de sécurité](deploiement.md#les-en-têtes-de-sécurité).
+
+### Lien d'écoute (« Retrouver ce titre »)
+
+Un auditeur qui aime le titre en cours l'ouvre sur sa plateforme d'un toucher. Un service de liens, que la station règle, rend pour un artiste et un titre un lien qui ouvre le morceau chez chacun. Le logiciel n'en nomme aucun : l'adresse et la clé sont des réglages de la station, éteints par défaut ([FON-84](feuille-de-route/P2.md#fon-84--retrouver-ce-titre-par-hopper)).
+
+- `GET /listen-link.json`, admin seulement → `{enabled, url, key_set}`. `enabled` vaut `false` tant que la station ne l'a pas allumé, `url` `null` sans adresse. `key_set` dit seulement qu'une clé partenaire est posée : **aucune route ne rend la clé**.
+- `PUT /listen-link.json`, admin seulement, avec le jeton CSRF → la même forme que `GET`. Seules les clés présentes changent : `enabled` (booléen), `url` (une adresse en `http://` ou `https://`, sans identifiant ni mot de passe, de 500 caractères au plus), `key` (une ligne, sans espace, de 200 caractères au plus). Une adresse ou une clé vide ou `null` efface le réglage. C'est tout ou rien : une valeur refusée répond 400 `validation_error` avec son `field`, et rien n'est écrit. Changer l'adresse ou la clé oublie ce que l'ancien service avait répondu.
+
+Les réglages sont les clés `features.listen_link` (l'interrupteur, absent = éteint), `listen_link.url` et `listen_link.key` de la table `settings`. Un moteur plus ancien n'a pas la route : la console dit de le mettre à jour.
+
+Allumé, quand un titre de musique passe à l'antenne (source `autodj` ou `carts`, jamais un direct ni un relais), le scheduler le demande au service en tâche de fond, après avoir répondu au playout :
+
+- `POST {adresse}/api/resolve`, corps `{"track": {"artist", "title"}}`, avec `X-Hopper-Key: {clé}` si la station en a une. Réponse `200 {id, url}` : le lien. `422` : rien n'est sûr à la lettre près, donc aucun lien. Tout le reste (panne, 4xx ou 5xx, réponse illisible, adresse qui n'est pas web) donne aussi aucun lien.
+- Le délai est de 3 s, sans nouvel essai. Trois pannes de suite : plus rien ne part pendant une minute. Une réponse sûre est gardée en mémoire une semaine, un « pas sûr » un jour : un titre rejoué n'est pas redemandé. **Une panne ou un délai du service ne retarde jamais l'antenne** : la demande ne s'attend pas, et le titre passe sans lien.
+- Ce qui part de la station : l'artiste et le titre qui passent, et la clé. Rien d'autre.
+
+Le lien arrive ensuite, quand le service a répondu :
+
+- `now.json` (service nowplaying) porte `listen_url` seulement quand le lien est sûr et que c'est celui du titre en cours. Le scheduler le relaie par un second `POST /hook` `{"listen_link": {artist, title, radiotomate_sound_id, url}}` que nowplaying pose sur le titre en cours, ou garde pour le titre qui va arriver. Le titre suivant le perd. nowplaying ne garde qu'une adresse web d'une ligne, de 500 caractères au plus.
+- `GET /live.json` porte le même `listen_url`, que la console montre en lien « Retrouver ce titre » dans le titre en cours de la barre du haut. Le scheduler et l'interface sont deux processus : le scheduler garde le lien du titre en cours dans la clé `listen_link.current` de la table `settings`, que l'interface relit. Éteint, ou pour un autre titre, le champ est absent.
 
 ### Catalogue (service à part du moteur)
 

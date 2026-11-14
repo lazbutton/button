@@ -46,7 +46,9 @@ FICHE_FIELDS = ("title", "artist", "album", "year", "genre", "famille")
 # Les colonnes qui se trient, et les filtres qui prennent une valeur exacte.
 SORTS = ("title", "artist", "album", "famille", "genre", "year", "duration")
 FILTERS = ("collection", "artist", "famille", "album", "genre", "year")
-FACETS = ("collection", "artist", "famille", "album")
+# What the table ranges by; the genre is no ranking, but a selection picks it (FON-73).
+RANKINGS = ("collection", "artist", "famille", "album")
+FACETS = (*RANKINGS, "genre")
 PAGE = 100
 MAX_PAGE = 500
 # Beets garde les valeurs d'un champ multiple, comme les genres de Beets 2.14,
@@ -169,6 +171,8 @@ class TitleQuery:
     offset: int = 0
     limit: int = PAGE
     facets: tuple[str, ...] = ()
+    # From and to, both kept: a title without a year is in neither.
+    years: tuple[int | None, int | None] = (None, None)
 
     @classmethod
     def from_args(cls, args: Mapping[str, str]) -> TitleQuery:
@@ -190,8 +194,9 @@ class TitleQuery:
         filters = {
             name: " ".join(str(args[name]).split()) for name in FILTERS if name in args
         }
-        if filters.get("year") and not filters["year"].isdigit():
-            raise DomainValidationError("L'année est un nombre.", field="year")
+        for name in ("year", "year_from", "year_to"):
+            if args.get(name) and not str(args[name]).strip().isdigit():
+                raise DomainValidationError("L'année est un nombre.", field=name)
         return cls(
             q=str(args.get("q") or ""),
             filters=filters,
@@ -200,6 +205,10 @@ class TitleQuery:
             offset=_bounded(args.get("offset"), 0, 0, 10**9, "offset"),
             limit=_bounded(args.get("limit"), PAGE, 1, MAX_PAGE, "limit"),
             facets=facets,
+            years=(
+                int(args["year_from"]) if args.get("year_from") else None,
+                int(args["year_to"]) if args.get("year_to") else None,
+            ),
         )
 
 
@@ -221,6 +230,13 @@ def _value(entry: dict, name: str) -> str:
 def _matches(entry: dict, query: TitleQuery, words: list[str]) -> bool:
     for name, wanted in query.filters.items():
         if fold(_value(entry, name)) != fold(wanted):
+            return False
+    start, end = query.years
+    if start is not None or end is not None:
+        year = entry["year"]
+        if year is None or (start is not None and year < start):
+            return False
+        if end is not None and year > end:
             return False
     if words:
         haystack = fold(

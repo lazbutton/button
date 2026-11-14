@@ -1,5 +1,7 @@
+import { ExternalLink } from "lucide-react";
 import { Link } from "react-router-dom";
 import { liveToItem } from "../../api/liveMap";
+import { listenLink } from "../../api/listenLink";
 import { topNow } from "../../api/topbar";
 import type { LiveSnapshot } from "../../api/types";
 import { useAntennaClock } from "../../lib/liveClock";
@@ -18,6 +20,7 @@ export function NowPlaying({
 }) {
   const clock = useAntennaClock(live);
   const now = topNow({ live, item: liveToItem(live), clock, stale, answeredAt });
+  const listen = listenLink(live, stale);
 
   return (
     <div
@@ -25,6 +28,7 @@ export function NowPlaying({
       data-ending={now.ending ? "true" : "false"}
       data-idle={now.idle ? "true" : "false"}
       data-stale={now.stale ? "true" : "false"}
+      data-listen={listen ? "true" : "false"}
     >
       {/* Le lien ne contient que le titre et l'artiste, que son nom reprend dans l'ordre, même quand la
           barre resserrée cache l'artiste. L'avancée et le temps restent à côté ; le lien couvre tout le cadre. */}
@@ -45,6 +49,19 @@ export function NowPlaying({
         <span className="tb-now-meta" aria-hidden="true">
           <span className="tb-now-note">{now.note}</span>
         </span>
+      ) : null}
+      {/* « Retrouver ce titre » : le lien que le service a rendu pour ce titre, seulement quand il en est sûr. */}
+      {listen ? (
+        <a
+          className="tb-now-listen"
+          href={listen}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label={`Retrouver ce titre : ${now.title}${now.artist ? `, ${now.artist}` : ""} (s’ouvre dans un nouvel onglet)`}
+          title="Retrouver ce titre"
+        >
+          <ExternalLink aria-hidden="true" size={16} />
+        </a>
       ) : null}
     </div>
   );
