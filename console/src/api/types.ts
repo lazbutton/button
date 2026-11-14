@@ -54,6 +54,10 @@ export type Sound = {
   last_played: string | null;
   uploader: string | null;
   path?: string;
+  /** Un titre de la rotation ou d'une collection, joué là où il est, sans copie (FON-69). Absent d'un moteur plus ancien. */
+  borrowed?: boolean;
+  /** Ce titre a quitté la banque : le son reste, « Indisponible ». */
+  missing?: boolean;
 };
 
 /** Un fichier du dossier d'un bac que le moteur n'a pas pris : son chemin dans ce dossier, ou `.` pour le dossier entier. */

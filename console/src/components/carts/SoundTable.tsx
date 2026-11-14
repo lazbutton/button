@@ -13,6 +13,7 @@ import {
   ChevronDown,
   FolderOpen,
   GripVertical,
+  Library,
   Link2,
   MoreHorizontal,
   Pause,
@@ -34,6 +35,7 @@ import {
   apiBlob,
   apiDeleteJson,
   apiPost,
+  apiPostJson,
   apiPut,
   ApiForbiddenError,
   ApiRequestError,
@@ -44,7 +46,10 @@ import { formatClock, percentOf } from "../../api/soundsView";
 import type { Cart, Sound } from "../../api/types";
 import type { ToastTone } from "../../ui/AppToast";
 import { ConfirmDialog } from "../../ui/ConfirmDialog";
+import { useAccount } from "../../api/AccountContext";
+import { addedToCart } from "../../api/bankCarts";
 import { BankAttachDialog } from "./BankAttachDialog";
+import { BankTitlesPicker } from "./BankTitlesPicker";
 
 export function SoundTable({
   cart,
@@ -85,6 +90,9 @@ export function SoundTable({
   const [busyDelete, setBusyDelete] = useState(false);
   const [titleQuery, setTitleQuery] = useState("");
   const [attachOpen, setAttachOpen] = useState(false);
+  // Titles of the bank, without a copy (FON-69): behind the bank's tidying.
+  const [pickOpen, setPickOpen] = useState(false);
+  const bankTitles = useAccount().account?.features?.bank_tidy === true;
 
   cartIdRef.current = cart.id;
   playingIdRef.current = playingId;
@@ -401,6 +409,15 @@ export function SoundTable({
                   <small>Lié, sans copie</small>
                 </span>
               </DropdownMenu.Item>
+              {bankTitles ? (
+                <DropdownMenu.Item onSelect={() => setPickOpen(true)}>
+                  <Library size={15} aria-hidden="true" />
+                  <span className="bacs-menu-copy">
+                    Titres de la banque
+                    <small>De la rotation et des collections, sans copie</small>
+                  </span>
+                </DropdownMenu.Item>
+              ) : null}
             </DropdownMenu.Content>
           </DropdownMenu.Root>
         </div>
@@ -564,6 +581,28 @@ export function SoundTable({
           <strong>Déposer dans « {cart.title} »</strong>
           <span>Les fichiers audio sont copiés dans le bac.</span>
         </div>
+      ) : null}
+
+      {pickOpen ? (
+        <BankTitlesPicker
+          cartTitle={cart.title}
+          inCart={new Set(cart.sounds.map((sound) => sound.path ?? ""))}
+          onClose={() => setPickOpen(false)}
+          onAdd={async (paths) => {
+            try {
+              const { cart: after } = await apiPostJson<{ cart: Cart }>(`/carts/${cart.id}/sounds.json`, { titles: paths });
+              const summary = addedToCart(after.sounds.length - cart.sounds.length, paths.length, after.title);
+              onCart(after);
+              notify(summary.text, summary.tone);
+            } catch (caught) {
+              if (caught instanceof ApiRequestError && caught.status === 409) {
+                notify(addedToCart(0, paths.length, cart.title).text, "info");
+                return;
+              }
+              throw caught;
+            }
+          }}
+        />
       ) : null}
 
       <BankAttachDialog
@@ -874,8 +913,19 @@ function SoundRow({
                 </Badge>
               ) : null}
               {unavailable ? (
-                <Badge size="1" variant="soft" color="orange" className="bacs-badge">
+                <Badge
+                  size="1"
+                  variant="soft"
+                  color="orange"
+                  className="bacs-badge"
+                  title={sound.missing ? "Ce titre a quitté la banque : retire-le du bac." : undefined}
+                >
                   Indisponible
+                </Badge>
+              ) : null}
+              {sound.borrowed && !sound.missing ? (
+                <Badge size="1" variant="outline" color="gray" className="bacs-badge" title="Joué depuis la banque, sans copie">
+                  Banque
                 </Badge>
               ) : null}
             </span>

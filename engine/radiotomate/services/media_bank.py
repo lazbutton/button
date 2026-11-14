@@ -50,6 +50,9 @@ HABILLAGE_TYPES = ("jingles", "ids", "pubs", "beds", "stings", "sfx")
 EMISSION_FULL = "entiere"
 # What a cart may follow.
 BANK_TOPS = (HABILLAGE_TOP, EMISSIONS_TOP, CART_DROP_TOP)
+# The titles a cart may also take one by one from the library, by their path and
+# without a copy (FON-69): the rotation's and the collections'. Its folder never.
+BORROWABLE_TOPS = (ROTATION_TOP, COLLECTIONS_TOP)
 # What the console is told of a cart's folder, instead of reading its name.
 BANK_ZONES = {
     HABILLAGE_TOP: "habillage",
@@ -192,6 +195,29 @@ def resolve_bank_path(raw: str) -> Path:
     if not resolved.is_file():
         raise DomainValidationError(f"missing file: {rel}")
     return resolved
+
+
+def resolve_bank_title(raw: str) -> Path:
+    """A title of the rotation or of a collection, that a cart plays where it is."""
+    resolved, rel = _resolved_under_root(raw)
+    if rel.split("/", 1)[0] not in BORROWABLE_TOPS:
+        raise DomainValidationError(
+            "Un bac ne prend ainsi qu'un titre de la rotation ou d'une collection.",
+            field="titles",
+        )
+    if not resolved.is_file():
+        raise DomainValidationError(
+            f"Ce titre n'est plus dans la banque : {rel}.", field="titles"
+        )
+    return resolved
+
+
+def borrowed_title(path: Path | str | None) -> bool:
+    """A sound that plays a title of the rotation or of a collection, not a copy."""
+    if not path:
+        return False
+    rel = media_rel(Path(path))
+    return bool(rel) and rel.split("/", 1)[0] in BORROWABLE_TOPS
 
 
 def resolve_bank_dir(raw: str) -> Path:

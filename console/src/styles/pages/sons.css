@@ -3282,6 +3282,77 @@
   }
 }
 
+/* ---------- Titles of the bank in a cart (FON-69) ---------- */
+
+.bacs-picker {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.bacs-picker-list {
+  display: grid;
+  max-height: min(22rem, 50vh);
+  margin-top: 0.75rem;
+  overflow-y: auto;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+}
+
+.bacs-picker-list > .bacs-dialog-note {
+  margin: 0;
+  padding: 0.9rem;
+}
+
+.bacs-picker-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 2.75rem;
+  padding: 0.4rem 0.75rem;
+  border-bottom: 1px solid var(--bacs-line, var(--app-border));
+  cursor: pointer;
+}
+
+.bacs-picker-row:last-child {
+  border-bottom: 0;
+}
+
+.bacs-picker-row:hover {
+  background: var(--gray-a2);
+}
+
+.bacs-picker-row.is-done {
+  cursor: default;
+}
+
+.bacs-picker-copy {
+  display: grid;
+  min-width: 0;
+}
+
+.bacs-picker-copy strong,
+.bacs-picker-copy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bacs-picker-copy strong {
+  font-size: 0.84rem;
+  font-weight: 560;
+}
+
+.bacs-picker-copy span,
+.bacs-picker-len {
+  color: var(--app-text-muted);
+  font-size: 0.74rem;
+}
+
+.bacs-picker-len {
+  font-variant-numeric: tabular-nums;
+}
+
 /* ---------- Narrow screens ---------- */
 
 @container bacs (max-width: 699px) {
