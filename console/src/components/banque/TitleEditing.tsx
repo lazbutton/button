@@ -157,19 +157,18 @@ export function needsConfirmation(outcome: EditOutcome): boolean {
  * « Modifier N fiches » : un champ coché prend la même valeur pour tous les
  * titres, un champ décoché garde celle de chacun. Un essai d'abord, qui dit ce
  * qui changera, ce qui attendra et les sélections touchées ; puis l'écriture.
- * `preset` coche et remplit des champs d'avance, comme la santé de la banque
- * (FON-72) : « Écrire partout Les Marées Hautes ».
  */
 export function EditTitlesDialog({
   titles,
-  preset,
   onClose,
   onDone,
+  preset,
 }: {
   titles: BankTitle[];
-  preset?: Partial<FicheForm>;
   onClose: () => void;
   onDone: (outcome: EditOutcome) => void;
+  /** Fields checked and filled already: what titles dropped on a group take (FON-75), or « Écrire partout » of the bank's health (FON-72). */
+  preset?: Partial<Record<FicheField, string>>;
 }) {
   const base = useId();
   const [checked, setChecked] = useState<Partial<Record<FicheField, boolean>>>(() =>

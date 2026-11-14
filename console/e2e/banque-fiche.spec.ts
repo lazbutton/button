@@ -274,3 +274,66 @@ test("la correction coupée sur la station, la fiche se lit sans se corriger", a
   await expect(fiche.getByText("Complète")).toBeVisible();
   await expect(fiche.getByRole("button", { name: "Corriger la fiche" })).toHaveCount(0);
 });
+
+/** Le tableau rangé par famille : les familles de la bibliothèque, comptées (FON-75). */
+async function parFamille(page: Page, titres: Titre[]) {
+  await page.route("**/media/titles.json*", async (route: Route) => {
+    const famille = new URL(route.request().url()).searchParams.get("famille");
+    const gardes = famille === null ? titres : titres.filter((entry) => entry.famille === famille);
+    await route.fulfill({
+      json: {
+        titles: gardes,
+        total: titres.length,
+        matched: gardes.length,
+        offset: 0,
+        limit: 100,
+        sort: "artist",
+        order: "asc",
+        facets: {
+          famille: [
+            { value: "jazz", label: "Jazz", count: titres.filter((entry) => entry.famille === "jazz").length },
+            { value: "soul-funk", label: "Soul, funk", count: titres.filter((entry) => entry.famille === "soul-funk").length },
+            { value: "", label: "", count: titres.filter((entry) => !entry.famille).length },
+          ],
+          collection: [{ value: "rotation", label: "rotation", count: titres.length }],
+        },
+      },
+    });
+  });
+}
+
+test("des titres glissés sur une famille demandent confirmation, puis la portent", async ({ page }) => {
+  const { lots, titres } = await banque(page);
+  await parFamille(page, titres);
+  await seConnecter(page, "admin");
+  await expect(antenne(page)).toBeVisible();
+  await page.goto("/sons?onglet=importer&ranger=famille");
+  const tableau = page.getByRole("region", { name: "Toute la banque" });
+  await tableau.getByRole("checkbox", { name: "Sélectionner Comète" }).click();
+  await tableau.getByRole("checkbox", { name: "Sélectionner Été indien" }).click();
+
+  const colonne = page.getByRole("complementary", { name: "Ranger la banque" });
+  await tableau.locator("tbody tr").filter({ hasText: "Comète" }).dragTo(colonne.getByRole("option", { name: /^Soul, funk/ }));
+  const fenetre = page.getByRole("dialog", { name: "Modifier 2 fiches" });
+  await expect(fenetre.getByRole("checkbox", { name: "Famille" })).toBeChecked();
+  expect(lots).toEqual([]);
+  await fenetre.getByRole("button", { name: "Vérifier" }).click();
+  await fenetre.getByRole("button", { name: "Modifier 2 fiches" }).click();
+  await expect(avis(page, "2 fiches corrigées.")).toBeVisible();
+  expect(lots.at(-1)?.titles).toEqual([
+    { id: 1, values: { famille: "soul-funk" }, expected: { famille: "jazz" } },
+    { id: 2, values: { famille: "soul-funk" }, expected: { famille: "jazz" } },
+  ]);
+});
+
+test("une cible refusée le dit : des titres glissés sur leur propre collection", async ({ page }) => {
+  await banque(page);
+  await seConnecter(page, "admin");
+  await expect(antenne(page)).toBeVisible();
+  await page.goto("/sons?onglet=importer");
+  const tableau = page.getByRole("region", { name: "Toute la banque" });
+  const colonne = page.getByRole("complementary", { name: "Ranger la banque" });
+  await tableau.locator("tbody tr").filter({ hasText: "Comète" }).dragTo(colonne.getByRole("option", { name: /^Rotation/ }));
+  await expect(page.getByRole("alert").or(page.getByRole("status")).filter({ hasText: "Ces titres sont déjà dans « Rotation »." })).toBeVisible();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+});

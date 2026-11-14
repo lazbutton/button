@@ -3449,6 +3449,31 @@
   }
 }
 
+/* ---------- Titles dragged onto a group or a cart (FON-75) ---------- */
+
+.bacs-track-row[draggable="true"] {
+  cursor: grab;
+}
+
+.banque-drop-cart {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.5rem var(--bacs-pad);
+  padding: 0.75rem 1rem;
+  border: 1px dashed var(--app-border-strong);
+  border-radius: var(--app-radius-md);
+  color: var(--app-text-muted);
+  font-size: 0.8rem;
+}
+
+.banque-drop-cart.is-over {
+  border-style: solid;
+  border-color: var(--app-focus);
+  background: var(--gray-a3);
+  color: var(--app-text);
+}
+
 /* ---------- The health of the bank (FON-72) ---------- */
 
 .banque-health {
