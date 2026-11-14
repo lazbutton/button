@@ -22,6 +22,7 @@ from radiotomate.interface import (
     agenda,
     autodj,
     bank_moves,
+    bank_removals,
     carts,
     csrf,
     emissions,
@@ -136,6 +137,7 @@ def app_factory(config: dict, reload: bool, beets: BeetsIntegration):  # noqa: P
     app.register_blueprint(title_edits.blueprint)
     app.register_blueprint(journal.blueprint)
     app.register_blueprint(bank_moves.blueprint)
+    app.register_blueprint(bank_removals.blueprint)
     app.register_blueprint(csrf.blueprint)
     app.register_blueprint(station.blueprint)
     app.register_blueprint(listen_link.blueprint)

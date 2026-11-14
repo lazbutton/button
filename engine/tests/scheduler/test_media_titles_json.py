@@ -98,6 +98,7 @@ async def test_switch_off_keeps_the_table_closed(
         "bank_tidy": False,
         "title_edits": False,
         "bank_moves": False,
+        "bank_removals": False,
     }
 
 
@@ -123,6 +124,7 @@ async def test_a_row_says_everything_the_table_shows(
         "bank_tidy": True,
         "title_edits": True,
         "bank_moves": True,
+        "bank_removals": True,
     }
     payload = await _titles(client, "?q=dune")
     assert payload["total"] == len(TITLES)
