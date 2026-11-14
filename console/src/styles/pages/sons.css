@@ -2985,6 +2985,87 @@
   font-size: 0.72rem;
 }
 
+.banque-sheet-plays {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.banque-sheet-plays h3 {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0;
+  color: var(--app-text-faint);
+  font-size: 0.64rem;
+  font-weight: 650;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.banque-sheet-headline {
+  display: grid;
+  gap: 0.15rem;
+  margin: 0;
+  font-size: 0.82rem;
+}
+
+.banque-sheet-headline strong {
+  font-weight: 600;
+}
+
+.banque-sheet-headline span,
+.banque-sheet-muted {
+  color: var(--app-text-muted);
+  font-size: 0.76rem;
+}
+
+.banque-sheet-muted {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0;
+}
+
+.banque-sheet-recent {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.banque-sheet-recent li {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.38rem 0.55rem;
+  border-radius: var(--app-radius-sm);
+  background: var(--gray-a2);
+  font-size: 0.76rem;
+}
+
+.banque-sheet-recent li span:first-child {
+  color: var(--app-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.banque-sheet-recent li span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--app-text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.banque-sheet-problem {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--app-danger-ink);
+  font-size: 0.76rem;
+}
+
 /* ---------- Narrow screens ---------- */
 
 @container bacs (max-width: 699px) {

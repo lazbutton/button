@@ -77,6 +77,19 @@ async function tableau(page: Page, statut = 200): Promise<URL[]> {
     const compte = (await reponse.json()) as Record<string, unknown>;
     await route.fulfill({ response: reponse, json: { ...compte, features: { bank_tidy: true } } });
   });
+  await page.route("**/media/titles/*/plays.json", (route: Route) =>
+    route.fulfill({
+      json: {
+        days: 90,
+        count: 2,
+        by_origin: { autodj: 1, bac: 0, agenda: 1, autre: 0 },
+        recent: [
+          { on_air: "2026-11-01T22:10+01:00", origin: "autodj", cart: null },
+          { on_air: "2026-10-30T09:00+01:00", origin: "agenda", cart: null },
+        ],
+      },
+    }),
+  );
   await page.route("**/media/titles.json*", async (route: Route) => {
     const url = new URL(route.request().url());
     demandes.push(url);
@@ -139,6 +152,10 @@ test("toute la banque se range par artiste, se trie, et ouvre la fiche d'un titr
   const fiche = page.getByRole("complementary", { name: "Fiche de Comète" });
   await expect(fiche.getByText("Complète")).toBeVisible();
   await expect(fiche.getByText("10-rotation/1.mp3")).toBeVisible();
+  const antenneDuTitre = fiche.getByRole("region", { name: "À l'antenne" });
+  await expect(antenneDuTitre.getByText("Passé 2 fois en 90 jours")).toBeVisible();
+  await expect(antenneDuTitre.getByText("Auto-DJ 1 · Agenda 1")).toBeVisible();
+  await expect(antenneDuTitre.getByRole("list", { name: "Derniers passages" }).getByRole("listitem")).toHaveCount(2);
   await page.keyboard.press("Escape");
   await expect(fiche).toHaveCount(0);
   await expect(orage.getByRole("button", { name: "Comète", exact: true })).toBeFocused();

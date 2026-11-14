@@ -207,6 +207,8 @@ Jouer tout de suite, droit `live` : `POST /carts/{id}/now.json` et `POST /carts/
 
 Tant que l'interrupteur général de « Ranger la banque » est éteint, la route rend `409 {error, code:"bank_tidy_off"}`. Un tri, un ordre, une facette ou un nombre inconnus rendent `400 {error, code:"validation_error", field}`.
 
+`GET /media/titles/{id}/plays.json` (session, même interrupteur) → `{days, count, by_origin, recent}` : les passages à l'antenne d'un titre de la bibliothèque, lus au journal d'antenne (`metadata_log`), qui les garde 90 jours. `days` vaut 90 ; `count` compte les passages, hors titres sautés avant de jouer ; `by_origin` les range en `{autodj, bac, agenda, autre}` ; `recent` donne les dix derniers, du plus récent : `{on_air, origin, cart}`, `on_air` à l'heure de Paris, `cart` `{id, title}` ou `null`. Un passage se reconnaît au fichier joué, la fin de la requête que le playout a reçue ; un passage de l'Agenda, à la ligne du conducteur qui l'a envoyé, que le conducteur garde 7 jours : plus ancien, il compte comme un bac. Un identifiant que Beets n'a plus : `404`.
+
 ### Système
 
 `GET /system/disk.json` → `{total, used, free, path}` : espace disque de la banque (`MEDIA_ROOT`). Droits `carts` ou `autodj`, sinon 403 ; 503 si le disque est illisible.
