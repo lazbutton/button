@@ -51,6 +51,8 @@ import sys
 import tempfile
 import time
 import traceback
+import unicodedata
+from collections import Counter
 from contextlib import closing
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -84,6 +86,8 @@ TURNS_MIN = 3
 TURNS_MAX = 8
 # Les titres de chaque geste : peu, le banc compte la durée de la boucle.
 MOVED = 3
+# FON-68 : sur une copie de vraie banque, des centaines de fichiers renommés.
+RENAMED = 300
 REMOVED = 2
 CORRECTED = 4
 # Ce que le banc écrit dans les fiches corrigées : rien d'une station.
@@ -670,6 +674,72 @@ def geste_annuler(banc: Banc) -> None:
     banc.controler("déplacer puis annuler", avant, {}, {}, set(titles))
 
 
+async def _renommer(banc: Banc, rels: list[str]) -> tuple[list, object]:
+    from radiotomate.services.bank_lock import BeetsPlace
+    from radiotomate.services.title_renames import plan_renames, rename_titles
+
+    place = BeetsPlace.of(_beets(banc).lib)
+    ids = [row[0] for rel, row in banc.snapshot().items() if rel in rels]
+    db = await _engine_session(banc)
+    async with db.session() as session:
+        plans = await plan_renames(session, place, ids, "artiste-titre")
+        planned = [(plan.path, plan.to) for plan in plans if plan.state == "rename"]
+        outcome = await rename_titles(session, place, plans, username="banc")
+    await db.after_serving()
+    return planned, outcome
+
+
+def geste_renommer(banc: Banc) -> None:
+    """Des fichiers renommés d'après leur fiche (FON-68), puis « Annuler »."""
+    say("Geste : renommer des fichiers d'après leur fiche, puis annuler")
+    target = banc.archive()
+    titles = banc.choisir(ROTATION, RENAMED)
+    titles += banc.choisir(target[1], RENAMED) if target else []
+    if not titles:
+        say("  (rien à renommer dans cet échantillon)")
+        return
+    avant = banc.snapshot()
+    planned, outcome = asyncio.run(_renommer(banc, titles))
+    renamed = {plan.path: plan.to for plan in outcome.titles if plan.state == "renamed"}
+    banc.info["renommer"] = f"{len(renamed)} sur {len(titles)}"
+    banc.verdict(
+        "renommer",
+        "le moteur renomme chaque titre que l'aperçu laisse passer",
+        len(renamed) == len(planned) and outcome.entry is not None,
+        f"{len(renamed)} sur {len(planned)} prévus, {len(titles)} choisis ("
+        + ", ".join(
+            f"{count} {state}"
+            for state, count in sorted(Counter(p.state for p in outcome.titles).items())
+        )
+        + ")",
+    )
+    if not renamed:
+        return
+    decomposed = [
+        banc.ref(old)
+        for old, new in renamed.items()
+        if unicodedata.normalize("NFC", new) != new
+    ]
+    banc.verdict(
+        "renommer",
+        "chaque nouveau nom est en forme composée (NFC)",
+        not decomposed,
+        ", ".join(decomposed[:5]),
+    )
+    banc.controler("renommer", avant, renamed, {})
+    avant = banc.snapshot()
+    undone = asyncio.run(_annuler(banc, outcome.entry))
+    banc.verdict(
+        "renommer",
+        "« Annuler » rend leurs anciens noms",
+        len(undone.written) >= len(renamed) and not undone.kept,
+        f"{len(undone.written)} sur {len(renamed)}",
+    )
+    banc.controler(
+        "annuler le renommage", avant, {new: old for old, new in renamed.items()}, {}
+    )
+
+
 def geste_retirer(banc: Banc) -> None:
     """Des titres de la rotation et d'une collection, retirés par le catalogue."""
     import bank_api
@@ -874,6 +944,7 @@ GESTES = [
     geste_deplacer,
     geste_revenir,
     geste_annuler,
+    geste_renommer,
     geste_retirer,
     geste_corriger,
     geste_corriger_puis_lire,
