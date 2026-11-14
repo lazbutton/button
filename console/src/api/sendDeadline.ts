@@ -11,6 +11,12 @@ export const SEND_DEADLINE_MS = 10_000;
 export const BANK_SEND_DEADLINE_MS = 60_000;
 
 /**
+ * Corriger un lot de fiches : le moteur écrit jusqu'à 500 fichiers avant de
+ * répondre, et réécrit en entier un fichier dont les tags débordent leur place.
+ */
+export const TITLES_SEND_DEADLINE_MS = 120_000;
+
+/**
  * Un dépôt de sons dure le temps de les envoyer, plusieurs minutes sur un
  * réseau lent. Il n'est abandonné que s'il n'avance plus : aucun octet parti
  * pendant ce temps, ou pas de réponse ce temps après le dernier
