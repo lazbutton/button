@@ -2102,3 +2102,43 @@ button.prog-save {
   white-space: normal;
   line-height: 1.4;
 }
+
+/* ---------- A selection composed by filters (FON-73) ---------- */
+
+.banque-composer {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.banque-composer-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem 1rem;
+}
+
+.banque-composer-years {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.banque-composer-grid .rt-SelectTrigger {
+  width: 100%;
+}
+
+.banque-composer-query {
+  color: var(--app-text-muted);
+  font-size: 0.74rem;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 559px) {
+  .banque-composer-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* A field that suggests from a list keeps the look of the others. */
+.banque-composer input::-webkit-calendar-picker-indicator {
+  display: none !important;
+}

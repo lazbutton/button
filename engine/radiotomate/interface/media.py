@@ -1,6 +1,6 @@
 """The bank's table (FON-64): the titles of the Beets library, sorted and filtered,
 the views each account keeps of it (FON-65), and the plays of a title in its
-fiche (FON-76).
+fiche (FON-76), and a selection composed by filters (FON-73).
 
 Behind the general switch of « Ranger la banque », ``features.bank_tidy``: off,
 the routes refuse, and the console keeps today's view.
@@ -15,6 +15,8 @@ from radiotomate.interface.json_util import read_json_object
 from radiotomate.services import bank_views
 from radiotomate.services.bank_plays import title_plays
 from radiotomate.services.bank_titles import TitleQuery, require_bank_tidy, titles_page
+from radiotomate.services.beets_query import validate_selection_query
+from radiotomate.services.selection_filters import SelectionFilters, selection_query
 
 blueprint = Blueprint("media", __name__)
 
@@ -76,3 +78,20 @@ async def title_plays_json(item_id: int):
         raise DomainNotFound("Ce titre n'est plus dans la bibliothèque.")
     path = bytes(item.path).decode("utf-8", "surrogateescape")
     return jsonify(await title_plays(g.dbsession, [path]))
+
+
+@blueprint.get("/media/selection.json")
+@login_required
+async def selection_json():
+    """A selection composed by filters (FON-73): its query, its count, ten titles."""
+    await require_bank_tidy(g.dbsession)
+    beets = BeetsIntegration.get()
+    filters = SelectionFilters.from_args(request.args)
+    query = selection_query(filters, genre_field=await beets.genre_field())
+    validate_selection_query(query)
+    items = await beets.search(query)
+    sample = [
+        {"artist": str(item.get("artist") or ""), "title": str(item.get("title") or "")}
+        for item in items[:10]
+    ]
+    return jsonify({"query": query, "count": len(items), "sample": sample})

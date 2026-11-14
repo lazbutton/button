@@ -19,7 +19,7 @@ from radiotomate.domain.errors import (
     DomainValidationError,
 )
 from radiotomate.models import BankView
-from radiotomate.services.bank_titles import FACETS, SORTS
+from radiotomate.services.bank_titles import RANKINGS, SORTS
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session as ormSession
@@ -50,7 +50,7 @@ def clean_state(raw: object) -> dict:
     if not isinstance(raw, dict):
         raise DomainValidationError("La vue est mal formée.", field="state")
     ranking = str(raw.get("ranking") or "collection")
-    if ranking not in FACETS:
+    if ranking not in RANKINGS:
         raise DomainValidationError(f"Rangement inconnu : {ranking}.", field="state")
     group = raw.get("group")
     if group is not None and not isinstance(group, str):

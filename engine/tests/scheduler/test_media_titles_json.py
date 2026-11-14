@@ -168,6 +168,12 @@ async def test_the_table_filters_by_each_column(
         "Été indien",
     ]
     assert _names(await _titles(client, f"?genre=Jazz&year=2015{sort}")) == ["Comète"]
+    # A range of years: a title without a year is in none.
+    assert _names(await _titles(client, f"?year_from=2016{sort}")) == [
+        "Dune",
+        "Été indien",
+    ]
+    assert _names(await _titles(client, f"?year_to=2015{sort}")) == ["Comète", "Écho"]
     # The text search forgets accents and case, and reads the path too.
     assert _names(await _titles(client, f"?q=%C3%89T%C3%89%20INDIEN{sort}")) == [
         "Été indien"
@@ -232,7 +238,15 @@ async def test_the_facets_count_the_whole_bank(
 
 
 @pytest.mark.parametrize(
-    "query", ["?sort=size", "?order=up", "?facets=genre", "?limit=x", "?year=deux"]
+    "query",
+    [
+        "?sort=size",
+        "?order=up",
+        "?facets=taille",
+        "?limit=x",
+        "?year=deux",
+        "?year_from=x",
+    ],
 )
 async def test_a_wrong_query_is_refused(  # noqa: PLR0913
     raw_app, app_configration, dbsession, users_password, tmp_path, query
