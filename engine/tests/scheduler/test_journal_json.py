@@ -190,7 +190,7 @@ async def test_a_lot_older_than_30_days_is_not_undone(
 
 
 def test_a_gesture_without_undo_says_so():
-    entry = JournalEntry(gesture="remove", created=datetime(2026, 11, 14, 12))
+    entry = JournalEntry(gesture="copy", created=datetime(2026, 11, 14, 12))
     assert journal.why_not_undoable(entry, None, datetime(2026, 11, 14, 13)) == (
         "Ce geste ne s'annule pas encore."
     )

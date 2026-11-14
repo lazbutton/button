@@ -458,14 +458,64 @@ def _each(
     return done, failed, []
 
 
-def remove_files(media: Path, destination: str, names: object) -> tuple[int, dict]:
-    """Send titles to the bank's trash. Beets drops them at its next round."""
+# What a removal by the engine answers: (status, payload), or None when it leaves
+# the removal to the catalogue.
+EngineRemove = Callable[[list[str]], "tuple[int, dict] | None"]
+
+
+def _removed_by_engine(media: Path, folder: Path, wanted: list[str], engine: EngineRemove) -> tuple[int, dict] | None:
+    """Hand the removals to the engine, which notes them in its journal (FON-71).
+
+    The engine names each title by its path below the bank: the answer names them
+    again as the console does. None, and the catalogue removes them itself, as
+    before: an engine that does not remove them.
+    """
+    failed: list[dict] = []
+    paths: list[str] = []
+    by_path: dict[str, str] = {}
+    for name in wanted:
+        path = _file_in(folder, name)
+        if path is None:
+            failed.append({"name": name, "reason": "fichier introuvable"})
+            continue
+        rel = path.relative_to(media).as_posix()
+        by_path[rel] = name
+        paths.append(rel)
+    if not paths:
+        return 200, {"removed": [], "failed": failed, "left": []}
+    answer = engine(paths)
+    if answer is None:
+        return None
+    status, payload = answer
+    if status != 200:
+        return status, payload
+
+    def named(rows: object) -> list[str]:
+        return [by_path[row] for row in rows if isinstance(row, str) and row in by_path] if isinstance(rows, list) else []
+
+    for row in payload.get("failed") or []:
+        if isinstance(row, dict) and row.get("from") in by_path:
+            failed.append({"name": by_path[row["from"]], "reason": str(row.get("reason") or "retrait impossible")})
+    return 200, {"removed": named(payload.get("removed")), "failed": failed, "left": named(payload.get("left"))}
+
+
+def remove_files(media: Path, destination: str, names: object, engine: EngineRemove | None = None) -> tuple[int, dict]:
+    """Send titles to the bank's trash.
+
+    With ``engine``, the engine removes them first, if it does: it takes them out
+    of Beets at once and notes them in its journal (FON-71). Otherwise Beets drops
+    them at its next round.
+    """
     folder = folder_of(media, destination)
     if folder is None:
         return 404, {"error": "Collection introuvable."}
     wanted, problem = _names(names)
     if wanted is None:
         return 400, {"error": problem}
+    if engine is not None:
+        answer = _removed_by_engine(media, folder, wanted, engine)
+        if answer is not None:
+            return answer
     trash = media / layout.TRASH
 
     def act(name: str) -> str | None:

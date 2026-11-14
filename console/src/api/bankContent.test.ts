@@ -17,6 +17,7 @@ import {
   modifiedLabel,
   moveBankFiles,
   moveNote,
+  removeNote,
   removeBankFiles,
   renameCollection,
   renameProblem,
@@ -332,4 +333,13 @@ test("the move window says whether a title keeps what it is", () => {
       "comme un titre nouveau. Une diffusion de l'Agenda qui joue un de ces fichiers ne le trouvera plus.",
   );
   assert.match(moveNote(2, "Rotation", false), /les retrouve dans Rotation .* des titres nouveaux/);
+});
+
+test("« Retirer » dit si le retrait se note au journal, et s'annule", () => {
+  assert.match(removeNote(1, true), /Le retrait se note dans Sons → Journal, d'où il s'annule pendant 30 jours/);
+  assert.match(removeNote(1, true), /À l'antenne ou en file, il reste où il est/);
+  assert.match(removeNote(3, true), /^Les fichiers partent dans la corbeille de la banque/);
+  // Le catalogue retire, comme avant : l'indexation les laisse partir à son tour suivant.
+  assert.match(removeNote(2, false), /après le prochain passage de l'indexation/);
+  assert.doesNotMatch(removeNote(2, false), /Journal/);
 });

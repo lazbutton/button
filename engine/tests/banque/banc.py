@@ -772,6 +772,109 @@ def geste_retirer(banc: Banc) -> None:
     banc.controler("retirer", avant, {}, removed)
 
 
+def _retire_par_le_moteur(banc: Banc):
+    """Le moteur qui reçoit les retraits du catalogue (`engine_remove`, FON-71)."""
+
+    def removals(asked: list[str]) -> tuple[int, dict]:
+        report = asyncio.run(_retirer(banc, asked))
+        banc.info["retrait"] = report.entry
+        return 200, report.payload()
+
+    return removals
+
+
+async def _retirer(banc: Banc, paths: list[str]) -> object:
+    from radiotomate.services import bank_removals
+    from radiotomate.services.bank_lock import BeetsPlace
+
+    place = BeetsPlace.of(_beets(banc).lib)
+    db = await _engine_session(banc)
+    async with db.session() as session:
+        report = await bank_removals.remove_titles(
+            session, place, paths, username="banc"
+        )
+    await db.after_serving()
+    return report
+
+
+def geste_retirer_moteur(banc: Banc) -> None:
+    """Des titres retirés par le catalogue, qui passe la main au moteur (FON-71) :
+    ils sortent de la bibliothèque aussitôt, et le lot se note au journal."""
+    import bank_api
+
+    say("Geste : retirer des titres par le moteur")
+    titles = banc.choisir(ROTATION, REMOVED)
+    if not titles:
+        say("  (rien à retirer dans cet échantillon)")
+        return
+    avant = banc.snapshot()
+    removed = {rel: sha(banc.media / rel) for rel in titles}
+    names = [rel.rsplit("/", 1)[-1] for rel in titles]
+    status, answer = bank_api.remove_files(
+        banc.media, "rotation", names, engine=_retire_par_le_moteur(banc)
+    )
+    banc.verdict(
+        "retirer par le moteur",
+        "le catalogue et le moteur retirent les titres, et le notent",
+        status == 200
+        and not answer.get("failed")
+        and banc.info.get("retrait") is not None,
+        reasons(status, answer),
+    )
+    still = [banc.ref(rel) for rel in titles if rel in banc.snapshot()]
+    banc.verdict(
+        "retirer par le moteur",
+        "les titres sortent de la bibliothèque sans attendre la boucle",
+        not still,
+        ", ".join(still),
+    )
+    banc.info["retires"] = titles
+    banc.controler("retirer par le moteur", avant, {}, removed)
+
+
+def geste_remettre(banc: Banc) -> None:
+    """« Annuler » le retrait : chaque fichier revient, et son titre sous son
+    identifiant de Beets, avec sa fiche."""
+    entry = banc.info.get("retrait")
+    titles = banc.info.get("retires") or []
+    if entry is None or not titles:
+        return
+    say("Geste : annuler le retrait")
+    avant = banc.snapshot()
+    outcome = asyncio.run(_annuler(banc, entry))
+    banc.verdict(
+        "annuler le retrait",
+        "« Annuler » remet chaque titre",
+        len(outcome.written) == len(titles) and not outcome.kept,
+        f"{len(outcome.written)} sur {len(titles)}",
+    )
+    back = [banc.ref(rel) for rel in titles if not (banc.media / rel).is_file()]
+    banc.verdict(
+        "annuler le retrait",
+        "chaque fichier est revenu à son chemin d'avant",
+        not back,
+        ", ".join(back[:5]),
+    )
+    files = files_of(banc.media)
+    for rel in titles:
+        if rel in files:
+            banc.hashes[rel] = sha(files[rel])
+            banc.readable.add(rel)
+    banc.controler("annuler le retrait", avant, {}, {})
+    apres = banc.snapshot()
+    same = [
+        rel
+        for rel in titles
+        if rel in apres and apres[rel][0] == banc.identity.get(rel)
+    ]
+    banc.verdict(
+        "annuler le retrait",
+        "chaque titre revient sous son identifiant de Beets",
+        len(same) == len(titles),
+        f"{len(same)} sur {len(titles)}",
+    )
+
+
 def fiche_of(path: Path) -> dict[str, object]:
     """Ce que les tags d'un fichier disent des champs que FON-66 corrige."""
     track = MediaFile(path)
@@ -952,6 +1055,8 @@ GESTES = [
     geste_annuler,
     geste_renommer,
     geste_retirer,
+    geste_retirer_moteur,
+    geste_remettre,
     geste_corriger,
     geste_corriger_puis_lire,
 ]
