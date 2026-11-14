@@ -7,6 +7,7 @@ from radiotomate.services.bank_moves import moves_on
 from radiotomate.services.bank_removals import removals_on
 from radiotomate.services.bank_titles import bank_tidy_enabled
 from radiotomate.services.title_edits import title_edits_enabled
+from radiotomate.services.title_renames import renames_on
 
 blueprint = Blueprint("account", __name__, template_folder="templates")
 
@@ -29,6 +30,8 @@ async def account_json():
                 "bank_removals": await removals_on(g.dbsession),
                 # FON-74: the table gives the station's tags, and ranges by them.
                 "station_tags": await bank_tidy_enabled(g.dbsession),
+                # FON-68: files renamed after their fiche.
+                "title_renames": await renames_on(g.dbsession),
             },
         },
     )

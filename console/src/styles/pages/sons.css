@@ -3469,6 +3469,102 @@ button.banque-tag:focus-visible {
   font-variant-numeric: tabular-nums;
 }
 
+/* ---------- Renaming files after their fiche (FON-68) ---------- */
+
+.banque-rename-choice {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.banque-rename-artist {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 2.5rem;
+  color: var(--app-text);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.banque-rename-list {
+  display: grid;
+  gap: 0;
+  max-height: 18rem;
+  margin: 0 0 0.75rem;
+  padding: 0;
+  overflow-y: auto;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  list-style: none;
+}
+
+.banque-rename-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.6rem;
+  border-top: 1px solid var(--app-border);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.banque-rename-row:first-child {
+  border-top: 0;
+}
+
+.banque-rename-from,
+.banque-rename-to span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.banque-rename-from {
+  color: var(--app-text-muted);
+}
+
+.banque-rename-to {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+  color: var(--app-text);
+}
+
+.banque-rename-why {
+  color: var(--app-text-muted);
+}
+
+.banque-rename-row.is-taken .banque-rename-why,
+.banque-rename-row.is-busy .banque-rename-why,
+.banque-rename-row.is-missing .banque-rename-why {
+  color: var(--app-warn-ink);
+}
+
+.banque-sheet-rename {
+  display: grid;
+  justify-items: start;
+  gap: 0.5rem;
+}
+
+.banque-sheet-rename p {
+  margin: 0;
+  color: var(--app-text-muted);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+@container bacs (max-width: 559px) {
+  .banque-rename-choice,
+  .banque-rename-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 /* ---------- Narrow screens ---------- */
 
 @container bacs (max-width: 699px) {
