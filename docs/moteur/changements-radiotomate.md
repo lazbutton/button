@@ -150,6 +150,8 @@ L’Agenda (migration v17) ajoute des émissions à une date précise : un set e
 
 Une émission (`emissions`, migrations v10 et v15) a un titre, un créneau hebdomadaire ou daté, et un `host_username`. Le créneau live sans encodeur est l’alerte `live_absent` (EF-01) : le filet est l’horloge du moment, pas un silence. Le prochain direct de la page Semaine et du conducteur, `next` de `/antenne/emissions.json` (`next_live`, `services/emissions.py`), suit la règle de la page Antenne : une émission hebdomadaire n’y compte pas un jour où l’Agenda l’annule ou la remplace par une diffusion datée, et un direct daté y compte. Il lit l’Agenda sur la semaine pour cette route seule, pas à chaque titre qui nomme l’antenne.
 
+Un cart peut aussi jouer un titre de la rotation ou d'une collection là où il est, sans copie (FON-69, `media_bank.resolve_bank_title`, `BORROWABLE_TOPS`) : `Sound.available` le tient pour absent quand son fichier a quitté la banque (`Sound.missing`), et un cart qui suit un dossier ne retire plus un tel son de lui-même.
+
 Un cart peut pointer un dossier de la banque (`bank_folder`, v12) et marquer ses sons comme pads d’identifiant (`ident_pads`, v16). Les jingles par défaut prennent le dossier `30-habillage/jingles`. Le scheduler rattache au cart les fichiers nouveaux de son dossier (`scheduler/bank_sync.py`), et note ceux qu’il ne prend pas, avec leur raison, dans un fichier `.refus.json` de ce dossier. L’interface les rend dans `skipped_files`.
 
 Les dossiers de la banque ne sont nommés que dans `services/media_bank.py`, hors des migrations publiées ([décision 0019](../decisions/0019-le-rangement-de-la-banque.md)) : `tests/test_media_bank.py` refuse un nom ailleurs dans le paquet. L’interface dit à la console ce qu’elle lisait dans les chemins : la zone du dossier d’un cart (`bank_zone`), les dossiers d’habillage qu’un cart peut suivre (`habillage` de `/media/bank.json`), et le cart de chaque son du battement, à l’antenne et à suivre (`cart_id` de `/live.json`, `attach_live_carts`).
@@ -192,6 +194,8 @@ Un playout figé est un incident, `playout_stalled` (`scheduler/stall.py`). Le 1
 
 `beets/compat.py` corrige l’import de Beets 2.5 sous Python 3.14 : l’ioctl de taille de terminal demandait 4 octets, le noyau en écrit 8.
 
+Le scheduler cherche en tâche de fond les fiches de la bibliothèque (FON-25, `scheduler/fiches.py`), comme il analyse le ReplayGain : un titre à la fois, dans un fil à part, derrière `features.fiches`, éteint par défaut. Le plugin `beetsplug/fiches.py` déclare dans Beets les champs flexibles des fiches, et `beet fiches`. `radiotomate maintenance fiches` dit où en est la recherche, et l'allume ou la coupe. L'image du moteur porte `fpcalc` (`libchromaprint-tools`).
+
 Le moteur tourne sur Beets 2.14 (ARC-06), et non plus 2.5 : `BeetsIntegration.default()` appelle `_setup()` sans argument, et règle lui-même le niveau du journal de Beets, à INFO comme le faisait la 2.5. Le genre d’un titre y est une liste, `genres` : la migration v20 réécrit `genre:` en `genres:` dans les requêtes des catégories, et `services/beets_query.py` refuse une requête nouvelle qui écrit `genre:`, que Beets ne lit plus que par un alias qui avertit à chaque requête.
 
 L’image du playout passe `apt-get upgrade` sur celle de Liquidsoap, que ses auteurs ne reconstruisent pas quand Debian publie un correctif. Liquidsoap garde la version de son tag.
@@ -200,7 +204,7 @@ L’image du playout passe `apt-get upgrade` sur celle de Liquidsoap, que ses au
 
 `brand.json` et `brand.py` portent le nom affiché (`INTERFACE_NAME`), le logo et les libellés, ceux du logiciel : le `brand.json` du paquet ne donne aucune adresse. Le nom de la station, les adresses de son flux et de son direct, et le lien de son code source se règlent dans la console : des clés `station.*` de la table `settings` (`services/station.py`), sans migration. La console les pose sur son `brand.json`, qui reste le repli. L'adresse du direct se lit aussi par tout compte, pour « Passer en direct » : `GET /station/harbor.json`. Les pages HTMX gardent le nom de `brand.json`. `layout.jinja` est en `lang=fr`, avec `suite.css`. La feuille `sass/_suite.scss` est la charte noir et blanc du pupitre. Les pages HTMX d’origine (live, carts, auto-DJ, utilisateurs) restent servies par le même processus.
 
-## Schéma, de v7 à v21
+## Schéma, de v7 à v22
 
 L’amont s’arrête à v6. Les versions suivantes :
 
@@ -221,6 +225,7 @@ L’amont s’arrête à v6. Les versions suivantes :
 | v19 | `bank_views` : les vues du tableau de la banque que chaque compte garde (FON-65), effacées avec leur compte |
 | v20 | `music_categories.query` et `empty_query` : `genre` devient `genres`, le champ de Beets 2.14 (ARC-06) ; la descente remet `genre` |
 | v21 | Le journal des gestes sur la banque : `journal_entries` et `journal_changes` |
+| v22 | `fiches`, `fiche_propositions` et `fiche_decisions` : la recherche des fiches de la bibliothèque (FON-25) |
 
 `radiotomate update --target-version` redescend le schéma. `engine/tests/test_migrations.py` monte puis redescend chaque version sur une base remplie : la descente rend tout ce qui existait avant la montée, sauf pour quatre versions. v7 remet aux créneaux de minuit le titre et la couleur par défaut, pas les leurs. v9 remet `grouping:rotation` à une Rotation qui cherchait déjà `path:/media/10-rotation` avant elle. v13 rend aux carts sortis du cron leur mode `TIMED`, mais pas leur `schedule_correct` ni leur tâche APScheduler. v14 ne défait rien : ses carts restent en `CLOCK`, et les tables APScheduler ne reviennent pas. Le test remonte ensuite chaque version : la montée repasse, et rend les mêmes tables, sauf pour deux versions dont la descente laisse ce que la montée a créé. Celle de v1 garde la table `metadata_log`, et la montée bute dessus ; celle de v12 ne fait rien, et la montée bute sur la colonne `carts.bank_folder`, restée. La 0.1.0, première version publiée, est déjà en v18 : revenir à une version publiée ne passe jamais par ces descentes.
 

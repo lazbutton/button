@@ -263,7 +263,12 @@ test("la correction coupée sur la station, la fiche se lit sans se corriger", a
   await banque(page, false);
   const tableau = await ouvrir(page);
 
-  await expect(tableau.getByRole("checkbox", { name: "Sélectionner Comète" })).toHaveCount(0);
+  // Un admin sélectionne encore, pour ajouter à un bac (FON-69), mais rien ne se corrige.
+  await tableau.getByRole("checkbox", { name: "Sélectionner Comète" }).click();
+  const selection = tableau.getByRole("toolbar", { name: "Sélection" });
+  await expect(selection.getByRole("button", { name: "Ajouter à un bac" })).toBeVisible();
+  await expect(selection.getByRole("button", { name: /^Modifier/ })).toHaveCount(0);
+  await selection.getByRole("button", { name: "Désélectionner" }).click();
   await tableau.getByRole("button", { name: "Comète", exact: true }).click();
   const fiche = page.getByRole("complementary", { name: "Fiche de Comète" });
   await expect(fiche.getByText("Complète")).toBeVisible();

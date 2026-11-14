@@ -9,6 +9,7 @@ from sqlalchemy.dialects.sqlite import DATETIME
 from sqlalchemy.orm import Mapped, Session, mapped_column, relationship
 
 from radiotomate.db import Base, PathLike
+from radiotomate.services.media_bank import borrowed_title
 
 _log = logging.getLogger(__name__)
 
@@ -52,8 +53,16 @@ class Sound(Base):
         soon by our scheduler's analyzer.
 
         Note that this logic is also implemented for Cart's query expressions.
+
+        A title of the bank that the cart plays without a copy, and whose file left
+        the bank, is not ready either: the cart keeps it, « Indisponible » (FON-69).
         """
-        return self.active and self.gain is not None
+        return self.active and self.gain is not None and not self.missing
+
+    @property
+    def missing(self) -> bool:
+        """A title borrowed from the bank whose file is no longer there (FON-69)."""
+        return borrowed_title(self.path) and not Path(self.path).is_file()
 
     @classmethod
     async def from_id(cls, session: Session, sound_id: int) -> Sound | None:

@@ -24,6 +24,8 @@ La CI lance `pytest` avec `TZ=Europe/Paris`, sans `tests/interface` ni `tests/e2
 | `radiotomate/services/` | Opérations partagées par l'interface et le scheduler : carts, auto-DJ, émissions, Agenda, banque |
 | `radiotomate/fiches/` | Les fiches de la bibliothèque : les règles de Hopper qui reconnaissent un titre et proposent de corriger ses tags, et la recherche d'un titre en ligne. Sans Quart, sans Beets ; seuls `http.py`, `sources.py` et `search.py` parlent au réseau, par httpx, et `fingerprint.py` lance `fpcalc` ([ADR 0017](../docs/decisions/0017-une-fiche-ne-s-ecrit-qu-acceptee.md)) |
 | `radiotomate/models/` | Modèles SQLAlchemy |
+| `radiotomate/scheduler/fiches.py` | La recherche des fiches en tâche de fond (FON-25) : un titre à la fois, dans un fil à part, derrière `features.fiches`. Les tables `fiches`, `fiche_propositions` et `fiche_decisions` (`models/fiche.py`) |
+| `beetsplug/fiches.py` | Le plugin des fiches dans Beets : leurs champs flexibles, et `beet fiches`. Pas de `__init__.py` dans `beetsplug/` : il cacherait l'espace de noms de Beets |
 | `radiotomate/commands/` | La commande `radiotomate` (click). `update/vNN.py` : les migrations |
 | `playout/radiotomate.liq` | Le script Liquidsoap 2.4.5 |
 | `playout/tests/` | Deux bancs, que la CI lance aussi. Le banc d'antenne : `antenna.py` joue le script dans le Liquidsoap de l'image du playout, devant un faux scheduler, écoute ce qui sort, et lit ce que le playout annonce dans son battement (`../scripts/verifier.sh antenne`). Le banc du conducteur : `rundown.py` monte le vrai scheduler et la vraie interface devant ce même Liquidsoap, dans son réseau comme sur une station, et compare l'heure du conducteur à ce qui passe (`../scripts/verifier.sh conducteur`) |
@@ -42,7 +44,7 @@ La CI lance `pytest` avec `TZ=Europe/Paris`, sans `tests/interface` ni `tests/e2
 
 ## Migrations
 
-- Une migration est `radiotomate/commands/update/vNN.py`, avec `async def upgrade(conn)` et `async def downgrade(conn)`. La dernière est v21. Prendre le numéro libre au moment d'écrire, et le vérifier encore avant de fusionner : deux branches peuvent prendre le même.
+- Une migration est `radiotomate/commands/update/vNN.py`, avec `async def upgrade(conn)` et `async def downgrade(conn)`. La dernière est v22. Prendre le numéro libre au moment d'écrire, et le vérifier encore avant de fusionner : deux branches peuvent prendre le même.
 - Une migration publiée ne se modifie jamais, même pour un nom ou un commentaire.
 - `radiotomate update` applique les migrations, et `--target-version N` redescend. `radiotomate-init` lance `update` à chaque démarrage de la station. La version du schéma est la clé `SCHEMA_VERSION` de la table `settings`.
 - Chaque version passe dans sa propre transaction, avec la mise à jour de `SCHEMA_VERSION` : celle qui échoue ne laisse rien. Une migration ne termine donc jamais la transaction : ni `commit`, ni `rollback`, ni `VACUUM`, ni changement de `journal_mode`. `tests/test_update_atomic.py` le vérifie pour chaque version.

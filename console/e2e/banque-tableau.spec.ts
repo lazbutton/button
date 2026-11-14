@@ -254,7 +254,9 @@ test("choisir ses colonnes, garder la vue sous un nom, puis la rouvrir", async (
   for (let fois = 0; fois < 3; fois++) await colonnes.getByRole("button", { name: "Monter Année" }).click();
   await page.keyboard.press("Escape");
   await expect(jazz.getByRole("columnheader", { name: "Album" })).toHaveCount(0);
-  await expect(jazz.getByRole("columnheader").nth(2)).toHaveText("Année");
+  // L'année vient juste après le titre (devant, la case à cocher et l'écoute).
+  const entetes = jazz.getByRole("columnheader");
+  await expect(entetes.filter({ hasText: /^Titre$/ }).locator("xpath=following-sibling::th[1]")).toHaveText("Année");
 
   await jazz.getByRole("button", { name: "Vues" }).click();
   await page.getByRole("menuitem", { name: "Garder cette vue…" }).click();
@@ -327,4 +329,78 @@ test("composer une sélection par filtres, depuis le tableau rangé par famille"
   await fenetre.getByRole("button", { name: "Créer la sélection" }).click();
   await expect.poll(() => creees.length).toBe(1);
   expect(creees[0]).toEqual({ name: "Jazz depuis 2016", query: "famille:=jazz year:2016..", empty_query: "" });
+});
+
+/** Les ajouts de titres de la banque à un bac (FON-69) : rend le corps reçu, et le bac tel qu'il était, un son de plus. */
+async function ajoutsAuBac(page: Page): Promise<Array<Record<string, unknown>>> {
+  const recus: Array<Record<string, unknown>> = [];
+  await page.route("**/carts/*/sounds.json", async (route: Route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    const corps = route.request().postDataJSON() as Record<string, unknown>;
+    recus.push(corps);
+    const id = Number(new URL(route.request().url()).pathname.split("/").at(-2));
+    const reponse = await page.request.get("/carts.json");
+    const bac = ((await reponse.json()) as { carts: Array<Record<string, unknown> & { id: number; sounds: unknown[] }> }).carts.find(
+      (cart) => cart.id === id,
+    );
+    if (!bac) return route.fulfill({ status: 404, json: { error: "not_found" } });
+    const ajoutes = (corps.titles as string[]).map((path, rang) => ({
+      id: 9000 + rang,
+      rank: bac.sounds.length + rang + 1,
+      title: `Orage - ${path}`,
+      duration: 200,
+      active: true,
+      available: false,
+      gain: null,
+      peak: null,
+      last_played: null,
+      uploader: "admin",
+      path,
+      borrowed: true,
+      missing: false,
+    }));
+    await route.fulfill({ status: 201, json: { cart: { ...bac, sounds: [...bac.sounds, ...ajoutes] } } });
+  });
+  return recus;
+}
+
+test("ajouter des titres du tableau à un bac, sans copie", async ({ page }) => {
+  await tableau(page);
+  const recus = await ajoutsAuBac(page);
+  await seConnecter(page, "admin");
+  await expect(antenne(page)).toBeVisible();
+  await page.goto("/sons?onglet=importer&ranger=artist&groupe=Orage");
+
+  const orage = page.getByRole("region", { name: "Orage" });
+  await orage.getByRole("checkbox", { name: "Sélectionner Comète" }).click();
+  await orage.getByRole("checkbox", { name: "Sélectionner Été indien" }).click();
+  await orage.getByRole("toolbar", { name: "Sélection" }).getByRole("button", { name: "Ajouter à un bac" }).click();
+  const fenetre = page.getByRole("dialog", { name: "Ajouter 2 titres à un bac" });
+  await expect(fenetre.getByText("un bac ouvert dans Dropbox ne les voit pas")).toBeVisible();
+  await fenetre.getByRole("combobox", { name: "Bac" }).click();
+  await page.getByRole("option", { name: /Musique de démo/ }).click();
+  await fenetre.getByRole("button", { name: "Ajouter à « Musique de démo »" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "2 titres de la banque ajoutés au bac « Musique de démo », sans copie." })).toBeVisible();
+  expect(recus).toEqual([{ titles: ["10-rotation/1.mp3", "20-archives/nuit/2.mp3"] }]);
+});
+
+test("un bac prend des titres de la banque, et dit qu'ils viennent de la banque", async ({ page }) => {
+  await tableau(page);
+  const recus = await ajoutsAuBac(page);
+  await seConnecter(page, "admin");
+  await expect(antenne(page)).toBeVisible();
+  await page.goto("/sons");
+  await page.getByRole("option", { name: /Musique de démo/ }).click();
+  const bac = page.getByRole("region", { name: "Musique de démo" });
+
+  await bac.getByRole("button", { name: /^Ajouter/ }).click();
+  await page.getByRole("menuitem", { name: /Titres de la banque/ }).click();
+  const fenetre = page.getByRole("dialog", { name: "Titres de la banque pour « Musique de démo »" });
+  await fenetre.getByRole("textbox", { name: "Chercher dans la banque" }).fill("dune");
+  await expect(fenetre.getByRole("checkbox")).toHaveCount(1);
+  await fenetre.getByRole("checkbox").click();
+  await fenetre.getByRole("button", { name: "Ajouter 1 titre" }).click();
+  await expect(fenetre).toHaveCount(0);
+  expect(recus).toEqual([{ titles: ["20-archives/nuit/4.mp3"] }]);
+  await expect(bac.getByText("Banque", { exact: true })).toBeVisible();
 });

@@ -154,8 +154,8 @@ check_moteur() {
   command -v poetry >/dev/null 2>&1 ||
     missing "Poetry absent : https://python-poetry.org/docs/#installation" || return
   cd "$root/engine"
-  poetry run ruff check radiotomate tests
-  poetry run ruff format --check radiotomate tests
+  poetry run ruff check radiotomate beetsplug tests
+  poetry run ruff format --check radiotomate beetsplug tests
   # Comme la CI : heure de Paris, sans les tests Playwright.
   TZ=Europe/Paris poetry run pytest -q -p no:cacheprovider -o addopts="" \
     tests --ignore=tests/e2e --ignore=tests/interface
