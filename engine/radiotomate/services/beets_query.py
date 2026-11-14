@@ -6,9 +6,16 @@ titre est pris s'il répond à l'une d'elles. Une partie sans filtre prend toute
 bibliothèque : sous `grouping:jazz,`, l'auto-DJ jouerait n'importe quel titre.
 
 La requête est lue par Beets lui-même, pour voir les parties comme il les voit.
+
+Beets 2.14 range le genre dans une liste, `genres`. Il lit encore `genre:`, mais par
+un alias qui écrit un avertissement au journal à chaque requête, et que Beets 3.0
+retire : une sélection nouvelle l'écrit `genres:`. La migration v19 a réécrit les
+sélections d'avant (ARC-06).
 """
 
 from __future__ import annotations
+
+import re
 
 from beets.dbcore.query import (
     AndQuery,
@@ -32,6 +39,13 @@ BAD_VALUE = (
     "Beets ne sait pas lire une valeur de la requête : vérifie les nombres, "
     "les durées, les dates et les expressions régulières."
 )
+LEGACY_GENRE = (
+    "Beets range maintenant le genre dans `genres` : écris `genres:Jazz` plutôt "
+    "que `genre:Jazz`."
+)
+# Le champ `genre` en tête d'un terme, nié ou non, devant `:` ou le `+` ou `-`
+# d'un tri : la règle de la migration v19.
+_GENRE_FIELD = re.compile(r"""(^|[\s,"'])[-^]?genre(?=:|[+-](?:$|[\s,"']))""")
 
 
 def _parse(query: str) -> Query:
@@ -51,6 +65,8 @@ def validate_selection_query(query: str, *, field: str = "query") -> None:
     Une requête sans virgule qui prend tout, comme un tri seul (`year+`), reste
     permise : elle le dit d'elle-même.
     """
+    if _GENRE_FIELD.search(query):
+        raise DomainValidationError(LEGACY_GENRE, field=field)
     try:
         parsed = _parse(query)
     except InvalidQueryArgumentValueError as exc:

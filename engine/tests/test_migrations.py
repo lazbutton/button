@@ -126,6 +126,69 @@ async def test_v18_encoder_token_up_then_down(tmp_path: Path):
     await db.after_serving()
 
 
+async def test_v19_categories_search_genres(tmp_path: Path):
+    """
+    v19 rewrites the field `genre` of the categories' queries into `genres`, which
+    Beets 2.14 reads without its alias, in a term only. Going back to v18 puts `genre`
+    back, also in a query written at v19.
+    """
+    db = QuartAlchemy()
+    db.init_from_config({"url": f"sqlite+aiosqlite:///{tmp_path / 'v18.db'}"}, {})
+    await do_update(db.engine, target_version=18)
+    queries = {
+        "Jazz": ("genre:Jazz", ""),
+        "Pas de rock": ("-genre:Rock year:1990..1999", "^genre:Rock"),
+        "Exact": ("genre:=Jazz , genre::^Blues$", 'grouping:jazz "genre:Hip Hop"'),
+        "Tri": ("grouping:rotation genre+", "genre- year+"),
+        # a field that ends with genre, a value that holds it, an artist named so
+        "Autres": ("subgenre:Jazz title:genre artist:genre-x", "comments:a,genre"),
+    }
+    async with db.engine.connect() as conn:
+        for name, (query, empty) in queries.items():
+            await conn.execute(
+                text(
+                    "insert into music_categories (name, query, empty_query) "
+                    "values (:name, :query, :empty)"
+                ),
+                {"name": name, "query": query, "empty": empty},
+            )
+        await conn.commit()
+    categories = "select name, query, empty_query from music_categories order by name"
+    before = await _rows(db.engine, categories)
+
+    await do_update(db.engine, target_version=19)
+    assert await _schema_version(db.engine) == 19
+    after = {
+        name: (query, empty)
+        for name, query, empty in await _rows(db.engine, categories)
+    }
+    # the Rotation of v9 has no genre
+    rotation = [row for row in before if row[0] not in queries]
+    assert [(name, *after.pop(name)) for name, *_ in rotation] == rotation
+    assert after == {
+        "Jazz": ("genres:Jazz", ""),
+        "Pas de rock": ("-genres:Rock year:1990..1999", "^genres:Rock"),
+        "Exact": ("genres:=Jazz , genres::^Blues$", 'grouping:jazz "genres:Hip Hop"'),
+        "Tri": ("grouping:rotation genres+", "genres- year+"),
+        "Autres": ("subgenre:Jazz title:genre artist:genre-x", "comments:a,genre"),
+    }
+    async with db.engine.connect() as conn:
+        await conn.execute(
+            text(
+                "insert into music_categories (name, query, empty_query) "
+                "values ('Écrite en v19', 'genres:Soul', 'genres:Funk')"
+            )
+        )
+        await conn.commit()
+
+    await do_update(db.engine, target_version=18)
+    assert await _schema_version(db.engine) == 18
+    assert await _rows(db.engine, categories) == sorted(
+        [*before, ("Écrite en v19", "genre:Soul", "genre:Funk")]
+    )
+    await db.after_serving()
+
+
 # What a station writes at each version, once its database reached it: each migration
 # finds a full database at the version before. Every column of every table holds a
 # value that is neither NULL nor its default, as the tests check, so that losing it
@@ -274,6 +337,8 @@ STATION_DATA = {
         set stream_token_hash = 'sha256-hex',
             stream_token_created_at = '2026-10-30 13:05:00'
         where id = 1;
+        insert into music_categories (name, query, empty_query)
+        values ('Jazz', 'genre:Jazz year:1950..1969', '-genre:Rock genre:Jazz');
     """,
 }
 

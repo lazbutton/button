@@ -18,7 +18,7 @@ Le tick d’une seconde venu de Liquidsoap ne recalcule l’horloge que si l’�
 
 La séparation des artistes et des titres est dans `scheduler/music_rules.py`.
 
-La requête Beets d’une catégorie passe par `services/beets_query.py`. Beets coupe une requête à ses virgules, et une partie vide y prend toute la bibliothèque : `grouping:jazz,` ferait jouer n’importe quel titre. Les routes JSON des catégories et `testquery.json` refusent une telle requête, comme une requête que Beets ne sait pas lire. L’auto-DJ ignore la partie vide d’une catégorie enregistrée avant ce refus.
+La requête Beets d’une catégorie passe par `services/beets_query.py`. Beets coupe une requête à ses virgules, et une partie vide y prend toute la bibliothèque : `grouping:jazz,` ferait jouer n’importe quel titre. Les routes JSON des catégories et `testquery.json` refusent une telle requête, comme une requête que Beets ne sait pas lire, ou qui cherche dans `genre`, que Beets 2.14 nomme `genres`. L’auto-DJ ignore la partie vide d’une catégorie enregistrée avant ce refus.
 
 ## Conducteur et vérité d’antenne
 
@@ -181,6 +181,8 @@ Un playout figé est un incident, `playout_stalled` (`scheduler/stall.py`). Le 1
 `radiotomate maintenance` regroupe les commandes d’exploitation d’une station, que lance la commande `station` (`commands/maintenance.py`). `maintenance updates` tient les demandes de la page **Réglages → Mises à jour** (MAJ-07), que `station requests` lit, fait attendre, lance et ferme : `host`, `show`, `wait`, `start` et `finish`, sur les fichiers de `RT_DATA/updates/` (`services/updates.py`). Les routes `GET /system/updates.json` et `POST`, `DELETE /system/updates/request.json` les montrent à la console, avec les versions publiées, lues sur GitHub. `maintenance next-live` dit le prochain direct, une émission hebdomadaire ou un direct de l’Agenda, comme la page Antenne de la console : `station status` l’affiche. Une émission hebdomadaire n’y compte pas un jour où l’Agenda l’annule, ou la remplace par une diffusion datée : le calcul passe à la suivante.
 
 `beets/compat.py` corrige l’import de Beets 2.5 sous Python 3.14 : l’ioctl de taille de terminal demandait 4 octets, le noyau en écrit 8.
+
+Le moteur tourne sur Beets 2.14 (ARC-06), et non plus 2.5 : `BeetsIntegration.default()` appelle `_setup()` sans argument, et règle lui-même le niveau du journal de Beets, à INFO comme le faisait la 2.5. Le genre d’un titre y est une liste, `genres` : la migration v19 réécrit `genre:` en `genres:` dans les requêtes des catégories, et `services/beets_query.py` refuse une requête nouvelle qui écrit `genre:`, que Beets ne lit plus que par un alias qui avertit à chaque requête.
 
 L’image du playout passe `apt-get upgrade` sur celle de Liquidsoap, que ses auteurs ne reconstruisent pas quand Debian publie un correctif. Liquidsoap garde la version de son tag.
 

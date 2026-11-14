@@ -7,7 +7,8 @@ copied waits, and a WAV that holds MP3 stays as it is. The library follows
 the disk: a removed file leaves it, and comes back when put back at the same
 path, and a changed file is read again, under the same Beets id. A track of a
 collection takes the name of its folder as its grouping, and keeps the genre of
-its file.
+its file. A library that Beets 2.5.1 indexed comes to 2.14 with the same ids, gain
+and grouping, and keeps its absolute paths: Beets' root is out of the bank.
 The loop also runs against a fake `beet` in
 `services/catalog/test_beets_import_loop.py`, which the CI runs when the script
 changes.
@@ -23,14 +24,18 @@ import shutil
 import sqlite3
 import struct
 import subprocess
+import sys
 import time
 from contextlib import closing
 from pathlib import Path
 
 from mediafile import MediaFile
+from ruamel.yaml import YAML
 
 SCRIPTS = Path(__file__).parents[2] / "deploy" / "scripts"
 TRACK = Path(__file__).parent / "assets" / "ohradiotomateoh.mp3"
+# a library that Beets 2.5.1 indexed, its paths under @MEDIA@
+LIBRARY_2_5 = Path(__file__).parent / "assets" / "beets-2.5.1-library.sql"
 MACHINE_SECRETS = [
     "ICECAST_SOURCE_PASSWORD",
     "ICECAST_ADMIN_PASSWORD",
@@ -77,13 +82,8 @@ def _run(tmp_path: Path, *command: str, **extra: str) -> subprocess.CompletedPro
     )
 
 
-def _station(tmp_path: Path) -> Path:
-    """A new station, set up by the real init. Returns its media bank."""
-    beetsdir = tmp_path / "data" / "Beets"
-    beetsdir.mkdir(parents=True)
-    # the init keeps a list of plugins that is already there: without
-    # replaygain, the import does not need ffmpeg
-    (beetsdir / "config.yaml").write_text("plugins: info\n", encoding="utf-8")
+def _init(tmp_path: Path) -> subprocess.CompletedProcess:
+    """The real init of the station, as at each start."""
     init = _run(
         tmp_path,
         "sh",
@@ -93,6 +93,17 @@ def _station(tmp_path: Path) -> Path:
         **{name: secrets.token_hex(24) for name in MACHINE_SECRETS},
     )
     assert init.returncode == 0, init.stderr
+    return init
+
+
+def _station(tmp_path: Path) -> Path:
+    """A station, set up by the real init. Returns its media bank."""
+    beetsdir = tmp_path / "data" / "Beets"
+    beetsdir.mkdir(parents=True, exist_ok=True)
+    # the init keeps a list of plugins that is already there: without
+    # replaygain, the import does not need ffmpeg
+    (beetsdir / "config.yaml").write_text("plugins: info\n", encoding="utf-8")
+    _init(tmp_path)
     config = (beetsdir / "config.yaml").read_text(encoding="utf-8")
     assert "incremental: true" in config
     # From Beets 2.7, the import skips a track with the artist and the title of
@@ -100,16 +111,21 @@ def _station(tmp_path: Path) -> Path:
     assert "duplicate_action: keep" in config
     # From Beets 2.10, it replaces a WAV that holds MP3 with an .mp3.
     assert "remux_mp3_in_wav: false" in config
-    (tmp_path / "bin").mkdir()
-    (tmp_path / "tmp").mkdir()
+    settings = YAML(typ="safe").load(config)
+    # From Beets 2.10, a path under the root is kept relative to it: the root is
+    # out of the bank
+    assert settings["directory"] == str(beetsdir)
+    assert settings["create_backup_before_migrations"] is False
+    (tmp_path / "bin").mkdir(exist_ok=True)
+    (tmp_path / "tmp").mkdir(exist_ok=True)
     sleep = tmp_path / "bin" / "sleep"
     sleep.write_text(
         FAKE_SLEEP.format(root=tmp_path, one_turn=ONE_TURN), encoding="utf-8"
     )
     sleep.chmod(0o755)
     media = tmp_path / "media"
-    (media / "10-rotation").mkdir(parents=True)
-    (media / "20-archives" / "jazz").mkdir(parents=True)
+    (media / "10-rotation").mkdir(parents=True, exist_ok=True)
+    (media / "20-archives" / "jazz").mkdir(parents=True, exist_ok=True)
     return media
 
 
@@ -148,9 +164,9 @@ def _odd_name(folder: Path) -> list[str]:
 
 
 def _items(
-    tmp_path: Path, fields: str = "id, album_id, grouping, genre, rg_track_gain, title"
+    tmp_path: Path, fields: str = "id, album_id, grouping, genres, rg_track_gain, title"
 ) -> dict[str, tuple]:
-    """The library, by file name: Beets id, album, grouping, genre, gain and title."""
+    """The library, by file name: Beets id, album, grouping, genres, gain and title."""
     library = tmp_path / "data" / "Beets" / "library.db"
     if not library.exists():
         return {}
@@ -247,7 +263,7 @@ def test_a_collection_keeps_the_genre_of_its_files(tmp_path: Path):
     marked = jazz / "Ada - Live.mp3"
     shutil.copy(TRACK, marked)
     _beet(tmp_path, "import", "-A", "-q", str(jazz))
-    _beet(tmp_path, "modify", "-y", "grouping=jazz", "genre=Archive", f"path:{jazz}")
+    _beet(tmp_path, "modify", "-y", "grouping=jazz", "genres=Archive", f"path:{jazz}")
     assert MediaFile(marked).genre == "Archive"
     dropped = jazz / "Bea - Live.mp3"
     shutil.copy(TRACK, dropped)
@@ -484,7 +500,7 @@ def test_a_changed_track_of_a_folder_album_leaves_the_others_alone(tmp_path: Pat
         _retag(rotation / name, OLD, genre=genre, year=year)
     # as the loop did before: the folder is one album
     _index_by_folder(tmp_path, rotation)
-    fields = "id, album_id, genre, year, title"
+    fields = "id, album_id, genres, year, title"
     before = _items(tmp_path, fields)
     assert len({values[1] for values in before.values()}) == 1
 
@@ -499,6 +515,116 @@ def test_a_changed_track_of_a_folder_album_leaves_the_others_alone(tmp_path: Pat
     # read out of its album, under the same id
     cy_id = before["Cy - Trois.mp3"][0]
     assert after["Cy - Trois.mp3"] == (cy_id, None, "Funk", 2010, "Trois, corrigé")
+
+
+def _beets_2_5_library(tmp_path: Path) -> dict[str, tuple]:
+    """A library that Beets 2.5.1 indexed, and its tracks in the bank, before the
+    station starts. Returns its items by file name: id, grouping, genre, gain."""
+    media = tmp_path / "media"
+    beetsdir = tmp_path / "data" / "Beets"
+    beetsdir.mkdir(parents=True)
+    with closing(sqlite3.connect(beetsdir / "library.db")) as con:
+        con.executescript(LIBRARY_2_5.read_text(encoding="utf-8"))
+        rows = con.execute("select id, path, genre, title from items").fetchall()
+        for item_id, path, genre, title in rows:
+            track = Path(path.replace("@MEDIA@", str(media)))
+            track.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(TRACK, track)
+            _retag(track, OLD, genre=genre, title=title)
+            con.execute(
+                "update items set path = ?, mtime = ? where id = ?",
+                (os.fsencode(track), OLD, item_id),
+            )
+        con.commit()
+        return {
+            Path(os.fsdecode(path)).name: (item_id, grouping, genre, gain)
+            for item_id, path, grouping, genre, gain in con.execute(
+                "select id, path, grouping, genre, rg_track_gain from items"
+            )
+        }
+
+
+def _ids(tmp_path: Path, query: str) -> set[int]:
+    """The ids of the tracks that a query of the categories takes, read by Beets."""
+    done = _run(tmp_path, "beet", "ls", "-f", "$id", query)
+    assert done.returncode == 0, done.stderr
+    assert "deprecated" not in done.stderr
+    return {int(line) for line in done.stdout.split()}
+
+
+def test_a_library_of_beets_2_5_keeps_its_ids_its_gain_and_its_grouping(
+    tmp_path: Path,
+):
+    before = _beets_2_5_library(tmp_path)
+    # what a category genre:Jazz took in 2.5.1: a part of the genre, any case
+    jazz = {fields[0] for fields in before.values() if "jazz" in fields[2].lower()}
+    assert len(jazz) == 2
+
+    # radiotomate-init copies the library, then Beets migrates it, once
+    media = _station(tmp_path)
+    copies = list((tmp_path / "data" / "backups").glob("beets-avant-migration-*.db"))
+    assert len(copies) == 1
+    with closing(sqlite3.connect(copies[0])) as con:
+        assert con.execute("select count(*) from items").fetchone() == (len(before),)
+        assert not con.execute(
+            "select 1 from sqlite_master where name = 'migrations'"
+        ).fetchone()
+    library = tmp_path / "data" / "Beets" / "library.db"
+    with closing(sqlite3.connect(library)) as con:
+        assert con.execute("select count(*) from migrations").fetchone()[0] > 0
+        paths = [os.fsdecode(path) for (path,) in con.execute("select path from items")]
+    assert all(path.startswith(f"{media}/") for path in paths), paths
+    # started again: nothing more to copy, and no copy of Beets' own
+    _init(tmp_path)
+    assert len(list((tmp_path / "data" / "backups").glob("beets-avant-*"))) == 1
+    assert not list((tmp_path / "data" / "Beets").glob("*.bak"))
+
+    _turn(tmp_path)
+    _turn(tmp_path)
+
+    after = _items(tmp_path, "id, grouping, rg_track_gain")
+    assert after == {
+        name: (item_id, grouping, gain)
+        for name, (item_id, grouping, _, gain) in before.items()
+    }
+    # the genres of 2.14 and its query: the same tracks, no warning
+    assert _ids(tmp_path, "genres:Jazz") == jazz
+    assert _ids(tmp_path, "famille:jazz") == {before["Ada - Un.mp3"][0]}
+
+    # a file removed leaves the library at the next turn
+    (media / "20-archives" / "jazz" / "Dan - Live.mp3").unlink()
+    _turn(tmp_path)
+    assert "Dan - Live.mp3" not in _items(tmp_path)
+
+
+def test_the_engine_opens_the_library_of_the_station(tmp_path: Path):
+    media = _station(tmp_path)
+    shutil.copy(TRACK, media / "10-rotation" / "Ada - Un.mp3")
+    _turn(tmp_path)
+    _turn(tmp_path)
+    # a new library has nothing to copy
+    assert not list((tmp_path / "data").rglob("*.bak"))
+    assert not list((tmp_path / "data").glob("backups/beets-*"))
+
+    # BeetsIntegration.default() sets Beets up as the interface and the scheduler do
+    opened = _run(
+        tmp_path,
+        sys.executable,
+        "-c",
+        "from radiotomate.beets import BeetsIntegration\n"
+        "lib = BeetsIntegration.default().lib\n"
+        "print(lib.directory.decode())\n"
+        "for item in lib.items():\n"
+        "    print(item.id, item.grouping, item.path.decode())\n",
+    )
+
+    assert opened.returncode == 0, opened.stderr
+    beetsdir = tmp_path / "data" / "Beets"
+    track = media / "10-rotation" / "Ada - Un.mp3"
+    assert opened.stdout.splitlines() == [
+        str(beetsdir),
+        f"{_items(tmp_path)['Ada - Un.mp3'][0]} rotation {track}",
+    ]
 
 
 def _mp3_in_wav(path: Path) -> None:
