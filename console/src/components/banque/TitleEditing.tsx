@@ -314,3 +314,50 @@ export function EditTitlesDialog({
     </Dialog.Root>
   );
 }
+
+/**
+ * Une écriture à confirmer : un collage sur une sélection (FON-67), ou une
+ * cellule dont l'essai a quelque chose à dire.
+ */
+export function ConfirmLotDialog({
+  question,
+  outcome,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  question: string;
+  outcome: EditOutcome;
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const changing = outcome.written + outcome.waiting.length;
+  return (
+    <Dialog.Root
+      open
+      onOpenChange={(open) => {
+        if (!open && !busy) onCancel();
+      }}
+    >
+      <Dialog.Content maxWidth="32rem">
+        <Dialog.Title>{question}</Dialog.Title>
+        <Dialog.Description size="2" color="gray" mb="2">
+          Avant d'écrire, voici ce qui changera.
+        </Dialog.Description>
+        <TryReport outcome={outcome} />
+        <div className="bacs-dialog-actions">
+          {busy ? <Spinner size="2" /> : null}
+          <Dialog.Close>
+            <Button type="button" size="2" variant="soft" color="gray" disabled={busy}>
+              Annuler
+            </Button>
+          </Dialog.Close>
+          <Button size="2" highContrast disabled={busy || changing === 0 || outcome.refused.length > 0} onClick={onConfirm}>
+            {changing === 1 ? "Écrire 1 fiche" : `Écrire ${changing} fiches`}
+          </Button>
+        </div>
+      </Dialog.Content>
+    </Dialog.Root>
+  );
+}
