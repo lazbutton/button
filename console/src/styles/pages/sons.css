@@ -2977,100 +2977,6 @@
   font-size: 0.72rem;
 }
 
-/* ---------- Correcting a fiche (FON-66) ---------- */
-
-.banque-sheet-form {
-  display: grid;
-  gap: 0.75rem;
-}
-
-.banque-sheet-hint {
-  margin: 0;
-  color: var(--app-text-muted);
-  font-size: 0.74rem;
-  line-height: 1.45;
-}
-
-.banque-try {
-  display: grid;
-  gap: 0.5rem;
-  margin: 0.75rem 0 0;
-  font-size: 0.8rem;
-  line-height: 1.45;
-}
-
-.banque-sheet-form .banque-try {
-  margin: 0;
-}
-
-.banque-try-count {
-  margin: 0;
-  color: var(--app-text);
-  font-variant-numeric: tabular-nums;
-}
-
-.banque-try-block {
-  padding: 0.6rem 0.75rem;
-  border-radius: var(--radius-3);
-  background: var(--gray-a3);
-  color: var(--app-text);
-}
-
-.banque-try-block.is-warn {
-  background: color-mix(in srgb, var(--app-vu-hot) 10%, transparent);
-  color: var(--app-warn-ink);
-}
-
-.banque-try-block.is-danger {
-  background: color-mix(in srgb, var(--app-danger) 8%, transparent);
-  color: var(--app-danger-ink);
-}
-
-.banque-try-block strong {
-  font-weight: 600;
-}
-
-.banque-try-block ul {
-  margin: 0.35rem 0 0;
-  padding-left: 1.1rem;
-}
-
-.banque-edit-fields {
-  display: grid;
-  gap: 0.55rem;
-}
-
-.banque-edit-row {
-  display: grid;
-  grid-template-columns: 8rem minmax(0, 1fr);
-  align-items: center;
-  gap: 0.35rem 0.75rem;
-}
-
-.banque-edit-check {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  min-height: 2.5rem;
-  color: var(--app-text);
-  font-size: 0.85rem;
-  cursor: pointer;
-}
-
-.banque-edit-error {
-  grid-column: 2;
-}
-
-@media (max-width: 520px) {
-  .banque-edit-row {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .banque-edit-error {
-    grid-column: 1;
-  }
-}
-
 .banque-columns {
   display: grid;
   gap: 0.6rem;
@@ -3225,6 +3131,155 @@
   gap: 0.5rem;
   color: var(--app-danger-ink);
   font-size: 0.76rem;
+}
+
+/* ---------- The table as a spreadsheet (FON-67) ---------- */
+
+.banque-titles td.c-grid {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.banque-cell {
+  display: block;
+  width: 100%;
+  min-height: 2.5rem;
+  padding: 0 0.35rem;
+  margin: 0 -0.35rem;
+  border: 0;
+  border-radius: var(--app-radius-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: text;
+}
+
+.banque-cell:hover {
+  background: var(--gray-a3);
+}
+
+.banque-cell:focus-visible {
+  outline: 2px solid var(--accent-8);
+  outline-offset: -2px;
+}
+
+.banque-cell:disabled {
+  cursor: default;
+}
+
+.banque-cell-input {
+  width: 100%;
+  min-height: 2.25rem;
+  margin: 0.15rem -0.35rem;
+  padding: 0 0.35rem;
+  border: 1px solid var(--accent-8);
+  border-radius: var(--app-radius-sm);
+  background: var(--app-surface-1);
+  color: var(--app-text);
+  font: inherit;
+}
+
+.banque-cell-input:focus {
+  outline: 2px solid var(--accent-8);
+  outline-offset: 1px;
+}
+
+/* ---------- Correcting a fiche (FON-66) ---------- */
+
+.banque-sheet-form {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.banque-sheet-hint {
+  margin: 0;
+  color: var(--app-text-muted);
+  font-size: 0.74rem;
+  line-height: 1.45;
+}
+
+.banque-try {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0.75rem 0 0;
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.banque-sheet-form .banque-try {
+  margin: 0;
+}
+
+.banque-try-count {
+  margin: 0;
+  color: var(--app-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.banque-try-block {
+  padding: 0.6rem 0.75rem;
+  border-radius: var(--radius-3);
+  background: var(--gray-a3);
+  color: var(--app-text);
+}
+
+.banque-try-block.is-warn {
+  background: color-mix(in srgb, var(--app-vu-hot) 10%, transparent);
+  color: var(--app-warn-ink);
+}
+
+.banque-try-block.is-danger {
+  background: color-mix(in srgb, var(--app-danger) 8%, transparent);
+  color: var(--app-danger-ink);
+}
+
+.banque-try-block strong {
+  font-weight: 600;
+}
+
+.banque-try-block ul {
+  margin: 0.35rem 0 0;
+  padding-left: 1.1rem;
+}
+
+.banque-edit-fields {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.banque-edit-row {
+  display: grid;
+  grid-template-columns: 8rem minmax(0, 1fr);
+  align-items: center;
+  gap: 0.35rem 0.75rem;
+}
+
+.banque-edit-check {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 2.5rem;
+  color: var(--app-text);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.banque-edit-error {
+  grid-column: 2;
+}
+
+@media (max-width: 520px) {
+  .banque-edit-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .banque-edit-error {
+    grid-column: 1;
+  }
 }
 
 /* ---------- Renaming files after their fiche (FON-68) ---------- */

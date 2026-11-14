@@ -10,10 +10,11 @@ importe par album, un fichier quand il importe par titre (-s). Le contenu d'un
 fichier lui tient lieu de titre, et une seconde ligne « genre=… », de genre. Le
 passage avec le vrai Beets est dans engine/tests/test_beets_import_loop.py.
 
-Le faux update fait comme le vrai, 2.5.1 : il ne relit qu'un fichier plus récent
-que la date notée, et ne note pas la nouvelle. Devant un fichier disparu, il
-retire le titre et élague les dossiers vidés jusqu'à la racine de la
-bibliothèque, la banque, sauf si `-d` en donne une autre. Après la relecture d'un
+Le faux update fait comme le vrai : il ne relit qu'un fichier plus récent que la
+date notée, et ne note pas la nouvelle. Devant un fichier disparu, il retire le
+titre et élague les dossiers vidés jusqu'à la racine de la bibliothèque, son
+propre dossier comme le pose init-radiotomate.sh, ou celle que donne `-d`. Ses
+chemins sont absolus : hors de sa racine, Beets 2.14 les garde ainsi. Après la relecture d'un
 titre d'album, il donne à tous les titres de l'album le genre du premier.
 
 Un lancement du script fait un tour : le faux sleep arrête la boucle. Elle
@@ -30,6 +31,7 @@ dans une valeur, prend celle du titre.
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import pickle
@@ -138,12 +140,34 @@ def evaluate(template: str, values: dict[str, object]) -> str:
     return "".join(read) + template[pos:]
 
 
+def note_lock(beetsdir: Path, args: list[str]) -> None:
+    """Note si la boucle tient le verrou de la bibliothèque pendant cet appel.
+
+    Une autre description ouverte du fichier, comme celle du moteur, ne le prend
+    pas tant que la boucle le tient.
+    """
+    lock = beetsdir / "banque.lock"
+    held = False
+    if lock.is_file():
+        with lock.open("a") as other:
+            try:
+                fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                held = True
+            else:
+                fcntl.flock(other, fcntl.LOCK_UN)
+    with (beetsdir / "verrou.log").open("a", encoding="utf-8") as log:
+        log.write(json.dumps({"call": args[:1], "held": held}) + "\n")
+
+
 def fake_beet(beetsdir: Path, args: list[str]) -> int:  # noqa: PLR0911, PLR0912
     """Le faux beet : import, modify, update et remove, tels que la boucle les lance."""
     with (beetsdir / "beet.log").open("a", encoding="utf-8") as log:
         log.write(json.dumps(args) + "\n")
-    # La racine de la bibliothèque : la banque, comme la règle init-radiotomate.sh.
-    directory = os.fsencode(os.environ["MEDIA_ROOT"])
+    note_lock(beetsdir, args)
+    # La racine de la bibliothèque : son propre dossier, comme la règle
+    # init-radiotomate.sh.
+    directory = os.fsencode(beetsdir)
     if args[:1] == ["-d"] and len(args) > 2:
         directory = os.fsencode(args[1])
         args = args[2:]
@@ -645,6 +669,24 @@ class BeetsImportLoopTest(unittest.TestCase):
             [["modify", "-y", "grouping=jazz", f"id:{dan['id']}"]],
         )
 
+    def test_a_library_with_relative_paths_stops_the_indexing(self) -> None:
+        # Beets 2.10 et plus range ainsi un titre sous sa racine, quand sa
+        # racine est la banque : la boucle n'y reconnaît plus aucun titre.
+        (self.rotation / "Ada - Un.mp3").write_bytes(b"un")
+        (self.rotation / "Bea - Deux.mp3").write_bytes(b"deux")
+        self.index_by_folder(self.rotation, "grouping=rotation")
+        with closing(open_library(self.beetsdir)) as con, con:
+            con.execute("update items set path = substr(path, ?)", (len(os.fsencode(self.media)) + 2,))
+        before = self.items()
+
+        self.turn()
+        stopped = self.turn()
+
+        self.assertIn("2 titre(s) ont un chemin relatif, comme 10-rotation/", stopped.stderr)
+        self.assertIn("Rien n'est indexé", stopped.stderr)
+        self.assertEqual(self.imports(), [])
+        self.assertEqual(self.items(), before)
+
     def test_a_lost_history_does_not_import_the_library_again(self) -> None:
         (self.rotation / "Ada - Un.mp3").write_bytes(b"un")
         (self.rotation / "Bea - Deux.mp3").write_bytes(b"deux")
@@ -947,6 +989,52 @@ class BeetsImportLoopTest(unittest.TestCase):
 
         self.assertEqual(self.groupings(), {"20-archives/soul/Eve - Live.flac": "soul"})
         self.assertIn(f"{count} titre(s) retiré(s)", removed.stdout)
+
+    def lock_calls(self) -> list[dict[str, object]]:
+        log = self.beetsdir / "verrou.log"
+        if not log.exists():
+            return []
+        return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+
+    def test_beets_writes_only_under_the_lock_of_the_library(self) -> None:
+        """Le moteur déplace un titre sous le même verrou (ARC-09) : la boucle ne voit
+        jamais un fichier à son nouveau nom avant que la bibliothèque l'ait."""
+        (self.rotation / "Ada - Un.mp3").write_bytes(b"un")
+        # Un second titre : une rotation vidée de tous ses titres ne retire rien.
+        (self.rotation / "Bea - Deux.mp3").write_bytes(b"deux")
+        bank = self.media / "20-archives" / "jazz"
+        bank.mkdir()
+        (bank / "Cy - Live.flac").write_bytes(b"live")
+        self.turn()
+        self.turn()
+        (self.rotation / "Ada - Un.mp3").unlink()
+        self.turn()
+
+        calls = self.lock_calls()
+        self.assertLessEqual({"import", "modify", "remove"}, {call["call"][0] for call in calls if call["call"]}, calls)
+        self.assertEqual([call for call in calls if not call["held"]], [])
+
+    def test_the_loop_waits_while_the_engine_holds_the_library(self) -> None:
+        (self.rotation / "Ada - Un.mp3").write_bytes(b"un")
+        lock = self.beetsdir / "banque.lock"
+        with lock.open("a") as engine:
+            fcntl.flock(engine, fcntl.LOCK_EX)
+            loop = subprocess.Popen(["sh", str(SCRIPT)], env=self.env(), cwd=self.root, text=True,
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            time.sleep(1.5)
+            self.assertIsNone(loop.poll(), "la boucle n'a pas attendu le moteur")
+            fcntl.flock(engine, fcntl.LOCK_UN)
+            _out, err = loop.communicate(timeout=60)
+        self.assertEqual(loop.returncode, ONE_TURN, err)
+
+    def test_a_lock_that_does_not_open_leaves_the_loop_running(self) -> None:
+        (self.beetsdir / "banque.lock").mkdir()
+        (self.rotation / "Ada - Un.mp3").write_bytes(b"un")
+        first = self.turn()
+        self.turn()
+
+        self.assertIn("Verrou de la bibliothèque", first.stderr)
+        self.assertEqual(list(self.groupings()), ["10-rotation/Ada - Un.mp3"])
 
 
 if __name__ == "__main__":

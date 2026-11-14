@@ -17,6 +17,33 @@ COLLECTIONS=20-archives
 # dossier.
 ROTATION_NAME=rotation
 
+# Le verrou de la bibliothèque, à côté de library.db. Le moteur le prend pour
+# déplacer, renommer un titre ou écrire ses tags (engine/radiotomate/services/
+# bank_lock.py) : il change le fichier, puis son chemin dans Beets. La boucle le
+# prend pour suivre le disque et pour indexer un dossier : elle ne voit jamais un
+# fichier à son nouveau nom avant que la bibliothèque l'ait, ni l'ancien chemin
+# disparu avant qu'elle l'ait oublié. Sans lui, un titre déplacé pendant un tour
+# sortirait de la bibliothèque, puis y reviendrait sous un nouvel identifiant.
+# C'est un flock sur le descripteur 9, ouvert une fois, que prend et rend un
+# Python enfant : le verrou suit la description ouverte, que le shell garde.
+LOCK="${BEETSDIR:-/data/Beets}/banque.lock"
+if { : >>"$LOCK"; } 2>/dev/null; then
+  exec 9>>"$LOCK"
+  LOCKED=yes
+else
+  echo "Verrou de la bibliothèque : $LOCK ne s'ouvre pas. La boucle tourne sans lui : un titre que le moteur déplace pendant un tour peut revenir sous un nouvel identifiant. Vérifier les droits du dossier de Beets." >&2
+  LOCKED=no
+fi
+lock() {
+  [ "$LOCKED" = yes ] || return 0
+  python3 -c 'import fcntl; fcntl.flock(9, fcntl.LOCK_EX)' ||
+    echo "Verrou de la bibliothèque : impossible de le prendre, l'erreur est au-dessus. Ce tour continue sans lui." >&2
+}
+unlock() {
+  [ "$LOCKED" = yes ] || return 0
+  python3 -c 'import fcntl; fcntl.flock(9, fcntl.LOCK_UN)' || true
+}
+
 # Beets note ce qu'il a importé (import.incremental) et ne le relit plus. La
 # boucle importe par titre (-s) : l'historique retient alors chaque fichier.
 # Par dossier, il ne retenait que le dossier, et un titre déposé ensuite, à plat
@@ -39,6 +66,12 @@ ROTATION_NAME=rotation
 #   Perdu ou illisible, il se refait de même.
 # - Il oublie un fichier disparu que la bibliothèque ne connaît plus : remis au
 #   même chemin, le fichier est réindexé, sous un nouvel identifiant.
+# La boucle lit les chemins absolus de la bibliothèque. Dès la 2.10, Beets range
+# relatif à sa racine, directory, le chemin d'un titre qui est dessous :
+# init-radiotomate.sh la pose donc hors de la banque. Une bibliothèque aux chemins
+# relatifs, rangée sous une autre racine, arrête l'indexation : la boucle n'y
+# reconnaîtrait aucun titre, et Beets réimporterait toute la banque sous de
+# nouveaux identifiants.
 follow_disk() { # les dossiers de tête que Beets indexe, sous la banque
   python3 - "$MEDIA" "$ROTATION" "$COLLECTIONS" <<'PY'
 import os
@@ -79,6 +112,18 @@ def missing(path):
 
 
 before = items()
+relative = [path for path in before.values() if not os.path.isabs(path)]
+if relative:
+    print(
+        f"Bibliothèque Beets : {len(relative)} titre(s) ont un chemin relatif, comme"
+        f" {os.fsdecode(relative[0])}. Beets les range ainsi quand sa racine, directory,"
+        " est la banque : sans eux, il réimporterait la banque sous de nouveaux"
+        " identifiants. Rien n'est indexé. Relancer la station, dont radiotomate-init"
+        " pose la racine hors de la banque, puis remettre la bibliothèque d'avant :"
+        " docs/deploiement.md, « La bibliothèque de Beets ».",
+        file=sys.stderr,
+    )
+    sys.exit(1)
 tops = []
 for name in map(os.fsencode, sys.argv[2:]):
     top = os.path.join(media, name, b"")
@@ -163,15 +208,16 @@ PY
 #   oublie d'ailleurs, dans l'historique, un titre changé qu'il a retiré.
 # - Un titre changé quitte d'abord son album, s'il en a un : une bibliothèque
 #   indexée par dossier fait un album de chaque dossier. Après la relecture d'un
-#   titre, beet update donne à l'album les champs d'album du premier titre, genre
+#   titre, beet update donne à l'album les champs d'album du premier titre, genres
 #   et année compris, et l'album les donne à tous ses titres.
 # - -e : les champs que la boucle pose d'après le dossier ne se relisent pas.
 #   Relu, le regroupement sortirait le titre de sa sélection jusqu'au beet modify
 #   qui suit.
 # - -d : devant un fichier disparu entre-temps, Beets efface aussi les dossiers
-#   vidés jusqu'à la racine de sa bibliothèque, la banque : une banque vidée de
-#   son dernier titre disparaîtrait, et COLLECTIONS avec elle. Avec une racine
-#   hors de la banque, il n'efface rien.
+#   vidés jusqu'à la racine de sa bibliothèque : avec la banque pour racine, une
+#   banque vidée de son dernier titre disparaîtrait, et COLLECTIONS avec elle.
+#   init-radiotomate.sh pose la racine hors de la banque ; -d l'y tient, même
+#   devant une configuration d'avant.
 # - -M : rien ne se déplace.
 # Le gain ReplayGain se relit aussi dans les tags. Un fichier remplacé qui n'en a
 # pas n'en a plus : le moteur le mesure avant de l'envoyer à l'antenne.
@@ -367,11 +413,17 @@ while true; do
   if [ -f /refresh_volume.py ]; then
     python3 /refresh_volume.py || true
   fi
+  lock
   if follow_disk; then
-    if [ -d "$MEDIA/$ROTATION" ] && folder_state same "$MEDIA/$ROTATION"; then
-      reread "$MEDIA/$ROTATION" grouping || true
-      beet import -A -q -s "$MEDIA/$ROTATION" || true
-      set_fields "$MEDIA/$ROTATION" grouping="$ROTATION_NAME" || true
+    unlock
+    if [ -d "$MEDIA/$ROTATION" ]; then
+      lock
+      if folder_state same "$MEDIA/$ROTATION"; then
+        reread "$MEDIA/$ROTATION" grouping || true
+        beet import -A -q -s "$MEDIA/$ROTATION" || true
+        set_fields "$MEDIA/$ROTATION" grouping="$ROTATION_NAME" || true
+      fi
+      unlock
     fi
     # Chaque dossier de COLLECTIONS est une collection ; son nom, tel quel, devient le grouping.
     for dir in "$MEDIA/$COLLECTIONS"/*/; do
@@ -380,12 +432,16 @@ while true; do
       # Pas de basename : $(…) retirerait un retour à la ligne final.
       ed=${dir##*/}
       case "$ed" in .*|_*) continue ;; esac
-      folder_state same "$dir" || continue
-      reread "$dir" grouping || true
-      beet import -A -q -s "$dir" || true
-      set_fields "$dir" grouping="$ed" || true
+      lock
+      if folder_state same "$dir"; then
+        reread "$dir" grouping || true
+        beet import -A -q -s "$dir" || true
+        set_fields "$dir" grouping="$ed" || true
+      fi
+      unlock
     done
   else
+    unlock
     echo "Historique Beets : reprise impossible, l'erreur est au-dessus. Rien n'est indexé à ce tour : sans elle, Beets réimporterait des titres déjà indexés. La boucle réessaie au prochain. Si l'erreur parle de droits, relancer la station (docker compose up -d) : radiotomate-init rend le dossier de Beets au moteur." >&2
   fi
   if [ -f "$PROMOTE" ]; then
