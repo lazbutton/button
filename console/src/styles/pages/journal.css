@@ -1,0 +1,163 @@
+/* Sons → Journal (FON-71): the gestures on the bank, lot by lot. */
+
+.journal {
+  display: grid;
+  gap: 1rem;
+}
+
+.journal-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.75rem 1.5rem;
+}
+
+.journal-intro {
+  flex: 1 1 18rem;
+  margin: 0;
+  color: var(--app-text-muted);
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.journal-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.journal-filter {
+  display: grid;
+  gap: 0.3rem;
+  min-width: 12rem;
+}
+
+.journal-list {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  background: var(--app-surface-1);
+}
+
+.journal-entry {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--app-border);
+}
+
+.journal-entry:last-child {
+  border-bottom: 0;
+}
+
+.journal-entry-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+}
+
+.journal-toggle {
+  display: flex;
+  flex: 1 1 18rem;
+  align-items: flex-start;
+  gap: 0.5rem;
+  min-height: 2.5rem;
+  padding: 0.25rem 0;
+  border: 0;
+  background: none;
+  color: var(--app-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.journal-toggle svg {
+  flex: none;
+  margin-top: 0.15rem;
+  color: var(--app-text-muted);
+}
+
+.journal-toggle:focus-visible {
+  outline: 2px solid var(--accent-8);
+  outline-offset: 2px;
+  border-radius: var(--app-radius-sm);
+}
+
+.journal-entry-copy {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.journal-entry-copy strong {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.journal-entry-copy span {
+  color: var(--app-text-muted);
+  font-size: 0.8rem;
+}
+
+.journal-entry-side {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.journal-entry-notes {
+  margin: 0 0 0 1.5rem;
+  color: var(--app-text-muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.journal-detail {
+  margin: 0.25rem 0 0 1.5rem;
+  overflow-x: auto;
+  font-size: 0.8rem;
+}
+
+.journal-changes {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.journal-changes th,
+.journal-changes td {
+  padding: 0.35rem 0.6rem;
+  border-bottom: 1px solid var(--app-border);
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.journal-changes th {
+  color: var(--app-text-muted);
+  font-size: 0.7rem;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+@media (max-width: 600px) {
+  .journal-entry {
+    padding: 0.75rem;
+  }
+
+  .journal-entry-notes,
+  .journal-detail {
+    margin-left: 0;
+  }
+
+  .journal-filter {
+    min-width: 0;
+    flex: 1 1 10rem;
+  }
+}
