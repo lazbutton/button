@@ -20,6 +20,7 @@ from radiotomate.scheduler import (
     antenne,
     bank_sync,
     clock,
+    fiches,
     harbor,
     health,
     live,
@@ -120,6 +121,8 @@ def app_factory(config: dict, beets: BeetsIntegration) -> CustomQuart:
             dbsettings = await radiotomate.models.Setting.load_all(session)
             app.config.from_mapping(dbsettings)
         app.add_background_task(beets.background_analyzer, db)
+        # The search of the fiches, off until features.fiches (FON-25).
+        app.add_background_task(fiches.loop, app)
         # The clock pushes a line only when it should air before the cleaner
         # would take it out of its queue.
         cleaning = app.config.get("QUEUE_CLEAN_ENABLED", True)

@@ -18,7 +18,8 @@ RUN apt-get update \
         ${BUILD_ONLY} \
         ffmpeg \
         lame \
-        flac
+        flac \
+        libchromaprint-tools
 
 # as a Python app, radiotomate runs in userland
 RUN useradd -md $RADIOTOMATE_HOME -s /bin/bash $RADIOTOMATE_USER
@@ -46,5 +47,7 @@ USER $RADIOTOMATE_USER
 
 # to improve caching: install radiotomate last. Then remove dev dependencies like poetry
 COPY radiotomate/ ./radiotomate
+# The plugin of the fiches (FON-25), found by Beets in its beetsplug namespace.
+COPY beetsplug/ ./beetsplug
 RUN poetry install --only main \
     && poetry sync --only main --no-root

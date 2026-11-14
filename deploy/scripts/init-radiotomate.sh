@@ -342,6 +342,13 @@ imp["remux_mp3_in_wav"] = False
 plugins = data.get("plugins") or "info random replaygain"
 if "drop2beets" in str(plugins):
     plugins = " ".join(p for p in str(plugins).split() if p != "drop2beets")
+# Le plugin des fiches (FON-25) : leurs champs, et beet fiches. Ajouté sans retirer
+# ceux que la station a mis.
+if isinstance(plugins, list):
+    if "fiches" not in plugins:
+        plugins.append("fiches")
+elif "fiches" not in str(plugins).split():
+    plugins = f"{plugins} fiches"
 data["plugins"] = plugins
 rg = data.setdefault("replaygain", {})
 rg["backend"] = "ffmpeg"

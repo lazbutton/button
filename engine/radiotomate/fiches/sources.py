@@ -871,6 +871,11 @@ def wikidata_artists(
 # ===== AcoustID =====
 
 ACOUSTID = "https://api.acoustid.org/v2/lookup"
+# La clé d'application de BUTTON chez AcoustID, comme celle que Beets écrit dans son
+# plugin chroma : elle dit quelle application demande, et n'ouvre aucun compte. Une
+# station peut poser la sienne (`fiches.acoustid_key`). Un usage hors de BUTTON
+# demande sa propre clé : https://acoustid.org/new-application
+BUTTON_ACOUSTID_KEY = "Hg5cySRJWo"
 # Une empreinte ou une durée que le service refuse pour ce fichier : rien à en
 # tirer, pas une panne.
 _ACOUSTID_NOTHING = frozenset({3, 8})
