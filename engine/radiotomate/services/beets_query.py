@@ -9,7 +9,7 @@ La requête est lue par Beets lui-même, pour voir les parties comme il les voit
 
 Beets 2.14 range le genre dans une liste, `genres`. Il lit encore `genre:`, mais par
 un alias qui écrit un avertissement au journal à chaque requête, et que Beets 3.0
-retire : une sélection nouvelle l'écrit `genres:`. La migration v19 a réécrit les
+retire : une sélection nouvelle l'écrit `genres:`. La migration v20 a réécrit les
 sélections d'avant (ARC-06).
 """
 
@@ -44,7 +44,7 @@ LEGACY_GENRE = (
     "que `genre:Jazz`."
 )
 # Le champ `genre` en tête d'un terme, nié ou non, devant `:` ou le `+` ou `-`
-# d'un tri : la règle de la migration v19.
+# d'un tri : la règle de la migration v20.
 _GENRE_FIELD = re.compile(r"""(^|[\s,"'])[-^]?genre(?=:|[+-](?:$|[\s,"']))""")
 
 

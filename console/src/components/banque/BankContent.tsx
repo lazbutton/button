@@ -7,16 +7,27 @@ import { createBank } from "../../api/banks";
 import { AppToast, useAppToast } from "../../ui/AppToast";
 import { ErrorState, LoadingState } from "../../ui/DataState";
 import { EmptyState } from "../../ui/EmptyState";
+import { BankTable } from "./BankTable";
 import { CollectionView } from "./CollectionView";
 import { CreateBankDialog } from "./CreateBankDialog";
 import { ShelfList } from "./ShelfList";
 
 /**
- * What the bank holds: rotation and the collections on the left, the titles of
- * the one chosen on the right. The collection chosen stays in the address
- * (`?collection=`), so a link or a reload keeps it.
+ * What the bank holds. Once the engine turns the bank's tidying on
+ * (`features.bank_tidy`, FON-64), the table of every title; until then, today's
+ * view of the collections.
  */
 export function BankContent({ onAdd }: { onAdd: (id: string) => void }) {
+  const { account } = useAccount();
+  return account?.features?.bank_tidy === true ? <BankTable onAdd={onAdd} /> : <CollectionsContent onAdd={onAdd} />;
+}
+
+/**
+ * Rotation and the collections on the left, the titles of the one chosen on the
+ * right. The collection chosen stays in the address (`?collection=`), so a link
+ * or a reload keeps it.
+ */
+function CollectionsContent({ onAdd }: { onAdd: (id: string) => void }) {
   const { isAdmin } = useAccount();
   const [params, setParams] = useSearchParams();
   const wanted = params.get("collection") || "rotation";

@@ -1,8 +1,27 @@
-import { Button, Code, Dialog, DropdownMenu, IconButton, Kbd, Spinner, TextField } from "@radix-ui/themes";
+import {
+  Button,
+  Code,
+  Dialog,
+  DropdownMenu,
+  IconButton,
+  Kbd,
+  SegmentedControl,
+  Spinner,
+  TextField,
+} from "@radix-ui/themes";
 import { FlaskConical, ListMusic, MoreHorizontal, Pencil, Plus, Search, SearchX, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
+import { useAccount } from "../api/AccountContext";
 import { ApiRequestError, apiDelete, apiGet, apiPostJson, apiPut } from "../api/client";
+import {
+  NO_FILTERS,
+  filtersFromParams,
+  suggestedName,
+  withoutSelectionParams,
+  type SelectionFilters,
+} from "../api/selectionFilters";
+import { SelectionComposer } from "../components/banque/SelectionComposer";
 import { errorText } from "../api/programmationErrors";
 import { nameTaken } from "../api/programmationView";
 import { SessionGate } from "../api/SessionGate";
@@ -26,6 +45,19 @@ export function CategoriesPage() {
   const { toast, show, dismiss } = useAppToast();
   const [query, setQuery] = useState("");
   const [editing, setEditing] = useState<Category | "new" | null>(null);
+  // A link of the bank's table (« Créer une sélection ») opens a new one with its filters.
+  const [params, setParams] = useSearchParams();
+  const [preset, setPreset] = useState<SelectionFilters | null>(null);
+  const { account, ready: accountReady } = useAccount();
+  const composable = account?.features?.bank_tidy === true;
+  useEffect(() => {
+    const wanted = filtersFromParams(params);
+    // The switch is read in the account: wait for it before taking the link.
+    if (!wanted || !accountReady) return;
+    setParams(withoutSelectionParams(params), { replace: true });
+    setPreset(composable ? wanted : null);
+    setEditing("new");
+  }, [accountReady, composable, params, setParams]);
   const [deleting, setDeleting] = useState<Category | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -250,7 +282,12 @@ export function CategoriesPage() {
       <SelectionDialog
         target={editing}
         names={categories.map((row) => row.name)}
-        onClose={() => setEditing(null)}
+        composable={composable}
+        preset={preset}
+        onClose={() => {
+          setEditing(null);
+          setPreset(null);
+        }}
         onSaved={async (text) => {
           await reload();
           void clocksRes.reload();
@@ -273,20 +310,34 @@ export function CategoriesPage() {
   );
 }
 
-/** Create or edit a sélection, and see what its query finds before saving. */
+/**
+ * Create or edit a sélection, and see what its query finds before saving. Once
+ * the bank's tidying is on, a new one is composed by filters (FON-73): the
+ * engine writes the query; « Écrire la requête à la main » keeps the editor.
+ */
 function SelectionDialog({
   target,
   names,
+  composable,
+  preset,
   onClose,
   onSaved,
 }: {
   target: Category | "new" | null;
   names: string[];
+  /** The bank's tidying is on: the filters are there. */
+  composable: boolean;
+  /** The filters a link of the bank's table brought. */
+  preset: SelectionFilters | null;
   onClose: () => void;
   onSaved: (message: string) => Promise<void>;
 }) {
   const initial = target && target !== "new" ? target : null;
   const [name, setName] = useState("");
+  const [nameTouched, setNameTouched] = useState(false);
+  const [mode, setMode] = useState<"filtres" | "main">("main");
+  const [filters, setFilters] = useState<SelectionFilters>(NO_FILTERS);
+  const [composed, setComposed] = useState("");
   const [query, setQuery] = useState("");
   const [fallback, setFallback] = useState("");
   const [busy, setBusy] = useState(false);
@@ -298,7 +349,11 @@ function SelectionDialog({
 
   useEffect(() => {
     if (!target) return;
-    setName(initial?.name ?? "");
+    setName(initial?.name ?? (preset ? suggestedName(preset) : ""));
+    setNameTouched(false);
+    setMode(composable && !initial ? "filtres" : "main");
+    setFilters(preset ?? NO_FILTERS);
+    setComposed("");
     setQuery(initial?.query ?? "");
     setFallback(initial?.empty_query ?? "");
     setFailure("");
@@ -314,7 +369,13 @@ function SelectionDialog({
 
   const others = names.filter((row) => row !== initial?.name);
   const clash = nameTaken(name, others);
-  const ready = Boolean(name.trim()) && Boolean(query.trim()) && !clash;
+  // By filters, the query is the engine's, once it holds.
+  const written = mode === "filtres" ? composed : query;
+  const ready = Boolean(name.trim()) && Boolean(written.trim()) && !clash;
+  const compose = (next: SelectionFilters) => {
+    setFilters(next);
+    if (!nameTouched && !initial) setName(suggestedName(next));
+  };
 
   const runTest = async (text: string) => {
     const wanted = text.trim();
@@ -335,7 +396,7 @@ function SelectionDialog({
     setBusy(true);
     setFailure("");
     setFailureField(undefined);
-    const body = { name: name.trim(), query: query.trim(), empty_query: fallback.trim() };
+    const body = { name: name.trim(), query: written.trim(), empty_query: fallback.trim() };
     try {
       if (initial) await apiPut(`/autodj/categories/${initial.id}.json`, body);
       else await apiPostJson("/autodj/categories.json", body);
@@ -361,7 +422,9 @@ function SelectionDialog({
       <Dialog.Content maxWidth="34rem">
         <Dialog.Title>{initial ? "Modifier la sélection" : "Nouvelle sélection de titres"}</Dialog.Title>
         <Dialog.Description size="2" color="gray" mb="4">
-          La requête interroge la banque indexée par Beets. Teste-la avant d'enregistrer.
+          {mode === "filtres"
+            ? "Choisis des filtres : la sélection compte ses titres à chaque choix, et le moteur écrit sa requête."
+            : "La requête interroge la banque indexée par Beets. Teste-la avant d'enregistrer."}
         </Dialog.Description>
         <form
           className="prog-dialog-form"
@@ -377,67 +440,92 @@ function SelectionDialog({
               value={name}
               placeholder="Rotation"
               autoFocus
-              onChange={(event) => setName(event.target.value)}
+              onChange={(event) => {
+                setName(event.target.value);
+                setNameTouched(true);
+              }}
             />
           </FormField>
-          <div className="ui-field">
-            <label className="ui-field-label" htmlFor="selection-query">
-              Requête
-            </label>
-            <div className="prog-query-row">
-              <TextField.Root
-                id="selection-query"
-                size="2"
-                className="ui-field-control prog-code-input"
-                value={query}
-                spellCheck={false}
-                onChange={(event) => setQuery(event.target.value)}
-              />
-              <Button
-                type="button"
-                size="2"
-                variant="soft"
-                color="gray"
-                disabled={!query.trim() || testing}
-                onClick={() => void runTest(query)}
-              >
-                {testing ? <Spinner size="1" /> : <FlaskConical className="ui-button-icon" />}
-                Tester
-              </Button>
-            </div>
-            <span className="ui-field-hint">Exemples : grouping:matinale · genres:Jazz</span>
-          </div>
-          {/* A refusal was about the query before: it goes once the query changes. */}
-          {test && !(test.error && stale) ? (
-            <div className={`prog-test${stale ? " is-stale" : ""}`} role="status" aria-live="polite">
-              {test.error ? (
-                <p className="prog-warn">{test.error}</p>
-              ) : test.result ? (
-                <>
-                  <p>
-                    <strong>
-                      {test.result.count} titre{test.result.count === 1 ? "" : "s"}
-                    </strong>{" "}
-                    {stale
-                      ? "pour la requête d'avant : reteste."
-                      : test.result.count
-                        ? "trouvés, par exemple :"
-                        : "trouvé : le repli servira."}
-                  </p>
-                  {test.result.sample.length && !stale ? (
-                    <ul>
-                      {test.result.sample.slice(0, 6).map((item, index) => (
-                        <li key={`${item.artist}-${item.title}-${index}`}>
-                          <span>{item.title || "Sans titre"}</span>
-                          {item.artist ? <small>{item.artist}</small> : null}
-                        </li>
-                      ))}
-                    </ul>
-                  ) : null}
-                </>
-              ) : null}
-            </div>
+          {composable ? (
+            <SegmentedControl.Root
+              size="2"
+              value={mode}
+              aria-label="Façon d'écrire la sélection"
+              onValueChange={(value) => {
+                const next = value as "filtres" | "main";
+                // The query composed goes on in the editor, to be changed by hand.
+                if (next === "main" && composed) setQuery(composed);
+                setMode(next);
+              }}
+            >
+              <SegmentedControl.Item value="filtres">Par filtres</SegmentedControl.Item>
+              <SegmentedControl.Item value="main">Écrire la requête à la main</SegmentedControl.Item>
+            </SegmentedControl.Root>
           ) : null}
+          {mode === "filtres" ? (
+            <SelectionComposer filters={filters} onChange={compose} onComposed={setComposed} />
+          ) : (
+            <>
+            <div className="ui-field">
+              <label className="ui-field-label" htmlFor="selection-query">
+                Requête
+              </label>
+              <div className="prog-query-row">
+                <TextField.Root
+                  id="selection-query"
+                  size="2"
+                  className="ui-field-control prog-code-input"
+                  value={query}
+                  spellCheck={false}
+                  onChange={(event) => setQuery(event.target.value)}
+                />
+                <Button
+                  type="button"
+                  size="2"
+                  variant="soft"
+                  color="gray"
+                  disabled={!query.trim() || testing}
+                  onClick={() => void runTest(query)}
+                >
+                  {testing ? <Spinner size="1" /> : <FlaskConical className="ui-button-icon" />}
+                  Tester
+                </Button>
+              </div>
+              <span className="ui-field-hint">Exemples : grouping:matinale · genres:Jazz</span>
+            </div>
+            {/* A refusal was about the query before: it goes once the query changes. */}
+            {test && !(test.error && stale) ? (
+              <div className={`prog-test${stale ? " is-stale" : ""}`} role="status" aria-live="polite">
+                {test.error ? (
+                  <p className="prog-warn">{test.error}</p>
+                ) : test.result ? (
+                  <>
+                    <p>
+                      <strong>
+                        {test.result.count} titre{test.result.count === 1 ? "" : "s"}
+                      </strong>{" "}
+                      {stale
+                        ? "pour la requête d'avant : reteste."
+                        : test.result.count
+                          ? "trouvés, par exemple :"
+                          : "trouvé : le repli servira."}
+                    </p>
+                    {test.result.sample.length && !stale ? (
+                      <ul>
+                        {test.result.sample.slice(0, 6).map((item, index) => (
+                          <li key={`${item.artist}-${item.title}-${index}`}>
+                            <span>{item.title || "Sans titre"}</span>
+                            {item.artist ? <small>{item.artist}</small> : null}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </>
+                ) : null}
+              </div>
+            ) : null}
+            </>
+          )}
           <FormField
             label="Si elle ne trouve rien"
             hint="Facultatif : une autre requête, essayée à la place."

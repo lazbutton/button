@@ -446,6 +446,7 @@ class OneLayoutForAllTest(unittest.TestCase):
         for own, canon in {
             "INBOX_TOP": "INBOX",
             "ROTATION_TOP": "ROTATION",
+            "COLLECTIONS_TOP": "COLLECTIONS",
             "HABILLAGE_TOP": "HABILLAGE",
             "EMISSIONS_TOP": "EMISSIONS",
             "CART_DROP_TOP": "CARTS",

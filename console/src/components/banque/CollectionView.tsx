@@ -656,7 +656,7 @@ function BankRow({
   );
 }
 
-function MoveDialog({
+export function MoveDialog({
   names,
   from,
   options,
@@ -712,7 +712,7 @@ function MoveDialog({
   );
 }
 
-function RenameDialog({
+export function RenameDialog({
   shelf,
   shelves,
   onClose,

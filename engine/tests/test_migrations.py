@@ -126,15 +126,67 @@ async def test_v18_encoder_token_up_then_down(tmp_path: Path):
     await db.after_serving()
 
 
-async def test_v19_categories_search_genres(tmp_path: Path):
+async def test_v19_bank_views_up_then_down(tmp_path: Path):
     """
-    v19 rewrites the field `genre` of the categories' queries into `genres`, which
-    Beets 2.14 reads without its alias, in a term only. Going back to v18 puts `genre`
-    back, also in a query written at v19.
+    v19 keeps the views of the bank's table, each with its account: an account
+    deleted takes its views with it, and going back to v18 takes the table away
+    without touching the accounts.
     """
     db = QuartAlchemy()
     db.init_from_config({"url": f"sqlite+aiosqlite:///{tmp_path / 'v18.db'}"}, {})
     await do_update(db.engine, target_version=18)
+    async with db.engine.connect() as conn:
+        for sql in (
+            "insert into users (id, username, password, notes, permissions) "
+            """values (1, 'nadia', 'argon2-hash', '', '{"autodj": true}')""",
+            "insert into users (id, username, password, notes, permissions) "
+            "values (2, 'samir', 'argon2-hash', '', '{}')",
+        ):
+            await conn.execute(text(sql))
+        await conn.commit()
+    users = "select * from users order by id"
+    before = await _rows(db.engine, users)
+
+    await do_update(db.engine, target_version=19)
+    assert await _schema_version(db.engine) == 19
+    async with db.engine.connect() as conn:
+        await conn.exec_driver_sql("PRAGMA foreign_keys=ON")
+        for sql in (
+            "insert into bank_views (user_id, name, state, created, modified) values "
+            "(1, 'Jazz', '{}', '2026-11-14 09:00:00', '2026-11-14 09:00:00'), "
+            "(2, 'Jazz', '{}', '2026-11-14 09:00:00', '2026-11-14 09:00:00')",
+        ):
+            await conn.execute(text(sql))
+        # One name per account.
+        with pytest.raises(Exception, match="UNIQUE"):
+            await conn.execute(
+                text(
+                    "insert into bank_views (user_id, name, state, created, modified) "
+                    "values (1, 'Jazz', '{}', '2026-11-14', '2026-11-14')"
+                )
+            )
+        await conn.execute(text("delete from users where id = 2"))
+        await conn.commit()
+    assert await _rows(db.engine, "select user_id, name from bank_views") == [
+        (1, "Jazz")
+    ]
+
+    await do_update(db.engine, target_version=18)
+    assert await _schema_version(db.engine) == 18
+    assert "bank_views" not in await _table_names(db.engine)
+    assert await _rows(db.engine, users) == before[:1]
+    await db.after_serving()
+
+
+async def test_v20_categories_search_genres(tmp_path: Path):
+    """
+    v20 rewrites the field `genre` of the categories' queries into `genres`, which
+    Beets 2.14 reads without its alias, in a term only. Going back to v19 puts `genre`
+    back, also in a query written at v20.
+    """
+    db = QuartAlchemy()
+    db.init_from_config({"url": f"sqlite+aiosqlite:///{tmp_path / 'v19.db'}"}, {})
+    await do_update(db.engine, target_version=19)
     queries = {
         "Jazz": ("genre:Jazz", ""),
         "Pas de rock": ("-genre:Rock year:1990..1999", "^genre:Rock"),
@@ -156,8 +208,8 @@ async def test_v19_categories_search_genres(tmp_path: Path):
     categories = "select name, query, empty_query from music_categories order by name"
     before = await _rows(db.engine, categories)
 
-    await do_update(db.engine, target_version=19)
-    assert await _schema_version(db.engine) == 19
+    await do_update(db.engine, target_version=20)
+    assert await _schema_version(db.engine) == 20
     after = {
         name: (query, empty)
         for name, query, empty in await _rows(db.engine, categories)
@@ -176,15 +228,15 @@ async def test_v19_categories_search_genres(tmp_path: Path):
         await conn.execute(
             text(
                 "insert into music_categories (name, query, empty_query) "
-                "values ('Écrite en v19', 'genres:Soul', 'genres:Funk')"
+                "values ('Écrite en v20', 'genres:Soul', 'genres:Funk')"
             )
         )
         await conn.commit()
 
-    await do_update(db.engine, target_version=18)
-    assert await _schema_version(db.engine) == 18
+    await do_update(db.engine, target_version=19)
+    assert await _schema_version(db.engine) == 19
     assert await _rows(db.engine, categories) == sorted(
-        [*before, ("Écrite en v19", "genre:Soul", "genre:Funk")]
+        [*before, ("Écrite en v20", "genre:Soul", "genre:Funk")]
     )
     await db.after_serving()
 
@@ -337,6 +389,11 @@ STATION_DATA = {
         set stream_token_hash = 'sha256-hex',
             stream_token_created_at = '2026-10-30 13:05:00'
         where id = 1;
+    """,
+    19: """
+        insert into bank_views (id, user_id, name, state, created, modified)
+        values (1, 1, 'Jazz à relire', '{"ranking": "famille", "group": "jazz"}',
+            '2026-11-14 09:00:00', '2026-11-14 10:00:00');
         insert into music_categories (name, query, empty_query)
         values ('Jazz', 'genre:Jazz year:1950..1969', '-genre:Rock genre:Jazz');
     """,

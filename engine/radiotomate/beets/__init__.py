@@ -171,6 +171,41 @@ class BeetsIntegration:
         loop = get_running_loop()
         await loop.run_in_executor(None, self.rg.handle_track, item, False)
 
+    async def title_rows(self) -> list[tuple]:
+        """
+        Every title of the library, as the bank's table reads it (FON-64): id, path,
+        title, artist, album, year, genre, length and the ``famille`` flexible field.
+        One SQL query, not ``lib.items()``: building 7 000 Items takes seconds.
+        """
+        loop = get_running_loop()
+        return await loop.run_in_executor(None, self._title_rows)
+
+    def _genre_column(self, tx) -> str:
+        """Beets 2.14 keeps the genres of a title in `genres` (ARC-06)."""
+        columns = {row[1] for row in tx.query("PRAGMA table_info(items)")}
+        return "genres" if "genres" in columns else "genre"
+
+    async def genre_field(self) -> str:
+        """The genre's field in a query: `genre`, or `genres` with Beets 2.14."""
+
+        def read() -> str:
+            with self.lib.transaction() as tx:
+                return self._genre_column(tx)
+
+        return await get_running_loop().run_in_executor(None, read)
+
+    def _title_rows(self) -> list[tuple]:
+        with self.lib.transaction() as tx:
+            genre = self._genre_column(tx)
+            return list(
+                tx.query(
+                    "SELECT i.id, i.path, i.title, i.artist, i.album, i.year, "
+                    f"i.{genre}, i.length, a.value FROM items i "
+                    "LEFT JOIN item_attributes a "
+                    "ON a.entity_id = i.id AND a.key = 'famille'"
+                )
+            )
+
     async def get_item(self, beets_id: int) -> Item | None:
         loop = get_running_loop()
         return await loop.run_in_executor(None, self.lib.get_item, beets_id)

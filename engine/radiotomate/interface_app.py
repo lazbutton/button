@@ -30,6 +30,7 @@ from radiotomate.interface import (
     listen_link,
     live,
     login,
+    media,
     public,
     spa,
     station,
@@ -128,6 +129,7 @@ def app_factory(config: dict, reload: bool, beets: BeetsIntegration):
     app.register_blueprint(agenda.blueprint)
     app.register_blueprint(public.blueprint)
     app.register_blueprint(library.blueprint)
+    app.register_blueprint(media.blueprint)
     app.register_blueprint(csrf.blueprint)
     app.register_blueprint(station.blueprint)
     app.register_blueprint(listen_link.blueprint)
