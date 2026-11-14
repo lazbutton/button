@@ -149,7 +149,7 @@ Entre la deuxième et la troisième, le banc lance un relais, celui de son propr
 
 Une sonde (`rundown_probe.py`) tourne dans le réseau du playout. Elle lit le conducteur comme une console ouverte, six heures toutes les 3 s, la base du moteur, les battements que relaie le scheduler, le silence que le playout compte sur sa sortie, et ce que le nettoyeur retire des files. Sa console s'ouvre dès le démarrage, avant l'antenne : l'interface tire la prévision pendant que le scheduler tire la sienne, et une seule doit s'écrire (FON-60). Avec `features.forecast_drawn_once=0`, les deux s'écrivent, comme avant le correctif, et les premiers sons peuvent passer en double : cinq démarrages sur trente-deux, alors. Le banc échoue si :
 
-- un son part à plus de 5 s de l'heure que le conducteur lui donnait une minute avant. Un défaut connu du moteur, FON-61, est dit et pas compté : après la coupure « Attend la fin », un jingle du motif qui passe devant le titre annoncé avant lui ;
+- un son part à plus de 5 s de l'heure que le conducteur lui donnait une minute avant ;
 - la coupure « Coupe pile » ne part pas à sa minute, ou le titre qu'elle tranche revient après son son ;
 - la coupure « Attend la fin » coupe le titre qu'elle attend ;
 - une ligne envoyée au playout ne passe jamais, ou part dans une file qui en tient déjà une autre, prévue au même moment ou plus tard ;
@@ -159,7 +159,7 @@ Une sonde (`rundown_probe.py`) tourne dans le réseau du playout. Elle lit le co
 - pendant le direct, l'horloge envoie un son au playout, la coupure due passe, pendant ou après lui, sa ligne n'est pas fermée « retenue pendant le direct », ou l'interface accepte un « Diffuser maintenant » ;
 - après le direct, le titre qu'il a coupé revient, ou la grille ne reprend pas.
 
-Une heure donnée avant un relais ou le premier son du banc ne dit rien de ce qui passe après : le conducteur ne les prévoit pas. Ces sons-là ne sont pas comparés, et le relevé les dit « pas jugé ». À partir du direct, le banc ne compare plus d'heure, et ne relève plus ce que l'horloge envoie : le retour d'un direct n'est pas encore propre (FON-55, FON-61). Il y juge le direct lui-même, et finit 25 s après lui, une fois la grille repartie. Le blanc qui suit un direct est mesuré, et dit : c'est la fiche FON-55.
+Une heure donnée avant un relais ou le premier son du banc ne dit rien de ce qui passe après : le conducteur ne les prévoit pas. Ces sons-là ne sont pas comparés, et le relevé les dit « pas jugé ». À partir du direct, le banc ne compare plus d'heure, et ne relève plus ce que l'horloge envoie : le retour d'un direct n'est pas encore propre (FON-55, FON-62). Il y juge le direct lui-même, et finit 25 s après lui, une fois la grille repartie. Le blanc qui suit un direct est mesuré, et dit : c'est la fiche FON-55.
 
 Le banc dure cinq à six minutes. Ses coupures tombent toutes dans l'heure où l'antenne démarre : dans les cinq dernières minutes d'une heure, il peut attendre la suivante. Il prend des ports libres, et se défait à la fin, avec ses volumes et ses images. La CI le lance avant de construire les images du moteur ([`engine.yml`](../.github/workflows/engine.yml)), sur une image du moteur qu'elle construit elle-même, avec le cache du dernier build de `main` (`RUNDOWN_ENGINE_IMAGE`).
 

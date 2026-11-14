@@ -18,9 +18,7 @@ launches a relay, as a console does, then sends a live to the harbor, as the
 encoder of a studio does. It fails when:
 
 - a sound starts more than a few seconds from the time the conducteur gave it
-  a minute before. But for a known defect of the engine, told and not counted:
-  the jingle that goes ahead of a title after the cut « Attend la fin »
-  (FON-61);
+  a minute before;
 - the cut « Coupe pile » does not go on its minute, or the title it cuts comes
   back after its sound;
 - the cut « Attend la fin » cuts the title it waits for;
@@ -36,7 +34,7 @@ encoder of a studio does. It fails when:
   it; the grid does not start again.
 
 From the live on, the bench compares no time: the return of a live is not
-clean yet (FON-55, FON-61), and it only judges the live itself.
+clean yet (FON-55, FON-62), and it only judges the live itself.
 
 `key=value` sets a key of the table `settings` before the engine starts: a
 switch turned off shows the bench failing. `--journal FILE` keeps what the
@@ -343,7 +341,7 @@ class Reading:
     def find_troubles(self) -> list[Trouble]:
         """Until the antenna starts, and during a relay. And from the live on:
         the return of a live is not clean yet, the conducteur is compared up to
-        it only (FON-55, FON-61)."""
+        it only (FON-55, FON-62)."""
         found = []
         if self.starts:
             found.append(Trouble(float("-inf"), self.starts[0]["at"]))
@@ -442,36 +440,11 @@ def what(row: dict) -> str:
     return f"« {row['title']} »"
 
 
-def jingle_ahead(reading: Reading, row: dict) -> dict | None:
-    """A known defect of the engine, FON-61: the jingle of the motif that goes
-    ahead of a title, right after the sound of the cut « Attend la fin ». The
-    title the conducteur puts before the jingle is loaded behind that sound,
-    and the heartbeat no longer counts it: the clock takes the queue of the
-    Auto-DJ for empty. The title, when it is this one."""
-    line = reading.items.get(row["item"], [{}])[-1]
-    if row["source"] != "jingles" or line.get("when") != "sequential":
-        return None
-    before = reading.before(row)
-    if before is None or before["cart"] != reading.plan["carts"][seed.FLASH]:
-        return None
-    title = reading.next_start(row["at"])
-    if title is None or title["source"] != "autodj":
-        return None
-    moment = row["at"] - SAID_BEFORE
-    said_title = reading.said(title["item"], moment)
-    said_jingle = reading.said(row["item"], moment)
-    if None in (said_title, said_jingle) or said_title >= said_jingle:
-        return None
-    return title
-
-
-def on_time(reading: Reading) -> tuple[list[str], dict[int, float], list[str]]:
+def on_time(reading: Reading) -> tuple[list[str], dict[int, float]]:
     """The sounds that started away from the time the conducteur gave them a
-    minute before, the gap of each sound judged, by its row, and the sounds a
-    known defect of the engine moved, which the bench does not count."""
+    minute before, and the gap of each sound judged, by its row."""
     failures = []
     gaps: dict[int, float] = {}
-    known = []
     for row in reading.starts:
         if not reading.foreseen(row["at"]):
             continue
@@ -483,20 +456,12 @@ def on_time(reading: Reading) -> tuple[list[str], dict[int, float], list[str]]:
             )
             continue
         gaps[row["id"]] = row["at"] - said
-        if abs(gaps[row["id"]]) <= ON_TIME:
-            continue
-        title = jingle_ahead(reading, row) if gaps[row["id"]] < 0 else None
-        if title is not None:
-            known.append(
-                f"FON-61 : {what(row)} est passé à {reading.hms(row['at'])}, devant"
-                f" {what(title)}, que le conducteur annonçait avant lui"
+        if abs(gaps[row["id"]]) > ON_TIME:
+            failures.append(
+                f"{what(row)} est passé à {reading.hms(row['at'])} : une minute avant,"
+                f" le conducteur l'annonçait pour {reading.hms(said)}"
             )
-            continue
-        failures.append(
-            f"{what(row)} est passé à {reading.hms(row['at'])} : une minute avant,"
-            f" le conducteur l'annonçait pour {reading.hms(said)}"
-        )
-    return failures, gaps, known
+    return failures, gaps
 
 
 def hard_cut(reading: Reading) -> list[str]:
@@ -788,10 +753,8 @@ def table(reading: Reading, gaps: dict[int, float]) -> None:
 
 def verdict(reading: Reading) -> list[str]:
     """What went wrong, in the words shown to whoever runs the bench."""
-    failures, gaps, known = on_time(reading)
+    failures, gaps = on_time(reading)
     table(reading, gaps)
-    for defect in known:
-        say(f"  défaut connu, pas compté : {defect}")
     quiet, after_live = silences(reading)
     closed = sorted(
         {
