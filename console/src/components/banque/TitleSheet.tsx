@@ -73,7 +73,7 @@ export function TitleSheet({
         </div>
         <section className="bacs-inspector-group" aria-label="Fiche">
           <p className="banque-sheet-state">
-            <Badge size="1" variant="soft" color={fiche.complete ? "green" : "gray"}>
+            <Badge size="1" variant="soft" color={fiche.complete ? "green" : "gray"} highContrast>
               {fiche.label}
             </Badge>
             <span>{fiche.detail}</span>

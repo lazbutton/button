@@ -1,4 +1,5 @@
 import type { Page, Route } from "@playwright/test";
+import { verifierAccessibilite } from "./accessibilite.ts";
 import { antenne, expect, seConnecter, test } from "./banc.ts";
 
 // Le tableau de la banque (FON-64), derrière l'interrupteur général de « Ranger
@@ -139,6 +140,8 @@ test("toute la banque se range par artiste, se trie, et ouvre la fiche d'un titr
   const fiche = page.getByRole("complementary", { name: "Fiche de Comète" });
   await expect(fiche.getByText("Complète")).toBeVisible();
   await expect(fiche.getByText("10-rotation/1.mp3")).toBeVisible();
+  // Un titre complet : son badge vert, dans la fiche et dans le tableau, se lit.
+  await verifierAccessibilite(page, "fiche d'un titre complet");
   await page.keyboard.press("Escape");
   await expect(fiche).toHaveCount(0);
   await expect(orage.getByRole("button", { name: "Comète", exact: true })).toBeFocused();

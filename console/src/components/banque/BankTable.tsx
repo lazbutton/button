@@ -899,7 +899,7 @@ function TitleRow({
             return (
               <td key={key} className="c-fiche">
                 <Tooltip content={fiche.detail}>
-                  <Badge size="1" variant="soft" color={fiche.complete ? "green" : "gray"} tabIndex={0}>
+                  <Badge size="1" variant="soft" color={fiche.complete ? "green" : "gray"} highContrast tabIndex={0}>
                     {fiche.label}
                   </Badge>
                 </Tooltip>
