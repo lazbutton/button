@@ -611,19 +611,26 @@ def test_the_engine_opens_the_library_of_the_station(tmp_path: Path):
         tmp_path,
         sys.executable,
         "-c",
+        "from concurrent.futures import ThreadPoolExecutor\n"
         "from radiotomate.beets import BeetsIntegration\n"
         "lib = BeetsIntegration.default().lib\n"
         "print(lib.directory.decode())\n"
         "for item in lib.items():\n"
-        "    print(item.id, item.grouping, item.path.decode())\n",
+        "    print(item.id, item.grouping, item.path.decode())\n"
+        # Beets 2.14 binds its root to a ContextVar, that run_in_executor does
+        # not copy: a path kept relative to the root would come back relative
+        "with ThreadPoolExecutor() as pool:\n"
+        "    print(pool.submit(lambda: lib.get_item(1).path.decode()).result())\n",
     )
 
     assert opened.returncode == 0, opened.stderr
     beetsdir = tmp_path / "data" / "Beets"
     track = media / "10-rotation" / "Ada - Un.mp3"
+    assert _items(tmp_path)["Ada - Un.mp3"][0] == 1
     assert opened.stdout.splitlines() == [
         str(beetsdir),
-        f"{_items(tmp_path)['Ada - Un.mp3'][0]} rotation {track}",
+        f"1 rotation {track}",
+        str(track),
     ]
 
 
