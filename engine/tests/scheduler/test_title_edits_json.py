@@ -104,7 +104,7 @@ async def test_edit_try_writes_nothing(
 ):
     beets, ids = _bank(tmp_path, ("mp3", "flac"))
     await _open(dbsession)
-    dbsession.add(MusicCategory(name="Jazz", query="genre:Jazz"))
+    dbsession.add(MusicCategory(name="Jazz", query="genres:Jazz"))
     client = await _client(
         app_configration, beets, dbsession, users_password, {"autodj": True}
     )
