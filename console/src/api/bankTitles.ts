@@ -1,3 +1,4 @@
+import type { TitleCart } from "./bankCarts.ts";
 import type { BankShelf } from "./bankContent.ts";
 
 /**
@@ -27,6 +28,8 @@ export type BankTitle = {
   path: string;
   /** The fields of the fiche still empty. */
   missing: FicheField[];
+  /** The carts that play it without a copy (FON-69); absent from an older engine. */
+  carts?: TitleCart[];
 };
 
 export type FicheField = "title" | "artist" | "album" | "year" | "genre" | "famille";

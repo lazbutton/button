@@ -30,7 +30,7 @@ class JournalEntry(Base):
     __tablename__ = "journal_entries"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    # "edit", "undo", "move" (ARC-09); later "accept" (FON-27), "rename" (FON-68),
+    # "edit", "undo", "move" (ARC-09), "rename" (FON-68); later "accept" (FON-27),
     # "remove" (FON-71)
     gesture: Mapped[str] = mapped_column(String, nullable=False, index=True)
     username: Mapped[str] = mapped_column(String, nullable=False, index=True)

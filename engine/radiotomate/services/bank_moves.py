@@ -79,6 +79,8 @@ SETTING_MOVES = "features.bank_moves_keep_identity"
 _SETTING_OFF = {"0", "false", "off", "no", "non", ""}
 # A lot of moves in the journal of the gestures (FON-66, FON-71).
 GESTURE_MOVE = "move"
+# A lot of files renamed after their fiche (FON-68): the same move, its own gesture.
+GESTURE_RENAME = "rename"
 PATH_FIELD = "path"
 
 # The reasons, in French: the console shows them as they are.
@@ -561,18 +563,19 @@ async def _move_lot(
     return report
 
 
-async def move_titles(
+async def move_titles(  # noqa: PLR0913
     session: AsyncSession,
     place: BeetsPlace,
     moves: list[tuple[str, str]],
     *,
     username: str,
     budget: float = TIME_BUDGET,
+    gesture: str = GESTURE_MOVE,
 ) -> MoveReport:
     """Move titles of the bank, and note the lot in the journal of the gestures."""
     report = await _move_lot(session, place, moves, budget)
     if report.changes:
-        entry = JournalEntry.note(GESTURE_MOVE, username, report.changes)
+        entry = JournalEntry.note(gesture, username, report.changes)
         session.add(entry)
         await session.commit()
         report.entry = entry.id
@@ -595,8 +598,8 @@ class MoveIssue(title_edits.TitleIssue):
 
 
 def moves_files(entry: JournalEntry) -> bool:
-    """A lot of moves, or the undoing of one: what ``undo_moves`` undoes."""
-    if entry.gesture == GESTURE_MOVE:
+    """A lot of moves or renames, or the undoing of one: what ``undo_moves`` undoes."""
+    if entry.gesture in {GESTURE_MOVE, GESTURE_RENAME}:
         return True
     fields = (entry.details or {}).get("fields")
     return entry.gesture == title_edits.GESTURE_UNDO and fields == [PATH_FIELD]
