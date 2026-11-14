@@ -1,5 +1,6 @@
 import { Code, Select, Spinner, TextField } from "@radix-ui/themes";
 import { useEffect, useId, useRef, useState } from "react";
+import { useAccount } from "../../api/AccountContext";
 import { bankShelves, type BankShelf } from "../../api/bankContent";
 import type { BankFacet, BankTitlesPage } from "../../api/bankTitles";
 import { ApiRequestError, apiGet } from "../../api/client";
@@ -12,13 +13,20 @@ import {
 } from "../../api/selectionFilters";
 import { FormField } from "../../ui/FormField";
 
-type Facets = { famille: BankFacet[]; collection: BankFacet[]; artist: BankFacet[]; album: BankFacet[]; genre: BankFacet[] };
+type Facets = {
+  famille: BankFacet[];
+  collection: BankFacet[];
+  artist: BankFacet[];
+  album: BankFacet[];
+  genre: BankFacet[];
+  etiquette: BankFacet[];
+};
 
 const ANY = "__toutes__";
 
 /**
  * « Nouvelle sélection », par filtres (FON-73) : une famille, une collection, un
- * artiste, un album, un genre, des années. À chaque choix, le moteur écrit la
+ * artiste, un album, un genre, une étiquette de la station (FON-74), des années. À chaque choix, le moteur écrit la
  * requête Beets qui dit la même chose, la vérifie, la compte et en montre dix
  * titres. `onComposed` reçoit la requête, ou rien tant qu'elle ne tient pas.
  */
@@ -31,6 +39,9 @@ export function SelectionComposer({
   onChange: (filters: SelectionFilters) => void;
   onComposed: (query: string) => void;
 }) {
+  const { account } = useAccount();
+  // Un moteur d'avant FON-74 ne connaît pas les étiquettes : le filtre se cache.
+  const tagsKnown = account?.features?.station_tags === true;
   const [facets, setFacets] = useState<Facets | null>(null);
   const [shelves, setShelves] = useState<BankShelf[]>([]);
   const [composed, setComposed] = useState<ComposedSelection | null>(null);
@@ -45,7 +56,8 @@ export function SelectionComposer({
   onComposedRef.current = onComposed;
 
   useEffect(() => {
-    void apiGet<BankTitlesPage>("/media/titles.json?limit=1&facets=famille,collection,artist,album,genre").then(
+    const names = `famille,collection,artist,album,genre${tagsKnown ? ",etiquette" : ""}`;
+    void apiGet<BankTitlesPage>(`/media/titles.json?limit=1&facets=${names}`).then(
       (page) =>
         setFacets({
           famille: page.facets.famille ?? [],
@@ -53,9 +65,13 @@ export function SelectionComposer({
           artist: page.facets.artist ?? [],
           album: page.facets.album ?? [],
           genre: (page.facets as Record<string, BankFacet[] | undefined>).genre ?? [],
+          etiquette: page.facets.etiquette ?? [],
         }),
       (caught) => setProblem(caught instanceof Error ? caught.message : "La banque ne s'est pas lue."),
     );
+  }, [tagsKnown]);
+
+  useEffect(() => {
     void bankShelves().then(setShelves, () => setShelves([]));
   }, []);
 
@@ -127,6 +143,24 @@ export function SelectionComposer({
             </Select.Content>
           </Select.Root>
         </FormField>
+        {tagsKnown ? (
+          <FormField label="Étiquette" hint="Cette étiquette seule : « nuit » ne prend pas « minuit ».">
+            <Select.Root
+              value={filters.etiquette || ANY}
+              onValueChange={(value) => set("etiquette", value === ANY ? "" : value)}
+            >
+              <Select.Trigger variant="surface" className="ui-field-control" aria-label="Étiquette" />
+              <Select.Content position="popper">
+                <Select.Item value={ANY}>Toutes</Select.Item>
+                {(facets?.etiquette ?? []).filter((facet) => facet.value).map((facet) => (
+                  <Select.Item key={facet.value} value={facet.value}>
+                    {label(facet)} · {facet.count}
+                  </Select.Item>
+                ))}
+              </Select.Content>
+            </Select.Root>
+          </FormField>
+        ) : null}
         <FormField label="Artiste" hint="Cet artiste seul, pas un nom qui le contient.">
           <TextField.Root
             size="2"

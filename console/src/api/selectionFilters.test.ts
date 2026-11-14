@@ -30,6 +30,7 @@ test("the years: four digits, in order", () => {
 test("the table's group becomes the selection's filter", () => {
   assert.deepEqual(filtersFromTable({ ranking: "famille", group: "jazz" }), { ...NO_FILTERS, famille: "jazz" });
   assert.deepEqual(filtersFromTable({ ranking: "collection", group: "nuit" }), { ...NO_FILTERS, collection: "nuit" });
+  assert.deepEqual(filtersFromTable({ ranking: "etiquette", group: "nuit" }), { ...NO_FILTERS, etiquette: "nuit" });
   assert.equal(tableMakesSelection({ ...DEFAULT_STATE, group: null }), false);
   assert.equal(tableMakesSelection({ ...DEFAULT_STATE, group: "" }), false);
   assert.equal(tableMakesSelection({ ...DEFAULT_STATE, group: "Orage" }), true);
@@ -53,4 +54,6 @@ test("a name to start from", () => {
   assert.equal(suggestedName({ ...NO_FILTERS, year_from: "1990", year_to: "1999" }), "De 1990 à 1999");
   assert.equal(suggestedName({ ...NO_FILTERS, year_to: "1999" }), "Jusqu'à 1999");
   assert.equal(suggestedName(NO_FILTERS), "");
+  assert.equal(suggestedName({ ...NO_FILTERS, famille: "jazz", etiquette: "nuit" }), "Jazz, nuit");
+  assert.equal(filtersQuery({ ...NO_FILTERS, etiquette: "nuit" }), "etiquette=nuit");
 });

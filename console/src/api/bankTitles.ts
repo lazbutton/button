@@ -2,8 +2,8 @@ import type { BankShelf } from "./bankContent.ts";
 
 /**
  * The bank's table (FON-64): every title of the Beets library, read by the
- * engine (`GET /media/titles.json`), ranged by collection, artist, family or
- * album. Pure logic, tested alongside; the calls are in the components.
+ * engine (`GET /media/titles.json`), ranged by collection, artist, family,
+ * album or tag of the station (FON-74). Pure logic, tested alongside; the calls are in the components.
  */
 
 /** A title of the library, as the engine's table gives it. */
@@ -19,6 +19,8 @@ export type BankTitle = {
   /** The short name of its family (`jazz`), empty until it is set. */
   famille: string;
   famille_label: string;
+  /** The station's tags (FON-74), in the library only; absent from an older engine. */
+  etiquettes?: string[];
   duration: number | null;
   zone: string;
   /** `rotation`, or the folder of its collection. */
@@ -31,7 +33,7 @@ export type BankTitle = {
 
 export type FicheField = "title" | "artist" | "album" | "year" | "genre" | "famille";
 export type BankFacet = { value: string; label: string; count: number };
-export type Ranking = "collection" | "artist" | "famille" | "album";
+export type Ranking = "collection" | "artist" | "famille" | "album" | "etiquette";
 export type TitleSort = "title" | "artist" | "album" | "famille" | "genre" | "year" | "duration";
 export type SortOrder = "asc" | "desc";
 
@@ -54,6 +56,7 @@ export const RANKINGS: Array<{ id: Ranking; label: string; plural: string; none:
   { id: "artist", label: "Artiste", plural: "Artistes", none: "Sans artiste" },
   { id: "famille", label: "Famille", plural: "Familles", none: "Sans famille" },
   { id: "album", label: "Album", plural: "Albums", none: "Sans album" },
+  { id: "etiquette", label: "Étiquette", plural: "Étiquettes", none: "Sans étiquette" },
 ];
 
 export const FIELD_LABELS: Record<FicheField, string> = {
@@ -65,14 +68,15 @@ export const FIELD_LABELS: Record<FicheField, string> = {
   famille: "famille",
 };
 
-export type ColumnKey = TitleSort | "fiche";
+export type ColumnKey = TitleSort | "etiquettes" | "fiche";
 
-/** The columns, in their own order; the last one, the fiche, does not sort. */
+/** The columns, in their own order; the tags and the fiche do not sort. */
 export const COLUMNS: Array<{ key: ColumnKey; label: string }> = [
   { key: "title", label: "Titre" },
   { key: "artist", label: "Artiste" },
   { key: "album", label: "Album" },
   { key: "famille", label: "Famille" },
+  { key: "etiquettes", label: "Étiquettes" },
   { key: "genre", label: "Genre" },
   { key: "year", label: "Année" },
   { key: "duration", label: "Durée" },
@@ -87,6 +91,18 @@ export function isRanking(value: string | null): value is Ranking {
 
 export function isSort(value: string | null): value is TitleSort {
   return value != null && SORTS.has(value);
+}
+
+/**
+ * What an engine before FON-74 does not know: the tags, as a ranking and a column.
+ * The console hides them rather than ask for them.
+ */
+export function rankingsFor(tags: boolean): Ranking[] {
+  return RANKINGS.map((item) => item.id).filter((id) => tags || id !== "etiquette");
+}
+
+export function columnsFor(columns: ColumnKey[], tags: boolean): ColumnKey[] {
+  return tags ? columns : columns.filter((key) => key !== "etiquettes");
 }
 
 export function rankingOf(id: Ranking) {
@@ -158,6 +174,7 @@ const COLUMN_REM: Record<ColumnKey, number> = {
   artist: 10,
   album: 9.5,
   famille: 7,
+  etiquettes: 9,
   genre: 7,
   year: 4,
   duration: 4.25,
