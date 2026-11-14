@@ -72,7 +72,8 @@ def _bank(tmp_path: Path, formats=FORMATS) -> tuple[BeetsIntegration, list[int]]
                 "artist": "Les Marées Hautes",
                 "album": "Estuaire",
                 "year": 2019,
-                "genre": "Jazz",
+                # Beets 2.14 keeps the genres in a list: genre= is a flexible field
+                "genres": ["Jazz"],
             }
         )
         item.write()
@@ -544,8 +545,8 @@ async def test_the_try_names_the_selections_touched(raw_app, dbsession, tmp_path
     await _open(dbsession)
     dbsession.add_all(
         [
-            MusicCategory(name="Jazz", query="genre:Jazz"),
-            MusicCategory(name="Soul", query="genre:Soul"),
+            MusicCategory(name="Jazz", query="genres:Jazz"),
+            MusicCategory(name="Soul", query="genres:Soul"),
             MusicCategory(name="Orage", query="artist:Orage"),
         ]
     )
