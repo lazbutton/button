@@ -6,6 +6,10 @@ Le détail des changements du moteur par rapport à l'amont : [docs/moteur/chang
 
 ## Non publié
 
+## 1.5.0
+
+Une mineure : rien d'autre que la mise à jour habituelle, voir [docs/deploiement.md](docs/deploiement.md#mettre-à-jour). Le schéma de la base reste en v18 : aucune migration.
+
 - La page **Réglages → Mises à jour** se lit d'un coup d'œil. Elle montrait les notes de chaque version en entier : d'une station en 1.0.1 à la 1.4.0, plus de six écrans d'ordinateur, plus de onze de téléphone, avant l'historique et l'état de la machine. Chaque version montre maintenant son numéro, ce qu'elle est, correctif, mineure ou majeure, sa date, puis la tête de ses notes, qui dit ce qu'elle demande à la station ; le détail de ses changements se déplie. Chaque ligne de l'historique dit son résultat par une icône, faite, arrêtée, annulée ou échouée, sans redire « revenue » quand la machine l'a déjà dit. Les heures récentes se disent « aujourd'hui » et « hier », comptés à Paris, et les commandes à taper sur la machine, comme `sudo station unhold`, s'écrivent en police de code. Les mises à jour de la nuit, qui ne tournent pas encore, sont dites dans la carte de la machine, plutôt que dans une carte à elles. Rien à faire sur une station : la page vient avec l'image de la console.
 
 ## 1.4.0
