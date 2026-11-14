@@ -23,7 +23,7 @@ from datetime import datetime, timedelta, timezone
 from time import perf_counter
 from typing import TYPE_CHECKING
 
-from sqlalchemy import case, select
+from sqlalchemy import case, func, select
 
 from radiotomate.domain.emission import is_harbor_source
 from radiotomate.enums import (
@@ -124,6 +124,11 @@ SETTING_CLOSE_LOST_LINES = "features.close_lines_lost_by_playout"
 # Whether the conducteur is rebuilt at the first tick of an engine that plans it
 # another way than the one before. Off: its lines stay. A missing key: rebuilt.
 SETTING_REBUILD_AFTER_UPGRADE = "features.rebuild_conducteur_after_upgrade"
+# ADR 0009: turned off, a jingle of the motif or a sound of the desk takes the
+# queue of the Auto-DJ for empty when the beat counts no title there, as before:
+# it went ahead of the title sent before it, loaded behind a sound, or pushed
+# after the beat had left (FON-61).
+SETTING_TITLES_SENT_FIRST = "features.titles_sent_go_first"
 _SETTING_OFF = {"0", "false", "off", ""}
 # Why an anchor line closes without going, as the conducteur shows it.
 HELD_BY_LIVE = "retenue pendant le direct"
@@ -644,19 +649,30 @@ def _file_order(row: RundownItem) -> tuple:
     return (row.planned_at, 0 if row.origin == _DESK_ORIGIN else 1, row.sequence)
 
 
-def _queue_head(live_data: dict, queue: str) -> str | None:
+def _queue_head(live_data: dict, queue: str, *, loaded: bool = True) -> str | None:
     """What a playout queue plays next: "" when it holds nothing, the rundown id
-    of its next title, or None for a title without a line, such as a gesture."""
+    of its next title, or None for a title without a line, such as a gesture.
+
+    ``loaded``: a queue that counts no title but names one holds it. Behind a
+    jingle or a sound of a cart, the queue of the Auto-DJ has already taken its
+    next title out, to play it after: it counts none, and names it."""
     cue_key, count_key = _QUEUE_HEADS[queue]
-    if queued_count(live_data, count_key, cue_key) == 0:
-        return ""
     cue = live_data.get(cue_key)
+    named = loaded and isinstance(cue, dict) and cue.get("rid", -1) != -1
+    if queued_count(live_data, count_key, cue_key) == 0 and not named:
+        return ""
     uri = str(cue.get("initial_uri") or "") if isinstance(cue, dict) else ""
     found = _ITEM_ID.search(uri)
     return found.group(1) if found else None
 
 
-async def _line_turn(session: ormSession, line: RundownItem, live_data: dict) -> bool:
+async def _line_turn(
+    session: ormSession,
+    line: RundownItem,
+    live_data: dict,
+    *,
+    sent_first: bool = True,
+) -> bool:
     """
     Whether a line for the jingles or carts queue goes now, at its place: a desk
     line, or a jingle of the motif (``features.motif_jingles_air``).
@@ -666,24 +682,35 @@ async def _line_turn(session: ormSession, line: RundownItem, live_data: dict) ->
     Auto-DJ, and air after it all the same. It does not cut the title on air
     either: it waits behind it in its own queue or a stronger one, or goes at its
     end.
+
+    ``sent_first`` (``features.titles_sent_go_first``): a queue the beat counts
+    empty may hold a title all the same, which the line waits for. The queue names
+    it, loaded behind the sound on air; or the clock has just pushed it, and the
+    beat left before the push.
     """
     src = source_id(live_data)
     if src in {"stream", "relay"}:
         return False
     rank = _QUEUE_RANK[line.queue]
-    for queue in _QUEUE_HEADS:
+    for queue, (cue_key, count_key) in _QUEUE_HEADS.items():
         if _QUEUE_RANK[queue] >= rank:
             continue
-        head = _queue_head(live_data, queue)
-        if head == "":
+        head = _queue_head(live_data, queue, loaded=sent_first)
+        if head == "" and not sent_first:
             continue
         queued = await RundownItem.from_id(session, head) if head else None
-        if queued is not None and queued.status == RundownStatus.PLAYED.value:
+        if head == "" or (
+            queued is not None and queued.status == RundownStatus.PLAYED.value
+        ):
             # The title a hard anchor cut: its queue keeps it loaded until it
             # takes the antenna back, then skips it. It is not ahead of the
-            # line, but hides the titles queued behind it: the lines sent to
-            # that queue tell which one airs next.
-            queued = await _next_sent_to(session, queue)
+            # line, but hides the titles queued behind it. A queue the beat
+            # says empty may hold a line too: the beat left before the clock
+            # pushed it. The lines sent to that queue tell which one airs next;
+            # when the beat counts none, only one pushed a moment ago.
+            counted = queued_count(live_data, count_key, cue_key) > 0
+            since = None if counted else _beat_lag_start()
+            queued = await _next_sent_to(session, queue, since=since)
             if queued is None:
                 continue
         if (
@@ -697,23 +724,40 @@ async def _line_turn(session: ormSession, line: RundownItem, live_data: dict) ->
     return remaining_seconds(live_data) <= JINGLE_PREEMPT_REMAINING
 
 
-async def _next_sent_to(session: ormSession, queue: str) -> RundownItem | None:
-    """The first line of the file sent to a queue of the playout, not on air yet."""
+def _beat_lag_start() -> datetime:
+    """Since when a push may not be in the beat yet: a line the playout took
+    before then, and that its beat neither counts nor names, is lost
+    (``execution.close_lost_lines``). The times of the outbox: the local clock."""
+    from radiotomate.scheduler.execution import LOST_AFTER
+
+    return datetime.now() - LOST_AFTER
+
+
+async def _next_sent_to(
+    session: ormSession, queue: str, *, since: datetime | None = None
+) -> RundownItem | None:
+    """The first line of the file sent to a queue of the playout, not on air yet.
+    ``since``: only a line pushed since then."""
     sent = [
         RundownStatus.PENDING_PUSH.value,
         RundownStatus.SENT.value,
         RundownStatus.ACCEPTED.value,
         RundownStatus.IN_QUEUE.value,
     ]
+    query = select(RundownItem).where(
+        RundownItem.queue == queue, RundownItem.status.in_(sent)
+    )
+    if since is not None:
+        taken = func.coalesce(
+            RundownItem.queued_at, RundownItem.sent_at, RundownItem.reserved_at
+        )
+        query = query.where(taken >= since)
     return await session.scalar(
-        select(RundownItem)
-        .where(RundownItem.queue == queue, RundownItem.status.in_(sent))
-        .order_by(
+        query.order_by(
             RundownItem.planned_at,
             case((RundownItem.origin == _DESK_ORIGIN, 0), else_=1),
             RundownItem.sequence,
-        )
-        .limit(1)
+        ).limit(1)
     )
 
 
@@ -1144,6 +1188,9 @@ async def _fill_sequential_from_rundown(  # noqa: PLR0912, PLR0913, PLR0915
     # cleaner would take it out before its turn.
     limit = _queue_wait["limit"] if await titles_queued_close_to_air(session) else None
     long_wait = limit is not None and remaining_seconds(live_data) > limit
+    # A jingle or a sound of the desk waits for the title sent before it, though
+    # the beat counts none in its queue.
+    sent_first = await titles_sent_go_first(session)
     for _ in range(8):
         if hold:
             break
@@ -1164,7 +1211,7 @@ async def _fill_sequential_from_rundown(  # noqa: PLR0912, PLR0913, PLR0915
             if desk and item.queue in {"jingles", "carts"}:
                 if desk_waits:
                     continue
-                turn = await _line_turn(session, item, live_data)
+                turn = await _line_turn(session, item, live_data, sent_first=sent_first)
                 if next_anchor is not None and _desk_would_overflow(
                     item, live_data, now, next_anchor, turn=turn
                 ):
@@ -1207,7 +1254,9 @@ async def _fill_sequential_from_rundown(  # noqa: PLR0912, PLR0913, PLR0915
                     if (
                         jingles_q >= JINGLE_QUEUE_DEPTH
                         or long_wait
-                        or not await _line_turn(session, item, live_data)
+                        or not await _line_turn(
+                            session, item, live_data, sent_first=sent_first
+                        )
                     ):
                         # The desk lines after it wait too, or they would air
                         # before it.
@@ -1501,6 +1550,15 @@ async def rebuilds_after_upgrade(session: ormSession) -> bool:
     """Whether the conducteur is rebuilt at the first tick of an engine that
     plans it another way than the one before. A missing key says so."""
     row = await Setting.from_key(session, SETTING_REBUILD_AFTER_UPGRADE)
+    return row is None or str(row.value).strip().lower() not in _SETTING_OFF
+
+
+async def titles_sent_go_first(session: ormSession) -> bool:
+    """Whether a jingle of the motif or a sound of the desk waits for the title
+    sent before it to the queue of the Auto-DJ, when the beat counts none there:
+    loaded behind the sound on air, or pushed after the beat left. A missing key
+    says so."""
+    row = await Setting.from_key(session, SETTING_TITLES_SENT_FIRST)
     return row is None or str(row.value).strip().lower() not in _SETTING_OFF
 
 
