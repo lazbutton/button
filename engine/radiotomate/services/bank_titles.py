@@ -16,7 +16,7 @@ from __future__ import annotations
 import os
 import unicodedata
 from dataclasses import dataclass, field
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
 from radiotomate.domain.errors import DomainError, DomainValidationError
@@ -306,10 +306,19 @@ def facet_counts(entries: Iterable[dict], name: str) -> list[dict]:
 
 
 def titles_page(
-    rows: Iterable[tuple], query: TitleQuery, root: str | None = None
+    rows: Iterable[tuple],
+    query: TitleQuery,
+    root: str | None = None,
+    carts: Mapping[str, list[dict]] | None = None,
 ) -> dict:
-    """One page of the table, and the facets it asked for, over the whole bank."""
+    """One page of the table, and the facets it asked for, over the whole bank.
+
+    `carts` names, by path below the bank, the carts that play a title without a
+    copy (FON-69): the console says so before the title leaves the bank.
+    """
     entries = [title_of(row, root) for row in rows]
+    for entry in entries:
+        entry["carts"] = (carts or {}).get(entry["path"], [])
     words = [word for word in fold(query.q).split() if word]
     kept = [entry for entry in entries if _matches(entry, query, words)]
     ordered = _ordered(kept, query)
@@ -323,6 +332,34 @@ def titles_page(
         "order": "desc" if query.descending else "asc",
         "facets": {name: facet_counts(entries, name) for name in query.facets},
     }
+
+
+async def carts_by_title(session: ormSession, root: str | None = None) -> dict:
+    """The carts that play each title of the bank, by its path below the bank."""
+    from sqlalchemy import select
+
+    from radiotomate.models import Cart, Sound
+
+    rows = await session.execute(
+        select(Sound.path, Cart.id, Cart.title)
+        .join(Cart, Cart.id == Sound.cart_id)
+        .order_by(Cart.title, Cart.id)
+    )
+    found: dict[str, list[dict]] = {}
+    for path, cart_id, title in rows:
+        rel = bank_rel(str(path), root)
+        listed = found.setdefault(rel, [])
+        if not any(cart["id"] == cart_id for cart in listed):
+            listed.append({"id": cart_id, "title": title})
+    return found
+
+
+def title_label(artist: object, title: object, path: Path) -> str:
+    """How a cart names a title of the bank: « Artiste - Titre », as its sounds."""
+    artist_text, title_text = _text(artist), _text(title)
+    if artist_text and title_text:
+        return f"{artist_text} - {title_text}"
+    return title_text or path.name
 
 
 def media_root_text() -> str:

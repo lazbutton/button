@@ -640,6 +640,25 @@ def test_the_engine_opens_the_library_of_the_station(tmp_path: Path):
     ]
 
 
+def test_beet_fiches_says_where_the_search_stands(tmp_path: Path):
+    """The plugin of the fiches loads in Beets 2.14, as init sets it."""
+    media = _station(tmp_path)
+    config = (tmp_path / "data" / "Beets" / "config.yaml").read_text(encoding="utf-8")
+    assert "fiches" in YAML(typ="safe").load(config)["plugins"].split()
+    shutil.copy(TRACK, media / "10-rotation" / "Ada - Un.mp3")
+    _turn(tmp_path)
+    _turn(tmp_path)
+
+    shown = _run(tmp_path, "beet", "fiches")
+
+    assert shown.returncode == 0, shown.stderr
+    assert "error loading plugin" not in shown.stderr
+    assert shown.stdout.splitlines()[:2] == [
+        "Recherche des fiches : coupée.",
+        "0 titre(s) cherché(s) sur 1.",
+    ]
+
+
 def _mp3_in_wav(path: Path) -> None:
     """A WAV that holds an MP3 stream (WAVE_FORMAT_MPEGLAYER3)."""
     mp3 = TRACK.read_bytes()

@@ -67,6 +67,15 @@ Liquidsoap choisit la source dans cet ordre : **direct (harbor) > relais > carts
 
 L'**Agenda** ajoute des diffusions à une date précise : un set déposé passe à son heure (`scheduler/agenda.py`), et un direct daté ouvre le harbor au compte prévu. Un invité dépose son set par un lien privé, sans compte : le fichier passe par tusd, puis le catalogue le range dans `40-emissions` et le déclare au moteur. L'interrupteur `agenda_enabled` coupe tout l'Agenda.
 
+## La recherche des fiches
+
+Les fiches d'un titre sont ce que la bibliothèque sait de lui, corrigé et complété d'après des sources en ligne, par des propositions que l'équipe relit : rien ne s'écrit d'office ([ADR 0017](decisions/0017-une-fiche-ne-s-ecrit-qu-acceptee.md)). La recherche est une tâche de fond du scheduler (`engine/radiotomate/scheduler/fiches.py`), comme l'analyse ReplayGain : un titre à la fois, dans un fil à part, sans faire attendre l'antenne. Elle relit ses interrupteurs entre deux titres : `features.fiches`, éteint par défaut, la coupe toute.
+
+- **Ce qu'elle joint** : AcoustID, avec l'empreinte que `fpcalc` prend des deux premières minutes du fichier ; Deezer, MusicBrainz et Wikidata ; Tidal, Apple Music et Bandcamp, chacun derrière son réglage. Chaque service a son seau et son disjoncteur (`engine/radiotomate/fiches/http.py`). Ce qui part de la station : l'artiste, le titre, l'album et l'empreinte de ses fichiers, rien de l'équipe ni des auditeurs.
+- **L'ordre** : les titres arrivés depuis qu'elle est allumée, puis ceux dont la clé a changé, puis le reste du catalogue, puis ceux à reprendre : un introuvable après 90 jours, une erreur après une attente qui double.
+- **Ce qu'elle garde**, dans la base du moteur : `fiches`, un titre cherché, par son identifiant de Beets, avec sa clé, son niveau, sa source et ses preuves ; `fiche_propositions`, un champ proposé et son état ; `fiche_decisions`, chaque acceptation et chaque refus, par la clé du titre, qui survit au titre. La clé : l'empreinte, sinon l'artiste, le titre et la durée, normalisés. Un fichier déplacé revient avec la même clé : ses preuves refont ses propositions sans réseau, et une valeur refusée ne se propose plus.
+- **Dans Beets**, le plugin `engine/beetsplug/fiches.py` déclare les champs flexibles que les fiches écriront une fois acceptées, `famille`, `fmg` et `fmg_source`, et `beet fiches`, qui dit où en est la recherche, comme `radiotomate maintenance fiches`.
+
 Pendant un direct, l'horloge se met en pause et laisse tomber les ancres dues : leurs lignes passent « sauté » au conducteur. Un relais en cours s'arrête quand le direct prend l'antenne. À la fin, les files jingles et auto-DJ sont vidées et le titre auto-DJ entamé est sauté : la grille reprend sur un morceau entier.
 
 ## Les données
@@ -76,7 +85,8 @@ Pendant un direct, l'horloge se met en pause et laisse tomber les ancres dues : 
 | Base de la station | `RT_DATA/radiotomate.db` (SQLite) | une par station ; schéma migré par `radiotomate update` au démarrage |
 | Configuration du moteur | `RT_DATA/radiotomate.yaml` | sorties, alertes, rétention, métriques ; écrite par `radiotomate-init` |
 | Banque de sons | `BUTTON_MEDIA` | `00-inbox`, `10-rotation`, `20-archives`, `30-habillage`, `40-emissions`, `50-carts`… Chaque composant nomme ces dossiers à un seul endroit : `media_bank.py` pour le moteur, `layout.py` pour le catalogue, la tête de chaque script pour la station ; la console n'en nomme aucun ([décision 0019](decisions/0019-le-rangement-de-la-banque.md)) |
-| Bibliothèque Beets | `RT_DATA/Beets` | index de la banque, ReplayGain |
+| Bibliothèque Beets | `RT_DATA/Beets` | index de la banque, ReplayGain, et les champs flexibles des fiches acceptées |
+| Fiches de la bibliothèque | `RT_DATA/radiotomate.db` | tables `fiches`, `fiche_propositions` et `fiche_decisions` : ce que la recherche a trouvé, ce qu'elle propose, et ce que l'équipe en a décidé |
 | Index de recherche | `MEILI_DATA` | reconstruit par le catalogue |
 | Envois en cours | volume `tusd-data` | les morceaux d'un envoi reprenable |
 | Comptes du dossier partagé | volume `share-private` | les mots de passe, écrits par le catalogue, et les rôles, par la boucle Beets ; lus par `share`, jamais dans la banque |

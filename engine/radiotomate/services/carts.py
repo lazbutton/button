@@ -19,6 +19,7 @@ from radiotomate.services.media_bank import (
     REFUSALS_NAME,
     BankFolderTooLargeError,
     bind_cart_bank,
+    borrowed_title,
     copy_into_bank,
     forget_legacy_files,
     iter_bank_audio,
@@ -271,6 +272,9 @@ def _missing_media_ids(sounds: list[Sound]) -> list[int]:
     for sound in sounds:
         resolved = _resolved(sound.path)
         if resolved is None or not path_in_media_bank(resolved):
+            continue
+        # A title borrowed from the bank stays, « Indisponible » (FON-69).
+        if borrowed_title(resolved):
             continue
         if resolved.is_file() or sound.id is None:
             continue
