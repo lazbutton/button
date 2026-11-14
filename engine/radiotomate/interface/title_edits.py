@@ -1,9 +1,8 @@
 """Corriger la fiche d'un titre ou d'un lot (FON-66), pour le Programmateur.
 
-- `POST /media/titles/edit.json` écrit un lot, ou l'essaie (`dry_run`) : ce qui
-  s'écrirait, ce qui attendrait, et les sélections de titres touchées.
-- `POST /media/journal/<id>/undo.json`, « Revenir », remet les valeurs d'avant
-  d'un lot.
+`POST /media/titles/edit.json` écrit un lot, ou l'essaie (`dry_run`) : ce qui
+s'écrirait, ce qui attendrait, et les sélections de titres touchées. « Revenir »
+passe par le journal (`radiotomate.interface.journal`).
 
 Les règles sont dans `radiotomate.services.title_edits`.
 """
@@ -26,7 +25,6 @@ from radiotomate.services.title_edits import (
     edit_titles,
     has_waiting,
     parse_person_edits,
-    undo_entry,
 )
 
 if TYPE_CHECKING:
@@ -40,7 +38,8 @@ blueprint = Blueprint("title_edits", __name__)
 WAITING_PERIOD = 15.0
 
 
-def _refused(exc: TitlesRefused):
+def refused_response(exc: TitlesRefused):
+    """Le refus d'un lot, avec chaque titre en cause et sa raison."""
     return jsonify(
         {
             "error": exc.message,
@@ -69,26 +68,8 @@ async def edit_json():
             dry_run=dry_run,
         )
     except TitlesRefused as exc:
-        return _refused(exc)
+        return refused_response(exc)
     return jsonify({"dry_run": dry_run, **outcome.payload()})
-
-
-@blueprint.post("/media/journal/<int:entry_id>/undo.json")
-@login_required
-async def undo_json(entry_id: int):
-    denied = forbidden_unless("autodj")
-    if denied is not None:
-        return denied
-    try:
-        outcome = await undo_entry(
-            g.dbsession,
-            BeetsIntegration.get(),
-            entry_id,
-            username=current_user.user.username,
-        )
-    except TitlesRefused as exc:
-        return _refused(exc)
-    return jsonify({"dry_run": False, **outcome.payload()})
 
 
 async def waiting_writes_task(db: QuartAlchemy, beets: BeetsIntegration) -> None:

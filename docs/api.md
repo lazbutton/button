@@ -221,7 +221,16 @@ Corriger la fiche d'un titre de la bibliothèque, seul ou par lot (FON-66), pour
 - `dry_run` n'écrit rien : `written` compte les titres qui changeraient, `waiting` ceux qui attendraient, `refused` ceux qui refuseraient le lot, et `selections:[{id, name, gained, lost}]` les sélections de titres qui gagneraient ou perdraient des titres, d'après leurs requêtes jouées avant et après sur chaque titre.
 - Chaque lot se note au journal des gestes : `entry` est son identifiant.
 
-`POST /media/journal/{id}/undo.json` (`autodj`), « Revenir » → la même forme. Remet la valeur d'avant de chaque champ écrit par le lot, tant que personne ne l'a changée depuis : un titre changé depuis garde sa valeur, et paraît dans `kept`. Ce qui attendait encore ne s'écrit pas. Un lot déjà défait : 409. Un lot inconnu : 404.
+
+#### Le journal des gestes
+
+Le journal des gestes sur la banque (FON-71), pour le rôle Programmateur (`autodj`), derrière `features.bank_tidy` : éteint, `409 {code:"bank_tidy_off"}`. Les règles sont dans `engine/radiotomate/services/journal.py`. C'est le premier morceau de SEC-10.
+
+`GET /media/journal.json` (`autodj`) `?gesture=&username=&before=&limit=` → `{entries, next, gestures:[{value, label, count}], people:[{value, count}], undo_days}` : les lots, du plus récent au plus ancien, 50 par page, 200 au plus. `before` reprend après le lot que `next` nomme ; `next` est null quand tout est là. Un lot : `{id, gesture, gesture_label, username, created, titles, fields, undo_of, undone_by:{id, username, created}|null, undoable, why_not, counts:{done, waiting, kept, cancelled, failed, pending}}`. `gesture` vaut `edit` (une correction), `undo` (une annulation), et bientôt `accept`, `rename`, `move` et `remove`. `counts` compte les titres par état. `why_not` dit pourquoi un lot ne s'annule pas : déjà défait, plus de 30 jours, ou un geste qui ne s'annule pas encore.
+
+`GET /media/journal/{id}.json` (`autodj`) → le lot, avec `changes:[{id, label, path, field, old, new, status, reason}]` : une ligne par titre et par champ, 5000 au plus.
+
+`POST /media/journal/{id}/undo.json` (`autodj`), « Revenir » ou « Annuler » → la forme de `POST /media/titles/edit.json`. Remet la valeur d'avant de chaque champ écrit par le lot, tant que personne ne l'a changée depuis : un titre changé depuis garde sa valeur, et paraît dans `kept`. Ce qui attendait encore ne s'écrit pas. Un lot déjà défait, ou de plus de 30 jours : 409. Un lot inconnu : 404. Annuler une correction demande aussi `features.title_edits`.
 
 ### Système
 
