@@ -4,13 +4,16 @@ import {
   Checkbox,
   DropdownMenu,
   IconButton,
+  Select,
   Spinner,
   Switch,
   TextField,
   Tooltip,
 } from "@radix-ui/themes";
 import {
+  ArrowRightLeft,
   ChevronDown,
+  Copy,
   FolderOpen,
   GripVertical,
   Library,
@@ -48,8 +51,10 @@ import type { ToastTone } from "../../ui/AppToast";
 import { ConfirmDialog } from "../../ui/ConfirmDialog";
 import { useAccount } from "../../api/AccountContext";
 import { addedToCart } from "../../api/bankCarts";
+import { VIEW_SORTS, orderBanner, sameOrder, sortSounds, type ViewSort } from "../../api/cartOrder";
 import { BankAttachDialog } from "./BankAttachDialog";
 import { BankTitlesPicker } from "./BankTitlesPicker";
+import { CartTransferDialog } from "./CartTransferDialog";
 
 export function SoundTable({
   cart,
@@ -89,6 +94,10 @@ export function SoundTable({
   const [selected, setSelected] = useState<Set<number>>(() => new Set());
   const [busyDelete, setBusyDelete] = useState(false);
   const [titleQuery, setTitleQuery] = useState("");
+  // FON-70 : la vue se trie sans changer l'ordre de passage ; les sons passent d'un bac à l'autre.
+  const [viewSort, setViewSort] = useState<ViewSort>("rank");
+  const [transfer, setTransfer] = useState<{ copy: boolean; ids: number[] } | null>(null);
+  const [applying, setApplying] = useState(false);
   const [attachOpen, setAttachOpen] = useState(false);
   // Titles of the bank, without a copy (FON-69): behind the bank's tidying.
   const [pickOpen, setPickOpen] = useState(false);
@@ -238,13 +247,34 @@ export function SoundTable({
     }
   };
 
+  const sortedSounds = useMemo(() => sortSounds(cart.sounds, viewSort, splitSoundTitle), [cart.sounds, viewSort]);
   const visibleSounds = useMemo(
-    () => cart.sounds.filter((sound) => fuzzyTitleMatch(sound.title, titleQuery)),
-    [cart.sounds, titleQuery],
+    () => sortedSounds.filter((sound) => fuzzyTitleMatch(sound.title, titleQuery)),
+    [sortedSounds, titleQuery],
   );
+  const sortedView = viewSort !== "rank";
   queueRef.current = visibleSounds.length ? visibleSounds : cart.sounds;
   const filtering = Boolean(titleQuery.trim());
-  const canDrag = cart.mode !== "random" && !filtering;
+  const canDrag = cart.mode !== "random" && !filtering && !sortedView;
+
+  // « Appliquer cet ordre au bac » : les rangs suivent la vue triée, et le journal le note.
+  const applyOrder = async () => {
+    if (applying) return;
+    setApplying(true);
+    try {
+      const payload = await apiPut<{ cart: Cart }>(`/carts/${cart.id}/sounds/ranks.json`, {
+        ranks: sortedSounds.map((sound) => sound.id),
+        sorted_by: viewSort,
+      });
+      onCart(payload.cart);
+      setViewSort("rank");
+      notify(`« ${cart.title} » passe maintenant dans cet ordre.`, "success");
+    } catch (caught) {
+      fail(caught, "L'ordre n'a pas changé.");
+    } finally {
+      setApplying(false);
+    }
+  };
 
   const toggleSelect = (id: number, shift: boolean) => {
     const ids = visibleSounds.map((sound) => sound.id);
@@ -337,6 +367,18 @@ export function SoundTable({
             <X className="ui-button-icon" />
             Désélectionner
           </Button>
+          {bankTitles ? (
+            <>
+              <Button size="1" variant="soft" color="gray" onClick={() => setTransfer({ copy: false, ids: [...selected] })}>
+                <ArrowRightLeft className="ui-button-icon" />
+                Déplacer vers un bac
+              </Button>
+              <Button size="1" variant="soft" color="gray" onClick={() => setTransfer({ copy: true, ids: [...selected] })}>
+                <Copy className="ui-button-icon" />
+                Copier dans un bac
+              </Button>
+            </>
+          ) : null}
           <ConfirmDialog
             trigger={
               <Button size="1" color="red" variant="soft" disabled={busyDelete}>
@@ -378,6 +420,18 @@ export function SoundTable({
             </span>
           ) : null}
           <span className="bacs-spacer" />
+          {bankTitles && cart.sounds.length > 1 ? (
+            <Select.Root size="1" value={viewSort} onValueChange={(value) => setViewSort(value as ViewSort)}>
+              <Select.Trigger variant="soft" color="gray" aria-label="Trier la vue" />
+              <Select.Content variant="soft" position="popper" align="end">
+                {VIEW_SORTS.map((item) => (
+                  <Select.Item key={item.id} value={item.id}>
+                    {item.id === "rank" ? item.label : `Par ${item.label.toLowerCase()}`}
+                  </Select.Item>
+                ))}
+              </Select.Content>
+            </Select.Root>
+          ) : null}
           <DropdownMenu.Root modal={false}>
             <DropdownMenu.Trigger disabled={importing}>
               <Button size="1" highContrast>
@@ -422,6 +476,26 @@ export function SoundTable({
           </DropdownMenu.Root>
         </div>
       )}
+
+      {sortedView ? (
+        <div className="banque-note" role="status">
+          <span>{orderBanner(viewSort, cart.mode)}</span>
+          {cart.mode !== "random" ? (
+            <Button
+              size="1"
+              variant="soft"
+              color="gray"
+              disabled={applying || sameOrder(sortedSounds, cart.sounds)}
+              onClick={() => void applyOrder()}
+            >
+              Appliquer cet ordre au bac
+            </Button>
+          ) : null}
+          <Button size="1" variant="ghost" color="gray" onClick={() => setViewSort("rank")}>
+            Revenir à l'ordre du bac
+          </Button>
+        </div>
+      ) : null}
 
       {importing && importProgress ? (
         <div className="bacs-import" role="status" aria-live="polite">
@@ -581,6 +655,21 @@ export function SoundTable({
           <strong>Déposer dans « {cart.title} »</strong>
           <span>Les fichiers audio sont copiés dans le bac.</span>
         </div>
+      ) : null}
+
+      {transfer ? (
+        <CartTransferDialog
+          copy={transfer.copy}
+          source={cart}
+          ids={transfer.ids}
+          notify={notify}
+          onClose={() => setTransfer(null)}
+          onCarts={(source, target) => {
+            setSelected(new Set());
+            onCart(target);
+            onCart(source);
+          }}
+        />
       ) : null}
 
       {pickOpen ? (
