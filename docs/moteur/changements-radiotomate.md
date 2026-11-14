@@ -158,6 +158,8 @@ Le tableau de la banque (`GET /media/titles.json`, `services/bank_titles.py`, FO
 
 Un cart a une version depuis v8, que l’amont n’a pas : l’interface refuse une modification qui porte une version dépassée (`require_cart_version`). Chargé avec ses sons, un cart reçoit ses deux compteurs, `sounds_count` et `inactive_sounds_count`, que l’amont calcule après coup (`postfill_query_expressions`). Posés comme des attributs, ils marquaient le cart modifié, et la version faisait le reste : chaque session qui chargeait ainsi un cart, puis validait, comme un tirage du conducteur, de l’horloge ou de « Diffuser maintenant », augmentait sa version et changeait son `modified`. Comme l’écriture d’un cart vérifie sa version (`WHERE version = …`), un enregistrement de la console qu’un tirage du même cart croisait échouait aussi (`StaleDataError`), même sans version dans sa requête, et un tirage qui croisait un enregistrement de même. Ils sont maintenant posés comme lus dans la base (`set_committed_value`), et gardés après l’écriture d’une modification du cart (`expire_on_flush=False`), comme avant : la page HTMX des sons les montre après un envoi. Marquer un cart comme pads d’identifiant retire la marque des autres d’un seul `UPDATE`, que la version ne suivait pas : un client qui avait lu l’un d’eux la lui remettait à son enregistrement suivant, sans refus, et l’ôtait au cart qui venait de la prendre. `_clear_other_ident_pads` monte maintenant leur version avec.
 
+La fiche d’un titre de la bibliothèque se corrige seule ou par lot de 500 au plus (`services/title_edits.py`, FON-66), le seul service du moteur qui l’écrit : le fichier d’abord, par Beets (`Item.write`, comme `beet modify`), puis la bibliothèque, qui note la nouvelle date du fichier. La famille reste un champ flexible de la bibliothèque. Un titre à l’antenne ou en file attend : la vérification et l’écriture du fichier se font sous le verrou d’écriture de la base, et une tâche de l’interface l’écrit quand il est passé. Un titre qui ne peut pas s’écrire refuse le lot avant toute écriture, et un fichier qui échoue en route rend aux autres leurs tags d’avant. Chaque lot se note dans le journal des gestes (v21, `models/journal.py`), avec la valeur d’avant, que « Revenir » remet. Tout attend l’interrupteur du rangement de la banque, `features.bank_tidy`, éteint, et `features.title_edits` coupe ce service seul.
+
 Chaque personne a une page de compte. Les utilisateurs se créent et se modifient aussi en JSON.
 
 Chaque compte a un jeton d’encodeur (v18, `services/stream_token.py`). L’encodeur l’envoie au harbor à la place du mot de passe du compte. `/can_stream` accepte encore ce mot de passe tant que le réglage `features.allow_account_password` n’est pas faux. Le moteur ne garde du jeton qu’une empreinte SHA-256.
@@ -192,7 +194,7 @@ L’image du playout passe `apt-get upgrade` sur celle de Liquidsoap, que ses au
 
 `brand.json` et `brand.py` portent le nom affiché (`INTERFACE_NAME`), le logo et les libellés, ceux du logiciel : le `brand.json` du paquet ne donne aucune adresse. Le nom de la station, les adresses de son flux et de son direct, et le lien de son code source se règlent dans la console : des clés `station.*` de la table `settings` (`services/station.py`), sans migration. La console les pose sur son `brand.json`, qui reste le repli. L'adresse du direct se lit aussi par tout compte, pour « Passer en direct » : `GET /station/harbor.json`. Les pages HTMX gardent le nom de `brand.json`. `layout.jinja` est en `lang=fr`, avec `suite.css`. La feuille `sass/_suite.scss` est la charte noir et blanc du pupitre. Les pages HTMX d’origine (live, carts, auto-DJ, utilisateurs) restent servies par le même processus.
 
-## Schéma, de v7 à v20
+## Schéma, de v7 à v21
 
 L’amont s’arrête à v6. Les versions suivantes :
 
@@ -212,6 +214,7 @@ L’amont s’arrête à v6. Les versions suivantes :
 | v18 | `users.stream_token_hash` et `users.stream_token_created_at` : le jeton d’encodeur |
 | v19 | `bank_views` : les vues du tableau de la banque que chaque compte garde (FON-65), effacées avec leur compte |
 | v20 | `music_categories.query` et `empty_query` : `genre` devient `genres`, le champ de Beets 2.14 (ARC-06) ; la descente remet `genre` |
+| v21 | Le journal des gestes sur la banque : `journal_entries` et `journal_changes` |
 
 `radiotomate update --target-version` redescend le schéma. `engine/tests/test_migrations.py` monte puis redescend chaque version sur une base remplie : la descente rend tout ce qui existait avant la montée, sauf pour quatre versions. v7 remet aux créneaux de minuit le titre et la couleur par défaut, pas les leurs. v9 remet `grouping:rotation` à une Rotation qui cherchait déjà `path:/media/10-rotation` avant elle. v13 rend aux carts sortis du cron leur mode `TIMED`, mais pas leur `schedule_correct` ni leur tâche APScheduler. v14 ne défait rien : ses carts restent en `CLOCK`, et les tables APScheduler ne reviennent pas. Le test remonte ensuite chaque version : la montée repasse, et rend les mêmes tables, sauf pour deux versions dont la descente laisse ce que la montée a créé. Celle de v1 garde la table `metadata_log`, et la montée bute dessus ; celle de v12 ne fait rien, et la montée bute sur la colonne `carts.bank_folder`, restée. La 0.1.0, première version publiée, est déjà en v18 : revenir à une version publiée ne passe jamais par ces descentes.
 
@@ -225,7 +228,7 @@ Métier : `domain/`, `services/` (carts, auto-DJ, requêtes Beets, émissions, b
 
 Interface : `account.py`, `csrf.py`, `emissions.py`, `integrity.py`, `json_util.py`, `media.py`, `spa.py`, `station_public.py`, `system.py`.
 
-Agenda : `models/agenda.py`, `domain/agenda.py`, `services/agenda.py`, `scheduler/agenda.py`, `interface/agenda.py`, `interface/public.py`. Banque : `services/media_bank.py`, `services/bank_titles.py`, `services/bank_plays.py`, `services/selection_filters.py`.
+Agenda : `models/agenda.py`, `domain/agenda.py`, `services/agenda.py`, `scheduler/agenda.py`, `interface/agenda.py`, `interface/public.py`. Banque : `services/media_bank.py`, `services/bank_titles.py`, `services/bank_plays.py`, `services/selection_filters.py`, et la fiche d’un titre, `services/title_edits.py`, `interface/title_edits.py` et `models/journal.py`.
 
 Fiches de la bibliothèque : `fiches/`, les règles de l’outil de catalogue de Hopper (texte normalisé, variantes d’un titre, règles, seconde et troisième passes, propositions), sans Quart, sans Beets, sans réseau ; et la recherche d’un titre en ligne, par httpx, chez Deezer, MusicBrainz, Wikidata et AcoustID, et, chacune allumée par son réglage, chez Tidal, Apple Music et Bandcamp, avec un seau et un disjoncteur par service (`http.py`, `sources.py`, `search.py`), et son empreinte par `fpcalc` (`fingerprint.py`).
 

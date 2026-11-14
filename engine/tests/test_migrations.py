@@ -241,6 +241,40 @@ async def test_v20_categories_search_genres(tmp_path: Path):
     await db.after_serving()
 
 
+async def test_v21_journal_up_then_down(tmp_path: Path):
+    """
+    v21 adds the journal of the gestures on the bank, empty; going back to v20 takes
+    it away with what it holds, and nothing else.
+    """
+    db = QuartAlchemy()
+    db.init_from_config({"url": f"sqlite+aiosqlite:///{tmp_path / 'v20.db'}"}, {})
+    await do_update(db.engine, target_version=20)
+    before = await _table_names(db.engine)
+
+    await do_update(db.engine, target_version=21)
+    assert await _schema_version(db.engine) == 21
+    assert {"journal_entries", "journal_changes"} <= await _table_names(db.engine)
+    async with db.engine.connect() as conn:
+        for sql in STATION_DATA[21].split(";"):
+            if sql.strip():
+                await conn.execute(text(sql))
+        await conn.commit()
+    # an entry gone takes its changes with it, and leaves its undo in place
+    async with db.engine.connect() as conn:
+        await conn.exec_driver_sql("PRAGMA foreign_keys=ON")
+        await conn.execute(text("delete from journal_entries where id = 1"))
+        await conn.commit()
+    assert await _rows(db.engine, "select count(*) from journal_changes") == [(0,)]
+    assert await _rows(db.engine, "select id, undo_of from journal_entries") == [
+        (2, None)
+    ]
+
+    await do_update(db.engine, target_version=20)
+    assert await _schema_version(db.engine) == 20
+    assert await _table_names(db.engine) == before
+    await db.after_serving()
+
+
 # What a station writes at each version, once its database reached it: each migration
 # finds a full database at the version before. Every column of every table holds a
 # value that is neither NULL nor its default, as the tests check, so that losing it
@@ -396,6 +430,20 @@ STATION_DATA = {
             '2026-11-14 09:00:00', '2026-11-14 10:00:00');
         insert into music_categories (name, query, empty_query)
         values ('Jazz', 'genre:Jazz year:1950..1969', '-genre:Rock genre:Jazz');
+    """,
+    21: """
+        insert into journal_entries (id, gesture, username, created, titles, undo_of,
+            details)
+        values (1, 'edit', 'animateur', '2026-11-14 16:00:00', 2, null,
+            '{"fields": ["album"]}');
+        insert into journal_entries (id, gesture, username, created, titles, undo_of,
+            details)
+        values (2, 'undo', 'animateur', '2026-11-14 16:05:00', 1, 1,
+            '{"fields": ["album"]}');
+        insert into journal_changes (id, entry_id, beets_id, path, label, field,
+            old_value, new_value, status, reason, applied_at)
+        values (1, 1, 42, '/media/10-rotation/a.mp3', 'Orage - Brume', 'album',
+            '"Estuaire"', '"Ciel"', 'waiting', 'en file', '2026-11-14 16:00:01');
     """,
 }
 
