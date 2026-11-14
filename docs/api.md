@@ -207,6 +207,13 @@ Jouer tout de suite, droit `live` : `POST /carts/{id}/now.json` et `POST /carts/
 
 Tant que l'interrupteur général de « Ranger la banque » est éteint, la route rend `409 {error, code:"bank_tidy_off"}`. Un tri, un ordre, une facette ou un nombre inconnus rendent `400 {error, code:"validation_error", field}`.
 
+Les vues du tableau, chacune à son compte, derrière le même interrupteur (`409 bank_tidy_off` éteint). Une vue : `{id, name, state, modified}`, où `state` vaut `{ranking, group, q, sort, order, columns}` : le rangement (`collection`, `artist`, `famille` ou `album`), son groupe (`null` pour toute la banque, `""` pour les titres sans ce champ), la recherche, le tri et son ordre comme ceux de `/media/titles.json`, et les colonnes montrées, dans leur ordre, parmi `title`, `artist`, `album`, `famille`, `genre`, `year`, `duration` et `fiche`, le titre toujours. `modified` est à l'heure de Paris.
+
+- `GET /media/views.json` (session) → `{views}` : celles du compte connecté, par nom.
+- `POST /media/views.json` `{name, state}` → `201 {view}`. Le nom, de 60 signes au plus, se tasse sur ses espaces. Un nom que le compte a déjà : `409 {error, code:"conflict", field:"name"}` ; cent vues au plus par compte, `409` au-delà. Un état inconnu, des colonnes en double ou sans le titre : `400 {code:"validation_error"}`.
+- `PUT /media/views/{id}.json` `{name?, state?}` → `{view}`. `DELETE /media/views/{id}.json` → `{ok:true}`. La vue d'un autre compte rend `404`, comme une vue effacée.
+- Un compte supprimé emporte ses vues.
+
 ### Système
 
 `GET /system/disk.json` → `{total, used, free, path}` : espace disque de la banque (`MEDIA_ROOT`). Droits `carts` ou `autodj`, sinon 403 ; 503 si le disque est illisible.
