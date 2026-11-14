@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import http.cookiejar
 import json
-import os
 import sqlite3
 import threading
 import time
@@ -53,8 +52,6 @@ PLANNED = ("planned", "rescue")
 
 _lock = threading.Lock()
 _events: list[dict] = []
-# Set once the journal of the antenna has its first sound.
-_on_air = threading.Event()
 
 
 def note(event: str, **fields) -> None:
@@ -129,7 +126,6 @@ def watch_base() -> None:
                     (last_log,),
                 ):
                     last_log = row["id"]
-                    _on_air.set()
                     try:
                         extra = json.loads(row["extra"] or "{}")
                     except ValueError:
@@ -257,12 +253,9 @@ def watch_conducteur() -> None:
     when the console asked: the interface may take seconds to answer, and what
     it answers is no older than the question.
 
-    The console opens once the antenna has started. Open before, it has the
-    interface draw the forecast while the scheduler draws its own, at its first
-    tick: one start out of six or so, the first sounds then air twice (FON-60).
-    RUNDOWN_CONSOLE_EARLY=1 opens it at once, to see that fault."""
-    if os.environ.get("RUNDOWN_CONSOLE_EARLY") != "1":
-        _on_air.wait()
+    The console opens at once, before the antenna starts: the interface draws
+    the forecast while the scheduler draws its own, at its first tick, and only
+    one of the two draws is written (FON-60)."""
     jar = http.cookiejar.CookieJar()
     console = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
     logged = False

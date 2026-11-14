@@ -85,8 +85,6 @@ services:
     entrypoint: ["python3", "-u", "/bench/rundown_probe.py"]
     environment:
       TZ: Europe/Paris
-      # 1: the console of the probe opens before the antenna starts.
-      RUNDOWN_CONSOLE_EARLY: ${RUNDOWN_CONSOLE_EARLY:-}
     volumes:
       - data:/data
       - .:/bench:ro
