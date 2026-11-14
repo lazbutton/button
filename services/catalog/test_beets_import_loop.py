@@ -31,6 +31,7 @@ dans une valeur, prend celle du titre.
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import pickle
@@ -139,10 +140,31 @@ def evaluate(template: str, values: dict[str, object]) -> str:
     return "".join(read) + template[pos:]
 
 
+def note_lock(beetsdir: Path, args: list[str]) -> None:
+    """Note si la boucle tient le verrou de la bibliothèque pendant cet appel.
+
+    Une autre description ouverte du fichier, comme celle du moteur, ne le prend
+    pas tant que la boucle le tient.
+    """
+    lock = beetsdir / "banque.lock"
+    held = False
+    if lock.is_file():
+        with lock.open("a") as other:
+            try:
+                fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                held = True
+            else:
+                fcntl.flock(other, fcntl.LOCK_UN)
+    with (beetsdir / "verrou.log").open("a", encoding="utf-8") as log:
+        log.write(json.dumps({"call": args[:1], "held": held}) + "\n")
+
+
 def fake_beet(beetsdir: Path, args: list[str]) -> int:  # noqa: PLR0911, PLR0912
     """Le faux beet : import, modify, update et remove, tels que la boucle les lance."""
     with (beetsdir / "beet.log").open("a", encoding="utf-8") as log:
         log.write(json.dumps(args) + "\n")
+    note_lock(beetsdir, args)
     # La racine de la bibliothèque : son propre dossier, comme la règle
     # init-radiotomate.sh.
     directory = os.fsencode(beetsdir)
@@ -967,6 +989,52 @@ class BeetsImportLoopTest(unittest.TestCase):
 
         self.assertEqual(self.groupings(), {"20-archives/soul/Eve - Live.flac": "soul"})
         self.assertIn(f"{count} titre(s) retiré(s)", removed.stdout)
+
+    def lock_calls(self) -> list[dict[str, object]]:
+        log = self.beetsdir / "verrou.log"
+        if not log.exists():
+            return []
+        return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+
+    def test_beets_writes_only_under_the_lock_of_the_library(self) -> None:
+        """Le moteur déplace un titre sous le même verrou (ARC-09) : la boucle ne voit
+        jamais un fichier à son nouveau nom avant que la bibliothèque l'ait."""
+        (self.rotation / "Ada - Un.mp3").write_bytes(b"un")
+        # Un second titre : une rotation vidée de tous ses titres ne retire rien.
+        (self.rotation / "Bea - Deux.mp3").write_bytes(b"deux")
+        bank = self.media / "20-archives" / "jazz"
+        bank.mkdir()
+        (bank / "Cy - Live.flac").write_bytes(b"live")
+        self.turn()
+        self.turn()
+        (self.rotation / "Ada - Un.mp3").unlink()
+        self.turn()
+
+        calls = self.lock_calls()
+        self.assertLessEqual({"import", "modify", "remove"}, {call["call"][0] for call in calls if call["call"]}, calls)
+        self.assertEqual([call for call in calls if not call["held"]], [])
+
+    def test_the_loop_waits_while_the_engine_holds_the_library(self) -> None:
+        (self.rotation / "Ada - Un.mp3").write_bytes(b"un")
+        lock = self.beetsdir / "banque.lock"
+        with lock.open("a") as engine:
+            fcntl.flock(engine, fcntl.LOCK_EX)
+            loop = subprocess.Popen(["sh", str(SCRIPT)], env=self.env(), cwd=self.root, text=True,
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            time.sleep(1.5)
+            self.assertIsNone(loop.poll(), "la boucle n'a pas attendu le moteur")
+            fcntl.flock(engine, fcntl.LOCK_UN)
+            _out, err = loop.communicate(timeout=60)
+        self.assertEqual(loop.returncode, ONE_TURN, err)
+
+    def test_a_lock_that_does_not_open_leaves_the_loop_running(self) -> None:
+        (self.beetsdir / "banque.lock").mkdir()
+        (self.rotation / "Ada - Un.mp3").write_bytes(b"un")
+        first = self.turn()
+        self.turn()
+
+        self.assertIn("Verrou de la bibliothèque", first.stderr)
+        self.assertEqual(list(self.groupings()), ["10-rotation/Ada - Un.mp3"])
 
 
 if __name__ == "__main__":

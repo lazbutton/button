@@ -65,6 +65,7 @@ from radiotomate.models import (
     RundownItem,
     Setting,
 )
+from radiotomate.services.bank_lock import BankBusyError, BeetsPlace, bank_lock
 from radiotomate.services.bank_titles import bank_tidy_enabled
 from radiotomate.services.beets_query import playable_query
 
@@ -457,10 +458,17 @@ def _file_problem(item: Item) -> str | None:
 _SENDING = (CommandStatus.PENDING.value, CommandStatus.SENDING.value)
 
 
-async def busy_status(session: ormSession, beets_id: int, path: str) -> str | None:
+async def busy_status(
+    session: ormSession, beets_id: int | None, path: str
+) -> str | None:
     """`ISSUE_ON_AIR` ou `ISSUE_QUEUED` quand une ligne du conducteur engagée joue
-    ce titre, ou s'apprête à l'envoyer ; sinon `None`."""
-    same_title = or_(RundownItem.beets_id == beets_id, RundownItem.path == path)
+    ce titre, ou s'apprête à l'envoyer ; sinon `None`. Sans identifiant, un fichier
+    que Beets n'a pas encore indexé, par son chemin seul (ARC-09)."""
+    same_title = (
+        RundownItem.path == path
+        if beets_id is None
+        else or_(RundownItem.beets_id == beets_id, RundownItem.path == path)
+    )
     statuses = list(
         await session.scalars(
             select(RundownItem.status).where(
@@ -542,7 +550,19 @@ async def _write_plans(
     qui échoue lève `_WriteFailed` ; une autre erreur, comme une base occupée,
     passe telle quelle. Dans les deux cas, les fichiers déjà écrits, et celui
     qui a échoué, reprennent d'abord leurs tags d'avant.
+
+    Sous le verrou de la bibliothèque, partagé avec la boucle d'import (ARC-09) :
+    elle ne relit pas un fichier à moitié écrit. Lui d'abord, puis la base, pour
+    chaque fichier : la base n'est jamais tenue pendant qu'on attend la boucle.
+    Tenu par la boucle plus de 5 s, il lève `BankBusyError`, et rien ne s'écrit.
     """
+    async with bank_lock(BeetsPlace.of(beets.lib)):
+        return await _write_held(session, beets, plans)
+
+
+async def _write_held(
+    session: ormSession, beets: BeetsIntegration, plans: list[_Plan]
+) -> tuple[list[_Plan], list[tuple[_Plan, str]]]:
     written: list[_Plan] = []
     waiting: list[tuple[_Plan, str]] = []
     current: _Plan | None = None
@@ -1013,6 +1033,9 @@ async def _apply_group(
         return False
     try:
         written, _waiting = await _write_plans(session, beets, plans)
+    except BankBusyError:
+        # La boucle d'import tient la bibliothèque : au passage suivant.
+        return False
     except _WriteFailed as failure:
         _log.warning(
             "waiting title edit failed on %s: %s", failure.plan.path, failure.cause

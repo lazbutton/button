@@ -26,6 +26,7 @@ import {
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useAccount } from "../../api/AccountContext";
 import {
   BANK_PAGE,
   bankFileUrl,
@@ -36,6 +37,7 @@ import {
   isAudioName,
   modifiedLabel,
   moveBankFiles,
+  moveNote,
   removeBankFiles,
   renameCollection,
   renameProblem,
@@ -669,6 +671,7 @@ export function MoveDialog({
   onClose: () => void;
   onMove: (target: BankDestination) => void;
 }) {
+  const { account } = useAccount();
   const [target, setTarget] = useState(options[0]?.id ?? "");
   const value = options.find((item) => item.id === target) ?? options[0];
   const what = names.length === 1 ? "ce titre" : titlesLabel(names.length).toLowerCase();
@@ -692,10 +695,7 @@ export function MoveDialog({
           </div>
         ) : null}
         <p className="bacs-dialog-note">
-          L'auto-DJ {names.length === 1 ? "le" : "les"} retrouve dans {value ? value.label : "sa destination"} au
-          prochain passage de l'indexation, environ une minute : Beets {names.length === 1 ? "le relit" : "les relit"}{" "}
-          comme {names.length === 1 ? "un titre nouveau" : "des titres nouveaux"}. Une diffusion de l'Agenda qui joue un
-          de ces fichiers ne le trouvera plus.
+          {moveNote(names.length, value ? value.label : "sa destination", account?.features?.bank_moves === true)}
         </p>
         <div className="bacs-dialog-actions">
           <Dialog.Close>

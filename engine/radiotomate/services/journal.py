@@ -1,9 +1,10 @@
 """Le journal des gestes sur la banque et les bacs (FON-71). Sans Quart.
 
 Chaque geste qui écrit se note dans `journal_entries` et `journal_changes`
-(`radiotomate.models.journal`) : la correction d'une fiche (FON-66), et bientôt le
-renommage (FON-68), le déplacement (ARC-09) et le retrait. Ce module les lit pour
-la page Journal de Sons, et défait un lot entier pendant 30 jours.
+(`radiotomate.models.journal`) : la correction d'une fiche (FON-66), le déplacement
+d'un titre (ARC-09), et bientôt le renommage (FON-68) et le retrait. Ce module les
+lit pour la page Journal de Sons, et défait un lot entier pendant 30 jours : un
+déplacement par `bank_moves.undo_moves`, le reste par `title_edits.undo_entry`.
 
 C'est le premier morceau de SEC-10 : la même table s'étendra aux horloges, aux
 réglages des bacs et aux comptes.
@@ -24,7 +25,8 @@ from radiotomate.domain.errors import (
     DomainValidationError,
 )
 from radiotomate.models import JournalChange, JournalEntry
-from radiotomate.services import title_edits
+from radiotomate.services import bank_moves, title_edits
+from radiotomate.services.bank_lock import BeetsPlace
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session as ormSession
@@ -47,7 +49,7 @@ GESTURE_LABELS = {
     "remove": "Retrait",
 }
 # Les gestes qui savent se défaire, et comment.
-UNDOABLE = frozenset(title_edits.GESTURES)
+UNDOABLE = frozenset((*title_edits.GESTURES, bank_moves.GESTURE_MOVE))
 
 STATUSES = (
     title_edits.STATUS_DONE,
@@ -262,4 +264,9 @@ async def undo(
     reason = why_not_undoable(entry, undone.get(entry.id))
     if reason is not None:
         raise DomainConflict(reason)
+    if bank_moves.moves_files(entry):
+        # Des fichiers déplacés ou renommés reprennent leur chemin d'avant (ARC-09).
+        return await bank_moves.undo_moves(
+            session, BeetsPlace.of(beets.lib), entry, username=username
+        )
     return await title_edits.undo_entry(session, beets, entry.id, username=username)

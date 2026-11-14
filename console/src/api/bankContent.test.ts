@@ -16,6 +16,7 @@ import {
   MAYBE_DONE,
   modifiedLabel,
   moveBankFiles,
+  moveNote,
   removeBankFiles,
   renameCollection,
   renameProblem,
@@ -317,4 +318,18 @@ test("a new name follows the rules of the first", () => {
   // Its own name, written another way, is not a clash.
   assert.equal(renameProblem(list, "jazz", "Jazz d'ete"), "");
   assert.equal(renameProblem(list, "jazz", "Jazz du soir"), "");
+});
+
+test("the move window says whether a title keeps what it is", () => {
+  // The engine moves it (ARC-09): it keeps its fiche, its place, its subfolder.
+  assert.match(moveNote(1, "Jazz", true), /^Il garde sa fiche, son volume mesuré, son sous-dossier/);
+  assert.match(moveNote(3, "Jazz", true), /^Ils gardent leur fiche/);
+  assert.doesNotMatch(moveNote(3, "Jazz", true), /ne le trouvera plus/);
+  // The catalogue moves it, as before: Beets reads it again, the Agenda loses it.
+  assert.equal(
+    moveNote(1, "Jazz", false),
+    "L'auto-DJ le retrouve dans Jazz au prochain passage de l'indexation, environ une minute : Beets le relit " +
+      "comme un titre nouveau. Une diffusion de l'Agenda qui joue un de ces fichiers ne le trouvera plus.",
+  );
+  assert.match(moveNote(2, "Rotation", false), /les retrouve dans Rotation .* des titres nouveaux/);
 });

@@ -3,8 +3,8 @@ Le banc de la banque (`banc.py`), sur des fichiers fabriqués.
 
 Il rejoue, avec la vraie boucle de Beets, les gestes du catalogue. Le test
 vérifie que le banc tient debout, pour que personne ne le découvre cassé le jour
-où une copie de vraie banque arrive : il passe, il dit le défaut connu
-d'aujourd'hui (ARC-09), et son rapport ne nomme aucun titre.
+où une copie de vraie banque arrive : il passe, un titre déplacé y garde son
+identifiant (ARC-09), et son rapport ne nomme aucun titre.
 
 Il tourne dans son propre processus : le banc pose `MEDIA_ROOT` et la base du
 moteur, que les autres tests ne doivent pas voir.
@@ -47,18 +47,19 @@ def _banc(*args: str, **env: str) -> subprocess.CompletedProcess:
     )
 
 
-def test_the_bench_runs_on_made_up_files_and_says_the_known_defect(tmp_path: Path):
+def test_the_bench_runs_on_made_up_files(tmp_path: Path):
     report = tmp_path / "rapport.md"
     detail = tmp_path / "detail.txt"
     done = _banc("--fabrique", "--rapport", str(report), "--detail", str(detail))
     assert done.returncode == 0, done.stdout[-3000:] + done.stderr[-3000:]
 
     text = report.read_text(encoding="utf-8")
-    # le défaut d'aujourd'hui : un titre déplacé change d'identifiant (ARC-09)
-    assert "défaut connu (ARC-09)" in text
+    # un titre déplacé par le moteur garde son identifiant (ARC-09)
+    assert "défaut connu" not in text
+    assert "| déplacer | un titre déplacé garde son identifiant de Beets | ok" in text
     assert "**échec**" not in text
-    # chaque geste du catalogue y est, et les bacs et l'Agenda ont été vérifiés
-    for geste in ("déplacer", "ramener", "retirer"):
+    # chaque geste y est, et les bacs et l'Agenda ont été vérifiés
+    for geste in ("déplacer", "ramener", "annuler", "retirer"):
         assert f"| {geste} |" in text
     assert "les bacs gardent leurs sons et l'Agenda ses fichiers" in text
     assert "la boucle suivante ne réimporte rien" in text
