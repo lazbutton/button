@@ -190,7 +190,7 @@ L’image du playout passe `apt-get upgrade` sur celle de Liquidsoap, que ses au
 
 `brand.json` et `brand.py` portent le nom affiché (`INTERFACE_NAME`), le logo et les libellés, ceux du logiciel : le `brand.json` du paquet ne donne aucune adresse. Le nom de la station, les adresses de son flux et de son direct, et le lien de son code source se règlent dans la console : des clés `station.*` de la table `settings` (`services/station.py`), sans migration. La console les pose sur son `brand.json`, qui reste le repli. L'adresse du direct se lit aussi par tout compte, pour « Passer en direct » : `GET /station/harbor.json`. Les pages HTMX gardent le nom de `brand.json`. `layout.jinja` est en `lang=fr`, avec `suite.css`. La feuille `sass/_suite.scss` est la charte noir et blanc du pupitre. Les pages HTMX d’origine (live, carts, auto-DJ, utilisateurs) restent servies par le même processus.
 
-## Schéma, de v7 à v18
+## Schéma, de v7 à v19
 
 L’amont s’arrête à v6. Les versions suivantes :
 
@@ -208,6 +208,7 @@ L’amont s’arrête à v6. Les versions suivantes :
 | v16 | `carts.ident_pads` |
 | v17 | Agenda : diffusions datées, invités, fichiers des sets, jours annulés des émissions hebdo |
 | v18 | `users.stream_token_hash` et `users.stream_token_created_at` : le jeton d’encodeur |
+| v19 | `bank_views` : les vues du tableau de la banque que chaque compte garde (FON-65), effacées avec leur compte |
 
 `radiotomate update --target-version` redescend le schéma. `engine/tests/test_migrations.py` monte puis redescend chaque version sur une base remplie : la descente rend tout ce qui existait avant la montée, sauf pour quatre versions. v7 remet aux créneaux de minuit le titre et la couleur par défaut, pas les leurs. v9 remet `grouping:rotation` à une Rotation qui cherchait déjà `path:/media/10-rotation` avant elle. v13 rend aux carts sortis du cron leur mode `TIMED`, mais pas leur `schedule_correct` ni leur tâche APScheduler. v14 ne défait rien : ses carts restent en `CLOCK`, et les tables APScheduler ne reviennent pas. Le test remonte ensuite chaque version : la montée repasse, et rend les mêmes tables, sauf pour deux versions dont la descente laisse ce que la montée a créé. Celle de v1 garde la table `metadata_log`, et la montée bute dessus ; celle de v12 ne fait rien, et la montée bute sur la colonne `carts.bank_folder`, restée. La 0.1.0, première version publiée, est déjà en v18 : revenir à une version publiée ne passe jamais par ces descentes.
 

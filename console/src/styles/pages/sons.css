@@ -2867,20 +2867,12 @@
   display: none;
 }
 
-/* Every column keeps its room, as in a spreadsheet: a narrow table scrolls sideways.
-   On a phone, the title carries its artist and duration, and the family stays. */
-.banque-titles {
-  min-width: 64rem;
-}
-
-.banque-titles.has-gestures {
-  min-width: 70rem;
-}
-
+/* Every column keeps its room, as in a spreadsheet: a narrow table scrolls sideways
+   (its min-width comes with its columns, tableMinWidth). On a phone, the title
+   carries its artist and duration, and the family stays. */
 @container bacs-main (max-width: 659px) {
-  .banque-titles,
-  .banque-titles.has-gestures {
-    min-width: 0;
+  .banque-titles {
+    min-width: 0 !important;
   }
 
   .banque-titles :is(.c-artist, .c-album, .c-genre, .c-year, .c-fiche, .c-duration) {
@@ -2983,6 +2975,81 @@
   margin: 0;
   color: var(--app-text-faint);
   font-size: 0.72rem;
+}
+
+.banque-columns {
+  display: grid;
+  gap: 0.6rem;
+  min-width: 15rem;
+}
+
+.banque-columns-title {
+  margin: 0;
+  color: var(--app-text-faint);
+  font-size: 0.64rem;
+  font-weight: 650;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.banque-columns-list {
+  display: grid;
+  gap: 0.1rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.banque-columns-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  min-height: 2.1rem;
+}
+
+.banque-columns-check {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.banque-columns-list li.is-hidden .banque-columns-check {
+  color: var(--app-text-muted);
+}
+
+.banque-columns-move {
+  display: inline-flex;
+  gap: 0.2rem;
+}
+
+.banque-views-trigger {
+  max-width: 16rem;
+}
+
+.banque-views-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.banque-views-pad {
+  display: inline-block;
+  width: 14px;
+}
+
+@media (pointer: coarse) {
+  .banque-columns .rt-IconButton {
+    width: 2.5rem;
+    height: 2.5rem;
+  }
+
+  .banque-columns-list li {
+    min-height: 2.75rem;
+  }
 }
 
 /* ---------- Narrow screens ---------- */

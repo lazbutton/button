@@ -30,9 +30,9 @@ import {
   type BankShelf,
 } from "../../api/bankContent";
 import {
-  COLUMNS,
   TITLES_PAGE,
   cell,
+  columnLabel,
   ficheState,
   fileName,
   groupLabel,
@@ -41,10 +41,16 @@ import {
   nextSort,
   rankingOf,
   readState,
+  sameAsView,
+  stateOfView,
+  tableMinWidth,
   titlesCount,
   titlesQuery,
+  viewStateOf,
   writeState,
   type BankFacet,
+  type ColumnKey,
+  type SavedView,
   type BankTitle,
   type BankTitlesPage,
   type Ranking,
@@ -52,19 +58,43 @@ import {
   type TitleSort,
 } from "../../api/bankTitles";
 import { createBank } from "../../api/banks";
-import { API_PREFIX, ApiRequestError, apiGet } from "../../api/client";
+import { API_PREFIX, ApiRequestError, apiDeleteJson, apiGet, apiPostJson, apiPut } from "../../api/client";
 import { formatClock, percentOf } from "../../api/soundsView";
 import { usePreview } from "../../lib/usePreview";
 import { AppToast, useAppToast } from "../../ui/AppToast";
 import { ConfirmDialog } from "../../ui/ConfirmDialog";
 import { ErrorState, LoadingState } from "../../ui/DataState";
 import { EmptyState } from "../../ui/EmptyState";
+import { ColumnsPicker } from "./ColumnsPicker";
 import { MoveDialog, RenameDialog } from "./CollectionView";
 import { CreateBankDialog } from "./CreateBankDialog";
 import { RANKING_ICONS, RankingList } from "./RankingList";
 import { TitleSheet } from "./TitleSheet";
+import { ViewsMenu } from "./ViewsMenu";
 
 type Progress = { kind: "removed" | "moved"; done: number; total: number };
+
+// The view open stays in the address; the browser only keeps the last one opened.
+const VIEW_PARAM = "gardee";
+const LAST_VIEW = "button.banque.derniere-vue";
+
+function lastView(): number | null {
+  try {
+    const raw = window.localStorage.getItem(LAST_VIEW);
+    return raw && /^\d+$/.test(raw) ? Number(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function rememberView(id: number | null): void {
+  try {
+    if (id == null) window.localStorage.removeItem(LAST_VIEW);
+    else window.localStorage.setItem(LAST_VIEW, String(id));
+  } catch {
+    // Private window or blocked storage: the view is not reopened next time, that is all.
+  }
+}
 
 function messageOf(caught: unknown, fallback: string): string {
   return caught instanceof Error && caught.message ? caught.message : fallback;
@@ -99,8 +129,10 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [creating, setCreating] = useState<string | null>(null);
+  const [views, setViews] = useState<SavedView[] | null>(null);
   const { toast, show, dismiss } = useAppToast();
   const ticket = useRef(0);
+  const reopened = useRef(false);
   const preview = usePreview(
     (message) => show(message, "error"),
     (id) => `${API_PREFIX}/autodj/beets/${encodeURIComponent(id)}`,
@@ -139,9 +171,21 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
     }
   }, [state]);
 
+  const loadViews = useCallback(async () => {
+    try {
+      const payload = await apiGet<{ views?: SavedView[] }>("/media/views.json");
+      setViews(Array.isArray(payload.views) ? payload.views : []);
+    } catch (caught) {
+      // An engine without the views: the menu hides, the table stays.
+      if (caught instanceof ApiRequestError && caught.status === 404) setViews(null);
+      else show(messageOf(caught, "Les vues gardées ne se sont pas lues."), "error");
+    }
+  }, [show]);
+
   useEffect(() => {
     void loadShelves();
-  }, [loadShelves]);
+    void loadViews();
+  }, [loadShelves, loadViews]);
 
   useEffect(() => {
     void load();
@@ -173,6 +217,50 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
     } finally {
       setLoadingMore(false);
     }
+  };
+
+  const activeId = Number(params.get(VIEW_PARAM)) || null;
+  const active = views?.find((view) => view.id === activeId) ?? null;
+
+  const openView = useCallback(
+    (view: SavedView) => {
+      const next = writeState(params, stateOfView(view));
+      next.set(VIEW_PARAM, String(view.id));
+      setParams(next, { replace: true });
+      setTyped(stateOfView(view).q);
+      setOpenId(null);
+      setView("detail");
+      rememberView(view.id);
+    },
+    [params, setParams],
+  );
+
+  // The bank opened bare, with nothing in the address: the last view opened, if it is still kept.
+  useEffect(() => {
+    if (reopened.current || !views) return;
+    reopened.current = true;
+    const bare = ["ranger", "groupe", "collection", "tri", "ordre", "q", "colonnes", VIEW_PARAM].every((key) => !params.has(key));
+    const last = lastView();
+    const view = bare && last != null ? views.find((item) => item.id === last) : undefined;
+    if (view) openView(view);
+  }, [openView, params, views]);
+
+  const createView = async (name: string) => {
+    const { view } = await apiPostJson<{ view: SavedView }>("/media/views.json", { name, state: viewStateOf(state) });
+    setViews((before) => [...(before ?? []), view].sort((a, b) => a.name.localeCompare(b.name, "fr")));
+    const next = new URLSearchParams(params);
+    next.set(VIEW_PARAM, String(view.id));
+    setParams(next, { replace: true });
+    rememberView(view.id);
+    show(`Vue « ${view.name} » gardée. Elle se rouvre depuis « Vues », sur tout ordinateur.`, "success");
+  };
+
+  const putView = async (view: SavedView, body: Record<string, unknown>) => {
+    const { view: saved } = await apiPut<{ view: SavedView }>(`/media/views/${view.id}.json`, body);
+    setViews((before) =>
+      (before ?? []).map((item) => (item.id === saved.id ? saved : item)).sort((a, b) => a.name.localeCompare(b.name, "fr")),
+    );
+    return saved;
   };
 
   const rankingGroups = groupsOf(state.ranking, groups[state.ranking] ?? [], shelves);
@@ -398,6 +486,41 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
                 <span className="bacs-muted bacs-hide-narrow" aria-live="polite">
                   {page ? (state.q.trim() ? `${titlesCount(page.matched)} trouvés` : titlesCount(page.matched)) : ""}
                 </span>
+                <ColumnsPicker columns={state.columns} onChange={(columns) => update({ columns })} />
+                {views ? (
+                  <ViewsMenu
+                    views={views}
+                    active={active}
+                    modified={active ? !sameAsView(state, active) : false}
+                    onOpen={openView}
+                    onCreate={createView}
+                    onSave={(view) => {
+                      void putView(view, { state: viewStateOf(state) }).then(
+                        (saved) => show(`Vue « ${saved.name} » mise à jour.`, "success"),
+                        (caught) => show(messageOf(caught, "La vue n'a pas été mise à jour."), "error"),
+                      );
+                    }}
+                    onRename={async (view, name) => {
+                      const saved = await putView(view, { name });
+                      show(`La vue « ${view.name} » s'appelle maintenant « ${saved.name} ».`, "success");
+                    }}
+                    onDelete={async (view) => {
+                      try {
+                        await apiDeleteJson(`/media/views/${view.id}.json`);
+                        setViews((before) => (before ?? []).filter((item) => item.id !== view.id));
+                        if (view.id === activeId) {
+                          const next = new URLSearchParams(params);
+                          next.delete(VIEW_PARAM);
+                          setParams(next, { replace: true });
+                        }
+                        if (lastView() === view.id) rememberView(null);
+                        show(`Vue « ${view.name} » supprimée.`, "success");
+                      } catch (caught) {
+                        show(messageOf(caught, "La vue n'a pas été supprimée."), "error");
+                      }
+                    }}
+                  />
+                ) : null}
               </div>
             )}
 
@@ -466,7 +589,11 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
                   ) : null}
                 </div>
               ) : (
-                <table className={`bacs-table banque-titles${gestures ? " has-gestures" : ""}`} aria-rowcount={count}>
+                <table
+                  className="bacs-table banque-titles"
+                  style={{ minWidth: `${tableMinWidth(state.columns, gestures)}rem` }}
+                  aria-rowcount={count}
+                >
                   <thead>
                     <tr>
                       {gestures ? (
@@ -485,18 +612,18 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
                       <th className="c-play">
                         <span className="ui-visually-hidden">Écouter</span>
                       </th>
-                      {COLUMNS.map((column) =>
-                        column.key === "fiche" ? (
-                          <th key={column.key} className="c-fiche">
-                            {column.label}
+                      {state.columns.map((key) =>
+                        key === "fiche" ? (
+                          <th key={key} className="c-fiche">
+                            {columnLabel(key)}
                           </th>
                         ) : (
                           <SortHeader
-                            key={column.key}
-                            column={column.key}
-                            label={column.label}
+                            key={key}
+                            column={key}
+                            label={columnLabel(key)}
                             state={state}
-                            onSort={(key) => update(nextSort(state, key))}
+                            onSort={(column) => update(nextSort(state, column))}
                           />
                         ),
                       )}
@@ -512,6 +639,7 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
                       <TitleRow
                         key={title.id}
                         title={title}
+                        columns={state.columns}
                         gestures={gestures}
                         busy={busy}
                         canMove={others.length > 0}
@@ -681,6 +809,7 @@ function SortHeader({
 
 function TitleRow({
   title,
+  columns,
   gestures,
   busy,
   canMove,
@@ -694,6 +823,7 @@ function TitleRow({
   onRemove,
 }: {
   title: BankTitle;
+  columns: ColumnKey[];
   gestures: boolean;
   busy: boolean;
   canMove: boolean;
@@ -737,30 +867,52 @@ function TitleRow({
           )}
         </button>
       </td>
-      <td className="c-title">
-        <div className="bacs-cell-title">
-          <button type="button" className="banque-open" data-title-open={title.id} title={title.path} onClick={onOpen}>
-            {name}
-          </button>
-          <span className="bacs-artist banque-narrow-artist">
-            {title.artist ? <span>{title.artist}</span> : null}
-            {length ? <span className="bacs-inline-len">{length}</span> : null}
-          </span>
-        </div>
-      </td>
-      <td className="c-artist">{cell(title.artist)}</td>
-      <td className="c-album">{cell(title.album)}</td>
-      <td className="c-famille">{cell(title.famille_label)}</td>
-      <td className="c-genre">{cell(title.genre)}</td>
-      <td className="c-year">{cell(title.year)}</td>
-      <td className="c-duration">{length || "—"}</td>
-      <td className="c-fiche">
-        <Tooltip content={fiche.detail}>
-          <Badge size="1" variant="soft" color={fiche.complete ? "green" : "gray"} tabIndex={0}>
-            {fiche.label}
-          </Badge>
-        </Tooltip>
-      </td>
+      {columns.map((key) => {
+        switch (key) {
+          case "title":
+            return (
+              <td key={key} className="c-title">
+                <div className="bacs-cell-title">
+                  <button type="button" className="banque-open" data-title-open={title.id} title={title.path} onClick={onOpen}>
+                    {name}
+                  </button>
+                  <span className="bacs-artist banque-narrow-artist">
+                    {title.artist ? <span>{title.artist}</span> : null}
+                    {length ? <span className="bacs-inline-len">{length}</span> : null}
+                  </span>
+                </div>
+              </td>
+            );
+          case "famille":
+            return (
+              <td key={key} className="c-famille">
+                {cell(title.famille_label)}
+              </td>
+            );
+          case "duration":
+            return (
+              <td key={key} className="c-duration">
+                {length || "—"}
+              </td>
+            );
+          case "fiche":
+            return (
+              <td key={key} className="c-fiche">
+                <Tooltip content={fiche.detail}>
+                  <Badge size="1" variant="soft" color={fiche.complete ? "green" : "gray"} tabIndex={0}>
+                    {fiche.label}
+                  </Badge>
+                </Tooltip>
+              </td>
+            );
+          default:
+            return (
+              <td key={key} className={`c-${key}`}>
+                {cell(title[key])}
+              </td>
+            );
+        }
+      })}
       {gestures ? (
         <td className="c-more">
           <DropdownMenu.Root modal={false}>
