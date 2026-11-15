@@ -47,6 +47,8 @@ STATES = (
     "revenue",
     "en erreur",
 )
+# The verdict switched off (FON-80), its propositions leave no trace in the view.
+_WITHOUT_VERDICT = tuple(name for name in FIELDS if name != "fmg")
 PAGE = 50
 MAX_PAGE = 200
 # The recent searches that tell the pace of the search.
@@ -68,7 +70,9 @@ class ReviewQuery:
     limit: int = PAGE
 
     @classmethod
-    def from_args(cls, args: Mapping[str, str]) -> ReviewQuery:
+    def from_args(
+        cls, args: Mapping[str, str], *, verdict: bool = False
+    ) -> ReviewQuery:
         def one_of(name: str, values: tuple[str, ...]) -> str:
             value = str(args.get(name) or "").strip()
             if value and value not in values:
@@ -91,7 +95,7 @@ class ReviewQuery:
 
         return cls(
             level=one_of("level", LEVELS),
-            field=one_of("field", FIELDS),
+            field=one_of("field", FIELDS if verdict else _WITHOUT_VERDICT),
             bank=str(args.get("bank") or "").strip(),
             state=one_of("state", STATES),
             q=" ".join(str(args.get("q") or "").split()),
@@ -103,6 +107,11 @@ class ReviewQuery:
 def _bank(title: dict) -> str:
     """Where a title is, as the filter names it: the rotation, or its collection."""
     return title["collection"] or ""
+
+
+def _shown(fiche: Any, *, verdict: bool) -> list:
+    """The propositions a fiche shows: the verdict's only switched on (FON-80)."""
+    return [one for one in fiche.propositions if verdict or one.field != "fmg"]
 
 
 def _proposition(proposition: Any) -> dict:
@@ -154,9 +163,15 @@ def _counted(counter: Counter, order: tuple[str, ...] = ()) -> list[dict]:
 
 
 async def review_page(
-    session: ormSession, rows: list[tuple], query: ReviewQuery, *, enabled: bool
+    session: ormSession,
+    rows: list[tuple],
+    query: ReviewQuery,
+    *,
+    enabled: bool,
+    verdict: bool = False,
 ) -> dict:
-    """The head of the view and one page of its titles."""
+    """The head of the view and one page of its titles. The verdict switched off,
+    its propositions are left out."""
     titles = {entry["id"]: entry for entry in map(title_of, rows)}
     fiches = list(
         (
@@ -166,20 +181,21 @@ async def review_page(
         ).all()
     )
     fiches = [fiche for fiche in fiches if fiche.beets_id in titles]
+    shown_of = {fiche.id: _shown(fiche, verdict=verdict) for fiche in fiches}
     statuses = Counter(fiche.status for fiche in fiches)
     states = Counter(
-        proposition.state for fiche in fiches for proposition in fiche.propositions
+        proposition.state for fiche in fiches for proposition in shown_of[fiche.id]
     )
     waiting = [
         fiche
         for fiche in fiches
-        if any(one.state == PROPOSED for one in fiche.propositions)
+        if any(one.state == PROPOSED for one in shown_of[fiche.id])
     ]
     levels = Counter(fiche.level for fiche in waiting)
     fields = Counter(
         one.field
         for fiche in waiting
-        for one in fiche.propositions
+        for one in shown_of[fiche.id]
         if one.state == PROPOSED
     )
     banks = Counter(_bank(titles[fiche.beets_id]) for fiche in fiches)
@@ -205,7 +221,7 @@ async def review_page(
             continue
         shown = [
             one
-            for one in fiche.propositions
+            for one in shown_of[fiche.id]
             if (not wanted or one.state == wanted)
             and (not query.field or one.field == query.field)
         ]
@@ -300,10 +316,16 @@ def _readable(fiche: Any, track: Track, *, covers: bool = False) -> dict | None:
 
 
 async def review_detail(
-    session: ormSession, beets_id: int, item: Any, *, covers: bool = False
+    session: ormSession,
+    beets_id: int,
+    item: Any,
+    *,
+    covers: bool = False,
+    verdict: bool = False,
 ) -> dict:
     """One title: its fiche, its propositions and its evidence. `covers`: with the
-    link of its cover, when the station shows them (FON-83)."""
+    link of its cover, when the station shows them (FON-83). `verdict`: with the
+    propositions of the verdict, switched on (FON-80)."""
     fiche = await session.scalar(
         select(Fiche)
         .where(Fiche.beets_id == beets_id)
@@ -344,7 +366,7 @@ async def review_detail(
             "searched_at": iso_paris(_utc(fiche.searched_at)),
             "next_at": iso_paris(_utc(fiche.next_at)),
         },
-        "propositions": [_proposition(one) for one in fiche.propositions],
+        "propositions": [_proposition(one) for one in _shown(fiche, verdict=verdict)],
         "evidence": _readable(fiche, track, covers=covers),
         "listen": f"/autodj/beets/{beets_id}",
     }

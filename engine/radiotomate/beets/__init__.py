@@ -176,8 +176,8 @@ class BeetsIntegration:
     async def title_rows(self) -> list[tuple]:
         """
         Every title of the library, as the bank's table reads it (FON-64): id, path,
-        title, artist, album, year, genre, length, and the ``famille`` and
-        ``etiquettes`` flexible fields (FON-74).
+        title, artist, album, year, genre, length, and the ``famille``,
+        ``etiquettes`` (FON-74) and ``fmg`` (FON-80) flexible fields.
         One SQL query, not ``lib.items()``: building 7 000 Items takes seconds.
         """
         loop = get_running_loop()
@@ -203,11 +203,13 @@ class BeetsIntegration:
             return list(
                 tx.query(
                     "SELECT i.id, i.path, i.title, i.artist, i.album, i.year, "
-                    f"i.{genre}, i.length, a.value, t.value FROM items i "
+                    f"i.{genre}, i.length, a.value, t.value, v.value FROM items i "
                     "LEFT JOIN item_attributes a "
                     "ON a.entity_id = i.id AND a.key = 'famille' "
                     "LEFT JOIN item_attributes t "
-                    "ON t.entity_id = i.id AND t.key = 'etiquettes'"
+                    "ON t.entity_id = i.id AND t.key = 'etiquettes' "
+                    "LEFT JOIN item_attributes v "
+                    "ON v.entity_id = i.id AND v.key = 'fmg'"
                 )
             )
 

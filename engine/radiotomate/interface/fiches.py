@@ -65,16 +65,18 @@ async def fiches_json():
     if denied is not None:
         return denied
     await require_bank_tidy(g.dbsession)
-    query = fiches_review.ReviewQuery.from_args(request.args)
     settings = await read_settings(g.dbsession)
+    query = fiches_review.ReviewQuery.from_args(request.args, verdict=settings.verdict)
     beets = BeetsIntegration.get()
     rows = await beets.title_rows()
     page = await fiches_review.review_page(
-        g.dbsession, rows, query, enabled=settings.enabled
+        g.dbsession, rows, query, enabled=settings.enabled, verdict=settings.verdict
     )
     # La part des « oui » parmi les verdicts connus, en titres (FON-28).
-    page["verdict"] = settings.verdict
-    page["verdicts"] = await fiches_families.verdict_counts(beets)
+    # Le verdict éteint, la page n'en dit rien (FON-80).
+    if settings.verdict:
+        page["verdict"] = True
+        page["verdicts"] = await fiches_families.verdict_counts(beets)
     return jsonify(page)
 
 
@@ -86,9 +88,15 @@ async def fiche_json(beets_id: int):
         return denied
     await require_bank_tidy(g.dbsession)
     item = await BeetsIntegration.get().get_item(beets_id)
-    covers = (await read_settings(g.dbsession)).covers
+    settings = await read_settings(g.dbsession)
     return jsonify(
-        await fiches_review.review_detail(g.dbsession, beets_id, item, covers=covers)
+        await fiches_review.review_detail(
+            g.dbsession,
+            beets_id,
+            item,
+            covers=settings.covers,
+            verdict=settings.verdict,
+        )
     )
 
 

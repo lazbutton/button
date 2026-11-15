@@ -101,16 +101,21 @@ def _by_name(entry: dict) -> tuple:
     return fold(entry["artist"]), fold(entry["title"]), entry["path"]
 
 
-def figures(entries: list[dict]) -> dict:
-    """« La banque en chiffres » : the titles, the families, the complete fiches."""
+def figures(entries: list[dict], *, verdict: bool = False) -> dict:
+    """« La banque en chiffres » : the titles, the families, the complete fiches;
+    and, the verdict switched on (FON-80), the known verdicts by value."""
     families = [row for row in facet_counts(entries, "famille") if row["value"]]
     families.sort(key=lambda row: (-row["count"], fold(row["label"])))
-    return {
+    counted = {
         "titles": len(entries),
         "complete": sum(1 for entry in entries if not entry["missing"]),
         "families": families,
         "without_family": sum(1 for entry in entries if not entry["famille"]),
     }
+    if verdict:
+        values = Counter(entry.get("fmg", "") for entry in entries)
+        counted["verdicts"] = {name: values[name] for name in ("oui", "mixte", "non")}
+    return counted
 
 
 def spellings(entries: list[dict]) -> dict:
@@ -293,12 +298,23 @@ def unindexed(entries: list[dict], root: Path) -> dict:
     return {"count": len(found), "paths": found[:MAX_LISTED]}
 
 
-def bank_health(rows: Iterable[tuple], root: Path, model: str = DEFAULT_MODEL) -> dict:
-    """Everything the Santé view shows, from the library's rows and the disk."""
-    entries = [title_of(row, str(root)) for row in rows]
+def bank_health(
+    rows: Iterable[tuple],
+    root: Path,
+    model: str = DEFAULT_MODEL,
+    *,
+    verdict: bool = False,
+) -> dict:
+    """Everything the Santé view shows, from the library's rows and the disk. The
+    verdict is counted only switched on; its titles' entries never carry it."""
+    entries = [title_of(row, str(root), verdict=verdict) for row in rows]
+    counted_figures = figures(entries, verdict=verdict)
+    # The lists of titles below never carry the verdict.
+    for entry in entries:
+        entry.pop("fmg", None)
     return {
         "model": model,
-        "figures": figures(entries),
+        "figures": counted_figures,
         "spellings": spellings(entries),
         "duplicates": duplicates(entries),
         "misnamed": misnamed(entries, model),
