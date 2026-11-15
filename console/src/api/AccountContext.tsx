@@ -17,6 +17,7 @@ export type Account = {
     station_tags?: boolean;
     title_renames?: boolean;
     bank_health?: boolean;
+    bank_arrivals?: boolean;
     /** FON-83: the covers of the titles found, by their link. */
     fiche_covers?: boolean;
   };

@@ -3,6 +3,7 @@ from werkzeug.exceptions import BadRequest
 
 from radiotomate.auth import current_user, login_required
 from radiotomate.interface.json_util import read_json_object
+from radiotomate.services.bank_arrivals import arrivals_on
 from radiotomate.services.bank_health import health_on
 from radiotomate.services.bank_moves import moves_on
 from radiotomate.services.bank_removals import removals_on
@@ -36,6 +37,8 @@ async def account_json():
                 "title_renames": await renames_on(g.dbsession),
                 # FON-72: what is wrong in the bank, counted.
                 "bank_health": await health_on(g.dbsession),
+                # FON-81: the titles arrived in 30 days, to tidy as they come.
+                "bank_arrivals": await arrivals_on(g.dbsession),
                 # FON-83: the covers of the titles found, by their link.
                 "fiche_covers": await covers_on(g.dbsession),
             },
