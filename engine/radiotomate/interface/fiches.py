@@ -12,6 +12,10 @@
 - `POST /fiches/propositions/<id>/revenir.json` : une valeur écrite revient à celle
   d'avant. Droit `autodj`.
 - `POST /fiches/<beets_id>/rechercher.json` : chercher de nouveau. Droit `autodj`.
+- `POST /fiches/envois.json` : ce que la banque sait des fichiers que la console vient
+  d'envoyer, par leur destination et leur nom (FON-82) : dans la bibliothèque ou
+  pas encore, leurs doublons, et ce que la recherche en a reconnu. Il ne fait que
+  lire : un POST, pour porter la liste. Droit `autodj`.
 
 Derrière l'interrupteur du rangement de la banque, `features.bank_tidy` : éteint,
 les routes refusent. Écrire demande aussi `features.title_edits`, pas coupé.
@@ -30,12 +34,18 @@ from radiotomate.beets import BeetsIntegration
 from radiotomate.interface.json_util import forbidden_unless, read_json_object
 from radiotomate.quart import ShutdownError, or_shutdown
 from radiotomate.services import fiches_decisions, fiches_review
-from radiotomate.services.bank_titles import bank_tidy_enabled, require_bank_tidy
+from radiotomate.services.bank_titles import (
+    bank_tidy_enabled,
+    require_bank_tidy,
+    title_of,
+)
+from radiotomate.services.bank_uploads import read_files, uploads_report
 from radiotomate.services.fiches import (
     read_settings,
     settings_payload,
     write_settings,
 )
+from radiotomate.services.media_bank import media_root
 
 if TYPE_CHECKING:
     from radiotomate.db import QuartAlchemy
@@ -141,6 +151,23 @@ async def search_again_json(beets_id: int):
     await require_bank_tidy(g.dbsession)
     await fiches_decisions.search_again(g.dbsession, beets_id)
     return jsonify({"queued": True})
+
+
+@blueprint.post("/fiches/envois.json")
+@login_required
+async def uploads_json():
+    denied = forbidden_unless("autodj")
+    if denied is not None:
+        return denied
+    await require_bank_tidy(g.dbsession)
+    files = read_files(await read_json_object())
+    settings = await read_settings(g.dbsession)
+    root = str(media_root())
+    rows = await BeetsIntegration.get().title_rows()
+    entries = [title_of(row, root) for row in rows]
+    return jsonify(
+        await uploads_report(g.dbsession, entries, files, fiches_on=settings.enabled)
+    )
 
 
 async def accepted_writes_task(db: QuartAlchemy, beets: BeetsIntegration) -> None:

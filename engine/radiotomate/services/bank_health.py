@@ -156,17 +156,29 @@ def _marks(text: str) -> int:
     return sum(1 for char in plain if unicodedata.combining(char) or char.isupper())
 
 
-def duplicates(entries: list[dict]) -> dict:
-    """The same artist and title once normalized, lasting the same within 2 s.
+def duplicate_key(entry: dict) -> tuple[str, str] | None:
+    """What two duplicates share: the artist and the title, normalized. None for a
+    title without a duration, an artist or a title: nothing tells it apart from a
+    different take."""
+    artist, title = normalize_text(entry["artist"]), normalize_text(entry["title"])
+    if artist and title and entry["duration"]:
+        return artist, title
+    return None
 
-    A title without a duration, or without an artist or a title, is no one's
-    duplicate: nothing tells it apart from a different take.
+
+def duplicate_groups(entries: Iterable[dict]) -> list[list[dict]]:
+    """The duplicates of the bank: the same artist and title once normalized,
+    lasting the same within 2 s. The Santé view counts them, and the queue of
+    uploads (FON-82) names a file's: one reading for both.
+
+    The groups of a key depend only on the titles of that key: a caller may pass
+    those alone.
     """
     by_key: dict[tuple[str, str], list[dict]] = defaultdict(list)
     for entry in entries:
-        artist, title = normalize_text(entry["artist"]), normalize_text(entry["title"])
-        if artist and title and entry["duration"]:
-            by_key[(artist, title)].append(entry)
+        key = duplicate_key(entry)
+        if key:
+            by_key[key].append(entry)
     groups = []
     for members in by_key.values():
         members.sort(key=lambda entry: (entry["duration"], entry["path"]))
@@ -180,6 +192,13 @@ def duplicates(entries: list[dict]) -> dict:
             cluster = [entry]
         if len(cluster) > 1:
             groups.append(cluster)
+    return groups
+
+
+def duplicates(entries: list[dict]) -> dict:
+    """The same artist and title once normalized, lasting the same within 2 s
+    (`duplicate_groups`)."""
+    groups = duplicate_groups(entries)
     payload = [
         {
             "label": f"{group[0]['artist']} - {group[0]['title']}",
