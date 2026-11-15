@@ -24,6 +24,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, ClassVar
 from urllib.parse import parse_qsl, quote, urlsplit
 
+from radiotomate.fiches.covers import apple_cover, bandcamp_cover, deezer_cover
 from radiotomate.fiches.http import HttpError
 from radiotomate.fiches.loose import MbRelease
 from radiotomate.fiches.normalize import (
@@ -350,6 +351,7 @@ def _prune_album(body: dict[str, Any]) -> dict[str, Any]:
         "release_date": body.get("release_date"),
         "record_type": body.get("record_type"),
         "genres": [_object(genre).get("name") for genre in genres],
+        "cover": deezer_cover(body.get("cover_big")),
     }
 
 
@@ -381,6 +383,7 @@ def deezer_details(
             date=album["release_date"],
             record_type=album["record_type"],
             genres=tuple(album["genres"]),
+            cover=album["cover"],
         )
     elif own:
         found_album = DeezerAlbum(id=_js_string(own["id"]), title=own["title"])
@@ -1007,6 +1010,8 @@ class Candidate:
     artist_id: str | None = None
     by_label: bool = False
     kind: str = "track"
+    # Le lien de sa pochette (FON-83), chez Bandcamp.
+    cover: str | None = None
 
 
 def _coalesce(value: Any, default: Any) -> Any:
@@ -1270,6 +1275,7 @@ def apple_candidate(track: dict[str, Any]) -> Candidate:
         album=track.get("collectionName"),
         duration_ms=track.get("trackTimeMillis"),
         release_date=date[:10] if isinstance(date, str) else None,
+        cover=apple_cover(track.get("artworkUrl100")),
     )
 
 
@@ -1299,6 +1305,7 @@ def _prune_itunes(body: dict[str, Any]) -> AppleDetails | None:
         genre=result.get("primaryGenreName"),
         date=result.get("releaseDate"),
         album=result.get("collectionName"),
+        cover=apple_cover(result.get("artworkUrl100")),
     )
 
 
@@ -1508,6 +1515,7 @@ def bandcamp_candidate(
         release_date=_iso_day(details.get("release_date")),
         by_label=by_label,
         kind=kind,
+        cover=bandcamp_cover(details.get("art_id")),
     )
 
 

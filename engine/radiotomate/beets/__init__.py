@@ -231,6 +231,17 @@ class BeetsIntegration:
 
         return await get_running_loop().run_in_executor(None, read)
 
+    async def id_at(self, path: str) -> int | None:
+        """The id of the title Beets has for this file, by its path (FON-83). Through
+        Beets' own query, like ``tags_at``."""
+
+        def read() -> int | None:
+            for item in self.lib.items([f"path:{path}"]):
+                return item.id
+            return None
+
+        return await get_running_loop().run_in_executor(None, read)
+
     async def get_item(self, beets_id: int) -> Item | None:
         loop = get_running_loop()
         return await loop.run_in_executor(None, self.lib.get_item, beets_id)
