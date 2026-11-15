@@ -2142,3 +2142,126 @@ button.prog-save {
 .banque-composer input::-webkit-calendar-picker-indicator {
   display: none !important;
 }
+
+/* FON-28: where the families fall, under the selections. */
+
+.prog-fam {
+  flex: none;
+  display: grid;
+  gap: 0.6rem;
+  margin-top: 1.25rem;
+}
+
+.prog-fam-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+}
+
+.prog-fam-copy {
+  flex: 1 1 22rem;
+  min-width: 0;
+}
+
+.prog-fam-head h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 650;
+}
+
+.prog-fam-head p {
+  max-width: 44rem;
+  margin: 0.25rem 0 0;
+  color: var(--app-text-muted);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.prog-fam-frame {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-lg);
+  background: var(--app-surface-1);
+}
+
+.prog-fam-table th[scope="row"] {
+  font-weight: 600;
+}
+
+.prog-fam-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-height: 2.5rem;
+  padding: 0 0.35rem;
+  border: 0;
+  border-radius: var(--app-radius-sm);
+  background: none;
+  color: var(--app-text);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.prog-fam-toggle:hover {
+  background: var(--app-surface-hover);
+}
+
+.prog-fam-toggle:focus-visible {
+  outline: 2px solid var(--accent-8);
+  outline-offset: 2px;
+}
+
+.prog-fam-sample ul {
+  margin: 0;
+  padding-left: 1.1rem;
+  columns: 2 16rem;
+  line-height: 1.6;
+}
+
+.prog-fam-sample p {
+  margin: 0.4rem 0 0;
+}
+
+.prog-fam-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  color: var(--app-danger-ink);
+  font-size: 0.8rem;
+}
+
+/* Sur un écran étroit, la tête du tableau se cache : chaque nombre dit ce qu'il compte. */
+.prog-fam-label {
+  display: none;
+  color: var(--app-text-muted);
+}
+
+@container prog (max-width: 759px) {
+  .prog-fam-label {
+    display: inline;
+  }
+
+  .prog-fam-table .c-count {
+    width: auto;
+  }
+}
+
+/* Les familles dépliées, la liste des sélections et leur tableau se partagent la
+   hauteur, et chacun défile dans son cadre, comme la liste seule. */
+.prog-page:has(.prog-fam-frame) .prog-sel {
+  flex: 1 1 50%;
+  min-height: 12rem;
+}
+
+.prog-fam:has(.prog-fam-frame) {
+  display: flex;
+  flex: 1 1 50%;
+  flex-direction: column;
+  min-height: 12rem;
+}

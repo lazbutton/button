@@ -22,6 +22,8 @@ import {
   type SelectionFilters,
 } from "../api/selectionFilters";
 import { SelectionComposer } from "../components/banque/SelectionComposer";
+import { FamiliesPanel } from "../components/programmation/FamiliesPanel";
+import { FICHES_SETTINGS_JSON, queryExamples, type FichesSettings } from "../api/fiches";
 import { errorText } from "../api/programmationErrors";
 import { nameTaken } from "../api/programmationView";
 import { SessionGate } from "../api/SessionGate";
@@ -50,6 +52,23 @@ export function CategoriesPage() {
   const [preset, setPreset] = useState<SelectionFilters | null>(null);
   const { account, ready: accountReady } = useAccount();
   const composable = account?.features?.bank_tidy === true;
+  // FON-28 : le tableau des familles, relu quand une sélection change, et le verdict allumé pour l'aide.
+  const [familiesVersion, setFamiliesVersion] = useState(0);
+  const [verdictOn, setVerdictOn] = useState(false);
+  useEffect(() => {
+    if (!composable) return;
+    let cancelled = false;
+    apiGet<FichesSettings>(FICHES_SETTINGS_JSON).then(
+      (settings) => {
+        if (!cancelled) setVerdictOn(settings.verdict);
+      },
+      // Sans la route, l'aide ne parle pas du verdict : rien d'autre ne manque.
+      () => undefined,
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [composable]);
   useEffect(() => {
     const wanted = filtersFromParams(params);
     // The switch is read in the account: wait for it before taking the link.
@@ -106,6 +125,7 @@ export function CategoriesPage() {
     try {
       await apiDelete(`/autodj/categories/${deleting.id}.json`);
       await reload();
+      setFamiliesVersion((value) => value + 1);
       show(`« ${deleting.name} » supprimée.`, "success");
       setDeleting(null);
     } catch (caught) {
@@ -277,12 +297,14 @@ export function CategoriesPage() {
             )}
           </div>
         </div>
+        {composable ? <FamiliesPanel version={familiesVersion} /> : null}
       </SessionGate>
 
       <SelectionDialog
         target={editing}
         names={categories.map((row) => row.name)}
         composable={composable}
+        examples={queryExamples(composable, verdictOn)}
         preset={preset}
         onClose={() => {
           setEditing(null);
@@ -290,6 +312,7 @@ export function CategoriesPage() {
         }}
         onSaved={async (text) => {
           await reload();
+          setFamiliesVersion((value) => value + 1);
           void clocksRes.reload();
           show(text, "success");
         }}
@@ -319,6 +342,7 @@ function SelectionDialog({
   target,
   names,
   composable,
+  examples,
   preset,
   onClose,
   onSaved,
@@ -327,6 +351,8 @@ function SelectionDialog({
   names: string[];
   /** The bank's tidying is on: the filters are there. */
   composable: boolean;
+  /** The examples under the query: the family and the verdict once there (FON-28). */
+  examples: string;
   /** The filters a link of the bank's table brought. */
   preset: SelectionFilters | null;
   onClose: () => void;
@@ -491,7 +517,7 @@ function SelectionDialog({
                   Tester
                 </Button>
               </div>
-              <span className="ui-field-hint">Exemples : grouping:matinale · genres:Jazz</span>
+              <span className="ui-field-hint">{examples}</span>
             </div>
             {/* A refusal was about the query before: it goes once the query changes. */}
             {test && !(test.error && stale) ? (

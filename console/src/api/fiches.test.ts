@@ -3,6 +3,10 @@ import test from "node:test";
 import {
   NO_FILTERS,
   bankLabel,
+  fichesErrorText,
+  eraseQuestion,
+  queryExamples,
+  verdictShare,
   chunks,
   decidedMessage,
   propositionStatus,
@@ -206,4 +210,57 @@ test("un lot ne prend que les propositions sûres à relire, par gestes de 500",
   );
   assert.deepEqual(chunks([1, 2, 3, 4, 5], 2), [[1, 2], [3, 4], [5]]);
   assert.equal(chunks(Array.from({ length: 1001 }, (_, i) => i)).length, 3);
+});
+
+test("la part des « oui » se lit parmi les verdicts connus, en titres", () => {
+  assert.equal(verdictShare(undefined), "");
+  assert.equal(verdictShare({ oui: 0, mixte: 0, non: 0 }), "");
+  assert.equal(
+    verdictShare({ oui: 140, mixte: 30, non: 170 }),
+    "Verdict connu pour 340 titres : 140 « oui » (41 %), 30 mixtes, 170 « non ».",
+  );
+  assert.equal(verdictShare({ oui: 1 }), "Verdict connu pour 1 titre : 1 « oui » (100 %).");
+});
+
+test("l'aide de la requête dit la famille, et le verdict s'il est allumé", () => {
+  assert.equal(queryExamples(false, true), "Exemples : grouping:matinale · genres:Jazz");
+  assert.equal(queryExamples(true, false), "Exemples : grouping:matinale · genres:Jazz · famille:jazz");
+  assert.equal(queryExamples(true, true), "Exemples : grouping:matinale · genres:Jazz · famille:jazz · fmg:oui");
+});
+
+test("effacer les verdicts nomme d'abord les sélections qui se videront", () => {
+  assert.equal(
+    eraseQuestion({ titles: 2, waiting: 1, selections: [{ id: 1, name: "Femmes", query: "fmg:oui", count: 12 }] }),
+    "La sélection « Femmes » (12 titres) lit le verdict : elle se videra. Le verdict et sa source s'effacent de 2 titres de la bibliothèque, et 1 verdict en attente part. Les fichiers ne changent pas. Un titre cherché de nouveau, verdict allumé, retrouvera sa proposition.",
+  );
+  assert.match(
+    eraseQuestion({
+      titles: 1,
+      waiting: 0,
+      selections: [
+        { id: 1, name: "Femmes", query: "fmg:oui", count: 1 },
+        { id: 2, name: "Mixte", query: "fmg:mixte", count: null },
+      ],
+    }),
+    /^Ces sélections lisent le verdict, et se videront : « Femmes » \(1 titre\), « Mixte »\./,
+  );
+  assert.match(eraseQuestion({ titles: 0, waiting: 0, selections: [] }), /^Aucune sélection ne lit le verdict\./);
+});
+
+test("une erreur se dit en clair, jamais par le nom technique du client", () => {
+  const named = (name: string, message: string) => Object.assign(new Error(message), { name });
+  assert.equal(
+    fichesErrorText(named("ApiUnavailableError", "unavailable"), "x"),
+    "L’automate ne répond pas. Réessaie dans un instant.",
+  );
+  assert.equal(fichesErrorText(named("ApiAuthError", "auth"), "x"), "Session expirée : reconnecte-toi.");
+  assert.equal(
+    fichesErrorText(named("ApiForbiddenError", "forbidden"), "x", "Réservé à un admin."),
+    "Réservé à un admin.",
+  );
+  assert.equal(
+    fichesErrorText(named("ApiRequestError", "Ce titre n'a pas encore de fiche."), "x"),
+    "Ce titre n'a pas encore de fiche.",
+  );
+  assert.equal(fichesErrorText("rien", "Réessaie."), "Réessaie.");
 });
