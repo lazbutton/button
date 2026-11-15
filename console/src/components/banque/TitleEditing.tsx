@@ -167,7 +167,7 @@ export function EditTitlesDialog({
   titles: BankTitle[];
   onClose: () => void;
   onDone: (outcome: EditOutcome) => void;
-  /** Fields checked and filled already: what titles dropped on a group take (FON-75). */
+  /** Fields checked and filled already: what titles dropped on a group take (FON-75), or « Écrire partout » of the bank's health (FON-72). */
   preset?: Partial<Record<FicheField, string>>;
 }) {
   const base = useId();
