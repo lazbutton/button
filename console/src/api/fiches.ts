@@ -169,14 +169,22 @@ export function levelChips(page: Pick<FichesPage, "levels" | "statuses">): Fiche
   return chips;
 }
 
-export type FichesFilters = { level: string; field: string; bank: string; state: string; q: string };
+export type FichesFilters = {
+  level: string;
+  field: string;
+  bank: string;
+  state: string;
+  q: string;
+  /** Un groupe de propositions sûres, par nature de changement (FON-79). */
+  nature?: string;
+};
 
 export const NO_FILTERS: FichesFilters = { level: "", field: "", bank: "", state: "", q: "" };
 
 /** La requête de la page, ses filtres et la suite. */
 export function fichesQuery(filters: FichesFilters, offset?: number | null): string {
   const params = new URLSearchParams();
-  for (const name of ["level", "field", "bank", "state"] as const) {
+  for (const name of ["level", "field", "bank", "state", "nature"] as const) {
     if (filters[name]) params.set(name, filters[name]);
   }
   const q = filters.q.trim();
@@ -402,6 +410,43 @@ export function chunks<T>(values: T[], size = MAX_DECISIONS): T[][] {
   const out: T[][] = [];
   for (let index = 0; index < values.length; index += size) out.push(values.slice(index, index + size));
   return out;
+}
+
+// -- par nature de changement (FON-79) ----------------------------------------------
+
+export const NATURES_JSON = "/fiches/natures.json";
+
+export type NatureExample = {
+  id: number;
+  beets_id: number;
+  title: string;
+  artist: string;
+  field: string;
+  before: string;
+  value: string;
+};
+
+/** Les propositions sûres de toute la banque qui changent la même chose. */
+export type NatureGroup = {
+  nature: string;
+  label: string;
+  /** Ses propositions, et les titres qu'elles touchent. */
+  count: number;
+  titles: number;
+  ids: number[];
+  /** Dix, prises au hasard. */
+  examples: NatureExample[];
+};
+
+/** « 1 240 propositions, sur 980 titres » */
+export function natureCount(group: Pick<NatureGroup, "count" | "titles">): string {
+  const propositions = counted(group.count, "proposition", "propositions");
+  return group.titles === group.count ? propositions : `${propositions}, sur ${counted(group.titles, "titre", "titres")}`;
+}
+
+/** Combien de gestes un groupe demande au moteur, qui en prend 500 à la fois. */
+export function lotsOf(count: number, size = MAX_DECISIONS): number {
+  return Math.ceil(count / size);
 }
 
 // -- familles et verdict (FON-28) ---------------------------------------------------
