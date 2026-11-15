@@ -2378,6 +2378,42 @@
   font-weight: 560;
 }
 
+/* Ce que la banque sait d'un fichier envoyé (FON-82) : un doublon, ce qu'il est. */
+.banque-file-notes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.15rem 0.75rem;
+  margin-top: 0.15rem;
+  font-size: 0.75rem;
+}
+
+.banque-file-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  min-width: 0;
+  color: var(--app-text-muted);
+}
+
+.banque-file-note.is-warn {
+  color: var(--app-warn-ink);
+  font-weight: 560;
+}
+
+.banque-file-note.is-found {
+  color: var(--app-ok-ink);
+}
+
+.banque-file-note > svg {
+  flex: 0 0 auto;
+}
+
+.banque-send-note {
+  margin: 0.5rem 0 0;
+  color: var(--app-text-muted);
+  font-size: 0.8rem;
+}
+
 .banque-file .banque-progress {
   margin-top: 0.2rem;
 }
