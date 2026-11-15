@@ -4,12 +4,12 @@ Les mots de la radio et ceux du code. Quand la console et le code n'emploient pa
 
 | Mot | Sens | Dans le code |
 |---|---|---|
+| À ranger | La vue de **Sons → Banque** qui dit ce qui reste à faire dans la banque, une tâche par chose à corriger, chacune avec son geste ; le nom des fichiers y est facultatif. Elle a remplacé les vues Arrivées et Santé | `BankTasks.tsx`, `api/bankTasks.ts`, `GET /media/health.json` |
 | Admin | Le rôle qui gère les comptes et les réglages | droit `admin` |
 | Agenda | Les émissions à une date précise : un set enregistré ou un direct | `agenda_diffusions`, `domain/agenda.py` |
 | Ancre | Une position d'horloge calée sur une minute. Dure : elle coupe le titre en cours. Molle : elle attend sa fin | `Clock`, positions ancrées |
 | Animateur | Le rôle qui tient l'antenne depuis le pupitre. L'interrupteur « Peut passer en direct » lui permet aussi de brancher un encodeur | droits `live`, puis `stream` |
 | Antenne | Ce qui part vers les auditeurs. Aussi la page principale de la console | `AntennePage.tsx`, `/antenne/state.json` |
-| Arrivées | La vue de **Sons → Banque** qui montre les titres arrivés depuis 30 jours, à ranger à mesure | `GET /media/arrivals.json`, `services/bank_arrivals.py` |
 | Auto-DJ | La musique que le moteur choisit seul dans la banque, selon les catégories | file Liquidsoap `autodj` |
 | Bac | Le mot de la console pour un cart : des sons joués selon un mode, en liste, en boucle, au hasard, ou un relais | `Cart` |
 | Bac ouvert | Un bac dont le dossier existe dans le dossier `Bacs` de Dropbox, sous son numéro et son titre : un son qu'on y dépose entre dans le bac | `cloud-sync`, `deploy/scripts/cloud-sync.sh` |
@@ -56,7 +56,7 @@ Les mots de la radio et ceux du code. Quand la console et le code n'emploient pa
 | Relais | Le flux d'une autre radio, repris à l'antenne | cart en mode `relay` |
 | Retour arrière | Revenir à la version d'avant une mise à jour : ses fichiers, ses images, et la base d'avant la mise à jour si le schéma a migré. `station update` le fait seule quand la mise à jour échoue, `station rollback` à la main | `update_undo`, `cmd_rollback`, `updates.log` |
 | Rotation | La musique de tous les jours | `10-rotation` |
-| Santé de la banque | La vue de **Sons → Banque** qui compte ce qui cloche : artistes écrits de plusieurs façons, fichiers mal nommés, fiches incomplètes, doublons | `GET /media/health.json`, `services/bank_health.py` |
+| Santé de la banque | Le compte de ce qui cloche dans la banque : artistes écrits de plusieurs façons, numéros de piste pris pour artiste, doublons, fichiers hors de la bibliothèque, noms de fichiers. La vue **À ranger** en fait des tâches | `GET /media/health.json`, `services/bank_health.py` |
 | Scheduler | Le processus du moteur qui décide quoi jouer, port 6822 | `scheduler_app.py`, `scheduler/` |
 | Set | Une émission enregistrée de l'Agenda, souvent déposée par un invité | `kind:"set"` |
 | Station | Une radio installée : sa machine, ses données, sa marque | — |
