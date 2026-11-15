@@ -41,6 +41,11 @@ MISSING = {
     "album": "la fiche n'a pas d'album",
     "title": "la fiche n'a pas de titre",
 }
+# A track number taken for the artist: promote-inbox.sh cuts a name at its
+# first « - », and « 01 - Ana - Fado.mp3 » got the artist « 01 ». No name is
+# built on it: « 01 - 01 - Ana - Fado.mp3 » would be worse than the file's own.
+_TRACK_NUMBER = re.compile(r"[0-9]{1,2}")
+NUMBERED = "l'artiste de la fiche est un numéro de piste"
 
 
 def clean(value: object) -> str:
@@ -66,6 +71,26 @@ def fit(stem: str, suffix: str = "", limit: int = NAME_MAX) -> str:
     return (stem or _REPLACEMENT) + suffix
 
 
+def track_number(value: object) -> bool:
+    """An artist that is only a track number, « 01 » or « 7 »."""
+    return bool(_TRACK_NUMBER.fullmatch(clean(value)))
+
+
+def fields_after_number(path: str) -> dict | None:
+    """The artist and the title a file's name gives after its track number, cut
+    as promote-inbox.sh cuts it: « 01 - Ana - Fado.mp3 » gives Ana and Fado.
+    None for a name that starts with no track number, or gives no artist."""
+    stem = unicodedata.normalize("NFC", PurePosixPath(path).stem)
+    number, cut, rest = stem.partition(SEPARATOR)
+    if not cut or not track_number(number):
+        return None
+    artist, cut, title = rest.partition(SEPARATOR)
+    artist, title = " ".join(artist.split()), " ".join(title.split())
+    if not cut or not artist or not title or track_number(artist):
+        return None
+    return {"artist": artist, "title": title}
+
+
 def file_name(fields: dict, model: str, suffix: str) -> tuple[str | None, str]:
     """The file's name after its fiche, or why there is none."""
     keys = MODELS.get(model)
@@ -76,6 +101,8 @@ def file_name(fields: dict, model: str, suffix: str) -> tuple[str | None, str]:
         value = clean(fields.get(key))
         if not value:
             return None, MISSING[key]
+        if key == "artist" and track_number(value):
+            return None, NUMBERED
         values.append(value)
     suffix = unicodedata.normalize("NFC", suffix)
     return fit(SEPARATOR.join(values), suffix), ""
@@ -101,6 +128,8 @@ def renamed(
         artist = clean(fields.get("artist"))
         if not artist:
             return None, MISSING["artist"]
+        if track_number(artist):
+            return None, NUMBERED
         folder = (*parts[:shelf], fit(artist))
     else:
         folder = parts[:-1]
