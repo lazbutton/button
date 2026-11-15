@@ -2681,16 +2681,6 @@
   font-size: 0.64rem;
 }
 
-.banque-subfolder {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.bacs-artist > span + .banque-subfolder::before {
-  content: "· ";
-}
-
 .banque-more {
   display: flex;
   justify-content: center;

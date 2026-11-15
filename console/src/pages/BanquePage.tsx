@@ -3,7 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { useAccount } from "../api/AccountContext";
 import { BankArrivalsView } from "../components/banque/BankArrivals";
 import { BankHealthView } from "../components/banque/BankHealth";
-import { BankContent } from "../components/banque/BankContent";
+import { BankTable } from "../components/banque/BankTable";
 import { StationFolder } from "../components/banque/StationFolder";
 import { ReviewView } from "../components/fiches/ReviewView";
 import { ImporterPage, presetDestination } from "./ImporterPage";
@@ -82,7 +82,7 @@ export function BanquePage() {
       ) : vue === "sante" ? (
         <BankHealthView onOpenTable={openTable} />
       ) : (
-        <BankContent
+        <BankTable
           onAdd={(id) => {
             presetDestination(id);
             open("ajouter");
