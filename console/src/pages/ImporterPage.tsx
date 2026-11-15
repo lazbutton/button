@@ -36,6 +36,8 @@ import {
 } from "../api/soundsView";
 import { createBank } from "../api/banks";
 import { useAccount } from "../api/AccountContext";
+import { uploadKey, uploadNotes, type UploadNote } from "../api/uploadReport";
+import { useUploadReport } from "../components/banque/useUploadReport";
 import { CreateBankDialog } from "../components/banque/CreateBankDialog";
 import { DestinationPicker } from "../components/banque/DestinationPicker";
 import { StationFolder } from "../components/banque/StationFolder";
@@ -161,7 +163,7 @@ function useInbox() {
 
 export function ImporterPage() {
   const uppy = bankUppy();
-  const { isAdmin } = useAccount();
+  const { isAdmin, account } = useAccount();
   const files = useUppyState(uppy, (state) => state.files);
   const totalProgress = useUppyState(uppy, (state) => state.totalProgress);
   const { status, problem, loadedAt, loading, load } = useInbox();
@@ -188,6 +190,22 @@ export function ImporterPage() {
   // A bank gone from the disk falls back to rotation rather than to a destination the catalogue refuses.
   const destinationInfo = destinations.find((item) => item.id === destination) ?? destinations[0];
   const labelOf = (id: string | null | undefined) => destinationLabel(destinations, id);
+  // FON-82 : ce que la banque sait de chaque fichier envoyé, le rangement ouvert, pour qui lit les fiches.
+  const readsFiches =
+    account?.features?.bank_tidy === true && (isAdmin || account?.permissions.autodj === true);
+  const sent = useMemo(
+    () =>
+      list
+        .filter((_, index) => states[index] === "done")
+        .map((file) => ({ dest: String(file.meta.destination || ""), name: file.name ?? "" }))
+        .filter((one) => one.dest && one.name),
+    [list, states],
+  );
+  const uploads = useUploadReport(sent, readsFiches);
+  const notesOf = (file: BankFile): UploadNote[] => {
+    const report = uploads.reports[uploadKey(String(file.meta.destination || ""), file.name ?? "")];
+    return report ? uploadNotes(report, uploads.fichesOn, (id) => labelOf(id)) : [];
+  };
 
   useUppyEvent(uppy, "complete", (result) => {
     void load();
@@ -426,12 +444,18 @@ export function ImporterPage() {
                     file={file}
                     state={states[index]}
                     destination={labelOf(file.meta.destination)}
+                    notes={states[index] === "done" ? notesOf(file) : []}
                     onPause={() => uppy.pauseResume(file.id)}
                     onRetry={() => void uppy.retryUpload(file.id)}
                     onRemove={() => uppy.removeFile(file.id)}
                   />
                 ))}
               </ul>
+              {uploads.problem ? (
+                <p className="banque-send-note" role="status">
+                  {uploads.problem}
+                </p>
+              ) : null}
               <footer className="banque-send-foot">
                 <p className="banque-send-summary" aria-live="polite">
                   {active ? (
@@ -562,6 +586,7 @@ function QueueRow({
   file,
   state,
   destination,
+  notes = [],
   onPause,
   onRetry,
   onRemove,
@@ -569,6 +594,8 @@ function QueueRow({
   file: BankFile;
   state: FileState;
   destination: string;
+  /** Ce que la banque sait du fichier envoyé (FON-82) : un doublon, ce qu'il est. */
+  notes?: UploadNote[];
   onPause: () => void;
   onRetry: () => void;
   onRemove: () => void;
@@ -612,6 +639,17 @@ function QueueRow({
           </span>
           {reason ? <span className="banque-file-reason">{reason}</span> : null}
         </span>
+        {notes.length ? (
+          <span className="banque-file-notes" aria-live="polite">
+            {notes.map((note) => (
+              <span key={note.text} className={`banque-file-note is-${note.tone}`}>
+                {note.tone === "warn" ? <AlertTriangle size={13} aria-hidden="true" /> : null}
+                {note.tone === "found" ? <Check size={13} aria-hidden="true" /> : null}
+                {note.text}
+              </span>
+            ))}
+          </span>
+        ) : null}
         {state === "uploading" || state === "paused" ? (
           <span
             className="banque-progress"
