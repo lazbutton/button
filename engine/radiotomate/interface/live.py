@@ -240,6 +240,7 @@ async def live_json():
     dirty = await attach_live_emission(g.dbsession, snapshot)
     await attach_live_carts(g.dbsession, snapshot)
     await _attach_listen_link(g.dbsession, snapshot)
+    await _attach_cover(g.dbsession, snapshot)
     if dirty:
         await g.dbsession.commit()
     return jsonify(snapshot)
@@ -280,6 +281,18 @@ async def _attach_listen_link(session, snapshot: dict) -> None:
         await attach_to_live(session, snapshot)
     except Exception:
         _log.exception("listen link: could not read the link of the track on air")
+
+
+async def _attach_cover(session, snapshot: dict) -> None:
+    """The cover of the title on air (FON-83), when the station shows them. A fault
+    here leaves the snapshot as it was."""
+    try:
+        from radiotomate.beets import BeetsIntegration
+        from radiotomate.services.fiche_covers import attach_cover
+
+        await attach_cover(session, snapshot, BeetsIntegration.get().id_at)
+    except Exception:
+        _log.exception("covers: could not read the cover of the track on air")
 
 
 @blueprint.delete("/live")

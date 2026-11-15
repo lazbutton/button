@@ -105,6 +105,7 @@ async def test_switch_off_keeps_the_table_closed(
         "bank_removals": False,
         "station_tags": False,
         "title_renames": False,
+        "fiche_covers": False,
     }
 
 
@@ -133,6 +134,8 @@ async def test_a_row_says_everything_the_table_shows(
         "bank_removals": True,
         "station_tags": True,
         "title_renames": True,
+        # FON-83 : les pochettes ont leur propre réglage, éteint quand il manque.
+        "fiche_covers": False,
     }
     payload = await _titles(client, "?q=dune")
     assert payload["total"] == len(TITLES)

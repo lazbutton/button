@@ -471,6 +471,24 @@
   padding-right: 2.6rem;
 }
 
+/* La pochette du titre (FON-83), à gauche du cadre ; décorative, le lien la recouvre. */
+.tb-now[data-cover="true"] {
+  padding-left: 2.8rem;
+}
+
+.tb-now-cover {
+  position: absolute;
+  top: 50%;
+  left: 0.4rem;
+  width: 2rem;
+  height: 2rem;
+  border-radius: var(--app-radius-sm);
+  background: var(--app-surface-3);
+  object-fit: cover;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
 .tb-now-listen {
   position: absolute;
   z-index: 2;
@@ -821,6 +839,15 @@
 
   .tb-now {
     padding-inline: 0.35rem;
+  }
+
+  /* La pochette laisse sa place au titre. */
+  .tb-now-cover {
+    display: none;
+  }
+
+  .tb-now[data-cover="true"] {
+    padding-left: 0.35rem;
   }
 }
 

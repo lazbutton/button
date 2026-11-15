@@ -28,6 +28,7 @@ import { usePreview } from "../../lib/usePreview";
 import { AppToast, useAppToast } from "../../ui/AppToast";
 import { ErrorState, LoadingState } from "../../ui/DataState";
 import { EmptyState } from "../../ui/EmptyState";
+import { Cover } from "./Cover";
 import "../../styles/pages/fiches.css";
 
 // Radix ne prend pas une valeur vide pour un choix de liste.
@@ -401,6 +402,7 @@ function FicheCard({ detail }: { detail: FicheDetail }) {
     <div className="fiches-detail">
       {evidence ? (
         <section className="fiches-evidence" aria-label="Ce que la recherche a trouvé">
+          <Cover url={evidence.cover} album={evidence.album} />
           <p className="fiches-evidence-head">
             Trouvé sur {evidence.found_at || fiche.source || "une source"}
             {evidence.url ? (

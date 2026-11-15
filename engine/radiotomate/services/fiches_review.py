@@ -22,6 +22,7 @@ from sqlalchemy.orm import selectinload
 
 from radiotomate.domain.agenda import iso_paris
 from radiotomate.domain.errors import DomainNotFound, DomainValidationError
+from radiotomate.fiches.covers import cover_of
 from radiotomate.fiches.evidence import from_json
 from radiotomate.fiches.proposals import Track, build_row
 from radiotomate.models import Fiche
@@ -275,8 +276,9 @@ def _track(item: Any) -> Track:
     )
 
 
-def _readable(fiche: Any, track: Track) -> dict | None:
-    """What the sources said of a title, as the rules read it."""
+def _readable(fiche: Any, track: Track, *, covers: bool = False) -> dict | None:
+    """What the sources said of a title, as the rules read it. `covers`: the link
+    of its cover too (FON-83), when the station shows them."""
     if not fiche.evidence:
         return None
     result, wikidata = from_json(fiche.evidence)
@@ -292,11 +294,15 @@ def _readable(fiche: Any, track: Track) -> dict | None:
         "genres": row.genres,
         "year_source": row.year_source,
         "doubt": result.doubt,
+        "cover": cover_of(result) if covers else None,
     }
 
 
-async def review_detail(session: ormSession, beets_id: int, item: Any) -> dict:
-    """One title: its fiche, its propositions and its evidence."""
+async def review_detail(
+    session: ormSession, beets_id: int, item: Any, *, covers: bool = False
+) -> dict:
+    """One title: its fiche, its propositions and its evidence. `covers`: with the
+    link of its cover, when the station shows them (FON-83)."""
     fiche = await session.scalar(
         select(Fiche)
         .where(Fiche.beets_id == beets_id)
@@ -338,7 +344,7 @@ async def review_detail(session: ormSession, beets_id: int, item: Any) -> dict:
             "next_at": iso_paris(_utc(fiche.next_at)),
         },
         "propositions": [_proposition(one) for one in fiche.propositions],
-        "evidence": _readable(fiche, track),
+        "evidence": _readable(fiche, track, covers=covers),
         "listen": f"/autodj/beets/{beets_id}",
     }
 

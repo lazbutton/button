@@ -16,6 +16,8 @@ export type Account = {
     /** FON-74: the table gives the station's tags. */
     station_tags?: boolean;
     title_renames?: boolean;
+    /** FON-83: the covers of the titles found, by their link. */
+    fiche_covers?: boolean;
   };
 };
 

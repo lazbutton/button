@@ -6,6 +6,7 @@ from radiotomate.interface.json_util import read_json_object
 from radiotomate.services.bank_moves import moves_on
 from radiotomate.services.bank_removals import removals_on
 from radiotomate.services.bank_titles import bank_tidy_enabled
+from radiotomate.services.fiches import covers_on
 from radiotomate.services.title_edits import title_edits_enabled
 from radiotomate.services.title_renames import renames_on
 
@@ -32,6 +33,8 @@ async def account_json():
                 "station_tags": await bank_tidy_enabled(g.dbsession),
                 # FON-68: files renamed after their fiche.
                 "title_renames": await renames_on(g.dbsession),
+                # FON-83: the covers of the titles found, by their link.
+                "fiche_covers": await covers_on(g.dbsession),
             },
         },
     )
