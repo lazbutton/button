@@ -3727,6 +3727,109 @@ button.banque-tag:focus-visible {
   min-height: 2.5rem;
 }
 
+/* ---------- The arrivals of the bank (FON-81) ---------- */
+
+.banque-arrivals {
+  display: grid;
+  gap: 1rem;
+  max-width: 60rem;
+}
+
+.banque-arrival-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.banque-arrival-actions .rt-Button,
+.banque-arrival-decide .rt-Button {
+  min-height: 2.5rem;
+}
+
+.banque-arrival-list {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  list-style: none;
+}
+
+.banque-arrival {
+  display: grid;
+  gap: 0.4rem;
+  padding: 0.75rem 1rem;
+  border-top: 1px solid var(--app-border);
+}
+
+.banque-arrival:first-child {
+  border-top: 0;
+}
+
+.banque-arrival-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.banque-arrival-head > div:first-child {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.banque-arrival-head strong {
+  color: var(--app-text);
+  font-size: 0.88rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.banque-arrival-head span,
+.banque-arrival-note,
+.banque-arrival-name {
+  margin: 0;
+  color: var(--app-text-muted);
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
+.banque-arrival-propositions {
+  display: grid;
+  gap: 0.3rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--app-text);
+  font-size: 0.8rem;
+}
+
+.banque-arrival-propositions li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  overflow-wrap: anywhere;
+}
+
+.banque-arrival-decide {
+  display: inline-flex;
+  gap: 0.4rem;
+}
+
+.banque-arrival-twin {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0;
+  color: var(--app-warn-ink);
+  font-size: 0.8rem;
+}
+
 /* ---------- Narrow screens ---------- */
 
 @container bacs (max-width: 699px) {

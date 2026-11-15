@@ -17,6 +17,7 @@ export type Account = {
     station_tags?: boolean;
     title_renames?: boolean;
     bank_health?: boolean;
+    bank_arrivals?: boolean;
   };
 };
 
