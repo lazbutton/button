@@ -1,40 +1,40 @@
-import { SegmentedControl } from "@radix-ui/themes";
+import { Button, SegmentedControl } from "@radix-ui/themes";
+import { ArrowLeft } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import { useAccount } from "../api/AccountContext";
-import { BankArrivalsView } from "../components/banque/BankArrivals";
-import { BankHealthView } from "../components/banque/BankHealth";
+import { tasksCount } from "../api/bankTasks";
 import { BankTable } from "../components/banque/BankTable";
+import { BankTasksView, useBankTasks } from "../components/banque/BankTasks";
 import { StationFolder } from "../components/banque/StationFolder";
 import { ReviewView } from "../components/fiches/ReviewView";
 import { ImporterPage, presetDestination } from "./ImporterPage";
 
-type Vue = "contenu" | "ajouter" | "arrivees" | "relire" | "sante";
+type Vue = "contenu" | "ajouter" | "a-ranger" | "relire";
 
 /**
- * Sons → Banque : ce qu'elle contient, l'envoi de fichiers, les arrivées
- * (FON-81), les fiches à relire (FON-26) ou sa santé (FON-72), une fois le
- * rangement de la banque ouvert. La vue ouverte reste dans l'adresse
+ * Sons → Banque : ce qu'elle contient, l'envoi de fichiers, et ce qui reste à
+ * ranger (FON-92), une fois le rangement de la banque ouvert. « À ranger »
+ * remplace les vues Arrivées et Santé, et ouvre la relecture des fiches
+ * trouvées en ligne (FON-26). La vue ouverte reste dans l'adresse
  * (`?vue=ajouter`), comme l'onglet.
  */
 export function BanquePage() {
   const [params, setParams] = useSearchParams();
   const { account, isAdmin } = useAccount();
-  // FON-26 : les fiches à relire, pour le Programmateur, une fois le rangement de la banque ouvert.
-  const review = account?.features?.bank_tidy === true && (isAdmin || account.permissions.autodj === true);
-  const health = account?.features?.bank_health === true;
-  // FON-81 : les arrivées, pour le Programmateur.
-  const arrivals = account?.features?.bank_arrivals === true && (isAdmin || account.permissions.autodj === true);
+  // Ce qui reste à ranger, et la relecture, pour le Programmateur, une fois le rangement de la banque ouvert.
+  const tidy = account?.features?.bank_tidy === true && (isAdmin || account.permissions.autodj === true);
+  const tasks = useBankTasks(tidy, account?.features?.bank_health === true);
+  const count = tasksCount(tasks.tasks);
   const asked = params.get("vue");
   const vue: Vue =
     asked === "ajouter"
       ? "ajouter"
-      : asked === "arrivees" && arrivals
-        ? "arrivees"
-        : asked === "relire" && review
-          ? "relire"
-          : asked === "sante" && health
-            ? "sante"
-            : "contenu";
+      : asked === "relire" && tidy
+        ? "relire"
+        : // Arrivées et Santé, d'avant FON-92 : leurs adresses ouvrent « À ranger ».
+          (asked === "a-ranger" || asked === "arrivees" || asked === "sante") && tidy
+          ? "a-ranger"
+          : "contenu";
 
   const open = (next: Vue) => {
     const updated = new URLSearchParams(params);
@@ -43,10 +43,10 @@ export function BanquePage() {
     setParams(updated, { replace: true });
   };
 
-  // From the Santé view, the table ranged or searched as it says.
+  // From « À ranger », the table ranged, sorted or searched as a task says.
   const openTable = (table: Record<string, string>) => {
     const updated = new URLSearchParams(params);
-    for (const key of ["vue", "ranger", "groupe", "collection", "q"]) updated.delete(key);
+    for (const key of ["vue", "ranger", "groupe", "collection", "tri", "ordre", "q"]) updated.delete(key);
     for (const [key, value] of Object.entries(table)) updated.set(key, value);
     setParams(updated);
   };
@@ -56,15 +56,19 @@ export function BanquePage() {
       <div className="banque-views">
         <SegmentedControl.Root
           size="2"
-          value={vue}
+          // La relecture s'ouvre depuis « À ranger », qui reste l'onglet choisi.
+          value={vue === "relire" ? "a-ranger" : vue}
           aria-label="Vue de la banque"
           onValueChange={(value) => open(value as Vue)}
         >
           <SegmentedControl.Item value="contenu">Contenu</SegmentedControl.Item>
           <SegmentedControl.Item value="ajouter">Ajouter</SegmentedControl.Item>
-          {arrivals ? <SegmentedControl.Item value="arrivees">Arrivées</SegmentedControl.Item> : null}
-          {review ? <SegmentedControl.Item value="relire">À relire</SegmentedControl.Item> : null}
-          {health ? <SegmentedControl.Item value="sante">Santé</SegmentedControl.Item> : null}
+          {tidy ? (
+            <SegmentedControl.Item value="a-ranger">
+              À ranger
+              {count ? <span className="banque-views-count"> {count}</span> : null}
+            </SegmentedControl.Item>
+          ) : null}
         </SegmentedControl.Root>
         {/* The upload view has it in its own header. */}
         {vue === "contenu" ? (
@@ -75,12 +79,16 @@ export function BanquePage() {
       </div>
       {vue === "ajouter" ? (
         <ImporterPage />
-      ) : vue === "arrivees" ? (
-        <BankArrivalsView />
+      ) : vue === "a-ranger" ? (
+        <BankTasksView data={tasks} onOpenTable={openTable} onReview={() => open("relire")} />
       ) : vue === "relire" ? (
-        <ReviewView />
-      ) : vue === "sante" ? (
-        <BankHealthView onOpenTable={openTable} />
+        <>
+          <Button size="2" variant="ghost" color="gray" className="banque-back" onClick={() => open("a-ranger")}>
+            <ArrowLeft className="ui-button-icon" />
+            Retour à « À ranger »
+          </Button>
+          <ReviewView />
+        </>
       ) : (
         <BankTable
           onAdd={(id) => {
