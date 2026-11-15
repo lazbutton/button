@@ -52,6 +52,9 @@ FILTERS = ("collection", "artist", "famille", "album", "genre", "year", "etiquet
 # What the table ranges by; the genre is no ranking, but a selection picks it (FON-73).
 RANKINGS = ("collection", "artist", "famille", "album", "etiquette")
 FACETS = (*RANKINGS, "genre")
+# The verdict (FON-80), a column, a filter and a ranking only once switched on.
+VERDICT = "fmg"
+VERDICT_LABELS = {"oui": "Oui", "mixte": "Mixte", "non": "Non"}
 PAGE = 100
 MAX_PAGE = 500
 # Beets garde les valeurs d'un champ multiple, comme les genres de Beets 2.14,
@@ -132,8 +135,11 @@ def place_of(rel: str) -> tuple[str, str]:
     return zone, ""
 
 
-def title_of(row: tuple, root: str | None = None) -> dict:
-    """One row of the table, from one row of `BeetsIntegration.title_rows`."""
+def title_of(row: tuple, root: str | None = None, *, verdict: bool = False) -> dict:
+    """One row of the table, from one row of `BeetsIntegration.title_rows`.
+
+    The verdict « femme ou minorité de genre » (FON-80) is there only when asked,
+    the switch `features.fiches_fmg` on: switched off, it leaves no trace."""
     beets_id, path, title, artist, album, year, genre, length, famille, *more = row
     rel = bank_rel(path, root)
     zone, collection = place_of(rel)
@@ -162,6 +168,9 @@ def title_of(row: tuple, root: str | None = None) -> dict:
         "collection": collection,
         "path": rel,
     }
+    if verdict:
+        value = _text(more[1] if len(more) > 1 else None)
+        entry["fmg"] = value if value in VERDICT_LABELS else ""
     entry["missing"] = [name for name in FICHE_FIELDS if not entry[name]]
     return entry
 
@@ -181,10 +190,18 @@ class TitleQuery:
     years: tuple[int | None, int | None] = (None, None)
 
     @classmethod
-    def from_args(cls, args: Mapping[str, str]) -> TitleQuery:
-        """A filter given empty takes the titles where that field is empty."""
+    def from_args(cls, args: Mapping[str, str], *, verdict: bool = False) -> TitleQuery:
+        """A filter given empty takes the titles where that field is empty. The
+        verdict sorts, filters and ranges only switched on: off, it is a name the
+        table does not know."""
+        extra = (VERDICT,) if verdict else ()
+        sorts, filters_known, facets_known = (
+            (*SORTS, *extra),
+            (*FILTERS, *extra),
+            (*FACETS, *extra),
+        )
         sort = str(args.get("sort") or "artist")
-        if sort not in SORTS:
+        if sort not in sorts:
             raise DomainValidationError(f"Tri inconnu : {sort}.", field="sort")
         order = str(args.get("order") or "asc")
         if order not in ("asc", "desc"):
@@ -192,13 +209,15 @@ class TitleQuery:
         facets = tuple(
             name for name in str(args.get("facets") or "").split(",") if name.strip()
         )
-        unknown = [name for name in facets if name not in FACETS]
+        unknown = [name for name in facets if name not in facets_known]
         if unknown:
             raise DomainValidationError(
                 f"Facette inconnue : {unknown[0]}.", field="facets"
             )
         filters = {
-            name: " ".join(str(args[name]).split()) for name in FILTERS if name in args
+            name: " ".join(str(args[name]).split())
+            for name in filters_known
+            if name in args
         }
         for name in ("year", "year_from", "year_to"):
             if args.get(name) and not str(args[name]).strip().isdigit():
@@ -259,6 +278,11 @@ def _matches(entry: dict, query: TitleQuery, words: list[str]) -> bool:
 
 def _sort_key(name: str):
     """Empty values go last, whatever the order: they are what is left to fill."""
+    if name == VERDICT:
+        order = list(VERDICT_LABELS)
+        return lambda entry: not entry[name], lambda entry: (
+            order.index(entry[name]) if entry[name] in order else len(order)
+        )
     if name in ("year", "duration"):
         return lambda entry: entry[name] is None, lambda entry: entry[name] or 0
     return lambda entry: not entry[name], lambda entry: fold(_value(entry, name))
@@ -298,6 +322,8 @@ def facet_counts(entries: Iterable[dict], name: str) -> list[dict]:
             "value": labels[key],
             "label": FAMILY_LABELS.get(labels[key], labels[key])
             if name == "famille"
+            else VERDICT_LABELS.get(labels[key], labels[key])
+            if name == VERDICT
             else labels[key],
             "count": count,
         }
@@ -312,13 +338,15 @@ def titles_page(
     query: TitleQuery,
     root: str | None = None,
     carts: Mapping[str, list[dict]] | None = None,
+    *,
+    verdict: bool = False,
 ) -> dict:
     """One page of the table, and the facets it asked for, over the whole bank.
 
     `carts` names, by path below the bank, the carts that play a title without a
     copy (FON-69): the console says so before the title leaves the bank.
     """
-    entries = [title_of(row, root) for row in rows]
+    entries = [title_of(row, root, verdict=verdict) for row in rows]
     for entry in entries:
         entry["carts"] = (carts or {}).get(entry["path"], [])
     words = [word for word in fold(query.q).split() if word]

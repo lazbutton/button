@@ -15,6 +15,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from functools import partial
 from typing import TYPE_CHECKING
 
 from quart import Blueprint, g, jsonify, request
@@ -26,6 +27,7 @@ from radiotomate.domain.agenda import iso_paris
 from radiotomate.models import JournalEntry
 from radiotomate.services.bank_health import bank_health, check_model, require_health
 from radiotomate.services.bank_titles import require_bank_tidy
+from radiotomate.services.fiches import verdict_on
 from radiotomate.services.media_bank import media_root
 
 if TYPE_CHECKING:
@@ -56,7 +58,9 @@ class _Count:
         return self.task is not None and not self.task.done()
 
 
-_counts: dict[str, _Count] = {}
+# One count per model of names, and per state of the verdict (FON-80): switched
+# off, the answer has no trace of it, even counted before.
+_counts: dict[tuple[str, bool], _Count] = {}
 
 
 def _utcnow() -> datetime:
@@ -67,12 +71,19 @@ async def _journal_mark(session: ormSession) -> int:
     return (await session.scalar(select(func.max(JournalEntry.id)))) or 0
 
 
-async def _count(
-    count: _Count, beets: BeetsIntegration, root: Path, model: str, mark: int
+async def _count(  # noqa: PLR0913
+    count: _Count,
+    beets: BeetsIntegration,
+    root: Path,
+    model: str,
+    mark: int,
+    verdict: bool,
 ) -> None:
     try:
         rows = await beets.title_rows()
-        result = await asyncio.to_thread(bank_health, rows, root, model)
+        result = await asyncio.to_thread(
+            partial(bank_health, verdict=verdict), rows, root, model
+        )
     except Exception:
         _log.exception("The bank's health could not be counted")
         count.error = FAILED
@@ -109,13 +120,14 @@ async def health_json():
     await require_bank_tidy(g.dbsession)
     await require_health(g.dbsession)
     model = check_model(request.args.get("model"))
-    count = _counts.setdefault(model, _Count())
+    verdict = await verdict_on(g.dbsession)
+    count = _counts.setdefault((model, verdict), _Count())
     mark = await _journal_mark(g.dbsession)
     asked = request.args.get("refresh") == "1"
     if not count.running and (asked or _stale(count, mark, _utcnow())):
         count.error = None
         count.task = asyncio.create_task(
-            _count(count, BeetsIntegration.get(), media_root(), model, mark)
+            _count(count, BeetsIntegration.get(), media_root(), model, mark, verdict)
         )
     return jsonify(
         {

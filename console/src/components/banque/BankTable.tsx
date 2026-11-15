@@ -48,6 +48,8 @@ import {
   nextSort,
   rankingOf,
   rankingsFor,
+  verdictLabel,
+  withVerdict,
   readState,
   sameAsView,
   stateOfView,
@@ -145,6 +147,8 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
   const canEdit = account?.features?.title_edits === true && (isAdmin || account.permissions.autodj === true);
   // FON-74 : les étiquettes de la station, qu'un moteur plus ancien ne connaît pas.
   const tagsKnown = account?.features?.station_tags === true;
+  // FON-80 : le verdict, colonne et rangement, seulement allumé ; éteint, aucune trace.
+  const verdictKnown = account?.features?.fiches_fmg === true;
   // FON-68 : les fichiers se renomment d'après leur fiche, pour le Programmateur.
   const canRename = account?.features?.title_renames === true && (isAdmin || account.permissions.autodj === true);
   // FON-83 : la pochette d'un titre trouvé, par la fiche, que lit le droit de programmation.
@@ -152,8 +156,8 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
   // FON-69 : des titres de la banque dans un bac, sans copie, pour qui gère les bacs.
   const canCart = tidy && (isAdmin || account?.permissions.carts === true);
   const [params, setParams] = useSearchParams();
-  const state = useMemo(() => readState(params), [params]);
-  const columns = columnsFor(state.columns, tagsKnown);
+  const state = useMemo(() => withVerdict(readState(params), verdictKnown), [params, verdictKnown]);
+  const columns = columnsFor(state.columns, tagsKnown, verdictKnown);
   const [typed, setTyped] = useState(state.q);
   const [page, setPage] = useState<BankTitlesPage | null>(null);
   const [titles, setTitles] = useState<BankTitle[]>([]);
@@ -591,7 +595,7 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
       >
         <RankingList
           ranking={state.ranking}
-          rankings={rankingsFor(tagsKnown)}
+          rankings={rankingsFor(tagsKnown, verdictKnown)}
           groups={rankingGroups}
           total={page?.total ?? null}
           selected={state.group}
@@ -811,7 +815,7 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
                 </span>
                 <ColumnsPicker
                   columns={columns}
-                  known={columnsFor(DEFAULT_COLUMNS, tagsKnown)}
+                  known={columnsFor(DEFAULT_COLUMNS, tagsKnown, verdictKnown)}
                   onChange={(next) => update({ columns: next })}
                 />
                 {views ? (
@@ -1406,6 +1410,12 @@ function TitleRow({
             return (
               <td key={key} className="c-famille">
                 {cell(title.famille_label)}
+              </td>
+            );
+          case "fmg":
+            return (
+              <td key={key} className="c-fmg">
+                {verdictLabel(title.fmg)}
               </td>
             );
           case "duration":

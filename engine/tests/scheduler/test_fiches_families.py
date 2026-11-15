@@ -67,14 +67,15 @@ async def test_the_families_meet_the_selections(
     assert response.status_code == 200, await response.get_data()
     payload = await response.get_json()
     assert payload["library"] == 4
-    assert payload["verdict"] is False
+    # Le verdict éteint, la réponse n'en dit rien (FON-80).
+    assert "verdict" not in payload
     selections = {one["name"]: one for one in payload["selections"]}
     assert selections["Jazz"]["count"] == 2
     assert selections["Jazz"]["families"] == [
         {"value": "jazz", "label": "Jazz", "count": 2}
     ]
     assert selections["Soul"]["count"] == 0
-    assert selections["Jazz"]["reads_verdict"] is False
+    assert "reads_verdict" not in selections["Jazz"]
     families = {one["value"]: one for one in payload["families"]}
     # Dans l'ordre des familles de Hopper, les titres sans famille à la fin.
     assert [one["value"] for one in payload["families"]] == ["jazz", "soul-funk", ""]

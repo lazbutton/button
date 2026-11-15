@@ -20,6 +20,8 @@ export type Account = {
     bank_arrivals?: boolean;
     /** FON-83: the covers of the titles found, by their link. */
     fiche_covers?: boolean;
+    /** FON-80: the verdict in the table; only there switched on. */
+    fiches_fmg?: boolean;
   };
 };
 

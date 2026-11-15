@@ -21,6 +21,7 @@ from radiotomate.services.bank_titles import (
     titles_page,
 )
 from radiotomate.services.beets_query import validate_selection_query
+from radiotomate.services.fiches import verdict_on
 from radiotomate.services.selection_filters import SelectionFilters, selection_query
 
 blueprint = Blueprint("media", __name__)
@@ -29,10 +30,12 @@ blueprint = Blueprint("media", __name__)
 @blueprint.get("/media/titles.json")
 @login_required
 async def titles_json():
-    query = TitleQuery.from_args(request.args)
+    # FON-80 : le verdict, colonne, filtre et rangement, seulement allumé.
+    verdict = await verdict_on(g.dbsession)
+    query = TitleQuery.from_args(request.args, verdict=verdict)
     rows = await BeetsIntegration.get().title_rows()
     carts = await carts_by_title(g.dbsession)
-    return jsonify(titles_page(rows, query, carts=carts))
+    return jsonify(titles_page(rows, query, carts=carts, verdict=verdict))
 
 
 @blueprint.get("/media/views.json")

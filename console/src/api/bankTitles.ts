@@ -32,12 +32,15 @@ export type BankTitle = {
   missing: FicheField[];
   /** The carts that play it without a copy (FON-69); absent from an older engine. */
   carts?: TitleCart[];
+  /** The verdict « femme ou minorité de genre » (FON-80): `oui`, `mixte`, `non` or
+   * empty. Only there while the verdict is switched on. */
+  fmg?: string;
 };
 
 export type FicheField = "title" | "artist" | "album" | "year" | "genre" | "famille";
 export type BankFacet = { value: string; label: string; count: number };
-export type Ranking = "collection" | "artist" | "famille" | "album" | "etiquette";
-export type TitleSort = "title" | "artist" | "album" | "famille" | "genre" | "year" | "duration";
+export type Ranking = "collection" | "artist" | "famille" | "album" | "etiquette" | "fmg";
+export type TitleSort = "title" | "artist" | "album" | "famille" | "genre" | "year" | "duration" | "fmg";
 export type SortOrder = "asc" | "desc";
 
 export type BankTitlesPage = {
@@ -60,6 +63,7 @@ export const RANKINGS: Array<{ id: Ranking; label: string; plural: string; none:
   { id: "famille", label: "Famille", plural: "Familles", none: "Sans famille" },
   { id: "album", label: "Album", plural: "Albums", none: "Sans album" },
   { id: "etiquette", label: "Étiquette", plural: "Étiquettes", none: "Sans étiquette" },
+  { id: "fmg", label: "Verdict", plural: "Verdicts", none: "Sans verdict" },
 ];
 
 export const FIELD_LABELS: Record<FicheField, string> = {
@@ -79,6 +83,7 @@ export const COLUMNS: Array<{ key: ColumnKey; label: string }> = [
   { key: "artist", label: "Artiste" },
   { key: "album", label: "Album" },
   { key: "famille", label: "Famille" },
+  { key: "fmg", label: "Femme ou minorité de genre" },
   { key: "etiquettes", label: "Étiquettes" },
   { key: "genre", label: "Genre" },
   { key: "year", label: "Année" },
@@ -86,7 +91,7 @@ export const COLUMNS: Array<{ key: ColumnKey; label: string }> = [
   { key: "fiche", label: "Fiche" },
 ];
 
-const SORTS = new Set<string>(["title", "artist", "album", "famille", "genre", "year", "duration"]);
+const SORTS = new Set<string>(["title", "artist", "album", "famille", "genre", "year", "duration", "fmg"]);
 
 export function isRanking(value: string | null): value is Ranking {
   return RANKINGS.some((item) => item.id === value);
@@ -98,14 +103,33 @@ export function isSort(value: string | null): value is TitleSort {
 
 /**
  * What an engine before FON-74 does not know: the tags, as a ranking and a column.
- * The console hides them rather than ask for them.
+ * The console hides them rather than ask for them. The verdict (FON-80) is there
+ * only switched on: off, it leaves no trace, not even a ranking or a column.
  */
-export function rankingsFor(tags: boolean): Ranking[] {
-  return RANKINGS.map((item) => item.id).filter((id) => tags || id !== "etiquette");
+export function rankingsFor(tags: boolean, verdict = false): Ranking[] {
+  return RANKINGS.map((item) => item.id).filter((id) => (tags || id !== "etiquette") && (verdict || id !== "fmg"));
 }
 
-export function columnsFor(columns: ColumnKey[], tags: boolean): ColumnKey[] {
-  return tags ? columns : columns.filter((key) => key !== "etiquettes");
+export function columnsFor(columns: ColumnKey[], tags: boolean, verdict = false): ColumnKey[] {
+  return columns.filter((key) => (tags || key !== "etiquettes") && (verdict || key !== "fmg"));
+}
+
+/** A state an address or a view kept, without the verdict when it is switched off. */
+export function withVerdict(state: TableState, verdict: boolean): TableState {
+  if (verdict) return state;
+  const ranking = state.ranking === "fmg" ? DEFAULT_STATE.ranking : state.ranking;
+  const group = state.ranking === "fmg" ? null : state.group;
+  const sort = state.sort === "fmg" ? DEFAULT_STATE.sort : state.sort;
+  const order = state.sort === "fmg" ? DEFAULT_STATE.order : state.order;
+  if (ranking === state.ranking && sort === state.sort) return state;
+  return { ...state, ranking, group, sort, order };
+}
+
+const VERDICT_LABELS: Record<string, string> = { oui: "Oui", mixte: "Mixte", non: "Non" };
+
+/** A verdict as the table shows it: « Oui », « Mixte », « Non », or a dash. */
+export function verdictLabel(value: string | undefined): string {
+  return value ? (VERDICT_LABELS[value] ?? value) : "—";
 }
 
 export function rankingOf(id: Ranking) {
@@ -177,6 +201,7 @@ const COLUMN_REM: Record<ColumnKey, number> = {
   artist: 10,
   album: 9.5,
   famille: 7,
+  fmg: 8,
   etiquettes: 9,
   genre: 7,
   year: 4,
@@ -298,10 +323,7 @@ export function groupsOf(ranking: Ranking, facets: BankFacet[], shelves: BankShe
 }
 
 function fold(text: string): string {
-  return text
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .toLocaleLowerCase("fr");
+  return text.normalize("NFD").replace(/[̀-ͯ]/g, "").toLocaleLowerCase("fr");
 }
 
 /** The groups whose name holds every word typed. */
@@ -328,7 +350,8 @@ export function titlesCount(count: number): string {
 
 /** The Fiche column: complete, or what is left to fill. */
 export function ficheState(missing: FicheField[]): { complete: boolean; label: string; detail: string } {
-  if (!missing.length) return { complete: true, label: "Complète", detail: "Tous les champs de la fiche sont remplis." };
+  if (!missing.length)
+    return { complete: true, label: "Complète", detail: "Tous les champs de la fiche sont remplis." };
   const names = missing.map((field) => FIELD_LABELS[field]);
   const list = names.length > 1 ? `${names.slice(0, -1).join(", ")} et ${names[names.length - 1]}` : names[0];
   return {
