@@ -8,6 +8,7 @@ from radiotomate.services.bank_health import health_on
 from radiotomate.services.bank_moves import moves_on
 from radiotomate.services.bank_removals import removals_on
 from radiotomate.services.bank_titles import bank_tidy_enabled
+from radiotomate.services.fiches import covers_on
 from radiotomate.services.title_edits import title_edits_enabled
 from radiotomate.services.title_renames import renames_on
 
@@ -38,6 +39,8 @@ async def account_json():
                 "bank_health": await health_on(g.dbsession),
                 # FON-81: the titles arrived in 30 days, to tidy as they come.
                 "bank_arrivals": await arrivals_on(g.dbsession),
+                # FON-83: the covers of the titles found, by their link.
+                "fiche_covers": await covers_on(g.dbsession),
             },
         },
     )

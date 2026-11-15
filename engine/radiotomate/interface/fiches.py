@@ -3,7 +3,8 @@
 - `GET /fiches.json` : où en est la recherche, ses comptes, et une page de titres à
   relire, filtrée par niveau, champ, banque, état et texte. Droit `autodj`.
 - `GET /fiches/<beets_id>.json` : un titre, sa fiche, ses propositions et ses
-  preuves lisibles. Droit `autodj`.
+  preuves lisibles, avec le lien de sa pochette quand la station les montre
+  (`features.fiches_covers`, FON-83). Droit `autodj`.
 - `GET /fiches/reglages.json` : les interrupteurs de la recherche et de ses sources,
   et si une clé est posée, jamais sa valeur. Droit `autodj`.
 - `PUT /fiches/reglages.json` : les mêmes, et les clés. Un admin.
@@ -73,7 +74,10 @@ async def fiche_json(beets_id: int):
         return denied
     await require_bank_tidy(g.dbsession)
     item = await BeetsIntegration.get().get_item(beets_id)
-    return jsonify(await fiches_review.review_detail(g.dbsession, beets_id, item))
+    covers = (await read_settings(g.dbsession)).covers
+    return jsonify(
+        await fiches_review.review_detail(g.dbsession, beets_id, item, covers=covers)
+    )
 
 
 @blueprint.get("/fiches/reglages.json")

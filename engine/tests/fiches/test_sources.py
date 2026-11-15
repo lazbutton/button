@@ -921,6 +921,7 @@ def test_bandcamp_reads_a_label_page_the_artist_of_the_title_length_and_album():
         duration_ms=196_870,
         release_date="2024-08-22",
         by_label=True,
+        cover="https://f4.bcbits.com/img/a2340984311_5.jpg",
     )
 
 

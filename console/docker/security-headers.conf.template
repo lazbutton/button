@@ -21,4 +21,8 @@ add_header Permissions-Policy "camera=(), microphone=()" always;
 # - wasm-unsafe-eval : le décodeur MP3 du moniteur est en WebAssembly.
 # - unsafe-inline dans style-src : le verrou de défilement des fenêtres et
 #   des menus de Radix écrit une balise <style>.
-add_header Content-Security-Policy-Report-Only "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; media-src 'self' blob:${CSP_MEDIA_SRC}; connect-src 'self'${CSP_MEDIA_SRC}${CSP_CONNECT_SRC}; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'" always;
+# - img-src : les pochettes des fiches (FON-83), par leur lien, chez Deezer,
+#   Apple Music et Bandcamp. Le moteur ne rend que ces hôtes-là
+#   (COVER_DOMAINS, engine/radiotomate/fiches/covers.py), et seulement quand
+#   la station montre les pochettes : test_covers.py vérifie qu'ils sont ici.
+add_header Content-Security-Policy-Report-Only "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' https://*.dzcdn.net https://*.mzstatic.com https://*.bcbits.com; media-src 'self' blob:${CSP_MEDIA_SRC}; connect-src 'self'${CSP_MEDIA_SRC}${CSP_CONNECT_SRC}; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'" always;

@@ -180,6 +180,7 @@ def _strict_match(
         artist_id=found.artist_id,
         why=variant.why,
         credited=variant.credited,
+        cover=getattr(found, "cover", None),
     )
 
 
@@ -396,6 +397,7 @@ def _from_platform(platform: str, found: Candidate, why: Sequence[str]) -> Match
         why=tuple(why),
         credited=", ".join(found.artists),
         date=found.release_date,
+        cover=found.cover,
     )
 
 
