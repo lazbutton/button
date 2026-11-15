@@ -59,7 +59,7 @@ def test_the_bench_runs_on_made_up_files(tmp_path: Path):
     assert "| déplacer | un titre déplacé garde son identifiant de Beets | ok" in text
     assert "**échec**" not in text
     # chaque geste y est, et les bacs et l'Agenda ont été vérifiés
-    for geste in ("déplacer", "ramener", "annuler", "retirer", "santé"):
+    for geste in ("déplacer", "ramener", "annuler", "retirer", "santé", "arrivées"):
         assert f"| {geste} |" in text
     assert "les bacs gardent leurs sons et l'Agenda ses fichiers" in text
     assert "la boucle suivante ne réimporte rien" in text

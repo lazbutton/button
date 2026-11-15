@@ -1185,6 +1185,143 @@ def geste_sante(banc: Banc) -> None:
     banc.controler("santé", snapshot, {}, {}, set(titles))
 
 
+async def _arrivees(banc: Banc, rels: list[str]) -> dict:
+    """Les arrivées (FON-81) : deux titres reçoivent une fiche sûre, puis
+    « Ranger » accepte ses propositions (FON-27) et les renomme (FON-68), par les
+    services que la console appelle ; puis le journal défait tout."""
+    from radiotomate.models import Fiche, FicheProposition
+    from radiotomate.services import fiches_decisions, journal, title_edits
+    from radiotomate.services.bank_arrivals import arrivals, fiches_of, since
+    from radiotomate.services.bank_lock import BeetsPlace
+    from radiotomate.services.title_renames import plan_renames, rename_titles
+
+    beets = _beets(banc)
+    place = BeetsPlace.of(beets.lib)
+    ids = [row[0] for rel, row in banc.snapshot().items() if rel in rels]
+    db = await _engine_session(banc)
+    seen: dict = {"ids": ids}
+    async with db.session() as session:
+
+        async def count() -> dict:
+            added = await beets.added_since(since())
+            fiches = await fiches_of(session, added)
+            return arrivals(beets._title_rows(), added, fiches, "artiste-titre")
+
+        sure = []
+        for number, beets_id in enumerate(ids, start=1):
+            item = beets.lib.get_item(beets_id)
+            fiche = Fiche(
+                beets_id=beets_id,
+                key=f"banc-{beets_id}",
+                text_key=f"banc-{beets_id}",
+                status="trouvé",
+                level="sûr",
+                rules_version=1,
+            )
+            session.add(fiche)
+            await session.flush()
+            for field, value in (("artist", SPELLING), ("title", f"Estuaire {number}")):
+                proposition = FicheProposition(
+                    fiche_id=fiche.id,
+                    field=field,
+                    before=str(title_edits.current_value(item, field) or ""),
+                    value=value,
+                    level="sûr",
+                )
+                session.add(proposition)
+                await session.flush()
+                sure.append(proposition.id)
+        await session.commit()
+        seen["sure"] = sure
+        seen["avant"] = await count()
+        decided = await fiches_decisions.decide(
+            session, beets, sure, [], username="banc"
+        )
+        seen["acceptées"] = decided
+        plans = await plan_renames(session, place, ids, "artiste-titre")
+        renamed = await rename_titles(session, place, plans, username="banc")
+        seen["renommés"] = {
+            plan.id: plan.to for plan in renamed.titles if plan.state == "renamed"
+        }
+        seen["après"] = await count()
+        seen["noms"] = {
+            beets_id: os.fsdecode(beets.lib.get_item(beets_id).path) for beets_id in ids
+        }
+        seen["artistes"] = {
+            beets_id: MediaFile(beets.lib.get_item(beets_id).path).artist
+            for beets_id in ids
+        }
+        if renamed.entry is not None:
+            await journal.undo(session, beets, renamed.entry, username="banc")
+        if decided.entry is not None:
+            await journal.undo(session, beets, decided.entry, username="banc")
+    await db.after_serving()
+    return seen
+
+
+def geste_arrivees(banc: Banc) -> None:
+    """Les arrivées de la banque (FON-81) : chaque titre arrivé est listé ; deux
+    titres à la fiche sûre se rangent, fiche et nom, puis le journal les rend."""
+    say("Geste : ranger des arrivées, fiche et nom, puis annuler")
+    indexed = banc.snapshot()
+    titles = [rel for rel in banc.choisir(ROTATION, 50) if indexed[rel][-1]][:2]
+    if len(titles) < 2:
+        say("  (pas deux titres avec un titre dans la rotation)")
+        return
+    snapshot = banc.snapshot()
+    seen = asyncio.run(_arrivees(banc, titles))
+    avant, apres = seen["avant"], seen["après"]
+    shelves = [
+        rel
+        for rel in snapshot
+        if rel.startswith(ROTATION + "/")
+        or (rel.startswith(COLLECTIONS + "/") and rel.count("/") >= 2)
+    ]
+    banc.verdict(
+        "arrivées",
+        "chaque titre que la boucle vient d'indexer est une arrivée",
+        avant["total"] == len(shelves),
+        f"{avant['total']} sur {len(shelves)}",
+    )
+    ready = {title["id"] for title in avant["titles"] if title["ready"]}
+    banc.verdict(
+        "arrivées",
+        "une fiche sûre rend le titre prêt à ranger, avec son nom",
+        set(seen["ids"]) <= ready
+        and all(
+            title["to"] and title["to"].startswith(SPELLING + " - Estuaire ")
+            for title in avant["titles"]
+            if title["id"] in seen["ids"]
+        ),
+    )
+    decided = seen["acceptées"]
+    banc.verdict(
+        "arrivées",
+        "« Ranger » écrit la fiche dans chaque fichier",
+        decided.written == len(seen["sure"])
+        and all(artist == SPELLING for artist in seen["artistes"].values()),
+        f"{decided.written} valeurs sur {len(seen['sure'])}",
+    )
+    banc.verdict(
+        "arrivées",
+        "puis donne à chaque fichier le nom de sa fiche",
+        len(seen["renommés"]) == len(seen["ids"])
+        and all(
+            Path(path).name.startswith(SPELLING + " - Estuaire ")
+            for path in seen["noms"].values()
+        ),
+        f"{len(seen['renommés'])} sur {len(seen['ids'])}",
+    )
+    banc.verdict(
+        "arrivées",
+        "un titre rangé n'attend plus rien",
+        not any(
+            title["ready"] for title in apres["titles"] if title["id"] in seen["ids"]
+        ),
+    )
+    banc.controler("arrivées", snapshot, {}, {}, set(titles))
+
+
 GESTES = [
     geste_deplacer,
     geste_revenir,
@@ -1196,6 +1333,7 @@ GESTES = [
     geste_corriger,
     geste_corriger_puis_lire,
     geste_sante,
+    geste_arrivees,
 ]
 
 
