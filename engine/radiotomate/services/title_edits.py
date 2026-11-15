@@ -85,7 +85,7 @@ MAX_TITLES = 500
 # Écrits dans le fichier, puis dans la bibliothèque.
 TAG_FIELDS = ("title", "artist", "album", "year", "genre", "label", "isrc")
 # Dans la bibliothèque seulement : des champs flexibles de Beets.
-FLEX_FIELDS = ("famille", station_tags.FIELD)
+FLEX_FIELDS = ("famille", station_tags.FIELD, "fmg", "fmg_source")
 FIELDS = TAG_FIELDS + FLEX_FIELDS
 # Ce qu'une personne corrige dans la console.
 PERSON_FIELDS = ("title", "artist", "album", "year", "genre", "famille")
@@ -128,7 +128,12 @@ FIELD_LABELS = {
     "isrc": "l'ISRC",
     "famille": "la famille",
     station_tags.FIELD: "les étiquettes",
+    "fmg": "le verdict",
+    "fmg_source": "la source du verdict",
 }
+# Le verdict « femme ou minorité de genre » : seulement ce qu'une proposition écrit
+# (FON-27), jamais « à vérifier ».
+VERDICTS = frozenset({"oui", "mixte", "non"})
 
 # Pourquoi un titre ne s'écrit pas, ou pas encore.
 ISSUE_UNKNOWN = "unknown"
@@ -318,6 +323,8 @@ def clean_value(name: str, raw: object) -> object:
             f"La valeur de {FIELD_LABELS[name]} dépasse {MAX_TEXT} signes.",
             field=name,
         )
+    if name == "fmg" and value and value not in VERDICTS:
+        raise DomainValidationError("Le verdict vaut oui, mixte ou non.", field=name)
     if name == "famille" and value and value not in FAMILY_NAMES:
         raise DomainValidationError(
             "Cette famille n'existe pas. Choisis-en une de la liste.", field=name
