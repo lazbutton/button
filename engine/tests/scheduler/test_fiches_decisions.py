@@ -23,7 +23,7 @@ from radiotomate.models import (
 )
 from radiotomate.models.fiche import utcnow
 from radiotomate.services import fiches_decisions
-from radiotomate.services.fiches import SETTING_ENABLED
+from radiotomate.services.fiches import SETTING_ENABLED, SETTING_FMG
 from radiotomate.services.fiches_decisions import SEARCH_FIRST, decide, write_accepted
 from radiotomate.services.title_edits import (
     SETTING_TITLE_EDITS,
@@ -72,6 +72,11 @@ async def _fiche(dbsession, beets_id, proposals, *, level="sûr", key=None):
     dbsession.add(fiche)
     await dbsession.commit()
     return [proposition.id for proposition in fiche.propositions]
+
+
+async def _verdict_on(dbsession):
+    dbsession.add(Setting(key=SETTING_FMG, value="1"))
+    await dbsession.commit()
 
 
 async def _states(dbsession, ids):
@@ -142,6 +147,7 @@ async def test_the_family_and_the_verdict_never_touch_the_file(
     beets, (mp3,) = _bank(tmp_path, ("mp3",))
     await _open(dbsession)
     before = Path(os.fsdecode(beets.lib.get_item(mp3).path)).stat().st_mtime
+    await _verdict_on(dbsession)
     ids = await _fiche(dbsession, mp3, [("famille", "", "jazz"), ("fmg", "", "oui")])
     fiche = await _fiche_of(dbsession, mp3)
     fiche.propositions[1].source = "MusicBrainz : 4 membres connus sur 4 en 1989"
@@ -379,6 +385,8 @@ async def test_z_after_accepting_writes_back_and_proposes_again(
     geste, et se relit de nouveau."""
     beets, (mp3,) = _bank(tmp_path, ("mp3",))
     await _open(dbsession)
+    # Le verdict ne se décide qu'allumé (FON-80).
+    await _verdict_on(dbsession)
     ids = await _fiche(
         dbsession, mp3, [("album", "Estuaire", "Ciel"), ("fmg", "", "oui")]
     )
@@ -602,3 +610,14 @@ async def test_the_routes_stay_closed_with_the_switch_off(
     reopened = await client.post("/fiches/decisions/annuler.json", json={"ids": ids})
     assert reopened.status_code == 409
     assert (await reopened.get_json())["code"] == "bank_tidy_off"
+
+
+async def test_the_verdict_switched_off_is_not_decided(raw_app, dbsession, tmp_path):
+    """FON-80 : éteint, le verdict n'est pas montré, et ne se décide pas."""
+    beets, (mp3,) = _bank(tmp_path, ("mp3",))
+    await _open(dbsession)
+    ids = await _fiche(dbsession, mp3, [("fmg", "", "oui")])
+
+    with pytest.raises(DomainConflict):
+        await decide(dbsession, beets, ids, [], username="programmatrice")
+    assert "fmg" not in beets.lib.get_item(mp3)

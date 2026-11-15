@@ -343,6 +343,11 @@ async def decide(
         await require_title_edits(session)
     accepted = await _load(session, accept)
     refused = await _load(session, refuse)
+    if not (await read_settings(session)).verdict and any(
+        one.field == "fmg" for one in accepted + refused
+    ):
+        # The verdict switched off, its propositions are not shown (FON-80).
+        raise DomainConflict(STALE_MESSAGE)
     _check_states(accepted + refused)
     _check_levels(accepted)
     changed = await to_thread(_changed_since, beets, accepted)

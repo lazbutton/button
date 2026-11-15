@@ -86,6 +86,14 @@ async def read_settings(session: ormSession) -> FichesSettings:
     return FichesSettings.from_settings({row.key: row.value for row in rows})
 
 
+async def verdict_on(session: ormSession) -> bool:
+    """The verdict « femme ou minorité de genre » shown (FON-80): the bank's
+    tidying open and `features.fiches_fmg` on. Off, no route says a word of it."""
+    from radiotomate.services.bank_titles import bank_tidy_enabled
+
+    return (await read_settings(session)).verdict and await bank_tidy_enabled(session)
+
+
 async def covers_on(session: ormSession) -> bool:
     """Whether the console shows the covers of the titles found (FON-83): behind the
     general switch of the bank's tidying, as the fiches are, and their own."""

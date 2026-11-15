@@ -63,16 +63,21 @@ export function filtersQuery(filters: SelectionFilters): string {
   return params.toString();
 }
 
+/** A ranking the composer knows: the verdict (FON-80) is not one of its filters. */
+function composable(ranking: TableState["ranking"]): ranking is TableState["ranking"] & keyof SelectionFilters {
+  return (KEYS as string[]).includes(ranking);
+}
+
 /** The filters of a group of the table: « Créer une sélection » takes them. */
 export function filtersFromTable(state: Pick<TableState, "ranking" | "group">): SelectionFilters {
   const filters = { ...NO_FILTERS };
-  if (state.group) filters[state.ranking] = state.group;
+  if (state.group && composable(state.ranking)) filters[state.ranking] = state.group;
   return filters;
 }
 
-/** Whether the table's group can become a selection: a group with a value. */
-export function tableMakesSelection(state: Pick<TableState, "group">): boolean {
-  return Boolean(state.group);
+/** Whether the table's group can become a selection: a group with a value, of a ranking the composer knows. */
+export function tableMakesSelection(state: Pick<TableState, "ranking" | "group">): boolean {
+  return Boolean(state.group) && composable(state.ranking);
 }
 
 /** Where « Créer une sélection » leads: the selections, the new one open with these filters. */

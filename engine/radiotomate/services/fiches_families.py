@@ -75,7 +75,9 @@ def _family_order(values: set[str]) -> list[str]:
 
 
 async def families_payload(session: ormSession, beets: BeetsIntegration) -> dict:
-    """The table of the families and the selections."""
+    """The table of the families and the selections. The verdict switched off, it
+    says nothing of it (FON-80)."""
+    verdict = (await read_settings(session)).verdict
     titles = {entry["id"]: entry for entry in map(title_of, await beets.title_rows())}
     taken: set[int] = set()
     selections = []
@@ -95,8 +97,6 @@ async def families_payload(session: ormSession, beets: BeetsIntegration) -> dict
                 "name": category.name,
                 "query": category.query,
                 "count": None if matched is None else len(ids),
-                "reads_verdict": reads_verdict(category.query)
-                or reads_verdict(category.empty_query),
                 "families": [
                     {
                         "value": value,
@@ -109,6 +109,10 @@ async def families_payload(session: ormSession, beets: BeetsIntegration) -> dict
                 ],
             }
         )
+        if verdict:
+            selections[-1]["reads_verdict"] = reads_verdict(
+                category.query
+            ) or reads_verdict(category.empty_query)
     counts = Counter(entry["famille"] for entry in titles.values())
     families = []
     for value in _family_order(set(counts)):
@@ -147,13 +151,10 @@ async def families_payload(session: ormSession, beets: BeetsIntegration) -> dict
                 ],
             }
         )
-    settings = await read_settings(session)
-    return {
-        "library": len(titles),
-        "verdict": settings.verdict,
-        "selections": selections,
-        "families": families,
-    }
+    payload = {"library": len(titles), "selections": selections, "families": families}
+    if verdict:
+        payload["verdict"] = True
+    return payload
 
 
 # -- the verdict -----------------------------------------------------------------
