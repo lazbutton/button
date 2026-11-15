@@ -9,6 +9,7 @@ Les mots de la radio et ceux du code. Quand la console et le code n'emploient pa
 | Ancre | Une position d'horloge calée sur une minute. Dure : elle coupe le titre en cours. Molle : elle attend sa fin | `Clock`, positions ancrées |
 | Animateur | Le rôle qui tient l'antenne depuis le pupitre. L'interrupteur « Peut passer en direct » lui permet aussi de brancher un encodeur | droits `live`, puis `stream` |
 | Antenne | Ce qui part vers les auditeurs. Aussi la page principale de la console | `AntennePage.tsx`, `/antenne/state.json` |
+| Arrivées | La vue de **Sons → Banque** qui montre les titres arrivés depuis 30 jours, à ranger à mesure | `GET /media/arrivals.json`, `services/bank_arrivals.py` |
 | Auto-DJ | La musique que le moteur choisit seul dans la banque, selon les catégories | file Liquidsoap `autodj` |
 | Bac | Le mot de la console pour un cart : des sons joués selon un mode, en liste, en boucle, au hasard, ou un relais | `Cart` |
 | Bac ouvert | Un bac dont le dossier existe dans le dossier `Bacs` de Dropbox, sous son numéro et son titre : un son qu'on y dépose entre dans le bac | `cloud-sync`, `deploy/scripts/cloud-sync.sh` |
@@ -27,8 +28,9 @@ Les mots de la radio et ceux du code. Quand la console et le code n'emploient pa
 | Dropbox | Deux choses à ne pas confondre. Le conteneur qui surveille l'inbox, range les fichiers et met à jour Beets : lui ne parle pas à Dropbox. Et le stockage en ligne, où un bac ouvert reçoit des sons | `radiotomate-dropbox` ; `cloud-sync` |
 | Émission | Un programme nommé : hebdomadaire, avec un jour, des heures et parfois un animateur ; ou de session, le direct en cours | `emissions` |
 | Encodeur | Le logiciel qui envoie le son du direct : BUTT, Mixxx… | — |
+| Étiquette | Un mot que la station pose sur des titres, « nuit », « instrumental », pour les ranger et les sélectionner. Dans la bibliothèque seulement, jamais dans le fichier | champ flexible `etiquettes`, `services/station_tags.py` |
 | Famille | L'une des quatorze familles de genre des fiches, sous un nom court : `jazz`, `hip-hop`, `monde`… Elle range la banque ; le genre du fichier se montre à côté | champ flexible `famille`, `fiches/rules.py` |
-| Fiche d'un titre | Ce que la bibliothèque sait d'un titre, et ce que la recherche en ligne propose d'y corriger ou d'y ajouter | table `fiches`, `scheduler/fiches.py` |
+| Fiche d'un titre | Ce que la bibliothèque sait d'un titre : titre, artiste, album, année, genre, famille, étiquettes. Le Programmateur la corrige dans le tableau de **Sons → Banque**, et la recherche en ligne propose d'y corriger ou d'y ajouter, sans rien écrire qu'une personne n'ait accepté | table `fiches`, `scheduler/fiches.py`, `services/title_edits.py` |
 | Habillage | Les jingles, virgules et idents qui ponctuent l'antenne | `30-habillage` |
 | Harbor | L'entrée du direct dans Liquidsoap, port 6800 | `scheduler/harbor.py` |
 | `HOLD` | Le fichier qui bloque les mises à jour d'une station, avec sa date et sa raison, jusqu'à ce qu'une personne le retire : `station hold`, `station unhold`. Un retour arrière le pose aussi | `/opt/button/HOLD` |
@@ -38,6 +40,7 @@ Les mots de la radio et ceux du code. Quand la console et le code n'emploient pa
 | Invité | Une personne sans compte, qui dépose son set par un lien privé | `agenda_guests`, page `/invitation` |
 | Jeton d'encodeur | Le mot de passe que l'encodeur envoie au harbor, à la place de celui du compte. Un par compte, montré une seule fois | `users.stream_token_hash`, `services/stream_token.py` |
 | Journal d'antenne | Ce qui est vraiment passé, remonté par Liquidsoap, auquel le conducteur se réconcilie | `metadata_log` |
+| Journal des gestes | Ce qui a été fait sur la banque et les bacs, par qui, quand, avec la valeur d'avant : d'où un lot s'annule pendant 30 jours. **Sons → Journal** | `journal_entries`, `services/journal.py` |
 | Migration | Une évolution du schéma de la base | `commands/update/vNN.py` |
 | Moteur | Le fork de Radiotomate : playout, scheduler et interface | `engine/` |
 | Mount | Un point de diffusion d'Icecast, comme `/radio.mp3` | — |
@@ -49,9 +52,11 @@ Les mots de la radio et ceux du code. Quand la console et le code n'emploient pa
 | Programmateur | Le rôle qui règle la grille, les horloges et les bacs | droits `carts` et `autodj` |
 | Proposition | Un champ d'une fiche que la recherche propose de changer : la valeur d'avant, la valeur proposée, son niveau et sa source. Rien ne s'écrit sans qu'une personne l'accepte | table `fiche_propositions` |
 | Pupitre | La partie de la page Antenne où l'animateur prépare et lance ce qui passe | `scheduler/desk.py`, `AntenneDesk` |
+| Rangement de la banque | Le tableau de **Sons → Banque** et ses gestes, derrière un interrupteur général, allumé quand il manque : coupé, le tableau reste en lecture | `features.bank_tidy`, `services/bank_titles.py` |
 | Relais | Le flux d'une autre radio, repris à l'antenne | cart en mode `relay` |
 | Retour arrière | Revenir à la version d'avant une mise à jour : ses fichiers, ses images, et la base d'avant la mise à jour si le schéma a migré. `station update` le fait seule quand la mise à jour échoue, `station rollback` à la main | `update_undo`, `cmd_rollback`, `updates.log` |
 | Rotation | La musique de tous les jours | `10-rotation` |
+| Santé de la banque | La vue de **Sons → Banque** qui compte ce qui cloche : artistes écrits de plusieurs façons, fichiers mal nommés, fiches incomplètes, doublons | `GET /media/health.json`, `services/bank_health.py` |
 | Scheduler | Le processus du moteur qui décide quoi jouer, port 6822 | `scheduler_app.py`, `scheduler/` |
 | Set | Une émission enregistrée de l'Agenda, souvent déposée par un invité | `kind:"set"` |
 | Station | Une radio installée : sa machine, ses données, sa marque | — |
