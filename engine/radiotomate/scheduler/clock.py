@@ -135,7 +135,18 @@ SETTING_TITLES_SENT_FIRST = "features.titles_sent_go_first"
 # title on air, the jingle waited behind its sound, and the queue cleaner took it
 # out behind a long one (FON-89).
 SETTING_JINGLES_WAIT_FOR_CUT = "features.jingles_wait_for_hard_anchors"
+# ADR 0009: turned off, a title of the clock planned before a hard anchor, that
+# has not aired by its minute or barely, stays in the queue of the Auto-DJ, as
+# before: it airs whole after the sound of the anchor, and the lines planned after
+# that sound go as late as it lasts (FON-90).
+SETTING_SKIP_LATE_TITLES = "features.hard_anchors_skip_late_titles"
 _SETTING_OFF = {"0", "false", "off", ""}
+# Under this, a title of the Auto-DJ has not played: ``AUTODJ_PLAYED_S`` of
+# radiotomate.liq, which skips only a title that has played this long.
+AUTODJ_PLAYED_S = 0.5
+# Why a line closes without going, as the conducteur shows it. A title a hard
+# anchor was to cut, that had not aired by its minute (FON-90).
+TOO_LATE_FOR_THE_CUT = "trop tard pour la coupure"
 # Why an anchor line closes without going, as the conducteur shows it.
 HELD_BY_LIVE = "retenue pendant le direct"
 HELD_BY_SET = "retenue pendant un set de l'Agenda"
@@ -229,6 +240,9 @@ class SequencerState:
     epoch: int = 0
     pending_autodj_skip: bool = False
     pending_autodj_skip_minute: int | None = None
+    # The lines of the titles a hard anchor has closed too late for it, which the
+    # playout takes out of the queue of the Auto-DJ with the cut title (FON-90).
+    late_items: list[str] = field(default_factory=list)
 
 
 _state = SequencerState()
@@ -245,6 +259,7 @@ def reset_state() -> None:
     _state.epoch = 0
     _state.pending_autodj_skip = False
     _state.pending_autodj_skip_minute = None
+    _state.late_items = []
 
 
 def set_queue_max_age(seconds: float | None) -> None:
@@ -474,8 +489,7 @@ async def _clock_step(  # noqa: PLR0912, PLR0913, PLR0915
     agenda,
 ) -> None:
     if harbor:
-        _state.pending_autodj_skip = False
-        _state.pending_autodj_skip_minute = None
+        _forget_autodj_skip()
     if not harbor:
         from radiotomate.scheduler.outbox import dispatch_pending_commands
 
@@ -1496,32 +1510,122 @@ async def _skip_cut_autodj_if_ready(
     now: datetime,
     actions: list[str],
 ) -> None:
-    """Skip autodj_queue once the hard-sync cart is on air, not the output bed."""
+    """Skip autodj_queue once the hard-sync cart is on air, not the output bed.
+
+    The titles the anchor closed too late for it go with the cut title, named by
+    their lines (``items``): the playout takes them out of the queue, played less
+    than ``AUTODJ_PLAYED_S`` or not at all (FON-90)."""
     if not _state.pending_autodj_skip:
         return
     src = source_id(live_data)
     if src in {"stream", "relay"}:
-        _state.pending_autodj_skip = False
-        _state.pending_autodj_skip_minute = None
+        _forget_autodj_skip()
         return
     if src not in {"carts", "jingles"}:
         if (
             _state.pending_autodj_skip_minute is not None
             and now.minute != _state.pending_autodj_skip_minute
         ):
-            _state.pending_autodj_skip = False
-            _state.pending_autodj_skip_minute = None
+            _forget_autodj_skip()
         return
-    skip = await gateway.skip({"queue": "autodj"})
+    params = {"queue": "autodj"}
+    if _state.late_items:
+        params["items"] = ",".join(_state.late_items)
+    skip = await gateway.skip(params)
     if skip.ok:
-        _state.pending_autodj_skip = False
-        _state.pending_autodj_skip_minute = None
+        _forget_autodj_skip()
         actions.append("skip")
         return
     if not skip.transient:
-        _state.pending_autodj_skip = False
-        _state.pending_autodj_skip_minute = None
+        _forget_autodj_skip()
         _log.error("Deferred autodj skip after hard-sync failed: %s", skip.error)
+
+
+def _forget_autodj_skip() -> None:
+    _state.pending_autodj_skip = False
+    _state.pending_autodj_skip_minute = None
+    _state.late_items = []
+
+
+# A title of the clock that may not have aired by the minute of a hard anchor.
+_NOT_AIRED = {
+    RundownStatus.PLANNED.value,
+    RundownStatus.RESCUE.value,
+    RundownStatus.PENDING_PUSH.value,
+    RundownStatus.SENT.value,
+    RundownStatus.ACCEPTED.value,
+    RundownStatus.IN_QUEUE.value,
+    RundownStatus.ON_AIR.value,
+}
+# How far before a hard anchor its late titles are looked for.
+LATE_TITLES_SINCE = timedelta(hours=1)
+
+
+def _barely_started(line: RundownItem, live_data: dict) -> bool:
+    """Whether a title the as-run says on air had played less than
+    ``AUTODJ_PLAYED_S`` when a hard anchor fired. The beat names what airs, and
+    how long it has played. One that names another line left before this title
+    started, less than its interval ago. One that names nothing tells nothing:
+    the title is taken as played, the anchor cuts it as before."""
+    named = str(live_data.get("radiotomate_item_id") or "")
+    if not named:
+        return False
+    if named != line.id:
+        return True
+    try:
+        elapsed = float(live_data["elapsed"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    return elapsed < AUTODJ_PLAYED_S
+
+
+async def _close_late_titles(
+    session: ormSession, live_data: dict, now: datetime
+) -> list[str]:
+    """
+    The titles of the clock the conducteur planned before the hard anchor firing
+    now, that have not aired by its minute, or played less than
+    ``AUTODJ_PLAYED_S``: closed « sauté », « trop tard pour la coupure », and their
+    lines returned for the playout to take them out of the queue of the Auto-DJ
+    (``features.hard_anchors_skip_late_titles``, FON-90).
+
+    The conducteur plans the title that runs into the anchor, its length stopped
+    at the minute, and the anchor cuts it (FON-58). With the antenna a few seconds
+    late, it had not started, or the playout, which skips only a title that has
+    played, left it: it aired whole after the sound of the anchor, and the lines
+    planned after that sound went as late as it lasted. It skips: the anchor cuts
+    it whole.
+    """
+    local = now.replace(tzinfo=None)
+    minute = local.replace(second=0, microsecond=0)
+    rows = list(
+        await session.scalars(
+            select(RundownItem).where(
+                RundownItem.origin == "clock",
+                RundownItem.when_mode != WhenMode.ANCHORED.value,
+                RundownItem.queue == "autodj",
+                RundownItem.status.in_(list(_NOT_AIRED)),
+                RundownItem.planned_at < minute,
+                RundownItem.planned_at >= minute - LATE_TITLES_SINCE,
+            )
+        )
+    )
+    late = [
+        row
+        for row in rows
+        if row.status != RundownStatus.ON_AIR.value or _barely_started(row, live_data)
+    ]
+    for row in late:
+        _log.info(
+            "Rundown %s planned at %s has not aired by the hard anchor of %s: skipped",
+            row.id,
+            row.planned_at,
+            minute,
+        )
+        _close_line(row, TOO_LATE_FOR_THE_CUT, now)
+    if late:
+        await session.commit()
+    return [row.id for row in late]
 
 
 async def _remember_cut_autodj(
@@ -1642,6 +1746,13 @@ async def jingles_wait_for_hard_anchors(session: ormSession) -> bool:
     return row is None or str(row.value).strip().lower() not in _SETTING_OFF
 
 
+async def hard_anchors_skip_late_titles(session: ormSession) -> bool:
+    """Whether a title the conducteur planned before a hard anchor, that has not
+    aired by its minute or barely, skips. A missing key says so."""
+    row = await Setting.from_key(session, SETTING_SKIP_LATE_TITLES)
+    return row is None or str(row.value).strip().lower() not in _SETTING_OFF
+
+
 async def ordered_lines_follow_clock(session: ormSession) -> bool:
     """Whether the lines planned of a cart in order follow the sound the clock
     draws itself for an anchor of that cart. A missing key says they do."""
@@ -1733,6 +1844,10 @@ async def _fire_due_anchors(  # noqa: PLR0913
             await _remember_cut_autodj(session, live_data, now)
             _state.pending_autodj_skip = True
             _state.pending_autodj_skip_minute = now.minute
+            if await hard_anchors_skip_late_titles(session):
+                _state.late_items.extend(
+                    await _close_late_titles(session, live_data, now)
+                )
 
 
 def _skip_overtaken(

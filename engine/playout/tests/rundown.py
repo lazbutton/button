@@ -117,6 +117,11 @@ RELAY_SLACK = 6.0
 SENT = {"pending_push", "sent", "accepted", "in_queue"}
 HELD_REASON = "retenue pendant le direct"
 FLUSHED_REASON = "file vidée"
+# A title a cut « Coupe pile » was to cut, that had not aired by its minute, or
+# barely: the scheduler closes its line and the playout takes it back (FON-90).
+LATE_REASON = "trop tard pour la coupure"
+# The lines the playout was handed, and that it took back on purpose.
+TAKEN_BACK = {FLUSHED_REASON, LATE_REASON}
 # What the journals of the engine and of the playout say each second.
 NOISE = ("hypercorn.access", "lang.deprecated")
 
@@ -310,10 +315,15 @@ class Reading:
                 self.lines.setdefault(event["id"], []).append(event)
         # A sound starts once: the journal of the antenna names again a title
         # that comes back after what cut it, and the clock writes there the
-        # title a cut « Coupe pile » cuts.
+        # title a cut « Coupe pile » cuts. A title closed too late for a cut
+        # does not start once closed: the playout may name it again as it takes
+        # the antenna back, after the sound of the cut (FON-90).
+        late = self.closed(LATE_REASON)
         self.starts: list[dict] = []
         started: set[str] = set()
         for row in self.logs:
+            if row["item"] in late and row["at"] >= late[row["item"]]:
+                continue
             if row["item"] and not row["skipped"] and row["item"] not in started:
                 started.add(row["item"])
                 self.starts.append(row)
@@ -322,6 +332,16 @@ class Reading:
         connected = marks.get("studio_in")
         self.live = self.span("stream", connected) if connected else None
         self.troubles = self.find_troubles()
+
+    def closed(self, reason: str) -> dict[str, float]:
+        """When the probe first saw each line closed for ``reason``."""
+        found: dict[str, float] = {}
+        for states in (*self.items.values(), *self.lines.values()):
+            said = (state for state in states if state.get("reason") == reason)
+            seen = next(said, None)
+            if seen is not None:
+                found[seen["id"]] = min(found.get(seen["id"], seen["t"]), seen["t"])
+        return found
 
     def hms(self, moment: float | None) -> str:
         if moment is None:
@@ -521,13 +541,14 @@ def soft_cut(reading: Reading) -> list[str]:
 
 def never_aired(reading: Reading) -> list[str]:
     """The lines the playout was handed and that never aired, but those a
-    flush took back and those whose turn has not come."""
+    flush or a cut too late for them took back, and those whose turn has not
+    come."""
     aired = {row["item"] for row in reading.logs if not row["skipped"]}
     failures = []
     for item, states in reading.items.items():
         sent = next((state for state in states if state["status"] in SENT), None)
         last = states[-1]
-        if sent is None or item in aired or last["reason"] == FLUSHED_REASON:
+        if sent is None or item in aired or last["reason"] in TAKEN_BACK:
             continue
         if reading.after_the_live(sent["t"]):
             continue
@@ -556,7 +577,7 @@ def queued_behind(reading: Reading) -> list[str]:
     sent: dict[str, list[list[dict]]] = {}
     for states in reading.items.values():
         first, last = states[0], states[-1]
-        if first["status"] in {*SENT, "on_air"} and last["reason"] != FLUSHED_REASON:
+        if first["status"] in {*SENT, "on_air"} and last["reason"] not in TAKEN_BACK:
             sent.setdefault(first["queue"], []).append(states)
     failures = []
     for lines in sent.values():

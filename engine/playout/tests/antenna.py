@@ -25,6 +25,10 @@ when:
   them;
 - a sound told to wait for the end of a title cuts it: the end of the title
   comes back after the sound;
+- a title the scheduler takes out of the queue of the Auto-DJ by the id of its
+  line airs: the title the queue has loaded behind a sound that waited, which
+  has played one frame, or the one still queued after it (FON-90); or the title
+  loaded behind such a sound leaves when the scheduler names another line;
 - a relay comes back once the live that took the antenna from it is over;
 - the cleaner of the queues takes out the next title of the Auto-DJ, which the
   scheduler keeps ready behind what plays, or leaves the one after it;
@@ -74,6 +78,21 @@ CART = "cart"
 # on the minute that waits for the end.
 WAITS = [(TITLES[2], "jingle-fin"), (TITLES[3], "cart-fin")]
 LAST_SECONDS = 3.0
+# While a sound that waited plays, the clock takes out of the queue of the Auto-DJ
+# the titles a hard anchor closed too late for it, by the ids of their lines
+# (FON-90). During the sound of the cut, the title the queue has loaded behind it,
+# which has played one frame, and the one still queued after it leave. During the
+# jingle, the clock names a line the queue does not hold: the title loaded stays.
+DROPPED = [TITLES[4], TITLES[5]]
+DROPS = {
+    WAITS[0][1]: ["item-absent"],
+    WAITS[1][1]: [f"item-{name}" for name in DROPPED],
+}
+# As it takes the antenna back, the playout says again the last title of a queue
+# (`replay_metadata`). Behind a sound that waited, that is the title the queue had
+# loaded: taken out, it is said again, and the next one follows a few frames
+# later. A title said for less than this before the next one has not aired.
+SAID_AGAIN_SECONDS = 1.0
 # The queue each sound is pushed to: the source the heartbeat names meanwhile.
 QUEUES = {
     **dict.fromkeys(TITLES, "autodj"),
@@ -93,10 +112,17 @@ LIVE = "live"
 MEASURED = [
     name
     for name in [*TITLES, CART]
-    if name not in {CUT_BY_LIVE, *(cut[0] for cut in CUTS)}
+    if name not in {CUT_BY_LIVE, *DROPPED, *(cut[0] for cut in CUTS)}
 ]
-# What follows each sound that waited: its title before it, the next one after.
-FOLLOWS = {sound: (title, TITLES[TITLES.index(title) + 1]) for title, sound in WAITS}
+# What follows each sound that waited: its title before it, the next one after
+# that airs.
+FOLLOWS = {
+    sound: (
+        title,
+        next(name for name in TITLES[TITLES.index(title) + 1 :] if name not in DROPPED),
+    )
+    for title, sound in WAITS
+}
 # The cleaner of the queues, which the scheduler runs every minute: the second
 # title is the next one of the Auto-DJ and stays, the third one leaves once it
 # has waited this long, the least the playout takes. The first title, 40 s and
@@ -281,6 +307,18 @@ class Playout:
                 f"le playout a refusé {name} ({status}) : {body[:200]!r}"
             )
 
+    def drop(self, items: list[str]) -> None:
+        """Skips the queue of the Auto-DJ once a sound has cut in, as the
+        scheduler does after a hard anchor, with the lines of the titles it
+        closed too late for that anchor."""
+        query = f"queue=autodj&items={','.join(items)}"
+        status, body = call("DELETE", f"{self.api}/live?{query}")
+        if status != 200:
+            raise RuntimeError(
+                f"le playout a refusé de retirer {', '.join(items)} ({status}) :"
+                f" {body[:200]!r}"
+            )
+
     def clean(self, seconds: float) -> dict:
         """Takes out of the queues what has waited there that long, as the
         scheduler does every minute: what the playout says it removed and kept."""
@@ -431,6 +469,25 @@ def cut(playout: Playout, mp3: bytes) -> Cuts:
     return Cuts(relay, live, left)
 
 
+def drop_late(
+    playout: Playout, sound: str, pushed: list[str], pushed_at: dict[str, float]
+) -> list[str]:
+    """While ``sound`` plays, skips the queue of the Auto-DJ with the lines that
+    ``DROPS`` names for it. Returns the titles that leave. The title after them
+    is pushed before, as the clock keeps one ready."""
+    items = DROPS[sound]
+    leaving = [name for name in TITLES if f"item-{name}" in items]
+    while leaving and len(pushed) < len(TITLES):
+        name = TITLES[len(pushed)]
+        pushed.append(name)
+        playout.push("autodj", name)
+        pushed_at[name] = time.monotonic()
+        if name not in leaving:
+            break
+    playout.drop(items)
+    return leaving
+
+
 def scenario(playout: Playout, mp3: bytes) -> Cuts | None:
     """Pushes the titles as the scheduler does, a sound of a cart on the first
     one, a jingle on the second, then two sounds that wait for the end of the
@@ -441,11 +498,15 @@ def scenario(playout: Playout, mp3: bytes) -> Cuts | None:
     pushed_at: dict[str, float] = {}
     due: dict[str, float] = {}
     sent: set[str] = set()
+    # The sounds that waited during which the bench has skipped the queue, and
+    # the titles it took out of it.
+    drops: set[str] = set()
+    dropped: set[str] = set()
     deadline = time.monotonic() + LIMIT_SECONDS
     while time.monotonic() < deadline:
         aired = playout.aired()
         # As the scheduler: two titles in the queue, behind the one on air.
-        waiting = [name for name in pushed if name not in aired]
+        waiting = [name for name in pushed if name not in aired and name not in dropped]
         if len(pushed) < len(TITLES) and len(waiting) < 2:
             pushed.append(TITLES[len(pushed)])
             playout.push("autodj", pushed[-1])
@@ -475,6 +536,9 @@ def scenario(playout: Playout, mp3: bytes) -> Cuts | None:
             if 0 < beat["remaining"] <= LAST_SECONDS:
                 sent.add(sound)
                 playout.push(QUEUES[sound], sound, wait=True)
+        if beat is not None and beat["title"] in DROPS and beat["title"] not in drops:
+            drops.add(beat["title"])
+            dropped.update(drop_late(playout, beat["title"], pushed, pushed_at))
         # The last title has started: a relay and a live cut it.
         if CUT_BY_LIVE in aired and JINGLE in aired:
             return cut(playout, mp3)
@@ -552,6 +616,19 @@ def misnamed(beats: list[dict]) -> dict[str, str]:
         if named.count(queue) * 2 < len(named):
             found[name] = max(set(named), key=named.count)
     return found
+
+
+def on_air(rows: list[dict]) -> tuple[list[str], list[str]]:
+    """The titles of the journal in the order they aired, and those the playout
+    only said again, less than ``SAID_AGAIN_SECONDS`` before the next one."""
+    titled = [row for row in rows if row["title"]]
+    aired, said_again = [], []
+    for row, after in zip(titled, [*titled[1:], None], strict=True):
+        if after is not None and after["at"] - row["at"] < SAID_AGAIN_SECONDS:
+            said_again.append(row["title"])
+        else:
+            aired.append(row["title"])
+    return aired, said_again
 
 
 def returned(aired: list[str]) -> list[tuple[str, str]]:
@@ -648,9 +725,11 @@ def verdict(
 ) -> list[str]:
     """What went wrong, in the words shown to whoever runs the bench."""
     beats = journal["live"]
-    aired = [row["title"] for row in journal["metadata"] if row["title"]]
+    aired, said_again = on_air(journal["metadata"])
     seconds, stalls = listen(pcm)
     say(f"  à l'antenne : {', '.join(aired) or 'rien'}")
+    if said_again:
+        say(f"  redits par le playout, sans passer : {', '.join(said_again)}")
     say(f"  capture : {len(pcm) / BYTES_PER_SECOND:.1f} s, dont {seconds:.1f} s de son")
     lengths = announced(beats)
     say(
@@ -697,7 +776,13 @@ def verdict(
     failures += [
         f"« {name} » n'est jamais passé à l'antenne"
         for name in QUEUES
-        if name not in aired
+        if name not in aired and name not in DROPPED
+    ]
+    failures += [
+        f"« {name} », que le scheduler a retiré de la file de l'auto-DJ par"
+        " l'identifiant de sa ligne, est passé à l'antenne"
+        for name in DROPPED
+        if name in aired or any(beat["title"] == name for beat in beats)
     ]
     order = [name for name in dict.fromkeys(aired) if name in TITLES]
     if order != [name for name in TITLES if name in order]:
@@ -705,7 +790,7 @@ def verdict(
     if cuts is not None:
         failures += relayed(beats, journal["metadata"], cuts)
     failures += swept(cleaned)
-    expected = sum(sounds.audible(name) for name in QUEUES)
+    expected = sum(sounds.audible(name) for name in QUEUES if name not in DROPPED)
     if seconds < 0.75 * expected:
         failures.append(
             f"{seconds:.1f} s de son seulement, sur {expected:.1f} s de sons poussés"
@@ -745,8 +830,10 @@ def main() -> int:
         say(
             "Bon : chaque titre passe à son tour, annoncé pour sa durée et sous sa"
             " source, sans trame répétée ni reste figé. Le nettoyage des files"
-            " laisse le prochain titre. Un relais, puis un direct, prennent"
-            " l'antenne sous leur nom, et la rendent."
+            " laisse le prochain titre. Un titre retiré par l'identifiant de sa"
+            " ligne ne passe pas, et le titre chargé derrière un son qui a attendu"
+            " reste quand une autre ligne est nommée. Un relais, puis un direct,"
+            " prennent l'antenne sous leur nom, et la rendent."
         )
         return 0
     finally:
