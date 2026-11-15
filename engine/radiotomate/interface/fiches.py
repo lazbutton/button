@@ -15,6 +15,13 @@
 - `POST /fiches/propositions/<id>/revenir.json` : une valeur écrite revient à celle
   d'avant. Droit `autodj`.
 - `POST /fiches/<beets_id>/rechercher.json` : chercher de nouveau. Droit `autodj`.
+- `GET /fiches/familles.json` : pour chaque sélection de titres, les familles de ses
+  titres ; pour chaque famille, ses titres et ceux qu'aucune sélection ne prend
+  (FON-28). Droit `autodj`.
+- `GET /fiches/verdicts.json` : ce qu'effacer les verdicts toucherait, avec les
+  sélections qui lisent `fmg`. Droit `autodj`.
+- `POST /fiches/verdicts/effacer.json` : retire `fmg` et `fmg_source` de toute la
+  bibliothèque, et les verdicts en attente. Un admin.
 
 Derrière l'interrupteur du rangement de la banque, `features.bank_tidy` : éteint,
 les routes refusent. Écrire demande aussi `features.title_edits`, pas coupé.
@@ -32,7 +39,7 @@ from radiotomate.auth import current_user, login_required
 from radiotomate.beets import BeetsIntegration
 from radiotomate.interface.json_util import forbidden_unless, read_json_object
 from radiotomate.quart import ShutdownError, or_shutdown
-from radiotomate.services import fiches_decisions, fiches_review
+from radiotomate.services import fiches_decisions, fiches_families, fiches_review
 from radiotomate.services.bank_titles import bank_tidy_enabled, require_bank_tidy
 from radiotomate.services.fiches import (
     read_settings,
@@ -60,12 +67,15 @@ async def fiches_json():
     await require_bank_tidy(g.dbsession)
     query = fiches_review.ReviewQuery.from_args(request.args)
     settings = await read_settings(g.dbsession)
-    rows = await BeetsIntegration.get().title_rows()
-    return jsonify(
-        await fiches_review.review_page(
-            g.dbsession, rows, query, enabled=settings.enabled
-        )
+    beets = BeetsIntegration.get()
+    rows = await beets.title_rows()
+    page = await fiches_review.review_page(
+        g.dbsession, rows, query, enabled=settings.enabled
     )
+    # La part des « oui » parmi les verdicts connus, en titres (FON-28).
+    page["verdict"] = settings.verdict
+    page["verdicts"] = await fiches_families.verdict_counts(beets)
+    return jsonify(page)
 
 
 @blueprint.get("/fiches/<int:beets_id>.json")
@@ -165,6 +175,46 @@ async def search_again_json(beets_id: int):
     await require_bank_tidy(g.dbsession)
     await fiches_decisions.search_again(g.dbsession, beets_id)
     return jsonify({"queued": True})
+
+
+@blueprint.get("/fiches/familles.json")
+@login_required
+async def families_json():
+    denied = forbidden_unless("autodj")
+    if denied is not None:
+        return denied
+    await require_bank_tidy(g.dbsession)
+    return jsonify(
+        await fiches_families.families_payload(g.dbsession, BeetsIntegration.get())
+    )
+
+
+@blueprint.get("/fiches/verdicts.json")
+@login_required
+async def verdicts_json():
+    denied = forbidden_unless("autodj")
+    if denied is not None:
+        return denied
+    await require_bank_tidy(g.dbsession)
+    return jsonify(
+        await fiches_families.verdict_summary(g.dbsession, BeetsIntegration.get())
+    )
+
+
+@blueprint.post("/fiches/verdicts/effacer.json")
+@login_required
+async def erase_verdicts_json():
+    denied = forbidden_unless("admin")
+    if denied is not None:
+        return denied
+    await require_bank_tidy(g.dbsession)
+    return jsonify(
+        await fiches_families.erase_verdicts(
+            g.dbsession,
+            BeetsIntegration.get(),
+            username=current_user.user.username,
+        )
+    )
 
 
 async def accepted_writes_task(db: QuartAlchemy, beets: BeetsIntegration) -> None:

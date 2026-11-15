@@ -29,6 +29,7 @@ import {
   chunks,
   decidedMessage,
   duration,
+  fichesErrorText,
   durationGap,
   fichesQuery,
   fieldValue,
@@ -40,6 +41,7 @@ import {
   revertPath,
   searchAgainPath,
   sureShown,
+  verdictShare,
   type Decided,
   type FicheDetail,
   type FicheProposition,
@@ -64,7 +66,7 @@ const ALL = "tous";
 const TYPING_MS = 350;
 
 function messageOf(caught: unknown, fallback: string): string {
-  return caught instanceof Error && caught.message ? caught.message : fallback;
+  return fichesErrorText(caught, fallback);
 }
 
 /** Ce que la fiche d'un titre peut faire : accepter, refuser, revenir, chercher de nouveau. */
@@ -300,6 +302,10 @@ export function ReviewView() {
       <header className="fiches-head">
         <div className="fiches-intro">
           <p className="fiches-progress">{progressLine(page)}</p>
+          {/* FON-28 : la part des « oui » parmi les verdicts connus, verdict allumé. */}
+          {page.verdict && verdictShare(page.verdicts) ? (
+            <p className="fiches-hint fiches-verdicts">{verdictShare(page.verdicts)}</p>
+          ) : null}
           <p className="fiches-hint">
             {canWrite
               ? "Ce que la recherche en ligne propose de corriger, titre par titre, avec d'où ça vient. Accepter écrit la valeur dans le fichier, puis dans la bibliothèque ; « Revenir » remet celle d'avant."
