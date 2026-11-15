@@ -260,6 +260,62 @@ class RewriteOnlyToAddTest(unittest.TestCase):
             self.assertIn("title=Tune", call)
 
 
+class TrackNumberTest(unittest.TestCase):
+    """Un nom qui commence par un numéro de piste se lit après lui (FON-93) :
+    « 01 - Ana - Fado » ne donne plus l'artiste « 01 »."""
+
+    @staticmethod
+    def tags_of(bench: Bench) -> dict[str, tuple[str, str]]:
+        """L'artiste et le titre que chaque appel à ffmpeg écrit, par fichier."""
+        written = {}
+        for call in bench.calls():
+            values = dict(arg.split("=", 1) for arg in call if arg.startswith(("artist=", "title=")))
+            name = Path(call[-1]).name
+            if name.startswith(".") and ".partial." in name:
+                name = name[1:].replace(".partial.", ".")
+            written[name] = (values["artist"], values["title"])
+        return written
+
+    def test_a_leading_track_number_is_not_the_artist(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            bench = Bench(Path(raw))
+            bench.put("10-rotation/01 - Ana - Fado.mp3", b"mp3")
+            bench.put("10-rotation/7 - Rio.mp3", b"mp3")
+            bench.put("10-rotation/02 - Ana - Mar - Live.mp3", b"mp3")
+            bench.put("10-rotation/50 Cent - In Da Club.mp3", b"mp3")
+            bench.put("10-rotation/311 - Down.mp3", b"mp3")
+            bench.put("20-archives/jazz/03 - Bea - Live.wav", b"wav")
+            bench.put("00-inbox/rotation/04 - Ana - Nuit.mp3", b"mp3")
+            result = bench.run()
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                self.tags_of(bench),
+                {
+                    "01 - Ana - Fado.mp3": ("Ana", "Fado"),
+                    # Le nom ne dit pas l'artiste : le titre seul.
+                    "7 - Rio.mp3": ("", "Rio"),
+                    # Le titre garde ce qui suit l'artiste, « - » compris.
+                    "02 - Ana - Mar - Live.mp3": ("Ana", "Mar - Live"),
+                    # Pas de numéro de piste en tête : comme avant.
+                    "50 Cent - In Da Club.mp3": ("50 Cent", "In Da Club"),
+                    "311 - Down.mp3": ("311", "Down"),
+                    # Converti sur place, et promu depuis l'inbox : la même lecture.
+                    "03 - Bea - Live.flac": ("Bea", "Live"),
+                    "04 - Ana - Nuit.mp3": ("Ana", "Nuit"),
+                },
+            )
+            self.assertTrue((bench.media / "10-rotation" / "04 - Ana - Nuit.mp3").exists())
+
+    def test_a_reencoded_deposit_reads_its_name_the_same_way(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            bench = Bench(Path(raw))
+            bench.env["BROADCAST_CODEC"] = "mp3"
+            bench.put("00-inbox/rotation/05 - Ana - Aube.flac", b"flac")
+            result = bench.run()
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(self.tags_of(bench), {"05 - Ana - Aube.mp3": ("Ana", "Aube")})
+
+
 class UnreadableFileTest(unittest.TestCase):
     """Un fichier que ffmpeg ne lit pas est sauté ; le passage continue."""
 
