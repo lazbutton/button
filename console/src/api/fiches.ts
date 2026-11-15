@@ -99,6 +99,8 @@ export type FicheDetail = {
     genres: string;
     year_source: string;
     doubt: string;
+    /** Le lien de sa pochette, quand la station les montre (FON-83) ; absent d'un moteur plus ancien. */
+    cover?: string | null;
   } | null;
   listen: string;
 };
@@ -106,6 +108,8 @@ export type FicheDetail = {
 export type FichesSettings = {
   enabled: boolean;
   verdict: boolean;
+  /** Les pochettes, dans la console (FON-83) ; absent d'un moteur plus ancien. */
+  covers?: boolean;
   acoustid_key_set: boolean;
   sources: { tidal: boolean; apple_music: boolean; bandcamp: boolean; tidal_key_set: boolean };
   sent: string;
@@ -237,6 +241,8 @@ export function platformName(platform: string, foundAt: string): string {
 export type FichesSettingsForm = {
   enabled: boolean;
   verdict: boolean;
+  /** null : le moteur ne connaît pas les pochettes. */
+  covers: boolean | null;
   tidal: boolean;
   apple_music: boolean;
   bandcamp: boolean;
@@ -252,6 +258,7 @@ export function settingsForm(settings: FichesSettings): FichesSettingsForm {
   return {
     enabled: settings.enabled,
     verdict: settings.verdict,
+    covers: typeof settings.covers === "boolean" ? settings.covers : null,
     tidal: settings.sources.tidal,
     apple_music: settings.sources.apple_music,
     bandcamp: settings.sources.bandcamp,
@@ -267,6 +274,7 @@ export function settingsChanged(form: FichesSettingsForm, settings: FichesSettin
   return (
     form.enabled !== settings.enabled ||
     form.verdict !== settings.verdict ||
+    (form.covers !== null && form.covers !== settings.covers) ||
     form.tidal !== settings.sources.tidal ||
     form.apple_music !== settings.sources.apple_music ||
     form.bandcamp !== settings.sources.bandcamp ||
@@ -287,6 +295,7 @@ export function settingsBody(form: FichesSettingsForm): Record<string, unknown> 
     apple_music: form.apple_music,
     bandcamp: form.bandcamp,
   };
+  if (form.covers !== null) body.covers = form.covers;
   if (form.clearAcoustid) body.acoustid_key = "";
   else if (form.acoustid_key.trim()) body.acoustid_key = form.acoustid_key.trim();
   if (form.clearTidal) {

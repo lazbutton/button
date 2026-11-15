@@ -37,7 +37,7 @@ function failure(caught: unknown, fallback: string): string {
 
 /**
  * Réglages → Fiches (FON-26), pour un admin : la recherche des fiches en ligne, le
- * verdict, la clé AcoustID de la station, les sources de FON-30 et ce qui part de
+ * verdict, les pochettes (FON-83), la clé AcoustID de la station, les sources de FON-30 et ce qui part de
  * la station. Une clé s'écrit, elle ne se relit jamais.
  */
 export function FichesCard() {
@@ -182,6 +182,14 @@ export function FichesCard() {
           form.verdict,
           (verdict) => edit({ verdict }),
         )}
+        {form.covers !== null
+          ? toggle(
+              "Montrer les pochettes",
+              "Dans la console seulement, par leur lien : jamais copiées, jamais montrées aux auditeurs. Le navigateur les demande à Deezer, Apple Music ou Bandcamp.",
+              form.covers,
+              (covers) => edit({ covers }),
+            )
+          : null}
         <FormField
           label="Clé AcoustID de la station (facultative)"
           htmlFor="fiches-acoustid_key"

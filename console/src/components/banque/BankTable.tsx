@@ -144,6 +144,8 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
   const tagsKnown = account?.features?.station_tags === true;
   // FON-68 : les fichiers se renomment d'après leur fiche, pour le Programmateur.
   const canRename = account?.features?.title_renames === true && (isAdmin || account.permissions.autodj === true);
+  // FON-83 : la pochette d'un titre trouvé, par la fiche, que lit le droit de programmation.
+  const covers = account?.features?.fiche_covers === true && (isAdmin || account.permissions.autodj === true);
   // FON-69 : des titres de la banque dans un bac, sans copie, pour qui gère les bacs.
   const canCart = isAdmin || account?.permissions.carts === true;
   const [params, setParams] = useSearchParams();
@@ -1048,6 +1050,7 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
               playing={preview.playingId === String(opened.id)}
               canEdit={canEdit}
               canRename={canRename}
+              covers={covers}
               onRenamed={(result) => void afterRename(result)}
               startEditing={editOpen === opened.id}
               onSaved={(outcome, name) => void afterEdit(outcome, name)}

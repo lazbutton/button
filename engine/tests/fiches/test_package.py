@@ -18,6 +18,7 @@ RULES = (
     "radiotomate.fiches.third",
     "radiotomate.fiches.proposals",
     "radiotomate.fiches.evidence",
+    "radiotomate.fiches.covers",
 )
 SEARCH = (
     "radiotomate.fiches.http",

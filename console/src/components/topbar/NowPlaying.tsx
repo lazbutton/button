@@ -1,6 +1,8 @@
 import { ExternalLink } from "lucide-react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { liveToItem } from "../../api/liveMap";
+import { coverUrl } from "../../api/covers";
 import { listenLink } from "../../api/listenLink";
 import { topNow } from "../../api/topbar";
 import type { LiveSnapshot } from "../../api/types";
@@ -21,6 +23,11 @@ export function NowPlaying({
   const clock = useAntennaClock(live);
   const now = topNow({ live, item: liveToItem(live), clock, stale, answeredAt });
   const listen = listenLink(live, stale);
+  // La pochette du titre (FON-83), quand la station les montre : jamais pour un relevé périmé, ni pour
+  // une image qui ne se charge pas.
+  const cover = stale || live?.status === "offline" ? null : coverUrl(live?.cover_url);
+  const [broken, setBroken] = useState<string | null>(null);
+  const shown = cover && cover !== broken ? cover : null;
 
   return (
     <div
@@ -29,7 +36,20 @@ export function NowPlaying({
       data-idle={now.idle ? "true" : "false"}
       data-stale={now.stale ? "true" : "false"}
       data-listen={listen ? "true" : "false"}
+      data-cover={shown ? "true" : "false"}
     >
+      {shown ? (
+        <img
+          className="tb-now-cover"
+          src={shown}
+          alt=""
+          width={32}
+          height={32}
+          decoding="async"
+          referrerPolicy="no-referrer"
+          onError={() => setBroken(shown)}
+        />
+      ) : null}
       {/* Le lien ne contient que le titre et l'artiste, que son nom reprend dans l'ordre, même quand la
           barre resserrée cache l'artiste. L'avancée et le temps restent à côté ; le lien couvre tout le cadre. */}
       <Link to="/antenne" className="tb-now-link" aria-label={now.label}>

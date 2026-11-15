@@ -7,6 +7,7 @@ from radiotomate.services.bank_health import health_on
 from radiotomate.services.bank_moves import moves_on
 from radiotomate.services.bank_removals import removals_on
 from radiotomate.services.bank_titles import bank_tidy_enabled
+from radiotomate.services.fiches import covers_on
 from radiotomate.services.title_edits import title_edits_enabled
 from radiotomate.services.title_renames import renames_on
 
@@ -35,6 +36,8 @@ async def account_json():
                 "title_renames": await renames_on(g.dbsession),
                 # FON-72: what is wrong in the bank, counted.
                 "bank_health": await health_on(g.dbsession),
+                # FON-83: the covers of the titles found, by their link.
+                "fiche_covers": await covers_on(g.dbsession),
             },
         },
     )
