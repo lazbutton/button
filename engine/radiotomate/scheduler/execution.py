@@ -42,6 +42,7 @@ from radiotomate.models import (
     Sound,
 )
 from radiotomate.scheduler.clock import (
+    TOO_LATE_FOR_THE_CUT,
     lost_lines_close,
     motif_jingles_air,
     now_paris,
@@ -1357,6 +1358,12 @@ async def reconcile_as_run(session: ormSession, log: MetadataLog) -> None:
         # line stays played, and the lines after it, planned after the sound of
         # the anchor, stay where they are.
         return
+    if exact and _closed_too_late(item):
+        # A title a hard anchor closed too late for it (FON-90): it started less
+        # than half a second before the minute, and its as-run comes after the
+        # anchor, or its queue says it once more as it takes the antenna back. It
+        # does not air again, and its line stays « sauté ».
+        return
     previous = list(
         await session.scalars(
             select(RundownItem).where(
@@ -1398,6 +1405,15 @@ async def _cut_by_a_hard_anchor(
     return any(
         row is not log and (row.extra or {}).get("skip_reason") == "hard_sync"
         for row in rows
+    )
+
+
+def _closed_too_late(item: RundownItem) -> bool:
+    """Whether a hard anchor closed this line: its title had not aired by the
+    minute, or barely (clock._close_late_titles)."""
+    return (
+        item.status == RundownStatus.SKIPPED.value
+        and item.reason == TOO_LATE_FOR_THE_CUT
     )
 
 

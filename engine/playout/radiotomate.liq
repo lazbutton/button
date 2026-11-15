@@ -956,10 +956,31 @@ def live_DELETE(req, res) =
     # Hard-sync: drop the cut Auto-DJ track without skipping the output bed
     # (bed.skip would start the next Auto-DJ request before the cart is ready).
     if queue_name == "autodj" then
-      # Only a title that has played: the one a sound has cut. Behind a sound
-      # that waited for the end of a title, the queue holds the next one, of
-      # which it has played one frame: a skip would drop it whole.
-      if null.defined(autodj_queue.current()) and autodj_queue.elapsed() >= AUTODJ_PLAYED_S then
+      # `items`: the lines of the titles a hard anchor closed too late for it.
+      # They leave the queue, played or not (FON-90). The others stay, the
+      # title loaded behind a sound that waited among them.
+      late = list.filter(fun (s) -> s != "", string.split(separator=",", req.query["items"]))
+      current_maybe = autodj_queue.current()
+      playing_id = ref(-1)
+      playing_late = ref(false)
+      if null.defined(current_maybe) then
+        cur = null.get(current_maybe)
+        playing_id := request.id(cur)
+        cur_md = request.metadata(cur)
+        playing_late := list.mem(cur_md["radiotomate_item_id"], late)
+      end
+      list.iter(fun (r) -> begin
+        rid = request.id(r)
+        md = request.metadata(r)
+        if rid != playing_id() and list.mem(md["radiotomate_item_id"], late) then
+          autodj_queue.remove_request_id(rid)
+          log("Taking RID#{rid} out of autodj queue: too late for the hard anchor")
+        end
+      end, autodj_queue.queue())
+      # Else only a title that has played: the one a sound has cut. Behind a
+      # sound that waited for the end of a title, the queue holds the next one,
+      # of which it has played one frame: a skip would drop it whole.
+      if null.defined(current_maybe) and (playing_late() or autodj_queue.elapsed() >= AUTODJ_PLAYED_S) then
         autodj_queue.skip()
         log("Skipping autodj queue")
       end
