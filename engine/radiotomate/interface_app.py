@@ -174,6 +174,8 @@ def app_factory(config: dict, reload: bool, beets: BeetsIntegration):  # noqa: P
         app.add_background_task(live.watch_livedata_task)
         # the title corrections that wait for the end of a title on air (FON-66)
         app.add_background_task(title_edits.waiting_writes_task, db, beets)
+        # the accepted fiches that follow their write, or wait to be written (FON-27)
+        app.add_background_task(fiches.accepted_writes_task, db, beets)
 
         # Agenda files whose analysis a restart interrupted
         from radiotomate.services.agenda import pending_analyses, run_analysis

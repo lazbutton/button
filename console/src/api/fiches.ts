@@ -6,6 +6,17 @@
 
 export const FICHES_JSON = "/fiches.json";
 export const FICHES_SETTINGS_JSON = "/fiches/reglages.json";
+export const FICHES_DECISIONS_JSON = "/fiches/decisions.json";
+/** Ce qu'un geste prend au plus, comme le moteur. */
+export const MAX_DECISIONS = 500;
+
+export function revertPath(id: number): string {
+  return `/fiches/propositions/${id}/revenir.json`;
+}
+
+export function searchAgainPath(beetsId: number): string {
+  return `/fiches/${beetsId}/rechercher.json`;
+}
 
 export type FichesCount = { value: string; count: number };
 
@@ -18,6 +29,8 @@ export type FicheProposition = {
   why: string;
   source: string;
   state: string;
+  /** Acceptée, pourquoi elle attend ; en erreur, pourquoi elle ne s'est pas écrite. */
+  error: string;
 };
 
 export type FicheTitle = {
@@ -287,4 +300,100 @@ export function settingsBody(form: FichesSettingsForm): Record<string, unknown> 
     if (form.tidal_client_secret.trim()) body.tidal_client_secret = form.tidal_client_secret.trim();
   }
   return body;
+}
+
+// -- les décisions (FON-27) --------------------------------------------------------
+
+export type DecisionIssue = { id: number; label: string; code: string; reason: string };
+
+export type Decided = {
+  accepted: number;
+  refused: number;
+  written: number;
+  waiting: DecisionIssue[];
+  failed: DecisionIssue[];
+  stale: number;
+  entry: number | null;
+};
+
+function counted(value: number, one: string, many: string): string {
+  return `${count(value)} ${value === 1 ? one : many}`;
+}
+
+/** Ce qu'un geste a fait, pour le message en bas de l'écran. */
+export function decidedMessage(decided: Decided): { text: string; tone: "success" | "error" | "info" } {
+  const parts: string[] = [];
+  if (decided.written) parts.push(counted(decided.written, "proposition écrite", "propositions écrites"));
+  if (decided.refused) parts.push(counted(decided.refused, "proposition refusée", "propositions refusées"));
+  const head = parts.length ? `${parts.join(", ")}.` : "";
+  if (decided.failed.length) {
+    const [first] = decided.failed;
+    const more = decided.failed.length - 1;
+    const name = first.label ? `« ${first.label} »` : "Un titre";
+    const text = [
+      head,
+      `${name} n'a pas pu s'écrire : ${first.reason}`,
+      more ? `Et ${counted(more, "autre titre", "autres titres")}.` : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+    return { text, tone: "error" };
+  }
+  if (decided.waiting.length) {
+    const busy = decided.waiting.some((one) => one.code === "busy");
+    const waiting = busy
+      ? "La bibliothèque est occupée : les valeurs acceptées s'écriront dans un instant."
+      : decided.waiting.length === 1 && decided.waiting[0].label
+        ? `« ${decided.waiting[0].label} » s'écrira après son passage à l'antenne.`
+        : `${counted(decided.waiting.length, "titre s'écrira", "titres s'écriront")} après leur passage à l'antenne.`;
+    return { text: [head, waiting].filter(Boolean).join(" "), tone: "info" };
+  }
+  if (decided.stale) {
+    const stale = `${counted(decided.stale, "proposition a changé", "propositions ont changé")} depuis : le titre sera cherché de nouveau.`;
+    return { text: [head, stale].filter(Boolean).join(" "), tone: "info" };
+  }
+  return { text: head || "Rien n'a changé.", tone: head ? "success" : "info" };
+}
+
+export type PropositionStatus = { label: string; color: "gray" | "green" | "orange" | "red" | "blue"; note: string };
+
+/** L'état d'une proposition, comme la page le dit. Une proposition à relire n'en montre pas. */
+export function propositionStatus(proposition: Pick<FicheProposition, "state" | "error">): PropositionStatus | null {
+  switch (proposition.state) {
+    case "proposée":
+      return null;
+    case "acceptée":
+      return proposition.error
+        ? { label: "Reportée", color: "orange", note: proposition.error }
+        : { label: "Acceptée", color: "blue", note: "Elle s'écrit dans un instant." };
+    case "écrite":
+      return { label: "Écrite", color: "green", note: "" };
+    case "en erreur":
+      return { label: "En erreur", color: "red", note: proposition.error || "Elle n'a pas pu s'écrire." };
+    case "périmée":
+      return { label: "Périmée", color: "gray", note: "Sa valeur a changé depuis : le titre sera cherché de nouveau." };
+    case "revenue":
+      return { label: "Revenue", color: "gray", note: proposition.error };
+    default:
+      return { label: STATE_LABELS[proposition.state] ?? proposition.state, color: "gray", note: proposition.error };
+  }
+}
+
+/** Les propositions sûres à relire parmi les titres affichés : ce qu'un lot accepte. */
+export function sureShown(titles: Pick<FicheTitle, "id" | "propositions">[]): { ids: number[]; titles: number } {
+  const ids: number[] = [];
+  let withSome = 0;
+  for (const title of titles) {
+    const sure = title.propositions.filter((one) => one.state === "proposée" && one.level === "sûr");
+    if (sure.length) withSome += 1;
+    ids.push(...sure.map((one) => one.id));
+  }
+  return { ids, titles: withSome };
+}
+
+/** Un lot coupé en gestes que le moteur prend. */
+export function chunks<T>(values: T[], size = MAX_DECISIONS): T[][] {
+  const out: T[][] = [];
+  for (let index = 0; index < values.length; index += size) out.push(values.slice(index, index + size));
+  return out;
 }

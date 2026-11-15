@@ -115,6 +115,7 @@ def _proposition(proposition: Any) -> dict:
         "why": proposition.why,
         "source": proposition.source,
         "state": proposition.state,
+        "error": proposition.error,
     }
 
 

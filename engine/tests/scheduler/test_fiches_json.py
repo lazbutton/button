@@ -193,6 +193,7 @@ async def test_the_titles_to_read_their_counts_and_filters(
             "why": "",
             "source": "",
             "state": "proposée",
+            "error": "",
         }
     ]
 

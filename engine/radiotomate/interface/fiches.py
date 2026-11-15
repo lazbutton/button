@@ -8,27 +8,45 @@
 - `GET /fiches/reglages.json` : les interrupteurs de la recherche et de ses sources,
   et si une clé est posée, jamais sa valeur. Droit `autodj`.
 - `PUT /fiches/reglages.json` : les mêmes, et les clés. Un admin.
+- `POST /fiches/decisions.json` : accepter ou refuser des propositions (FON-27).
+  Accepter écrit aussitôt, par le service de FON-66, au journal. Droit `autodj`.
+- `POST /fiches/propositions/<id>/revenir.json` : une valeur écrite revient à celle
+  d'avant. Droit `autodj`.
+- `POST /fiches/<beets_id>/rechercher.json` : chercher de nouveau. Droit `autodj`.
 
 Derrière l'interrupteur du rangement de la banque, `features.bank_tidy` : éteint,
-les routes refusent. Rien ne s'y accepte encore : FON-27.
+les routes refusent. Écrire demande aussi `features.title_edits`, pas coupé.
 """
 
 from __future__ import annotations
 
+import logging
+from asyncio import CancelledError, sleep
+from typing import TYPE_CHECKING
+
 from quart import Blueprint, g, jsonify, request
 
-from radiotomate.auth import login_required
+from radiotomate.auth import current_user, login_required
 from radiotomate.beets import BeetsIntegration
 from radiotomate.interface.json_util import forbidden_unless, read_json_object
-from radiotomate.services import fiches_review
-from radiotomate.services.bank_titles import require_bank_tidy
+from radiotomate.quart import ShutdownError, or_shutdown
+from radiotomate.services import fiches_decisions, fiches_review
+from radiotomate.services.bank_titles import bank_tidy_enabled, require_bank_tidy
 from radiotomate.services.fiches import (
     read_settings,
     settings_payload,
     write_settings,
 )
 
+if TYPE_CHECKING:
+    from radiotomate.db import QuartAlchemy
+
 blueprint = Blueprint("fiches", __name__)
+_log = logging.getLogger(__name__)
+
+# Les propositions acceptées suivent le journal à ce rythme, comme les fiches qui
+# attendent la fin d'un passage à l'antenne (interface/title_edits.py).
+ACCEPTED_PERIOD = 15.0
 
 
 @blueprint.get("/fiches.json")
@@ -82,3 +100,66 @@ async def put_reglages_json():
     await write_settings(g.dbsession, await read_json_object())
     await g.dbsession.commit()
     return jsonify(await settings_payload(g.dbsession))
+
+
+@blueprint.post("/fiches/decisions.json")
+@login_required
+async def decisions_json():
+    denied = forbidden_unless("autodj")
+    if denied is not None:
+        return denied
+    await require_bank_tidy(g.dbsession)
+    accept, refuse = fiches_decisions.parse_decisions(await read_json_object())
+    outcome = await fiches_decisions.decide(
+        g.dbsession,
+        BeetsIntegration.get(),
+        accept,
+        refuse,
+        username=current_user.user.username,
+    )
+    return jsonify(outcome.payload())
+
+
+@blueprint.post("/fiches/propositions/<int:proposition_id>/revenir.json")
+@login_required
+async def revert_json(proposition_id: int):
+    denied = forbidden_unless("autodj")
+    if denied is not None:
+        return denied
+    await require_bank_tidy(g.dbsession)
+    outcome = await fiches_decisions.revert(
+        g.dbsession,
+        BeetsIntegration.get(),
+        proposition_id,
+        username=current_user.user.username,
+    )
+    return jsonify(outcome.payload())
+
+
+@blueprint.post("/fiches/<int:beets_id>/rechercher.json")
+@login_required
+async def search_again_json(beets_id: int):
+    denied = forbidden_unless("autodj")
+    if denied is not None:
+        return denied
+    await require_bank_tidy(g.dbsession)
+    await fiches_decisions.search_again(g.dbsession, beets_id)
+    return jsonify({"queued": True})
+
+
+async def accepted_writes_task(db: QuartAlchemy, beets: BeetsIntegration) -> None:
+    """Les propositions acceptées suivent leur écriture au journal, et celles qui
+    n'y sont jamais allées s'écrivent, comme sur un fichier revenu."""
+    while True:
+        try:
+            await or_shutdown(sleep(ACCEPTED_PERIOD))
+        except (ShutdownError, CancelledError):
+            return
+        try:
+            async with db.session() as session:
+                if await bank_tidy_enabled(session):
+                    await fiches_decisions.write_accepted(session, beets)
+        except (ShutdownError, CancelledError):
+            return
+        except Exception:
+            _log.exception("while writing the accepted fiches")

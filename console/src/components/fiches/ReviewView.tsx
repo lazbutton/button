@@ -1,14 +1,32 @@
 import { Badge, Button, Select, Spinner, TextField } from "@radix-ui/themes";
-import { ChevronDown, ChevronRight, CloudOff, ExternalLink, FileSearch, Pause, Play, Search } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { API_PREFIX, ApiRequestError, apiGet } from "../../api/client";
 import {
+  Check,
+  CheckCheck,
+  ChevronDown,
+  ChevronRight,
+  CloudOff,
+  ExternalLink,
+  FileSearch,
+  Pause,
+  Play,
+  RefreshCw,
+  RotateCcw,
+  Search,
+  X,
+} from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useAccount } from "../../api/AccountContext";
+import { API_PREFIX, ApiRequestError, apiGet, apiPostJson } from "../../api/client";
+import {
+  FICHES_DECISIONS_JSON,
   FICHES_JSON,
   FIELD_LABELS,
   LEVEL_LABELS,
   NO_FILTERS,
   STATE_LABELS,
   bankLabel,
+  chunks,
+  decidedMessage,
   duration,
   durationGap,
   fichesQuery,
@@ -17,15 +35,22 @@ import {
   levelColor,
   platformName,
   progressLine,
+  propositionStatus,
+  revertPath,
+  searchAgainPath,
+  sureShown,
+  type Decided,
   type FicheDetail,
   type FicheProposition,
   type FicheTitle,
   type FichesFilters,
   type FichesPage,
 } from "../../api/fiches";
+import { TITLES_SEND_DEADLINE_MS } from "../../api/sendDeadline";
 import { formatWhen } from "../../api/updates";
 import { usePreview } from "../../lib/usePreview";
 import { AppToast, useAppToast } from "../../ui/AppToast";
+import { ConfirmDialog } from "../../ui/ConfirmDialog";
 import { ErrorState, LoadingState } from "../../ui/DataState";
 import { EmptyState } from "../../ui/EmptyState";
 import { Cover } from "./Cover";
@@ -40,12 +65,27 @@ function messageOf(caught: unknown, fallback: string): string {
   return caught instanceof Error && caught.message ? caught.message : fallback;
 }
 
+/** Ce que la fiche d'un titre peut faire : accepter, refuser, revenir, chercher de nouveau. */
+type Gestures = {
+  canWrite: boolean;
+  busy: boolean;
+  decide: (accept: number[], refuse: number[], beetsId: number) => void;
+  revert: (proposition: FicheProposition, beetsId: number) => void;
+  searchAgain: (beetsId: number, name: string) => void;
+};
+
 /**
  * Sons → Banque → À relire (FON-26) : ce que la recherche en ligne propose pour
- * les fiches, par niveau, avec d'où ça vient. En lecture : rien ne s'accepte
- * encore (FON-27).
+ * les fiches, par niveau, avec d'où ça vient. Accepter écrit la valeur par le
+ * service de FON-66, au journal ; refuser l'écarte ; « Revenir » remet la valeur
+ * d'avant (FON-27).
  */
 export function ReviewView() {
+  const { account } = useAccount();
+  // Accepter écrit les fichiers : il faut la correction des fiches ouverte.
+  const canWrite = account?.features?.title_edits === true;
+  const [busy, setBusy] = useState(false);
+  const [lot, setLot] = useState<{ ids: number[]; titles: number } | null>(null);
   const [filters, setFilters] = useState<FichesFilters>(NO_FILTERS);
   const [typed, setTyped] = useState("");
   const [page, setPage] = useState<FichesPage | null>(null);
@@ -106,6 +146,111 @@ export function ReviewView() {
     }
   };
 
+  /** La tête de la page relue, et les titres touchés relus avec leur fiche, sans perdre la liste affichée. */
+  const refresh = async (beetsIds: number[]) => {
+    try {
+      const next = await apiGet<FichesPage>(`${FICHES_JSON}${fichesQuery(filters)}`);
+      setPage((before) => (before ? { ...next, next: before.next } : next));
+    } catch {
+      // La tête garde ses comptes : le geste, lui, est fait et son message dit lequel.
+    }
+    for (const beetsId of beetsIds) {
+      try {
+        const detail = await apiGet<FicheDetail>(`/fiches/${beetsId}.json`);
+        setTitles((before) =>
+          before.map((title) =>
+            title.id === beetsId ? { ...title, level: detail.fiche.level, propositions: detail.propositions } : title,
+          ),
+        );
+        setOpen((before) => (before[beetsId] ? { ...before, [beetsId]: detail } : before));
+      } catch {
+        // Le titre a quitté la bibliothèque : la prochaine lecture de la page le dira.
+      }
+    }
+  };
+
+  const failed = (caught: unknown, fallback: string) => {
+    show(messageOf(caught, fallback), "error");
+  };
+
+  const decide = async (accept: number[], refuse: number[], beetsIds: number[]) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const decided = await apiPostJson<Decided>(FICHES_DECISIONS_JSON, { accept, refuse }, TITLES_SEND_DEADLINE_MS);
+      const message = decidedMessage(decided);
+      show(message.text, message.tone);
+    } catch (caught) {
+      failed(caught, "La décision n'a pas été prise. Réessaie.");
+    } finally {
+      setBusy(false);
+      await refresh(beetsIds);
+    }
+  };
+
+  const acceptLot = async () => {
+    if (!lot || busy) return;
+    setBusy(true);
+    const total: Decided = { accepted: 0, refused: 0, written: 0, waiting: [], failed: [], stale: 0, entry: null };
+    try {
+      for (const ids of chunks(lot.ids)) {
+        const decided = await apiPostJson<Decided>(FICHES_DECISIONS_JSON, { accept: ids }, TITLES_SEND_DEADLINE_MS);
+        total.accepted += decided.accepted;
+        total.written += decided.written;
+        total.stale += decided.stale;
+        total.waiting.push(...decided.waiting);
+        total.failed.push(...decided.failed);
+      }
+      const message = decidedMessage(total);
+      show(message.text, message.tone);
+    } catch (caught) {
+      const done = total.written ? `${decidedMessage(total).text} ` : "";
+      show(`${done}${messageOf(caught, "Le lot ne s'est pas accepté en entier. Réessaie.")}`, "error");
+    } finally {
+      setBusy(false);
+      setLot(null);
+      setOpen({});
+      await load();
+    }
+  };
+
+  const revert = async (proposition: FicheProposition, beetsId: number) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await apiPostJson<Decided>(revertPath(proposition.id), {}, TITLES_SEND_DEADLINE_MS);
+      const field = FIELD_LABELS[proposition.field] ?? proposition.field;
+      show(`${field} : la valeur d'avant est revenue.`, "success");
+    } catch (caught) {
+      failed(caught, "La valeur d'avant n'est pas revenue. Réessaie.");
+    } finally {
+      setBusy(false);
+      await refresh([beetsId]);
+    }
+  };
+
+  const searchAgain = async (beetsId: number, name: string) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await apiPostJson<{ queued: boolean }>(searchAgainPath(beetsId), {});
+      show(`« ${name} » sera cherché de nouveau dans un instant.`, "info");
+    } catch (caught) {
+      failed(caught, "Le titre n'a pas été remis à chercher. Réessaie.");
+    } finally {
+      setBusy(false);
+      await refresh([beetsId]);
+    }
+  };
+
+  const gestures: Gestures = {
+    canWrite,
+    busy,
+    decide: (accept, refuse, beetsId) => void decide(accept, refuse, [beetsId]),
+    revert: (proposition, beetsId) => void revert(proposition, beetsId),
+    searchAgain: (beetsId, name) => void searchAgain(beetsId, name),
+  };
+
   const toggle = async (title: FicheTitle) => {
     if (open[title.id]) {
       setOpen(({ [title.id]: _gone, ...rest }) => rest);
@@ -141,6 +286,7 @@ export function ReviewView() {
   const filtered = Boolean(filters.level || filters.field || filters.bank || filters.state || filters.q);
   const errors = page.statuses.erreur ?? 0;
   const started = page.progress.searched > 0;
+  const sure = sureShown(titles);
 
   return (
     <section className="fiches" aria-label="Fiches à relire">
@@ -148,9 +294,18 @@ export function ReviewView() {
         <div className="fiches-intro">
           <p className="fiches-progress">{progressLine(page)}</p>
           <p className="fiches-hint">
-            Ce que la recherche en ligne propose de corriger, titre par titre, avec d'où ça vient. Rien ne s'écrit
-            encore depuis cette vue.
+            {canWrite
+              ? "Ce que la recherche en ligne propose de corriger, titre par titre, avec d'où ça vient. Accepter écrit la valeur dans le fichier, puis dans la bibliothèque ; « Revenir » remet celle d'avant."
+              : "Ce que la recherche en ligne propose de corriger, titre par titre, avec d'où ça vient. La correction des fiches est coupée sur cette station : on relit et on refuse, sans rien écrire."}
           </p>
+          {canWrite && sure.ids.length ? (
+            <div className="fiches-lot">
+              <Button size="2" variant="soft" disabled={busy} onClick={() => setLot(sure)}>
+                <CheckCheck className="ui-button-icon" />
+                Accepter les {sure.ids.length} propositions sûres affichées
+              </Button>
+            </div>
+          ) : null}
         </div>
         {chips.length ? (
           <div className="fiches-levels" role="group" aria-label="Niveaux">
@@ -263,6 +418,7 @@ export function ReviewView() {
                 playing={preview.playingId === String(title.id)}
                 onToggle={() => void toggle(title)}
                 onPlay={() => preview.toggle(String(title.id))}
+                gestures={gestures}
               />
             ))}
           </ol>
@@ -277,6 +433,22 @@ export function ReviewView() {
           </Button>
         </div>
       ) : null}
+      <ConfirmDialog
+        open={lot != null}
+        onOpenChange={(next) => {
+          if (!next && !busy) setLot(null);
+        }}
+        busy={busy}
+        title={lot ? `Accepter ${lot.ids.length} propositions sûres ?` : "Accepter ce lot ?"}
+        description={
+          lot
+            ? `Elles s'écrivent dans les fichiers de ${lot.titles} titre${lot.titles === 1 ? "" : "s"}, puis dans la bibliothèque, et le lot se note au journal. Un titre à l'antenne ou en file attend la fin de son passage. « Revenir » remet une valeur, proposition par proposition.`
+            : ""
+        }
+        confirmLabel="Accepter et écrire"
+        cancelLabel="Garder"
+        onConfirm={acceptLot}
+      />
       <AppToast toast={toast} onDismiss={dismiss} />
     </section>
   );
@@ -336,12 +508,14 @@ function TitleRow({
   playing,
   onToggle,
   onPlay,
+  gestures,
 }: {
   title: FicheTitle;
   detail: FicheDetail | "loading" | string | undefined;
   playing: boolean;
   onToggle: () => void;
   onPlay: () => void;
+  gestures: Gestures;
 }) {
   const name = title.title || title.path;
   const byline = [title.artist, title.album].filter(Boolean).join(" · ");
@@ -376,6 +550,9 @@ function TitleRow({
               <span aria-hidden="true"> → </span>
               <span className="ui-visually-hidden"> devient </span>
               <strong>{fieldValue(one.field, one.value)}</strong>
+              {propositionStatus(one) ? (
+                <span className="fiches-summary-state"> · {propositionStatus(one)?.label}</span>
+              ) : null}
             </li>
           ))}
         </ul>
@@ -389,15 +566,16 @@ function TitleRow({
           {detail}
         </p>
       ) : detail ? (
-        <FicheCard detail={detail} />
+        <FicheCard detail={detail} name={name} gestures={gestures} />
       ) : null}
     </li>
   );
 }
 
-function FicheCard({ detail }: { detail: FicheDetail }) {
+function FicheCard({ detail, name, gestures }: { detail: FicheDetail; name: string; gestures: Gestures }) {
   const { fiche, evidence, title } = detail;
   const gap = durationGap(title.duration, evidence?.duration ?? null);
+  const waiting = detail.propositions.filter((one) => one.state === "proposée").map((one) => one.id);
   return (
     <div className="fiches-detail">
       {evidence ? (
@@ -463,10 +641,47 @@ function FicheCard({ detail }: { detail: FicheDetail }) {
       {detail.propositions.length ? (
         <ul className="fiches-props" aria-label="Propositions">
           {detail.propositions.map((one) => (
-            <PropositionItem key={one.id} proposition={one} />
+            <PropositionItem key={one.id} proposition={one} beetsId={title.id} gestures={gestures} />
           ))}
         </ul>
       ) : null}
+      <div className="fiches-actions">
+        {waiting.length && gestures.canWrite ? (
+          <Button
+            size="2"
+            variant="soft"
+            disabled={gestures.busy}
+            onClick={() => gestures.decide(waiting, [], title.id)}
+          >
+            <Check className="ui-button-icon" />
+            {waiting.length === 1 ? "Accepter la proposition" : `Accepter les ${waiting.length} propositions`}
+            <span className="ui-visually-hidden"> de {name}</span>
+          </Button>
+        ) : null}
+        {waiting.length ? (
+          <Button
+            size="2"
+            variant="soft"
+            color="gray"
+            disabled={gestures.busy}
+            onClick={() => gestures.decide([], waiting, title.id)}
+          >
+            <X className="ui-button-icon" />
+            {waiting.length === 1 ? "Refuser la proposition" : `Refuser les ${waiting.length} propositions`}
+            <span className="ui-visually-hidden"> de {name}</span>
+          </Button>
+        ) : null}
+        <Button
+          size="2"
+          variant="ghost"
+          color="gray"
+          disabled={gestures.busy}
+          onClick={() => gestures.searchAgain(title.id, name)}
+        >
+          <RefreshCw className="ui-button-icon" />
+          Chercher de nouveau
+        </Button>
+      </div>
       <p className="fiches-meta">
         {fiche.status === "erreur" && fiche.error ? `Erreur : ${fiche.error}. ` : ""}
         Cherché {formatWhen(fiche.searched_at)}
@@ -477,7 +692,17 @@ function FicheCard({ detail }: { detail: FicheDetail }) {
   );
 }
 
-function PropositionItem({ proposition }: { proposition: FicheProposition }) {
+function PropositionItem({
+  proposition,
+  beetsId,
+  gestures,
+}: {
+  proposition: FicheProposition;
+  beetsId: number;
+  gestures: Gestures;
+}) {
+  const field = FIELD_LABELS[proposition.field] ?? proposition.field;
+  const status = propositionStatus(proposition);
   return (
     <li className="fiches-prop">
       <div className="fiches-prop-head">
@@ -485,9 +710,9 @@ function PropositionItem({ proposition }: { proposition: FicheProposition }) {
         <Badge size="1" variant="soft" color={levelColor(proposition.level)} highContrast>
           {LEVEL_LABELS[proposition.level] ?? proposition.level}
         </Badge>
-        {proposition.state !== "proposée" ? (
-          <Badge size="1" variant="soft" color="gray" highContrast>
-            {STATE_LABELS[proposition.state] ?? proposition.state}
+        {status ? (
+          <Badge size="1" variant="soft" color={status.color} highContrast>
+            {status.label}
           </Badge>
         ) : null}
       </div>
@@ -501,6 +726,52 @@ function PropositionItem({ proposition }: { proposition: FicheProposition }) {
         <p className="fiches-prop-why">
           {[proposition.why, proposition.source ? `source : ${proposition.source}` : ""].filter(Boolean).join(" · ")}
         </p>
+      ) : null}
+      {status?.note ? (
+        <p
+          className={`fiches-prop-note${status.color === "red" ? " is-danger" : status.color === "orange" ? " is-warn" : ""}`}
+        >
+          {status.note}
+        </p>
+      ) : null}
+      {proposition.state === "proposée" || (proposition.state === "écrite" && gestures.canWrite) ? (
+        <div className="fiches-prop-actions">
+          {proposition.state === "proposée" && gestures.canWrite ? (
+            <Button
+              size="1"
+              variant="soft"
+              disabled={gestures.busy}
+              onClick={() => gestures.decide([proposition.id], [], beetsId)}
+            >
+              <Check className="ui-button-icon" />
+              Accepter<span className="ui-visually-hidden"> {field}</span>
+            </Button>
+          ) : null}
+          {proposition.state === "proposée" ? (
+            <Button
+              size="1"
+              variant="soft"
+              color="gray"
+              disabled={gestures.busy}
+              onClick={() => gestures.decide([], [proposition.id], beetsId)}
+            >
+              <X className="ui-button-icon" />
+              Refuser<span className="ui-visually-hidden"> {field}</span>
+            </Button>
+          ) : null}
+          {proposition.state === "écrite" ? (
+            <Button
+              size="1"
+              variant="soft"
+              color="gray"
+              disabled={gestures.busy}
+              onClick={() => gestures.revert(proposition, beetsId)}
+            >
+              <RotateCcw className="ui-button-icon" />
+              Revenir<span className="ui-visually-hidden"> à la valeur d'avant de {field}</span>
+            </Button>
+          ) : null}
+        </div>
       ) : null}
     </li>
   );
