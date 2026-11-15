@@ -7,6 +7,7 @@ import {
   CloudOff,
   ExternalLink,
   FileSearch,
+  Keyboard,
   Pause,
   Play,
   RefreshCw,
@@ -55,6 +56,7 @@ import { ErrorState, LoadingState } from "../../ui/DataState";
 import { EmptyState } from "../../ui/EmptyState";
 import { Cover } from "./Cover";
 import "../../styles/pages/fiches.css";
+import { KeyboardReview } from "./KeyboardReview";
 
 // Radix ne prend pas une valeur vide pour un choix de liste.
 const ALL = "tous";
@@ -86,6 +88,9 @@ export function ReviewView() {
   const canWrite = account?.features?.title_edits === true;
   const [busy, setBusy] = useState(false);
   const [lot, setLot] = useState<{ ids: number[]; titles: number } | null>(null);
+  // FON-78 : la relecture au clavier, un titre à la fois.
+  const [keyboard, setKeyboard] = useState(false);
+  const keyboardButton = useRef<HTMLButtonElement>(null);
   const [filters, setFilters] = useState<FichesFilters>(NO_FILTERS);
   const [typed, setTyped] = useState("");
   const [page, setPage] = useState<FichesPage | null>(null);
@@ -287,6 +292,8 @@ export function ReviewView() {
   const errors = page.statuses.erreur ?? 0;
   const started = page.progress.searched > 0;
   const sure = sureShown(titles);
+  // Au clavier, les titres qui attendent : la vue À relire, avec quelque chose à relire.
+  const keyable = !filters.state && titles.some((title) => title.propositions.some((one) => one.state === "proposée"));
 
   return (
     <section className="fiches" aria-label="Fiches à relire">
@@ -298,12 +305,20 @@ export function ReviewView() {
               ? "Ce que la recherche en ligne propose de corriger, titre par titre, avec d'où ça vient. Accepter écrit la valeur dans le fichier, puis dans la bibliothèque ; « Revenir » remet celle d'avant."
               : "Ce que la recherche en ligne propose de corriger, titre par titre, avec d'où ça vient. La correction des fiches est coupée sur cette station : on relit et on refuse, sans rien écrire."}
           </p>
-          {canWrite && sure.ids.length ? (
+          {(canWrite && sure.ids.length) || keyable ? (
             <div className="fiches-lot">
-              <Button size="2" variant="soft" disabled={busy} onClick={() => setLot(sure)}>
-                <CheckCheck className="ui-button-icon" />
-                Accepter les {sure.ids.length} propositions sûres affichées
-              </Button>
+              {keyable ? (
+                <Button ref={keyboardButton} size="2" variant="soft" disabled={busy} onClick={() => setKeyboard(true)}>
+                  <Keyboard className="ui-button-icon" />
+                  Relire au clavier
+                </Button>
+              ) : null}
+              {canWrite && sure.ids.length ? (
+                <Button size="2" variant="soft" disabled={busy} onClick={() => setLot(sure)}>
+                  <CheckCheck className="ui-button-icon" />
+                  Accepter les {sure.ids.length} propositions sûres affichées
+                </Button>
+              ) : null}
             </div>
           ) : null}
         </div>
@@ -449,6 +464,21 @@ export function ReviewView() {
         cancelLabel="Garder"
         onConfirm={acceptLot}
       />
+      {keyboard ? (
+        <KeyboardReview
+          filters={filters}
+          canWrite={canWrite}
+          preview={preview}
+          onClose={() => {
+            setKeyboard(false);
+            preview.stop();
+            setOpen({});
+            void load();
+            // Le focus revient au bouton qui l'a ouverte : la fenêtre n'a pas de déclencheur à Radix.
+            requestAnimationFrame(() => keyboardButton.current?.focus());
+          }}
+        />
+      ) : null}
       <AppToast toast={toast} onDismiss={dismiss} />
     </section>
   );

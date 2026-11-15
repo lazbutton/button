@@ -10,6 +10,8 @@
 - `PUT /fiches/reglages.json` : les mêmes, et les clés. Un admin.
 - `POST /fiches/decisions.json` : accepter ou refuser des propositions (FON-27).
   Accepter écrit aussitôt, par le service de FON-66, au journal. Droit `autodj`.
+- `POST /fiches/decisions/annuler.json` : le dernier geste de la relecture au
+  clavier défait, ses propositions de nouveau à relire (FON-78). Droit `autodj`.
 - `POST /fiches/propositions/<id>/revenir.json` : une valeur écrite revient à celle
   d'avant. Droit `autodj`.
 - `POST /fiches/<beets_id>/rechercher.json` : chercher de nouveau. Droit `autodj`.
@@ -115,6 +117,24 @@ async def decisions_json():
         BeetsIntegration.get(),
         accept,
         refuse,
+        username=current_user.user.username,
+    )
+    return jsonify(outcome.payload())
+
+
+@blueprint.post("/fiches/decisions/annuler.json")
+@login_required
+async def reopen_json():
+    """« Z » de la relecture au clavier (FON-78) : le dernier geste défait."""
+    denied = forbidden_unless("autodj")
+    if denied is not None:
+        return denied
+    await require_bank_tidy(g.dbsession)
+    ids = fiches_decisions.parse_reopen(await read_json_object())
+    outcome = await fiches_decisions.reopen(
+        g.dbsession,
+        BeetsIntegration.get(),
+        ids,
         username=current_user.user.username,
     )
     return jsonify(outcome.payload())
