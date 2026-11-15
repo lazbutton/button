@@ -2,6 +2,8 @@ import { Badge, Button, IconButton, Spinner } from "@radix-ui/themes";
 import { Pencil, Play, Square, X } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import { cell, ficheState, type BankTitle } from "../../api/bankTitles";
+import { apiGet } from "../../api/client";
+import type { FicheDetail } from "../../api/fiches";
 import { formatClock } from "../../api/soundsView";
 import {
   EDIT_FIELDS,
@@ -16,6 +18,7 @@ import {
 import { FicheInput, TryReport, editTitles, messageOf, needsConfirmation } from "./TitleEditing";
 import { SheetRename, type RenameResult } from "./TitleRenaming";
 import { TitlePlaysSection } from "./TitlePlays";
+import { Cover } from "../fiches/Cover";
 
 /**
  * The fiche of a title, in a panel to the right of the table: what Beets knows
@@ -28,6 +31,7 @@ export function TitleSheet({
   playing,
   canEdit = false,
   canRename = false,
+  covers = false,
   startEditing = false,
   onPlay,
   onClose,
@@ -42,6 +46,8 @@ export function TitleSheet({
   canEdit?: boolean;
   /** Opens straight into the form, from the row's menu. */
   startEditing?: boolean;
+  /** The station shows the covers of the titles found (FON-83), and the account may read the fiches. */
+  covers?: boolean;
   onPlay: () => void;
   onClose: () => void;
   onSaved?: (outcome: EditOutcome, name: string) => void;
@@ -57,6 +63,24 @@ export function TitleSheet({
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState("");
   const name = titleName(title);
+  const [cover, setCover] = useState<{ id: number; url: string | null | undefined; album: string } | null>(null);
+
+  // La pochette vient de la fiche trouvée, par son lien. Un titre sans fiche, ou un moteur qui ne la
+  // donne pas, n'en a pas : rien à dire, elle n'est qu'un repère.
+  useEffect(() => {
+    if (!covers) return;
+    let live = true;
+    apiGet<FicheDetail>(`/fiches/${title.id}.json`)
+      .then((detail) => {
+        if (live) setCover({ id: title.id, url: detail.evidence?.cover, album: detail.evidence?.album ?? "" });
+      })
+      .catch(() => {
+        if (live) setCover(null);
+      });
+    return () => {
+      live = false;
+    };
+  }, [title.id, covers]);
 
   // A fiche opened takes the focus, so a screen reader reads it and Escape closes it.
   useEffect(() => {
@@ -157,6 +181,7 @@ export function TitleSheet({
         </IconButton>
       </header>
       <div className="bacs-inspector-body">
+        {covers && cover?.id === title.id ? <Cover url={cover.url} album={cover.album} /> : null}
         <div className="banque-sheet-name">
           <strong>{name}</strong>
           {title.artist ? <span>{title.artist}</span> : null}

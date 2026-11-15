@@ -105,6 +105,12 @@ test("une clé ne repart jamais telle qu'elle est gardée", () => {
     tidal_client_id: "id",
   });
   const cleared = settingsBody({ ...form, clearAcoustid: true, acoustid_key: "x", clearTidal: true });
+  // Un moteur sans pochettes (FON-83) ne reçoit rien d'elles ; un moteur qui les connaît, si.
+  assert.equal(form.covers, null);
+  assert.equal("covers" in settingsBody(form), false);
+  const withCovers = settingsForm({ ...SETTINGS, covers: false });
+  assert.equal(settingsChanged({ ...withCovers, covers: true }, { ...SETTINGS, covers: false }), true);
+  assert.equal(settingsBody({ ...withCovers, covers: true }).covers, true);
   assert.equal(cleared.acoustid_key, "");
   assert.equal(cleared.tidal_client_id, "");
   assert.equal(cleared.tidal_client_secret, "");

@@ -7,6 +7,8 @@
 - `fiches.acoustid_key`, the AcoustID key of the station; BUTTON's otherwise
   (`BUTTON_ACOUSTID_KEY`, `fiches/sources.py`).
 - The sources of FON-30, read by `SourceSettings.from_settings`.
+- `features.fiches_covers`, off by default, shows the cover of a title found in the
+  console, by its link only (FON-83): in its fiche and in the title on air.
 
 Where the search stands is read with sqlite3 alone, from the engine's database:
 `radiotomate maintenance fiches` says it, and so does `beet fiches`, from the
@@ -34,6 +36,7 @@ from radiotomate.fiches.sources import (
     SourceSettings,
 )
 from radiotomate.models import Setting
+from radiotomate.services.bank_titles import bank_tidy_enabled
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -43,6 +46,7 @@ if TYPE_CHECKING:
 SETTING_ENABLED = "features.fiches"
 SETTING_FMG = "features.fiches_fmg"
 SETTING_ACOUSTID_KEY = "fiches.acoustid_key"
+SETTING_COVERS = "features.fiches_covers"
 _OFF = frozenset({"0", "false", "off", "non", ""})
 
 
@@ -57,6 +61,7 @@ class FichesSettings:
 
     enabled: bool = False
     verdict: bool = False
+    covers: bool = False
     acoustid_key: str = field(default="", repr=False)
     sources: SourceSettings = field(default_factory=SourceSettings)
 
@@ -66,6 +71,7 @@ class FichesSettings:
         return cls(
             enabled=switched_on(values.get(SETTING_ENABLED)),
             verdict=switched_on(values.get(SETTING_FMG)),
+            covers=switched_on(values.get(SETTING_COVERS)),
             acoustid_key=station_key or BUTTON_ACOUSTID_KEY,
             sources=SourceSettings.from_settings(values),
         )
@@ -80,6 +86,13 @@ async def read_settings(session: ormSession) -> FichesSettings:
     return FichesSettings.from_settings({row.key: row.value for row in rows})
 
 
+async def covers_on(session: ormSession) -> bool:
+    """Whether the console shows the covers of the titles found (FON-83): behind the
+    general switch of the bank's tidying, as the fiches are, and their own."""
+    row = await Setting.from_key(session, SETTING_COVERS)
+    return switched_on(row.value if row else None) and await bank_tidy_enabled(session)
+
+
 async def set_enabled(session: ormSession, enabled: bool) -> None:
     await Setting.upsert(session, SETTING_ENABLED, "1" if enabled else "0")
 
@@ -88,13 +101,16 @@ async def set_enabled(session: ormSession, enabled: bool) -> None:
 SENT = (
     "l'artiste, le titre, l'album et l'empreinte de ses fichiers, vers MusicBrainz, "
     "AcoustID, Deezer et Wikidata ; l'artiste et le titre vers Tidal, Apple Music et "
-    "Bandcamp, s'ils sont allumés. Rien de l'équipe ni des auditeurs."
+    "Bandcamp, s'ils sont allumés. Rien des auditeurs. Rien de l'équipe, sauf, "
+    "pochettes allumées, l'adresse du navigateur de la console, qui demande chaque "
+    "pochette à Deezer, Apple Music ou Bandcamp."
 )
 
 # The switches that `PUT /fiches/reglages.json` writes, by the name of its field.
 SWITCHES = {
     "enabled": SETTING_ENABLED,
     "verdict": SETTING_FMG,
+    "covers": SETTING_COVERS,
     "tidal": SETTING_TIDAL,
     "apple_music": SETTING_APPLE,
     "bandcamp": SETTING_BANDCAMP,
@@ -121,6 +137,7 @@ async def settings_payload(session: ormSession) -> dict:
     return {
         "enabled": settings.enabled,
         "verdict": settings.verdict,
+        "covers": settings.covers,
         "acoustid_key_set": bool(str(values.get(SETTING_ACOUSTID_KEY) or "").strip()),
         "sources": {
             "tidal": sources.tidal,
