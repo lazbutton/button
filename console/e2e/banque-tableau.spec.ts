@@ -236,8 +236,9 @@ test("un admin renomme une collection, puis la supprime une fois vide", async ({
   await expect(page.getByRole("menuitem", { name: /Supprimer/ })).toHaveAttribute("aria-disabled", "true");
   await page.keyboard.press("Escape");
 
+  await page.goto("/sons?onglet=importer&groupe=vide");
   const colonne = page.getByRole("complementary", { name: "Ranger la banque" });
-  await colonne.getByRole("option", { name: /^Vide/ }).click();
+  await expect(page.getByRole("region", { name: "Vide" }).getByText("Aucun titre ici.")).toBeVisible();
   await page.getByRole("button", { name: "Actions pour la collection Vide" }).click();
   await page.getByRole("menuitem", { name: "Renommer…" }).click();
   const renommer = page.getByRole("dialog", { name: "Renommer la collection" });
