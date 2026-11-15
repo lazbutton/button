@@ -211,6 +211,18 @@ class BeetsIntegration:
                 )
             )
 
+    async def added_since(self, since: float) -> dict[int, float]:
+        """The titles indexed since a time (Unix seconds), with when (FON-81)."""
+
+        def read() -> dict[int, float]:
+            with self.lib.transaction() as tx:
+                rows = tx.query(
+                    "SELECT id, added FROM items WHERE added >= ?", (since,)
+                )
+                return {int(row[0]): float(row[1]) for row in rows}
+
+        return await get_running_loop().run_in_executor(None, read)
+
     async def tags_at(self, paths: list[Path]) -> dict[str, tuple[str, str]]:
         """The artist and the title Beets has for these files, by path (FON-69).
 

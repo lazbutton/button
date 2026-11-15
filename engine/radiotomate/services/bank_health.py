@@ -168,8 +168,8 @@ def duplicate_key(entry: dict) -> tuple[str, str] | None:
 
 def duplicate_groups(entries: Iterable[dict]) -> list[list[dict]]:
     """The duplicates of the bank: the same artist and title once normalized,
-    lasting the same within 2 s. The Santé view counts them, and the queue of
-    uploads (FON-82) names a file's: one reading for both.
+    lasting the same within 2 s. The Santé view counts them, Arrivées (FON-81) and
+    the queue of uploads (FON-82) name a title's: one reading for all three.
 
     The groups of a key depend only on the titles of that key: a caller may pass
     those alone.
