@@ -51,6 +51,27 @@ tag_of() { # tag_of <file> <artist|title>
   printf '%s\n' "$tag"
 }
 
+# L'artiste et le titre que donne un nom sans extension, « Artiste - Titre »,
+# coupé au premier « - ». Un nom qui commence par un numéro de piste, un ou deux
+# chiffres puis « - », se lit après lui, comme le moteur le lit
+# (fields_after_number, engine/radiotomate/services/bank_names.py) : « 01 - Ana
+# - Fado » donne Ana et Fado, « 01 - Fado » le titre seul. Avant, le numéro
+# devenait l'artiste (FON-93). « 50 Cent - In Da Club » garde son artiste.
+name_tags() { # name_tags <nom sans extension> : pose artist et title
+  nt_rest=$1
+  case "$nt_rest" in
+    [0-9]" - "?*|[0-9][0-9]" - "?*) nt_rest=${nt_rest#* - } ;;
+  esac
+  case "$nt_rest" in
+    *" - "*) artist=${nt_rest%% - *}; title=${nt_rest#* - } ;;
+    *)       artist=""; title=$nt_rest ;;
+  esac
+  # Encore un numéro : pas d'artiste, plutôt qu'un numéro.
+  case "$artist" in
+    [0-9]|[0-9][0-9]) artist=""; title=$nt_rest ;;
+  esac
+}
+
 # Les tags à écrire : ceux du fichier, complétés par son nom. Vrai si le nom
 # n'ajoute rien, par exemple un fichier sans artiste dont le nom n'a pas de
 # « Artiste - Titre » : le réécrire ne changerait que sa date, à chaque tour.
@@ -126,10 +147,7 @@ promote_dir() {
     name=$(basename "$src")
     stem=${name%.*}
     ext=$(printf '%s' "${name##*.}" | LC_ALL=C tr '[:upper:]' '[:lower:]')
-    case "$stem" in
-      *" - "*) artist=${stem%% - *}; title=${stem#* - } ;;
-      *)       artist=""; title=$stem ;;
-    esac
+    name_tags "$stem"
     if [ -n "$BROADCAST_CODEC" ]; then
       case "$ext" in
         mp3|flac|ogg|opus|m4a|wav|aif|aiff) ;;
@@ -200,10 +218,7 @@ tag_in_place() {
     case "$name" in .*) continue ;; esac
     stem=${name%.*}
     ext=$(printf '%s' "${name##*.}" | LC_ALL=C tr '[:upper:]' '[:lower:]')
-    case "$stem" in
-      *" - "*) artist=${stem%% - *}; title=${stem#* - } ;;
-      *)       artist=""; title=$stem ;;
-    esac
+    name_tags "$stem"
     case "$ext" in
       wav|aif|aiff)
         target="$dest/$stem.flac"

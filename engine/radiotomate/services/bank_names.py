@@ -41,9 +41,10 @@ MISSING = {
     "album": "la fiche n'a pas d'album",
     "title": "la fiche n'a pas de titre",
 }
-# A track number taken for the artist: promote-inbox.sh cuts a name at its
-# first « - », and « 01 - Ana - Fado.mp3 » got the artist « 01 ». No name is
-# built on it: « 01 - 01 - Ana - Fado.mp3 » would be worse than the file's own.
+# A track number taken for the artist: until FON-93, promote-inbox.sh cut a
+# name at its first « - », and « 01 - Ana - Fado.mp3 » got the artist « 01 ».
+# No name is built on it: « 01 - 01 - Ana - Fado.mp3 » would be worse than the
+# file's own.
 _TRACK_NUMBER = re.compile(r"[0-9]{1,2}")
 NUMBERED = "l'artiste de la fiche est un numéro de piste"
 
@@ -78,8 +79,9 @@ def track_number(value: object) -> bool:
 
 def fields_after_number(path: str) -> dict | None:
     """The artist and the title a file's name gives after its track number, cut
-    as promote-inbox.sh cuts it: « 01 - Ana - Fado.mp3 » gives Ana and Fado.
-    None for a name that starts with no track number, or gives no artist."""
+    as promote-inbox.sh cuts it (`name_tags`): « 01 - Ana - Fado.mp3 » gives Ana
+    and Fado. None for a name that starts with no track number, or gives no
+    artist."""
     stem = unicodedata.normalize("NFC", PurePosixPath(path).stem)
     number, cut, rest = stem.partition(SEPARATOR)
     if not cut or not track_number(number):
