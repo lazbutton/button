@@ -1049,6 +1049,142 @@ async def _garder(banc: Banc, rels: list[str]) -> object:
     return outcome
 
 
+# Une graphie semée sur deux titres, puis corrigée sur l'un (FON-72).
+SPELLING = "Les Marées Hautes"
+SPELLING_SOWN = "les marees hautes"
+
+
+async def _sante(banc: Banc, rels: list[str]) -> dict:
+    """Compte la santé de la banque, sème une graphie sur deux titres, renomme
+    l'un d'eux d'après sa fiche, corrige la graphie de l'autre, puis défait tout
+    par le journal : chaque compte."""
+    from radiotomate.services import journal, title_edits
+    from radiotomate.services.bank_health import bank_health
+    from radiotomate.services.bank_lock import BeetsPlace
+    from radiotomate.services.title_renames import plan_renames, rename_titles
+
+    beets = _beets(banc)
+    place = BeetsPlace.of(beets.lib)
+
+    def count() -> dict:
+        return bank_health(beets._title_rows(), banc.media, "artiste-titre")
+
+    def artist(beets_id: int, value: str) -> object:
+        item = beets.lib.get_item(beets_id)
+        expected = {"artist": title_edits.current_value(item, "artist")}
+        return title_edits.TitleEdit(beets_id, {"artist": value}, expected)
+
+    seen: dict = {"avant": count()}
+    ids = [row[0] for rel, row in banc.snapshot().items() if rel in rels]
+    seen["ids"] = ids
+    db = await _engine_session(banc)
+    async with db.session() as session:
+        sown = await title_edits.edit_titles(
+            session,
+            beets,
+            [artist(ids[0], SPELLING), artist(ids[1], SPELLING_SOWN)],
+            username="banc",
+        )
+        seen["semé"] = count()
+        plans = await plan_renames(session, place, ids[:1], "artiste-titre")
+        renamed = await rename_titles(session, place, plans, username="banc")
+        seen["renommé"] = count()
+        if renamed.entry is not None:
+            await journal.undo(session, beets, renamed.entry, username="banc")
+        fixed = await title_edits.edit_titles(
+            session, beets, [artist(ids[1], SPELLING)], username="banc"
+        )
+        seen["corrigé"] = count()
+        for entry in (fixed.entry_id, sown.entry_id):
+            if entry is not None:
+                await title_edits.undo_entry(session, beets, entry, username="banc")
+        seen["rétabli"] = count()
+    await db.after_serving()
+    return seen
+
+
+def _group_of(health: dict, beets_id: int) -> dict | None:
+    for group in health["spellings"]["groups"]:
+        if any(title["id"] == beets_id for title in group["titles"]):
+            return group
+    return None
+
+
+def geste_sante(banc: Banc) -> None:
+    """La santé de la banque (FON-72) : chaque titre compté, chaque fichier de la
+    banque dans la bibliothèque ou nommé, une graphie semée qui paraît puis part,
+    un fichier renommé qui sort des fichiers mal nommés."""
+    say("Geste : compter la santé de la banque, semer une graphie, la corriger")
+    # Deux titres qui ont un titre : renommés « Artiste - Titre » une fois semés.
+    indexed = banc.snapshot()
+    titles = [rel for rel in banc.choisir(ROTATION, 50) if indexed[rel][-1]][:2]
+    if len(titles) < 2:
+        say("  (pas deux titres avec un titre dans la rotation)")
+        return
+    snapshot = banc.snapshot()
+    seen = asyncio.run(_sante(banc, titles))
+    avant = seen["avant"]
+    known = set(banc.snapshot())
+    on_disk = {
+        rel
+        for rel in files_of(banc.media)
+        if rel.split("/")[0] in (ROTATION, COLLECTIONS)
+        and len(rel.split("/")) > (2 if rel.startswith(COLLECTIONS + "/") else 1)
+        and Path(rel).suffix.lower() in AUDIO_SUFFIXES
+    }
+    banc.info["santé"] = (
+        f"{avant['spellings']['count']} graphies, {avant['duplicates']['count']} "
+        f"doublons, {avant['misnamed']['count']} mal nommés, "
+        f"{avant['incomplete']['count']} incomplètes, {avant['archive']['count']} "
+        f"« Archive », {avant['unindexed']['count']} absents"
+    )
+    banc.verdict(
+        "santé",
+        "chaque titre de la bibliothèque est compté",
+        avant["figures"]["titles"] == len(known),
+        f"{avant['figures']['titles']} sur {len(known)}",
+    )
+    missing = sorted(on_disk - known)
+    named = avant["unindexed"]["paths"]
+    banc.verdict(
+        "santé",
+        "les fichiers absents de la bibliothèque sont ceux du disque",
+        avant["unindexed"]["count"] == len(missing) and named == missing[: len(named)],
+        f"{avant['unindexed']['count']} nommés, {len(missing)} sur le disque",
+    )
+    first, second = seen["ids"][:2]
+    sown = _group_of(seen["semé"], first)
+    banc.verdict(
+        "santé",
+        "une graphie semée paraît dans le compte",
+        sown is not None and _group_of(seen["semé"], second) is sown,
+    )
+    banc.verdict(
+        "santé",
+        "sa correction la retire du compte",
+        _group_of(seen["corrigé"], first) is None
+        and seen["corrigé"]["spellings"]["count"] == avant["spellings"]["count"],
+    )
+    banc.verdict(
+        "santé",
+        "« Revenir » rend le compte d'avant",
+        seen["rétabli"]["spellings"] == avant["spellings"],
+    )
+    misnamed = {title["id"] for title in seen["semé"]["misnamed"]["titles"]}
+    after = {title["id"] for title in seen["renommé"]["misnamed"]["titles"]}
+    banc.verdict(
+        "santé",
+        "un titre semé est mal nommé, et son renommage l'en sort",
+        first in misnamed
+        and first not in after
+        and seen["renommé"]["misnamed"]["count"]
+        == seen["semé"]["misnamed"]["count"] - 1,
+        f"{seen['semé']['misnamed']['count']} puis "
+        f"{seen['renommé']['misnamed']['count']}",
+    )
+    banc.controler("santé", snapshot, {}, {}, set(titles))
+
+
 GESTES = [
     geste_deplacer,
     geste_revenir,
@@ -1059,6 +1195,7 @@ GESTES = [
     geste_remettre,
     geste_corriger,
     geste_corriger_puis_lire,
+    geste_sante,
 ]
 
 
