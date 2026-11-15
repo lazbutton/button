@@ -27,7 +27,7 @@ async def account_json():
         # FON-71: a title removed is noted, and comes back from the trash.
         "bank_removals": await removals_on(g.dbsession),
         # FON-74: the table gives the station's tags, and ranges by them.
-        "station_tags": await bank_tidy_enabled(g.dbsession),
+        "station_tags": True,
         # FON-68: files renamed after their fiche.
         "title_renames": await renames_on(g.dbsession),
         # FON-72: what is wrong in the bank, counted.

@@ -87,11 +87,10 @@ async def read_settings(session: ormSession) -> FichesSettings:
 
 
 async def verdict_on(session: ormSession) -> bool:
-    """The verdict « femme ou minorité de genre » shown (FON-80): the bank's
-    tidying open and `features.fiches_fmg` on. Off, no route says a word of it."""
-    from radiotomate.services.bank_titles import bank_tidy_enabled
-
-    return (await read_settings(session)).verdict and await bank_tidy_enabled(session)
+    """The verdict « femme ou minorité de genre » shown (FON-80): `features.fiches_fmg`
+    on. Off, no route says a word of it. The general switch of the bank's tidying
+    off, the table still reads, its verdict with it (FON-85)."""
+    return (await read_settings(session)).verdict
 
 
 async def covers_on(session: ormSession) -> bool:

@@ -572,11 +572,16 @@ async def test_the_switches(raw_app, dbsession, tmp_path):
     beets, (beets_id,) = _bank(tmp_path, ("mp3",))
     edit = [TitleEdit(beets_id, {"title": "Brume"})]
 
-    # le chantier fermé : rien ne s'écrit
+    # le chantier coupé : rien ne s'écrit
+    tidy = Setting(key=bank_titles.SETTING_BANK_TIDY, value="0")
+    dbsession.add(tidy)
+    await dbsession.commit()
     with pytest.raises(TitleEditsOff):
         await edit_titles(dbsession, beets, edit, username="programmatrice")
     # le chantier ouvert, ce service coupé
-    await _open(dbsession, own="0")
+    tidy.value = "1"
+    dbsession.add(Setting(key=title_edits.SETTING_TITLE_EDITS, value="0"))
+    await dbsession.commit()
     with pytest.raises(TitleEditsOff):
         await edit_titles(dbsession, beets, edit, username="programmatrice")
     assert _tags(beets, beets_id).title == "Titre mp3"

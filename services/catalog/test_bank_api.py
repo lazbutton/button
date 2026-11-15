@@ -776,11 +776,14 @@ class RoutesTest(Bank):
         # As before ARC-09: the title lands at the root of its destination.
         self.assertEqual(self.names(), ["Ada - Song.wav", "Cy - Live.wav"])
         self.assertEqual(len(Engine.received), 1)
-        # The general switch of the bank's tidying off, as FON-64 says it.
+        # The general switch of the bank's tidying off (FON-85): nothing moves.
         Engine.moves = lambda asked: (409, {"error": "x", "code": "bank_tidy_off", "message": "x"})
         move = {"id": "rotation", "to": "jazz", "names": ["Cy - Live.wav"]}
-        self.assertEqual(self.json("/collection/move.json", payload=move)[0], 200)
-        self.assertEqual(self.names("jazz"), ["Bea - Live.wav", "Cy - Live.wav"])
+        self.assertEqual(
+            self.json("/collection/move.json", payload=move),
+            (409, {"error": "Le rangement de la banque est coupé sur cette station : rien n'a été déplacé."}),
+        )
+        self.assertEqual(self.names("jazz"), ["Bea - Live.wav"])
 
     def test_a_busy_engine_moves_nothing(self) -> None:
         message = "La banque est en cours d'indexation : rien n'a bougé. Réessaie dans une minute."
@@ -836,16 +839,26 @@ class RoutesTest(Bank):
         self.assertEqual(self.names("jazz"), ["Bea - Live.wav"])
 
     def test_with_its_switch_off_the_engine_leaves_the_removal_to_the_catalogue(self) -> None:
-        for code in ("bank_removals_off", "bank_tidy_off"):
-            Engine.removals = lambda asked, code=code: (409, {"error": "x", "code": code, "message": "x"})
-            sound(self.rotation / "Ada - Song.wav", artist="Ada", title="Song")
-            remove = {"id": "rotation", "names": ["Ada - Song.wav"]}
-            self.assertEqual(
-                self.json("/collection/remove.json", payload=remove),
-                (200, {"removed": ["Ada - Song.wav"], "failed": [], "left": []}),
-            )
-            self.assertEqual(self.names(), [])
-        self.assertEqual(len(Engine.received), 2)
+        Engine.removals = lambda asked: (409, {"error": "x", "code": "bank_removals_off", "message": "x"})
+        sound(self.rotation / "Ada - Song.wav", artist="Ada", title="Song")
+        remove = {"id": "rotation", "names": ["Ada - Song.wav"]}
+        self.assertEqual(
+            self.json("/collection/remove.json", payload=remove),
+            (200, {"removed": ["Ada - Song.wav"], "failed": [], "left": []}),
+        )
+        self.assertEqual(self.names(), [])
+        self.assertEqual(len(Engine.received), 1)
+
+    def test_with_the_tidying_off_nothing_is_removed(self) -> None:
+        # FON-85: the general switch off, neither the engine nor the catalogue writes.
+        Engine.removals = lambda asked: (409, {"error": "x", "code": "bank_tidy_off", "message": "x"})
+        sound(self.rotation / "Ada - Song.wav", artist="Ada", title="Song")
+        remove = {"id": "rotation", "names": ["Ada - Song.wav"]}
+        self.assertEqual(
+            self.json("/collection/remove.json", payload=remove),
+            (409, {"error": "Le rangement de la banque est coupé sur cette station : rien n'a été retiré."}),
+        )
+        self.assertEqual(self.names(), ["Ada - Song.wav"])
 
     def test_a_busy_engine_removes_nothing(self) -> None:
         message = "La banque est en cours d'indexation : rien n'a changé. Réessaie dans une minute."

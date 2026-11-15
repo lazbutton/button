@@ -94,7 +94,7 @@ import { cartsBeforeRemoval } from "../../api/bankCarts";
 import { TITLES_TYPE, decodeIds, draggedIds, dropAction, encodeIds } from "../../api/titleDrag";
 import { AddToCartDialog } from "./AddToCartDialog";
 import { ColumnsPicker } from "./ColumnsPicker";
-import { MoveDialog, RenameDialog } from "./CollectionView";
+import { MoveDialog, RenameDialog } from "./CollectionDialogs";
 import { CreateBankDialog } from "./CreateBankDialog";
 import { RANKING_ICONS, RankingList } from "./RankingList";
 import { GridCell } from "./GridCell";
@@ -133,13 +133,16 @@ function messageOf(caught: unknown, fallback: string): string {
 }
 
 /**
- * Sons → Banque, vue Contenu, once the bank's tidying is turned on (FON-64):
- * every title of the library in one table, ranged by collection, artist, family
- * or album. Ranged by collection, a collection keeps today's gestures: listen,
- * remove, move, rename and delete. The state stays in the address.
+ * Sons → Banque, vue Contenu (FON-64): every title of the library in one table,
+ * ranged by collection, artist, family or album. Ranged by collection, a
+ * collection keeps its gestures: listen, remove, move, rename and delete. The
+ * state stays in the address. The bank's tidying turned off (`features.bank_tidy`,
+ * FON-85), the table stays to read, without a gesture that writes.
  */
 export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
   const { isAdmin, role, account } = useAccount();
+  // FON-85 : coupé, le tableau se lit, et rien n'écrit dans les fichiers.
+  const tidy = account?.features?.bank_tidy === true;
   // FON-66 : la fiche se corrige, seule ou par lot, pour le Programmateur.
   const canEdit = account?.features?.title_edits === true && (isAdmin || account.permissions.autodj === true);
   // FON-74 : les étiquettes de la station, qu'un moteur plus ancien ne connaît pas.
@@ -151,7 +154,7 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
   // FON-83 : la pochette d'un titre trouvé, par la fiche, que lit le droit de programmation.
   const covers = account?.features?.fiche_covers === true && (isAdmin || account.permissions.autodj === true);
   // FON-69 : des titres de la banque dans un bac, sans copie, pour qui gère les bacs.
-  const canCart = isAdmin || account?.permissions.carts === true;
+  const canCart = tidy && (isAdmin || account?.permissions.carts === true);
   const [params, setParams] = useSearchParams();
   const state = useMemo(() => withVerdict(readState(params), verdictKnown), [params, verdictKnown]);
   const columns = columnsFor(state.columns, tagsKnown, verdictKnown);
@@ -333,10 +336,10 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
   // Ranged by collection, one collection of the catalogue: today's gestures.
   const shelf =
     state.ranking === "collection" && state.group ? (shelves.find((item) => item.id === state.group) ?? null) : null;
-  const gestures = shelf != null;
+  const gestures = shelf != null && tidy;
   const selectable = gestures || canEdit || canRename || canCart;
   // A group with a value becomes a selection of titles (FON-73), for whoever writes them.
-  const canSelect = tableMakesSelection(state) && roleAtLeast(role, "programmateur");
+  const canSelect = tidy && tableMakesSelection(state) && roleAtLeast(role, "programmateur");
   const others = shelves.filter((item) => item.id !== shelf?.id);
   const busy = progress != null;
   const opened = titles.find((title) => title.id === openId) ?? null;
@@ -384,7 +387,7 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
 
   // FON-75 : glisser, c'est pour qui range, corrige ou garnit les bacs ; les mêmes gestes
   // restent dans la barre de sélection, au clavier et sur téléphone.
-  const canDrag = selectable || roleAtLeast(role, "programmateur");
+  const canDrag = tidy && (selectable || roleAtLeast(role, "programmateur"));
   const dropTitles = (value: string, label: string, ids: number[]) => {
     const chosen = ids.map((id) => titles.find((title) => title.id === id)).filter((title): title is BankTitle => Boolean(title));
     const action = dropAction(state.ranking, value, label, chosen);
@@ -568,7 +571,7 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
           description={
             closed === "engine"
               ? "Le moteur de cette station ne sait pas encore montrer toute la banque dans un tableau."
-              : "Le rangement de la banque a été coupé sur cette station. Recharge la page pour retrouver la vue des collections."
+              : "Le moteur de cette station ne montre le tableau que le rangement de la banque allumé. Mets à jour la station."
           }
         />
       </div>
@@ -602,7 +605,7 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
             update({ ranking, group: null });
           }}
           onSelect={choose}
-          onCreate={isAdmin && state.ranking === "collection" ? (label) => setCreating(label) : undefined}
+          onCreate={tidy && isAdmin && state.ranking === "collection" ? (label) => setCreating(label) : undefined}
           onDropTitles={canDrag ? dropTitles : undefined}
         />
 
@@ -653,7 +656,7 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
                     <span className="bacs-show-narrow">Ajouter</span>
                   </Button>
                 ) : null}
-                {shelf && isAdmin && shelf.group !== "rotation" ? (
+                {shelf && tidy && isAdmin && shelf.group !== "rotation" ? (
                   <DropdownMenu.Root modal={false}>
                     <DropdownMenu.Trigger disabled={busy}>
                       <IconButton size="2" variant="outline" color="gray" aria-label={`Actions pour la collection ${shelf.label}`}>
@@ -679,6 +682,15 @@ export function BankTable({ onAdd }: { onAdd: (id: string) => void }) {
               </div>
             ) : null}
           </header>
+
+          {!tidy ? (
+            <div className="banque-note" role="status">
+              <span>
+                Le rangement de la banque est coupé sur cette station : le tableau se lit, et rien ne s'écrit dans
+                les fichiers. Il se rallume sur la machine de la station.
+              </span>
+            </div>
+          ) : null}
 
           <div className="bacs-sounds">
             {dragging && canCart ? (

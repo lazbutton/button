@@ -2,12 +2,12 @@ import type { Page, Route } from "@playwright/test";
 import { verifierAccessibilite } from "./accessibilite.ts";
 import { antenne, avis, expect, seConnecter, test } from "./banc.ts";
 
-// Le tableau de la banque (FON-64), derrière l'interrupteur général de « Ranger
-// la banque ». Le moteur du banc le garde éteint, comme une station : le parcours
-// l'allume dans la réponse de /account.json, et rend le tableau d'une
+// Le tableau de la banque (FON-64), la vue Contenu de Sons → Banque. Le parcours
+// pose l'interrupteur général de « Ranger la banque » dans la réponse de
+// /account.json, allumé ou coupé (FON-85), et rend le tableau d'une
 // bibliothèque tenue ici, filtrée et triée comme le moteur le fait
 // (engine/radiotomate/services/bank_titles.py). Les collections viennent du faux
-// catalogue : la rotation du banc.
+// catalogue : la rotation du banc, ou celles qu'un parcours tient en mémoire.
 
 type Titre = {
   id: number;
@@ -76,14 +76,14 @@ function facettes(nom: Facette) {
     .sort((a, b) => Number(!a.value) - Number(!b.value) || a.label.localeCompare(b.label, "fr"));
 }
 
-/** Allume l'interrupteur et rend le tableau. Rend les adresses demandées, dans l'ordre. */
-async function tableau(page: Page, statut = 200): Promise<URL[]> {
+/** Pose l'interrupteur et rend le tableau. Rend les adresses demandées, dans l'ordre. */
+async function tableau(page: Page, statut = 200, allume = true): Promise<URL[]> {
   const demandes: URL[] = [];
   await page.route("**/account.json", async (route: Route) => {
     if (route.request().method() !== "GET") return route.fallback();
     const reponse = await route.fetch();
     const compte = (await reponse.json()) as Record<string, unknown>;
-    await route.fulfill({ response: reponse, json: { ...compte, features: { bank_tidy: true } } });
+    await route.fulfill({ response: reponse, json: { ...compte, features: { bank_tidy: allume } } });
   });
   await page.route("**/media/titles/*/plays.json", (route: Route) =>
     route.fulfill({
@@ -190,6 +190,104 @@ test("rangée par collection, la rotation garde ses gestes", async ({ page }) =>
   const selection = rotation.getByRole("toolbar", { name: "Sélection" });
   await expect(selection.getByRole("button", { name: "Retirer" })).toBeVisible();
   await expect(selection.getByRole("button", { name: "Déplacer" })).toBeVisible();
+});
+
+type Etagere = { id: string; label: string; group: "rotation" | "archives"; folder: string; count: number; bytes: number };
+
+/** Les collections du catalogue, tenues ici : la liste, renommer, supprimer. Rend les gestes reçus. */
+async function catalogue(page: Page, etageres: Etagere[]): Promise<Array<{ chemin: string; corps: Record<string, unknown> }>> {
+  const gestes: Array<{ chemin: string; corps: Record<string, unknown> }> = [];
+  await page.route("**/library/collection/**", async (route: Route) => {
+    const chemin = new URL(route.request().url()).pathname.replace(/^\/library/, "");
+    if (chemin === "/collection/list.json") return route.fulfill({ json: { destinations: etageres } });
+    const corps = route.request().postDataJSON() as Record<string, unknown>;
+    gestes.push({ chemin, corps });
+    const etagere = etageres.find((item) => item.id === corps.id);
+    if (!etagere) return route.fulfill({ status: 404, json: { error: "Collection introuvable." } });
+    if (chemin === "/collection/rename.json") {
+      etagere.label = String(corps.label);
+      const { id, label, group, folder } = etagere;
+      return route.fulfill({ json: { destination: { id, label, group, folder } } });
+    }
+    if (chemin === "/collection/delete.json") {
+      etageres.splice(etageres.indexOf(etagere), 1);
+      return route.fulfill({ json: { deleted: etagere.id, trashed: 0 } });
+    }
+    return route.fulfill({ status: 404, json: { error: "not_found" } });
+  });
+  return gestes;
+}
+
+const COLLECTIONS = (): Etagere[] => [
+  { id: "rotation", label: "Rotation", group: "rotation", folder: "10-rotation", count: 2, bytes: 10 },
+  { id: "nuit", label: "Nuit", group: "archives", folder: "20-archives/nuit", count: 2, bytes: 10 },
+  { id: "vide", label: "Vide", group: "archives", folder: "20-archives/vide", count: 0, bytes: 0 },
+];
+
+test("un admin renomme une collection, puis la supprime une fois vide", async ({ page }) => {
+  await tableau(page);
+  const gestes = await catalogue(page, COLLECTIONS());
+  await seConnecter(page, "admin");
+  await expect(antenne(page)).toBeVisible();
+  await page.goto("/sons?onglet=importer&groupe=nuit");
+
+  // Une collection qui a des titres ne se supprime pas.
+  await page.getByRole("button", { name: "Actions pour la collection Nuit" }).click();
+  await expect(page.getByRole("menuitem", { name: /Supprimer/ })).toHaveAttribute("aria-disabled", "true");
+  await page.keyboard.press("Escape");
+
+  await page.goto("/sons?onglet=importer&groupe=vide");
+  const colonne = page.getByRole("complementary", { name: "Ranger la banque" });
+  await expect(page.getByRole("region", { name: "Vide" }).getByText("Aucun titre ici.")).toBeVisible();
+  await page.getByRole("button", { name: "Actions pour la collection Vide" }).click();
+  await page.getByRole("menuitem", { name: "Renommer…" }).click();
+  const renommer = page.getByRole("dialog", { name: "Renommer la collection" });
+  await renommer.getByLabel("Nom").fill("nuit");
+  await expect(renommer.getByText("Une collection porte déjà ce nom.")).toBeVisible();
+  await renommer.getByLabel("Nom").fill("Nuit blanche");
+  await renommer.getByRole("button", { name: "Renommer" }).click();
+  await expect(avis(page, "La collection « Vide » s'appelle maintenant « Nuit blanche ».")).toBeVisible();
+  await expect(colonne.getByRole("option", { name: /^Nuit blanche/ })).toBeVisible();
+
+  await page.getByRole("button", { name: "Actions pour la collection Nuit blanche" }).click();
+  await page.getByRole("menuitem", { name: /Supprimer/ }).click();
+  await page
+    .getByRole("dialog", { name: "Supprimer la collection « Nuit blanche » ?" })
+    .getByRole("button", { name: "Supprimer la collection" })
+    .click();
+  await expect(avis(page, "Collection « Nuit blanche » supprimée.")).toBeVisible();
+  await expect(colonne.getByRole("option", { name: /^Nuit blanche/ })).toHaveCount(0);
+
+  expect(gestes).toEqual([
+    { chemin: "/collection/rename.json", corps: { id: "vide", label: "Nuit blanche" } },
+    { chemin: "/collection/delete.json", corps: { id: "vide" } },
+  ]);
+});
+
+test("le rangement coupé, le tableau se lit, sans un geste qui écrit", async ({ page }) => {
+  await tableau(page, 200, false);
+  const gestes = await catalogue(page, COLLECTIONS());
+  await seConnecter(page, "admin");
+  await expect(antenne(page)).toBeVisible();
+  await page.goto("/sons?onglet=importer&groupe=nuit");
+
+  const nuit = page.getByRole("region", { name: "Nuit" });
+  await expect(nuit.getByRole("status").filter({ hasText: "Le rangement de la banque est coupé" })).toBeVisible();
+  await expect(nuit.getByRole("button", { name: "Dune", exact: true })).toBeVisible();
+  // Ni case à cocher, ni menu d'un titre, ni geste de la collection, ni « Nouvelle ».
+  await expect(nuit.getByRole("checkbox")).toHaveCount(0);
+  await expect(nuit.getByRole("button", { name: /^Actions pour/ })).toHaveCount(0);
+  await expect(page.getByRole("complementary", { name: "Ranger la banque" }).getByRole("button", { name: "Nouvelle" })).toHaveCount(0);
+  await expect(nuit.getByRole("link", { name: /Créer une sélection/ })).toHaveCount(0);
+  await expect(nuit.locator("tr[draggable=true]")).toHaveCount(0);
+
+  // La fiche d'un titre s'ouvre, en lecture.
+  await nuit.getByRole("button", { name: "Dune", exact: true }).click();
+  const fiche = page.getByRole("complementary", { name: "Fiche de Dune" });
+  await expect(fiche.getByText("Sable")).toBeVisible();
+  await expect(fiche.getByRole("button", { name: /Corriger/ })).toHaveCount(0);
+  await verifierAccessibilite(page);
+  expect(gestes).toEqual([]);
 });
 
 test("sur téléphone, la liste des groupes, puis le tableau, puis la fiche", async ({ page }) => {

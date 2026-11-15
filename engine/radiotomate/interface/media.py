@@ -2,8 +2,9 @@
 the views each account keeps of it (FON-65), and the plays of a title in its
 fiche (FON-76), and a selection composed by filters (FON-73).
 
-Behind the general switch of « Ranger la banque », ``features.bank_tidy``: off,
-the routes refuse, and the console keeps today's view.
+They answer whatever the general switch of « Ranger la banque »,
+``features.bank_tidy``: off, the table stays readable (FON-85). A view kept is a
+way to read it, written in the engine's base, never in a file.
 """
 
 from quart import Blueprint, g, jsonify, request
@@ -17,7 +18,6 @@ from radiotomate.services.bank_plays import title_plays
 from radiotomate.services.bank_titles import (
     TitleQuery,
     carts_by_title,
-    require_bank_tidy,
     titles_page,
 )
 from radiotomate.services.beets_query import validate_selection_query
@@ -30,7 +30,6 @@ blueprint = Blueprint("media", __name__)
 @blueprint.get("/media/titles.json")
 @login_required
 async def titles_json():
-    await require_bank_tidy(g.dbsession)
     # FON-80 : le verdict, colonne, filtre et rangement, seulement allumé.
     verdict = await verdict_on(g.dbsession)
     query = TitleQuery.from_args(request.args, verdict=verdict)
@@ -42,7 +41,6 @@ async def titles_json():
 @blueprint.get("/media/views.json")
 @login_required
 async def views_json():
-    await require_bank_tidy(g.dbsession)
     views = await bank_views.list_views(g.dbsession, current_user.user)
     return jsonify({"views": [bank_views.view_payload(view) for view in views]})
 
@@ -50,7 +48,6 @@ async def views_json():
 @blueprint.post("/media/views.json")
 @login_required
 async def create_view_json():
-    await require_bank_tidy(g.dbsession)
     data = await read_json_object()
     view = await bank_views.create_view(
         g.dbsession, current_user.user, data.get("name"), data.get("state")
@@ -62,7 +59,6 @@ async def create_view_json():
 @blueprint.put("/media/views/<int:view_id>.json")
 @login_required
 async def update_view_json(view_id: int):
-    await require_bank_tidy(g.dbsession)
     data = await read_json_object()
     view = await bank_views.update_view(g.dbsession, current_user.user, view_id, data)
     await g.dbsession.commit()
@@ -72,7 +68,6 @@ async def update_view_json(view_id: int):
 @blueprint.delete("/media/views/<int:view_id>.json")
 @login_required
 async def delete_view_json(view_id: int):
-    await require_bank_tidy(g.dbsession)
     await bank_views.delete_view(g.dbsession, current_user.user, view_id)
     await g.dbsession.commit()
     return jsonify({"ok": True})
@@ -81,7 +76,6 @@ async def delete_view_json(view_id: int):
 @blueprint.get("/media/titles/<int:item_id>/plays.json")
 @login_required
 async def title_plays_json(item_id: int):
-    await require_bank_tidy(g.dbsession)
     item = await BeetsIntegration.get().get_item(item_id)
     if item is None:
         raise DomainNotFound("Ce titre n'est plus dans la bibliothèque.")
@@ -93,7 +87,6 @@ async def title_plays_json(item_id: int):
 @login_required
 async def selection_json():
     """A selection composed by filters (FON-73): its query, its count, ten titles."""
-    await require_bank_tidy(g.dbsession)
     beets = BeetsIntegration.get()
     filters = SelectionFilters.from_args(request.args)
     query = selection_query(filters, genre_field=await beets.genre_field())

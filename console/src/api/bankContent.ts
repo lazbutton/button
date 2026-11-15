@@ -1,5 +1,4 @@
-import { displayNow } from "../lib/nowPlaying.ts";
-import { agoLabel, formatBytes, type BankDestination } from "./soundsView.ts";
+import type { BankDestination } from "./soundsView.ts";
 
 /** A file of rotation or of a collection, as the catalogue reads it on the disk. */
 export type BankFile = {
@@ -16,25 +15,10 @@ export type BankFile = {
 /** Rotation or a collection, with what it holds. */
 export type BankShelf = BankDestination & { count: number; bytes: number };
 
-export type BankPage = {
-  destination: BankDestination;
-  files: BankFile[];
-  /** Every file of the collection. */
-  total: number;
-  /** Those the search keeps. */
-  matched: number;
-  bytes: number;
-  /** The catalogue has not read every tag yet: the search may find more in a moment. */
-  partial: boolean;
-};
-
-export type BankSort = "name" | "recent";
 export type BankFailure = { name: string; reason: string };
 /** What a removal or a move did. `stopped` says why it did not go to the end. */
 export type BankChange = { done: string[]; failed: BankFailure[]; stopped: string };
 
-/** One page of the list. */
-export const BANK_PAGE = 100;
 /** Titles sent by one request: a move to another disk copies, and nginx waits 30 s. */
 export const BANK_BATCH = 25;
 
@@ -116,30 +100,6 @@ export async function bankShelves(): Promise<BankShelf[]> {
   return Array.isArray(payload.destinations) ? payload.destinations : [];
 }
 
-export async function bankFiles(
-  id: string,
-  options: { q?: string; offset?: number; sort?: BankSort } = {},
-): Promise<BankPage> {
-  const search = new URLSearchParams({ id, limit: String(BANK_PAGE), offset: String(options.offset ?? 0) });
-  if (options.q?.trim()) search.set("q", options.q.trim());
-  if (options.sort === "recent") search.set("sort", "recent");
-  const payload = await call<Partial<BankPage>>(`/collection/files.json?${search}`);
-  const files = Array.isArray(payload.files) ? payload.files : [];
-  return {
-    destination: payload.destination ?? { id, label: id, group: "archives", folder: "" },
-    files,
-    total: payload.total ?? files.length,
-    matched: payload.matched ?? files.length,
-    bytes: payload.bytes ?? 0,
-    partial: payload.partial === true,
-  };
-}
-
-/** Where the browser reads a file of the bank, for a pre-listen. */
-export function bankFileUrl(id: string, name: string): string {
-  return `/library/collection/file?${new URLSearchParams({ id, name })}`;
-}
-
 export function chunks<T>(items: T[], size: number): T[][] {
   const parts: T[][] = [];
   for (let start = 0; start < items.length; start += size) parts.push(items.slice(start, start + size));
@@ -217,27 +177,6 @@ export async function deleteCollection(id: string): Promise<number> {
   return typeof payload.trashed === "number" ? payload.trashed : 0;
 }
 
-// The formats the engine plays: AUDIO_SUFFIXES, in engine/radiotomate/services/media_bank.py.
-const AUDIO_NAMES = /\.(mp3|wav|wave|flac|ogg|oga|opus|m4a|aac|aiff|aif|wma|mp2|webm)$/i;
-
-/** A sound, by its name. Anything else in a collection is a file left there, that nothing plays. */
-export function isAudioName(name: string): boolean {
-  return AUDIO_NAMES.test(name);
-}
-
-/** The subfolder a title sits in, below its collection: « » at its root. */
-export function subfolderOf(name: string): string {
-  const cut = name.lastIndexOf("/");
-  return cut > 0 ? name.slice(0, cut) : "";
-}
-
-/** Artist and title of a file: its tags, or what its name says (« Artiste - Titre »). */
-export function bankLabels(file: Pick<BankFile, "name" | "title" | "artist">): { artist: string; title: string } {
-  const base = file.name.split("/").pop() || file.name;
-  const parsed = displayNow({ title: file.title || base, artist: file.artist || "" });
-  return { artist: parsed.artist, title: parsed.title || file.title || base };
-}
-
 function plural(count: number, one: string, many: string): string {
   return `${count} ${count === 1 ? one : many}`;
 }
@@ -287,44 +226,6 @@ export function removeNote(count: number, noted: boolean): string {
 
 export function titlesLabel(count: number): string {
   return count === 0 ? "Aucun titre" : plural(count, "titre", "titres");
-}
-
-/** « 12 titres · 1,2 Go », under the name of a collection. */
-export function shelfFacts(shelf: Pick<BankShelf, "count" | "bytes">): string {
-  return shelf.count ? `${titlesLabel(shelf.count)} · ${formatBytes(shelf.bytes)}` : "Vide";
-}
-
-/** « il y a 3 h », then the day; the year too once it is not this one. */
-export function modifiedLabel(iso: string, now = Date.now()): string {
-  const at = new Date(iso).getTime();
-  if (Number.isNaN(at)) return "";
-  if (now - at < 86_400_000 || new Date(at).getFullYear() === new Date(now).getFullYear()) return agoLabel(iso, now);
-  return new Date(at).toLocaleDateString("fr-FR", { day: "numeric", month: "short", year: "numeric" });
-}
-
-/**
- * A click on a title's box. With Shift, everything between the last title clicked
- * and this one joins the selection, as in a bac.
- */
-export function toggleSelection(
-  order: string[],
-  selected: ReadonlySet<string>,
-  last: string | null,
-  name: string,
-  shift: boolean,
-): Set<string> {
-  const next = new Set(selected);
-  if (shift && last != null) {
-    const from = order.indexOf(last);
-    const to = order.indexOf(name);
-    if (from >= 0 && to >= 0) {
-      for (let index = Math.min(from, to); index <= Math.max(from, to); index += 1) next.add(order[index]);
-      return next;
-    }
-  }
-  if (next.has(name)) next.delete(name);
-  else next.add(name);
-  return next;
 }
 
 /**

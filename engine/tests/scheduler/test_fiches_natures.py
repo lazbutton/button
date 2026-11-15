@@ -149,10 +149,12 @@ async def test_natures_json_and_the_nature_filter(
         app_configration, beets, dbsession, users_password, {"autodj": True}
     )
 
+    await Setting.upsert(dbsession, bank_titles.SETTING_BANK_TIDY, "0")
+    await dbsession.commit()
     closed = await client.get("/fiches/natures.json")
     assert closed.status_code == 409
     assert (await closed.get_json())["code"] == "bank_tidy_off"
-    dbsession.add(Setting(key=bank_titles.SETTING_BANK_TIDY, value="1"))
+    await Setting.upsert(dbsession, bank_titles.SETTING_BANK_TIDY, "1")
     await dbsession.commit()
 
     response = await client.get("/fiches/natures.json")

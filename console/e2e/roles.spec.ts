@@ -21,7 +21,8 @@ const ROLES = {
   admin: {
     libelle: "Admin",
     pages: ["Antenne", "Conducteur", "Programmation", "Sons", "Réglages"],
-    reglages: ["Comptes", "Station", "Automate", "Mises à jour", "Mon compte"],
+    // Fiches : le rangement de la banque, allumé quand le moteur n'en dit rien (FON-85).
+    reglages: ["Comptes", "Station", "Fiches", "Automate", "Mises à jour", "Mon compte"],
     programme: true,
     admin: true,
   },

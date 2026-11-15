@@ -4,27 +4,19 @@ import {
   BANK_BATCH,
   BankCallError,
   BankUnsupportedError,
-  bankFileUrl,
-  bankFiles,
-  bankLabels,
   bankShelves,
   callProblem,
   changeSummary,
   chunks,
   deleteCollection,
-  isAudioName,
   MAYBE_DONE,
-  modifiedLabel,
   moveBankFiles,
   moveNote,
   removeNote,
   removeBankFiles,
   renameCollection,
   renameProblem,
-  shelfFacts,
-  subfolderOf,
   titlesLabel,
-  toggleSelection,
 } from "./bankContent.ts";
 import type { BankDestination } from "./soundsView.ts";
 
@@ -90,36 +82,11 @@ test("an older catalogue does not know the routes: the view says to update it", 
   await assert.rejects(removeBankFiles("rotation", ["a.mp3"]), BankUnsupportedError);
 });
 
-test("the list asks for a page of a collection", async () => {
-  const calls = catalogue(
-    { body: { destinations: [{ ...ROTATION, count: 2, bytes: 10 }] } },
-    {
-      body: {
-        destination: JAZZ,
-        files: [{ name: "a.mp3", title: "A", artist: "", duration: 3, bytes: 5, modified: "2026-11-13T10:00:00+00:00" }],
-        total: 40,
-        matched: 1,
-        bytes: 900,
-        partial: true,
-      },
-    },
-    { body: {} },
-  );
+test("the collections are read from the catalogue", async () => {
+  catalogue({ body: { destinations: [{ ...ROTATION, count: 2, bytes: 10 }] } }, { body: {} });
   assert.deepEqual(await bankShelves(), [{ ...ROTATION, count: 2, bytes: 10 }]);
-  const page = await bankFiles("jazz", { q: "  été ", offset: 100, sort: "recent" });
-  assert.equal(calls[1].url, "/library/collection/files.json?id=jazz&limit=100&offset=100&q=%C3%A9t%C3%A9&sort=recent");
-  assert.deepEqual([page.total, page.matched, page.partial, page.files.length], [40, 1, true, 1]);
-  // A reply with nothing in it is an empty collection, not a crash.
-  const empty = await bankFiles("nuit");
-  assert.equal(calls[2].url, "/library/collection/files.json?id=nuit&limit=100&offset=0");
-  assert.deepEqual([empty.files, empty.total, empty.partial, empty.destination.id], [[], 0, false, "nuit"]);
-});
-
-test("a file of the bank plays by its collection and its name", () => {
-  assert.equal(
-    bankFileUrl("jazz", "Album/Été & nuit #1.mp3"),
-    "/library/collection/file?id=jazz&name=Album%2F%C3%89t%C3%A9+%26+nuit+%231.mp3",
-  );
+  // A reply with nothing in it is no collection, not a crash.
+  assert.deepEqual(await bankShelves(), []);
 });
 
 test("titles leave in batches, and what each batch did adds up", async () => {
@@ -211,62 +178,12 @@ test("a collection is renamed and deleted by its folder name", async () => {
   await assert.rejects(renameCollection("jazz", "X"), /Réservé à un admin\./);
 });
 
-test("a title shows its tags, or what its file name says", () => {
-  assert.deepEqual(bankLabels({ name: "01.mp3", title: "Le chant des machines", artist: "Ada Lovelace" }), {
-    artist: "Ada Lovelace",
-    title: "Le chant des machines",
-  });
-  // No tag: the catalogue sends the name without its extension.
-  assert.deepEqual(bankLabels({ name: "Ada - Song.mp3", title: "Ada - Song", artist: "" }), {
-    artist: "Ada",
-    title: "Song",
-  });
-  assert.deepEqual(bankLabels({ name: "Album/Bea - Live.flac", title: "", artist: "" }), {
-    artist: "Bea",
-    title: "Live",
-  });
-  assert.deepEqual(bankLabels({ name: "notes.txt", title: "notes", artist: "" }), { artist: "", title: "notes" });
-});
-
-test("a sound is known by its name, and so is its subfolder", () => {
-  assert.equal(isAudioName("Ada - Song.MP3"), true);
-  assert.equal(isAudioName("Album/01.flac"), true);
-  assert.equal(isAudioName("notes.txt"), false);
-  assert.equal(isAudioName("pochette.jpg"), false);
-  assert.equal(subfolderOf("Ada - Song.mp3"), "");
-  assert.equal(subfolderOf("Concerts/2024/01.wav"), "Concerts/2024");
-});
-
 test("counts and sizes read in French", () => {
   assert.equal(titlesLabel(0), "Aucun titre");
   assert.equal(titlesLabel(1), "1 titre");
   assert.equal(titlesLabel(240), "240 titres");
-  assert.equal(shelfFacts({ count: 0, bytes: 0 }), "Vide");
-  assert.equal(shelfFacts({ count: 1, bytes: 3 * 1024 * 1024 }), "1 titre · 3,0 Mo");
   assert.deepEqual(chunks([1, 2, 3, 4, 5], 2), [[1, 2], [3, 4], [5]]);
   assert.deepEqual(chunks([], 2), []);
-});
-
-test("a date is close, then a day, then a day with its year", () => {
-  const now = new Date("2026-11-13T12:00:00Z").getTime();
-  assert.equal(modifiedLabel("2026-11-13T11:58:00+00:00", now), "il y a 2 min");
-  assert.equal(modifiedLabel("2026-11-13T09:00:00+00:00", now), "il y a 3 h");
-  assert.equal(modifiedLabel("2026-03-02T09:00:00+00:00", now), "2 mars");
-  assert.equal(modifiedLabel("2024-03-02T09:00:00+00:00", now), "2 mars 2024");
-  assert.equal(modifiedLabel("pas une date", now), "");
-});
-
-test("Shift takes every title between two clicks", () => {
-  const order = ["a", "b", "c", "d", "e"];
-  const one = toggleSelection(order, new Set(), null, "b", false);
-  assert.deepEqual([...one], ["b"]);
-  assert.deepEqual([...toggleSelection(order, one, "b", "d", true)].sort(), ["b", "c", "d"]);
-  assert.deepEqual([...toggleSelection(order, one, "d", "a", true)].sort(), ["a", "b", "c", "d"]);
-  // A second click lets go; Shift without a first click is a plain click.
-  assert.deepEqual([...toggleSelection(order, one, "b", "b", false)], []);
-  assert.deepEqual([...toggleSelection(order, new Set(), null, "c", true)], ["c"]);
-  // The last title clicked left the list: a plain click again.
-  assert.deepEqual([...toggleSelection(order, one, "parti", "e", true)].sort(), ["b", "e"]);
 });
 
 test("a change says what it did, and to which collections, in sentences", () => {

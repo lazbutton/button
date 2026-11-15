@@ -102,8 +102,8 @@ async def _client(  # noqa: PLR0913
     user.update_password(users_password)
     user.permissions = {"autodj": True} if permissions is None else permissions
     dbsession.add(user)
-    if on:
-        dbsession.add(Setting(key=bank_titles.SETTING_BANK_TIDY, value="1"))
+    # On by default since FON-85: off, a station says so.
+    dbsession.add(Setting(key=bank_titles.SETTING_BANK_TIDY, value="1" if on else "0"))
     await dbsession.commit()
     client = _interface_client(app_configration, beets)
     await _login(client, "relire-json", users_password)

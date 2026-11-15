@@ -44,17 +44,19 @@ async def test_views_ask_for_a_session(raw_app, app_configration, beets_integrat
     assert (await client.get("/media/views.json")).status_code == 401
 
 
-async def test_switch_off_keeps_the_views_closed(
+async def test_switch_off_keeps_the_views(
     raw_app, app_configration, beets_integration, dbsession, users_password
 ):
+    # FON-85: a view is a way to read the table, kept in the engine's base: the
+    # switch off, the table and its views stay.
+    dbsession.add(Setting(key="features.bank_tidy", value="0"))
     await _account(dbsession, users_password, "nadia")
     client = await _client(app_configration, beets_integration, users_password, "nadia")
-    assert (await client.get("/media/views.json")).status_code == 409
+    assert (await client.get("/media/views.json")).status_code == 200
     response = await client.post(
         "/media/views.json", json={"name": "Jazz", "state": JAZZ}
     )
-    assert response.status_code == 409
-    assert (await response.get_json())["code"] == "bank_tidy_off"
+    assert response.status_code == 201
 
 
 @pytest.mark.usefixtures("switched_on")

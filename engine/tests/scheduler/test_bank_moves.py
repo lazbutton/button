@@ -561,12 +561,12 @@ async def test_past_its_time_a_request_says_what_is_left(
     assert report.left == ["10-rotation/b.mp3"]
 
 
-async def test_the_engine_moves_only_once_the_tidying_is_on(dbsession: ormSession):
-    assert await moves_on(dbsession) is False
-    tidy = Setting(key="features.bank_tidy", value="2")
+async def test_the_engine_moves_only_while_the_tidying_is_on(dbsession: ormSession):
+    # On unless said off, as the console reads it (FON-85).
+    assert await moves_on(dbsession) is True
+    tidy = Setting(key="features.bank_tidy", value="non")
     dbsession.add(tidy)
     await dbsession.commit()
-    # On only when said so, as the console reads it (FON-64).
     assert await moves_on(dbsession) is False
     tidy.value = "oui"
     await dbsession.commit()

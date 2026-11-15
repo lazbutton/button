@@ -5,7 +5,7 @@
 - `GET /media/journal/<id>.json` : un lot, ligne par ligne.
 - `POST /media/journal/<id>/undo.json` : « Annuler », pendant 30 jours.
 
-Derrière l'interrupteur du rangement de la banque, `features.bank_tidy` : éteint,
+Derrière l'interrupteur du rangement de la banque, `features.bank_tidy` : coupé,
 la page ne s'ouvre pas. Annuler une correction demande aussi
 `features.title_edits`, comme l'écrire.
 """

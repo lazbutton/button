@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from mediafile import MediaFile
 
-from radiotomate.models import MusicCategory, User
+from radiotomate.models import MusicCategory, Setting, User
 from tests.scheduler.test_studio_json import _interface_client, _login
 from tests.scheduler.test_title_edits import _bank, _open
 
@@ -57,6 +57,8 @@ async def test_edit_closed_while_the_switch_is_off(
     raw_app, app_configration, dbsession, users_password, tmp_path
 ):
     beets, ids = _bank(tmp_path, ("mp3",))
+    dbsession.add(Setting(key="features.bank_tidy", value="0"))
+    await dbsession.commit()
     client = await _client(
         app_configration, beets, dbsession, users_password, {"autodj": True}
     )

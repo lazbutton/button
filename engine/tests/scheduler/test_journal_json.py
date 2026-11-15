@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from mediafile import MediaFile
 from sqlalchemy import update as sql_update
 
-from radiotomate.models import JournalEntry, User
+from radiotomate.models import JournalEntry, Setting, User
 from radiotomate.services import journal
 from tests.scheduler.test_studio_json import _interface_client, _login
 from tests.scheduler.test_title_edits import _bank, _open
@@ -54,6 +54,8 @@ async def test_journal_closed_while_the_switch_is_off(
     raw_app, app_configration, dbsession, users_password, tmp_path
 ):
     beets, _ids = _bank(tmp_path, ("mp3",))
+    dbsession.add(Setting(key="features.bank_tidy", value="0"))
+    await dbsession.commit()
     client = await _client(
         app_configration, beets, dbsession, users_password, "programmatrice"
     )

@@ -203,6 +203,8 @@ async def test_the_switch_off_keeps_them_closed(
 ):
     beets, (one,) = _bank(tmp_path, ("mp3",))
     _mark(beets, one, fmg="oui")
+    dbsession.add(Setting(key="features.bank_tidy", value="0"))
+    await dbsession.commit()
     client = await _client(
         app_configration, beets, dbsession, users_password, {"admin": True}
     )

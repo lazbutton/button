@@ -1038,6 +1038,8 @@ def _engine_gesture(
 
     None when the engine leaves it to the catalogue: an engine from before,
     which does not know the route, or one of whose switches in `off` is off.
+    The general switch of the bank's tidying off, the engine refuses, and so
+    does the catalogue: nothing writes in the files (FON-85).
     """
     if not AUTOMATE_URL:
         return None
@@ -1056,6 +1058,8 @@ def _engine_gesture(
     status, payload = _engine_json(req, ENGINE_MOVE_WAIT)
     if status == 404 or (status == 409 and payload.get("code") in off):
         return None
+    if status == 409 and payload.get("code") == "bank_tidy_off":
+        return 409, {"error": f"Le rangement de la banque est coupé sur cette station : {nothing}"}
     if status == 200:
         return 200, payload
     if status == 401:
@@ -1075,13 +1079,13 @@ def engine_move(cookie: str, moves: list[dict]) -> tuple[int, dict] | None:
     The engine moves a title of the bank keeping its identity: its Beets id,
     its place in the carts and in the Agenda. None when it leaves the move to
     the catalogue: an engine from before, which does not know the route, or
-    whose switch is off.
+    whose switch of the moves is off.
     """
     return _engine_gesture(
         cookie,
         "/media/move.json",
         {"moves": moves},
-        {"bank_moves_off", "bank_tidy_off"},
+        {"bank_moves_off"},
         ENGINE_DOWN,
         "rien n'a été déplacé.",
     )
@@ -1098,7 +1102,7 @@ def engine_remove(cookie: str, paths: list[str]) -> tuple[int, dict] | None:
         cookie,
         "/media/remove.json",
         {"paths": paths},
-        {"bank_removals_off", "bank_tidy_off"},
+        {"bank_removals_off"},
         "automate injoignable : rien n'a été retiré.",
         "rien n'a été retiré.",
     )

@@ -9,7 +9,7 @@ from __future__ import annotations
 import pytest
 
 from radiotomate.domain.errors import DomainValidationError
-from radiotomate.models import MusicCategory, User
+from radiotomate.models import MusicCategory, Setting, User
 from radiotomate.services import station_tags
 from radiotomate.services.beets_query import validate_selection_query
 from radiotomate.services.station_tags import (
@@ -163,6 +163,8 @@ async def test_a_wrong_gesture_is_refused(  # noqa: PLR0913
 
 async def test_tags_wait_for_the_switch(raw_app, dbsession, tmp_path):
     beets, ids = _bank(tmp_path, ("mp3",))
+    dbsession.add(Setting(key="features.bank_tidy", value="0"))
+    await dbsession.commit()
     with pytest.raises(TitleEditsOff):
         await tag_titles(dbsession, beets, ids, ["nuit"], [], username="programmatrice")
     assert "etiquettes" not in beets.lib.get_item(ids[0])

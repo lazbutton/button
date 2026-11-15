@@ -598,6 +598,7 @@ async def test_the_routes_stay_closed_with_the_switch_off(
 ):
     beets, (mp3,) = _bank(tmp_path, ("mp3",))
     dbsession.add(Setting(key=SETTING_TITLE_EDITS, value="1"))
+    dbsession.add(Setting(key="features.bank_tidy", value="0"))
     await dbsession.commit()
     ids = await _fiche(dbsession, mp3, [("album", "Estuaire", "Ciel")])
     client = await _client(

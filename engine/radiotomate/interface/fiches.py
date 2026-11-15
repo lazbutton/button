@@ -29,7 +29,7 @@
   pas encore, leurs doublons, et ce que la recherche en a reconnu. Il ne fait que
   lire : un POST, pour porter la liste. Droit `autodj`.
 
-Derrière l'interrupteur du rangement de la banque, `features.bank_tidy` : éteint,
+Derrière l'interrupteur du rangement de la banque, `features.bank_tidy` : coupé,
 les routes refusent. Écrire demande aussi `features.title_edits`, pas coupé.
 """
 

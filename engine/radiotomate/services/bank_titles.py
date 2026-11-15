@@ -7,8 +7,9 @@ l'année et les champs flexibles, que l'index de la recherche n'a pas
 (docs/decisions/0020-la-banque-se-range-par-ses-fiches.md). Elle ne connaît que
 la rotation et les collections.
 
-Tout le chantier « Ranger la banque » attend derrière un interrupteur général,
-éteint tant que FON-85 ne l'a pas allumé : ``features.bank_tidy``.
+Tout le chantier « Ranger la banque » tient derrière un interrupteur général,
+``features.bank_tidy``, allumé depuis FON-85. Coupé, le tableau reste en lecture,
+et rien du chantier n'écrit plus dans les fichiers.
 """
 
 from __future__ import annotations
@@ -35,10 +36,10 @@ if TYPE_CHECKING:
 
     from sqlalchemy.orm import Session as ormSession
 
-# L'interrupteur général du chantier. Une clé absente le laisse éteint : la console
-# garde la vue d'aujourd'hui, et le tableau ne répond pas.
+# L'interrupteur général du chantier. Une clé absente le laisse allumé (FON-85).
+# Coupé, les lectures du tableau répondent, et ses gestes sont refusés.
 SETTING_BANK_TIDY = "features.bank_tidy"
-SETTING_ON = {"1", "true", "on", "yes", "oui"}
+SETTING_OFF = {"0", "false", "off", "no", "non", ""}
 
 ZONES = {ROTATION_TOP: "rotation", COLLECTIONS_TOP: "collections", **BANK_ZONES}
 ROTATION = "rotation"
@@ -67,15 +68,16 @@ class BankTidyOff(DomainError):  # noqa: N818
 
 
 async def bank_tidy_enabled(session: ormSession) -> bool:
-    """Whether the bank's new views are on: off until a station turns them on."""
+    """Whether the bank's tidying writes: on, unless a station turns it off."""
     row = await Setting.from_key(session, SETTING_BANK_TIDY)
-    return row is not None and str(row.value).strip().lower() in SETTING_ON
+    return row is None or str(row.value).strip().lower() not in SETTING_OFF
 
 
 async def require_bank_tidy(session: ormSession) -> None:
     if not await bank_tidy_enabled(session):
         raise BankTidyOff(
-            "Le rangement de la banque n'est pas encore ouvert sur cette station."
+            "Le rangement de la banque est coupé sur cette station : "
+            "le tableau reste en lecture."
         )
 
 

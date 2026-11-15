@@ -60,9 +60,9 @@ async def _cart(client) -> int:
 
 
 async def _client(app_configration, beets, dbsession, users_password, *, on=True):
-    if on:
-        dbsession.add(Setting(key=bank_titles.SETTING_BANK_TIDY, value="1"))
-        await dbsession.commit()
+    # On by default since FON-85: off, a station says so.
+    dbsession.add(Setting(key=bank_titles.SETTING_BANK_TIDY, value="1" if on else "0"))
+    await dbsession.commit()
     return await _admin_client(
         app_configration, beets, dbsession, users_password, "bacs-banque"
     )

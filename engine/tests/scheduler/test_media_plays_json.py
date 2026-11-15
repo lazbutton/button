@@ -116,9 +116,8 @@ async def test_the_fiche_says_how_often_when_and_from_where(  # noqa: PLR0913
     client = _interface_client(app_configration, beets)
     await _login(client, "plays-json", users_password)
 
-    off = await client.get(f"/media/titles/{item_id}/plays.json")
-    assert off.status_code == 409
-    dbsession.add(Setting(key=bank_titles.SETTING_BANK_TIDY, value="1"))
+    # FON-85 : le rangement coupé, la fiche d'un titre se lit encore.
+    dbsession.add(Setting(key=bank_titles.SETTING_BANK_TIDY, value="0"))
     await dbsession.commit()
 
     response = await client.get(f"/media/titles/{item_id}/plays.json")
