@@ -372,6 +372,122 @@ async def test_a_decision_applied_to_a_file_that_came_back_is_written(
     assert (entry.gesture, entry.username) == ("accept", "programmatrice")
 
 
+async def test_z_after_accepting_writes_back_and_proposes_again(
+    raw_app, dbsession, tmp_path
+):
+    """« Z » de la relecture au clavier (FON-78) : le titre revient comme avant le
+    geste, et se relit de nouveau."""
+    beets, (mp3,) = _bank(tmp_path, ("mp3",))
+    await _open(dbsession)
+    ids = await _fiche(
+        dbsession, mp3, [("album", "Estuaire", "Ciel"), ("fmg", "", "oui")]
+    )
+    accepted = await decide(dbsession, beets, ids, [], username="programmatrice")
+    assert MediaFile(beets.lib.get_item(mp3).path).album == "Ciel"
+
+    outcome = await fiches_decisions.reopen(
+        dbsession, beets, ids, username="programmatrice"
+    )
+
+    assert (outcome.written, outcome.waiting) == (2, [])
+    assert MediaFile(beets.lib.get_item(mp3).path).album == "Estuaire"
+    item = beets.lib.get_item(mp3)
+    assert (item.album, item.get("fmg", ""), item.get("fmg_source", "")) == (
+        "Estuaire",
+        "",
+        "",
+    )
+    assert set((await _states(dbsession, ids)).values()) == {("proposée", "")}
+    assert await dbsession.scalar(select(FicheDecision)) is None
+    undo = await JournalEntry.from_id(dbsession, outcome.entry)
+    assert (undo.gesture, outcome.entry != accepted.entry) == ("undo", True)
+
+    # Relue de nouveau, elle s'accepte comme la première fois.
+    again = await decide(dbsession, beets, ids[:1], [], username="programmatrice")
+    assert again.written == 1
+    assert MediaFile(beets.lib.get_item(mp3).path).album == "Ciel"
+
+
+async def test_z_after_refusing_proposes_again(raw_app, dbsession, tmp_path):
+    beets, (mp3,) = _bank(tmp_path, ("mp3",))
+    await _open(dbsession)
+    ids = await _fiche(dbsession, mp3, [("album", "Estuaire", "Ciel")])
+    await decide(dbsession, beets, [], ids, username="programmatrice")
+
+    outcome = await fiches_decisions.reopen(
+        dbsession, beets, ids, username="programmatrice"
+    )
+
+    assert (outcome.written, outcome.entry) == (0, None)
+    assert (await _states(dbsession, ids))[ids[0]] == ("proposée", "")
+    # Le refus est oublié : la valeur peut de nouveau être proposée.
+    assert await dbsession.scalar(select(FicheDecision)) is None
+    assert await dbsession.scalar(select(JournalEntry)) is None
+
+
+async def test_z_cancels_a_write_still_waiting(raw_app, dbsession, tmp_path):
+    beets, (queued,) = _bank(tmp_path, ("mp3",))
+    await _open(dbsession)
+    line = await _line(dbsession, queued, "in_queue")
+    ids = await _fiche(dbsession, queued, [("album", "Estuaire", "Ciel")])
+    await decide(dbsession, beets, ids, [], username="programmatrice")
+    assert (await _states(dbsession, ids))[ids[0]][0] == "acceptée"
+
+    await fiches_decisions.reopen(dbsession, beets, ids, username="programmatrice")
+
+    assert (await _states(dbsession, ids))[ids[0]] == ("proposée", "")
+    # Le titre passé, rien ne s'écrit : l'écriture qui attendait est défaite.
+    line.status = "played"
+    await dbsession.commit()
+    assert await apply_waiting(dbsession, beets) == 0
+    assert await write_accepted(dbsession, beets) == 0
+    assert MediaFile(beets.lib.get_item(queued).path).album == "Estuaire"
+    assert (await _states(dbsession, ids))[ids[0]] == ("proposée", "")
+
+
+async def test_z_keeps_a_value_changed_since(raw_app, dbsession, tmp_path):
+    beets, (mp3,) = _bank(tmp_path, ("mp3",))
+    await _open(dbsession)
+    ids = await _fiche(dbsession, mp3, [("album", "Estuaire", "Ciel")])
+    await decide(dbsession, beets, ids, [], username="programmatrice")
+    _written_elsewhere(beets, mp3, "Marée basse")
+
+    with pytest.raises(DomainConflict):
+        await fiches_decisions.reopen(dbsession, beets, ids, username="programmatrice")
+    assert (await _states(dbsession, ids))[ids[0]] == ("écrite", "")
+
+
+async def test_z_after_a_write_that_failed_proposes_again(raw_app, dbsession, tmp_path):
+    beets, (mp3,) = _bank(tmp_path, ("mp3",))
+    await _open(dbsession)
+    ids = await _fiche(dbsession, mp3, [("album", "Estuaire", "Ciel")])
+    beets.lib.get_item(mp3).filepath.chmod(0o444)
+    await decide(dbsession, beets, ids, [], username="programmatrice")
+    assert (await _states(dbsession, ids))[ids[0]][0] == "en erreur"
+
+    outcome = await fiches_decisions.reopen(
+        dbsession, beets, ids, username="programmatrice"
+    )
+
+    assert (outcome.written, outcome.entry) == (0, None)
+    assert (await _states(dbsession, ids))[ids[0]] == ("proposée", "")
+    assert MediaFile(beets.lib.get_item(mp3).path).album == "Estuaire"
+
+
+async def test_z_on_a_proposition_still_to_read_is_refused(
+    raw_app, dbsession, tmp_path
+):
+    beets, (mp3,) = _bank(tmp_path, ("mp3",))
+    await _open(dbsession)
+    ids = await _fiche(dbsession, mp3, [("album", "Estuaire", "Ciel")])
+    with pytest.raises(DomainConflict):
+        await fiches_decisions.reopen(dbsession, beets, ids, username="programmatrice")
+    with pytest.raises(DomainValidationError):
+        fiches_decisions.parse_reopen({"ids": []})
+    with pytest.raises(DomainValidationError):
+        fiches_decisions.parse_reopen({"ids": [1, 1]})
+
+
 async def test_accepting_asks_for_the_write_switch(raw_app, dbsession, tmp_path):
     beets, (mp3,) = _bank(tmp_path, ("mp3",))
     await _open(dbsession, own="0")
@@ -411,6 +527,7 @@ async def test_the_routes_ask_for_the_programming_right(
     for path, body in (
         (DECISIONS, {"accept": ids}),
         (f"/fiches/propositions/{ids[0]}/revenir.json", {}),
+        ("/fiches/decisions/annuler.json", {"ids": ids}),
         (f"/fiches/{mp3}/rechercher.json", {}),
     ):
         response = await client.post(path, json=body)
@@ -448,6 +565,14 @@ async def test_the_routes_decide_revert_and_search_again(
     assert back.status_code == 200, await back.get_data()
     assert MediaFile(beets.lib.get_item(mp3).path).album == "Estuaire"
 
+    # « Z » : le refus défait, la proposition de nouveau à relire (FON-78).
+    reopened = await client.post("/fiches/decisions/annuler.json", json={"ids": other})
+    assert reopened.status_code == 200, await reopened.get_data()
+    assert (await _states(dbsession, other))[other[0]] == ("proposée", "")
+    bad_ids = await client.post("/fiches/decisions/annuler.json", json={"ids": "x"})
+    assert bad_ids.status_code == 400
+    assert (await bad_ids.get_json())["field"] == "ids"
+
     off = await client.post(f"/fiches/{mp3}/rechercher.json")
     assert off.status_code == 409
     assert (await off.get_json())["code"] == "fiches_off"
@@ -474,3 +599,6 @@ async def test_the_routes_stay_closed_with_the_switch_off(
     assert response.status_code == 409
     assert (await response.get_json())["code"] == "bank_tidy_off"
     assert MediaFile(beets.lib.get_item(mp3).path).album == "Estuaire"
+    reopened = await client.post("/fiches/decisions/annuler.json", json={"ids": ids})
+    assert reopened.status_code == 409
+    assert (await reopened.get_json())["code"] == "bank_tidy_off"

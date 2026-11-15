@@ -11,6 +11,10 @@
   refused. A proposition whose value changed since it was made is stale: 409.
 - `revert`: a written value goes back to the one before, as long as nobody changed
   it since. The acceptance is forgotten: a file that comes back does not get it.
+- `reopen`: « Z » of the review at the keyboard (FON-78), the last gesture undone.
+  Its propositions are proposed again, as before it: a written value goes back to
+  the one before, one that still waits is never written, and the decision is
+  forgotten.
 - `search_again`: the title is searched before the rest of the catalogue.
 - `write_accepted`: the background of the interface. An accepted proposition
   follows its write in the journal (written, failed, cancelled), and one that never
@@ -194,6 +198,24 @@ def parse_decisions(data: dict) -> tuple[list[int], list[int]]:
             "Une proposition paraît deux fois dans le geste.", field="accept"
         )
     return accept, refuse
+
+
+def parse_reopen(data: dict) -> list[int]:
+    """`{ids: [ids]}`, the propositions of the gesture to undo, checked."""
+    ids = _ids(data.get("ids"), "ids")
+    if not ids:
+        raise DomainValidationError("Choisis au moins une proposition.", field="ids")
+    if len(ids) > MAX_PROPOSITIONS:
+        raise DomainValidationError(
+            f"Un geste prend {MAX_PROPOSITIONS} propositions au plus : "
+            f"celui-ci en a {len(ids)}.",
+            field="ids",
+        )
+    if len(set(ids)) != len(ids):
+        raise DomainValidationError(
+            "Une proposition paraît deux fois dans le geste.", field="ids"
+        )
+    return ids
 
 
 # -- deciding --------------------------------------------------------------------
@@ -504,6 +526,124 @@ async def revert(
         waiting=[issue.payload() for issue in done.waiting],
         entry=done.entry_id,
     )
+
+
+# -- undoing the last gesture (FON-78) ------------------------------------------
+
+
+def _cancel_waiting(
+    proposition: FicheProposition, changes: list[JournalChange]
+) -> None:
+    """The write an accepted proposition still waits for, cancelled: its latest
+    in the journal, as `_settle` reads it. One being written right now is not: the
+    gesture is tried again in an instant."""
+    value = typed(proposition.field, proposition.value)
+    for change in changes:
+        if not _same(proposition.field, change.new_value, value):
+            continue
+        if change.status == STATUS_PENDING:
+            raise DomainConflict(
+                "Cette valeur s'écrit en ce moment : réessaie dans un instant."
+            )
+        if change.status == STATUS_WAITING:
+            change.status = STATUS_CANCELLED
+            change.reason = "Défaite avant d'avoir été écrite."
+        return
+
+
+async def _forget(session: ormSession, proposition: FicheProposition) -> None:
+    await session.execute(
+        delete(FicheDecision).where(
+            FicheDecision.key == proposition.fiche.key,
+            FicheDecision.field == proposition.field,
+            FicheDecision.value == proposition.value,
+        )
+    )
+
+
+async def _write_back(
+    session: ormSession,
+    beets: BeetsIntegration,
+    written: dict[int, list[FicheProposition]],
+    username: str,
+) -> Decided:
+    """The written values back to the ones before, by the write service. A title
+    on air meanwhile gets them after its passage: its propositions say so."""
+    edits = []
+    for beets_id, group in written.items():
+        values: dict[str, object] = {}
+        expected: dict[str, object] = {}
+        for proposition in group:
+            name = proposition.field
+            values[name] = typed(name, proposition.before)
+            expected[name] = typed(name, proposition.value)
+            if name == "fmg":
+                values["fmg_source"] = ""
+        edits.append(TitleEdit(beets_id, values, expected))
+    try:
+        done = await edit_titles(
+            session, beets, edits, username=username, gesture=GESTURE_UNDO
+        )
+    except TitlesRefused as refused:
+        raise DomainConflict(
+            refused.titles[0].reason if refused.titles else refused.message
+        ) from refused
+    if done.kept:
+        raise DomainConflict(
+            "Sa valeur a changé depuis qu'elle a été écrite : elle la garde."
+            if done.kept[0].code == ISSUE_CHANGED
+            else done.kept[0].reason
+        )
+    for issue in done.waiting:
+        # Back after its passage on air: it is no longer to read again.
+        for proposition in written.get(issue.beets_id, []):
+            proposition.state = REVERTED
+            proposition.error = issue.reason
+    return Decided(
+        written=sum(
+            len(written[beets_id]) for beets_id in [*done.written, *done.unchanged]
+        ),
+        waiting=[issue.payload() for issue in done.waiting],
+        entry=done.entry_id,
+    )
+
+
+async def reopen(
+    session: ormSession,
+    beets: BeetsIntegration,
+    ids: list[int],
+    *,
+    username: str,
+) -> Decided:
+    """The propositions of a gesture proposed again, as before it. A written value
+    goes back to the one before, while nobody changed it since; one that still
+    waits is never written; the decision is forgotten."""
+    propositions = await _load(session, ids)
+    for proposition in propositions:
+        # A write that failed wrote nothing: it is proposed again, as it is.
+        if proposition.state not in (ACCEPTED, WRITTEN, WRITE_FAILED, REFUSED):
+            raise DomainConflict("Ce geste ne s'annule plus : relis la page.")
+    if any(one.state in (ACCEPTED, WRITTEN) for one in propositions):
+        await require_title_edits(session)
+    waiting = [one for one in propositions if one.state == ACCEPTED]
+    if waiting:
+        journal = await _journal(session, {one.fiche.beets_id for one in waiting})
+        for proposition in waiting:
+            _cancel_waiting(
+                proposition,
+                journal.get((proposition.fiche.beets_id, proposition.field), []),
+            )
+    written = _by_title(one for one in propositions if one.state == WRITTEN)
+    outcome = (
+        await _write_back(session, beets, written, username) if written else Decided()
+    )
+    for proposition in propositions:
+        await _forget(session, proposition)
+        if proposition.state != REVERTED:
+            proposition.state = PROPOSED
+            proposition.error = ""
+    await session.commit()
+    return outcome
 
 
 # -- searching again --------------------------------------------------------------

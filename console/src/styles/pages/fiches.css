@@ -377,3 +377,190 @@
     margin-bottom: 0.3rem;
   }
 }
+
+/* Relire au clavier (FON-78): one title at a time, before and after side by side. */
+.fiches-keys {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.fiches-keys-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+}
+
+.fiches-keys-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  color: var(--app-text-muted);
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.fiches-keys-progress progress {
+  width: 9rem;
+  height: 0.4rem;
+  overflow: hidden;
+  border: 0;
+  border-radius: 999px;
+  /* The track shows in both themes: the dialog's own surface would hide it. */
+  background: var(--app-border-strong);
+  accent-color: var(--app-accent);
+  appearance: none;
+}
+
+.fiches-keys-progress progress::-webkit-progress-bar {
+  background: var(--app-border-strong);
+}
+
+.fiches-keys-progress progress::-webkit-progress-value {
+  background: var(--app-accent);
+}
+
+.fiches-keys-progress progress::-moz-progress-bar {
+  background: var(--app-accent);
+}
+
+.fiches-keys-help {
+  margin: 0;
+  color: var(--app-text-muted);
+  font-size: 0.82rem;
+  line-height: 1.6;
+}
+
+.fiches-keys kbd {
+  display: inline-grid;
+  place-items: center;
+  min-width: 1.3rem;
+  height: 1.3rem;
+  padding: 0 0.3rem;
+  border: 1px solid var(--app-border-strong);
+  border-radius: 4px;
+  color: var(--app-text);
+  font-family: inherit;
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.fiches-keys-problem {
+  margin: 0;
+  color: var(--app-danger-ink);
+  font-size: 0.85rem;
+}
+
+.fiches-keys-wait,
+.fiches-keys-end {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 8rem;
+  justify-content: center;
+  margin: 0;
+  color: var(--app-text);
+  font-size: 0.95rem;
+}
+
+.fiches-keys-title {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.fiches-keys-name {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.fiches-keys-name h3 {
+  margin: 0;
+  font-size: 1.35rem;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.fiches-keys-name p {
+  margin: 0.2rem 0 0;
+  color: var(--app-text-muted);
+}
+
+.fiches-keys-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.95rem;
+}
+
+.fiches-keys-table th,
+.fiches-keys-table td {
+  padding: 0.55rem 0.5rem;
+  border-bottom: 1px solid var(--app-border);
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.fiches-keys-table thead th {
+  color: var(--app-text-muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.fiches-keys-table tbody th {
+  width: 7rem;
+  color: var(--app-text-muted);
+  font-weight: 500;
+}
+
+.fiches-keys-before {
+  color: var(--app-text-muted);
+}
+
+.fiches-keys-after {
+  color: var(--app-text);
+  font-weight: 600;
+}
+
+.fiches-keys-evidence {
+  display: grid;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+}
+
+.fiches-keys-evidence p {
+  margin: 0;
+}
+
+.fiches-keys-actions,
+.fiches-keys-nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.fiches-keys-spacer {
+  flex: 1;
+}
+
+.fiches-keys .rt-Button {
+  min-height: 2.5rem;
+}
+
+.fiches-keys .rt-Button kbd {
+  margin-left: 0.15rem;
+}
+
+@media (max-width: 520px) {
+  .fiches-keys-table tbody th {
+    width: auto;
+  }
+
+  .fiches-keys-progress progress {
+    width: 6rem;
+  }
+}
