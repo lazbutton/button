@@ -1,5 +1,5 @@
 import { Button, Select, TextField } from "@radix-ui/themes";
-import { Disc3, Layers, Library, Music, Plus, Search, SearchX, Shapes, Tag, UserRound } from "lucide-react";
+import { Disc3, Layers, Library, Music, Plus, Scale, Search, SearchX, Shapes, Tag, UserRound } from "lucide-react";
 import { useMemo, useRef, useState, type DragEvent, type KeyboardEvent } from "react";
 import {
   RANKINGS,
@@ -18,6 +18,8 @@ export const RANKING_ICONS = {
   famille: Shapes,
   album: Disc3,
   etiquette: Tag,
+  // FON-80 : le verdict, seulement allumé.
+  fmg: Scale,
 } as const;
 // The whole bank, then one row per group: a long list of artists is only drawn this far.
 const SHOWN = 400;
@@ -182,9 +184,7 @@ export function RankingList({
           ) : null}
         </div>
         {visible.length > SHOWN ? (
-          <p className="banque-shelves-hint">
-            {visible.length - SHOWN} de plus : précise la recherche pour les voir.
-          </p>
+          <p className="banque-shelves-hint">{visible.length - SHOWN} de plus : précise la recherche pour les voir.</p>
         ) : null}
         {searching && !visible.length ? (
           <div className="bacs-lib-empty">

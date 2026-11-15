@@ -20,6 +20,8 @@ import {
   nameInShelf,
   nextSort,
   rankingsFor,
+  verdictLabel,
+  withVerdict,
   readState,
   titlesCount,
   titlesQuery,
@@ -87,7 +89,11 @@ test("ranged by collection, every collection is there with its name, rotation fi
     { value: "vieux", label: "vieux", count: 1 },
     { value: "", label: "", count: 3 },
   ];
-  const shelves = [shelf("nuit", "Nuit", "20-archives/nuit"), shelf("rotation", "Rotation", "10-rotation"), shelf("vide", "Vide", "20-archives/vide")];
+  const shelves = [
+    shelf("nuit", "Nuit", "20-archives/nuit"),
+    shelf("rotation", "Rotation", "10-rotation"),
+    shelf("vide", "Vide", "20-archives/vide"),
+  ];
   assert.deepEqual(groupsOf("collection", facets, shelves), [
     { value: "rotation", label: "Rotation", count: 5 },
     { value: "nuit", label: "Nuit", count: 2 },
@@ -118,7 +124,11 @@ test("the groups filter forgets accents, and names the empty group", () => {
 });
 
 test("the Fiche column says what is left to fill", () => {
-  assert.deepEqual(ficheState([]), { complete: true, label: "Complète", detail: "Tous les champs de la fiche sont remplis." });
+  assert.deepEqual(ficheState([]), {
+    complete: true,
+    label: "Complète",
+    detail: "Tous les champs de la fiche sont remplis.",
+  });
   assert.deepEqual(ficheState(["genre"]), { complete: false, label: "1 champ vide", detail: "Genre à remplir." });
   assert.equal(ficheState(["album", "year", "famille"]).detail, "Album, année et famille à remplir.");
 });
@@ -152,12 +162,13 @@ test("columns read from anywhere keep the known ones once, and the title", () =>
 
 test("a column hides, comes back at its own place, and moves; the title stays", () => {
   const some = toggleColumn(toggleColumn(DEFAULT_COLUMNS, "album"), "genre");
-  assert.deepEqual(some, ["title", "artist", "famille", "etiquettes", "year", "duration", "fiche"]);
+  assert.deepEqual(some, ["title", "artist", "famille", "fmg", "etiquettes", "year", "duration", "fiche"]);
   assert.deepEqual(toggleColumn(some, "album"), [
     "title",
     "artist",
     "album",
     "famille",
+    "fmg",
     "etiquettes",
     "year",
     "duration",
@@ -180,7 +191,8 @@ test("an engine before FON-74: no tags to range by, nor their column", () => {
 });
 
 test("the table's room follows its columns", () => {
-  assert.equal(tableMinWidth(DEFAULT_COLUMNS, false), 73.15);
+  // Le verdict compte dans les colonnes par défaut ; éteint, columnsFor le retire avant.
+  assert.equal(tableMinWidth(DEFAULT_COLUMNS, false), 81.15);
   assert.equal(tableMinWidth(["title", "famille"], true), 28.25);
 });
 
@@ -192,7 +204,14 @@ const jazz: SavedView = {
 };
 
 test("a view opens its table, whatever an older view lacks", () => {
-  assert.deepEqual(stateOfView(jazz), { ranking: "famille", group: "jazz", q: "", sort: "year", order: "desc", columns: ["title", "year"] });
+  assert.deepEqual(stateOfView(jazz), {
+    ranking: "famille",
+    group: "jazz",
+    q: "",
+    sort: "year",
+    order: "desc",
+    columns: ["title", "year"],
+  });
   assert.deepEqual(stateOfView({ ...jazz, state: { ranking: "genre" as never } }), DEFAULT_STATE);
 });
 
@@ -208,4 +227,31 @@ test("a view's name: given, short, not taken by another view of the account", ()
   assert.equal(viewNameProblem("x".repeat(61), [jazz]), "Un nom de vue tient en 60 signes.");
   assert.equal(viewNameProblem(" Jazz   à relire ", [jazz]), "Tu as déjà une vue « Jazz à relire ».");
   assert.equal(viewNameProblem("Jazz à relire", [jazz], 3), "");
+});
+
+test("le verdict n'a ni rangement, ni colonne, ni tri tant qu'il est éteint (FON-80)", () => {
+  assert.deepEqual(rankingsFor(true), ["collection", "artist", "famille", "album", "etiquette"]);
+  assert.deepEqual(rankingsFor(true, true), ["collection", "artist", "famille", "album", "etiquette", "fmg"]);
+  assert.deepEqual(columnsFor(["title", "fmg", "year"], true), ["title", "year"]);
+  assert.deepEqual(columnsFor(["title", "fmg", "year"], true, true), ["title", "fmg", "year"]);
+  const kept = {
+    ...DEFAULT_STATE,
+    ranking: "fmg" as const,
+    group: "oui",
+    sort: "fmg" as const,
+    order: "desc" as const,
+  };
+  assert.deepEqual(withVerdict(kept, false), {
+    ...kept,
+    ranking: "collection",
+    group: null,
+    sort: "artist",
+    order: "asc",
+  });
+  assert.equal(withVerdict(kept, true), kept);
+  assert.equal(withVerdict(DEFAULT_STATE, false), DEFAULT_STATE);
+  assert.equal(verdictLabel("oui"), "Oui");
+  assert.equal(verdictLabel("mixte"), "Mixte");
+  assert.equal(verdictLabel(""), "—");
+  assert.equal(verdictLabel(undefined), "—");
 });

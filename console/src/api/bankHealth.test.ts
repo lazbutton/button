@@ -18,6 +18,7 @@ import {
   spellingAction,
   spellingLine,
   type SpellingGroup,
+  verdictLine,
 } from "./bankHealth.ts";
 
 function title(id: number, more: Partial<HealthTitle> = {}): HealthTitle {
@@ -108,10 +109,33 @@ test("an empty field opens the table ranged on it, when it ranges", () => {
 });
 
 test("the lines that name a title", () => {
-  assert.equal(renameLine(title(3, { path: "20-archives/nuit/03_un.mp3", to: "Ada - Un.mp3" })), "03_un.mp3 → Ada - Un.mp3");
+  assert.equal(
+    renameLine(title(3, { path: "20-archives/nuit/03_un.mp3", to: "Ada - Un.mp3" })),
+    "03_un.mp3 → Ada - Un.mp3",
+  );
   assert.equal(placeLine(title(3, { path: "20-archives/nuit/a.mp3" })), "nuit · a.mp3");
-  assert.equal(placeLine(title(3, { path: "10-rotation/a.mp3", zone: "rotation", collection: "rotation" })), "Rotation · a.mp3");
+  assert.equal(
+    placeLine(title(3, { path: "10-rotation/a.mp3", zone: "rotation", collection: "rotation" })),
+    "Rotation · a.mp3",
+  );
   assert.equal(moreLine(25, 20, ["fichier", "fichiers"]), "et 5 fichiers de plus");
   assert.equal(moreLine(1 + 20, 20, ["fichier", "fichiers"]), "et 1 fichier de plus");
   assert.equal(moreLine(20, 20, ["fichier", "fichiers"]), "");
+});
+
+test("la part des « oui » parmi les verdicts connus, seulement le verdict allumé (FON-80)", () => {
+  const figures = { titles: 10, complete: 5, families: [], without_family: 10 };
+  assert.equal(verdictLine(figures), null);
+  assert.equal(
+    verdictLine({ ...figures, verdicts: { oui: 0, mixte: 0, non: 0 } }),
+    "Aucun verdict connu pour l'instant.",
+  );
+  assert.equal(
+    verdictLine({ ...figures, verdicts: { oui: 2, mixte: 1, non: 1 } }),
+    "2 « oui » sur 4 verdicts connus, 50 % (1 mixte, 1 « non »)",
+  );
+  assert.equal(
+    verdictLine({ ...figures, verdicts: { oui: 1, mixte: 0, non: 0 } }),
+    "1 « oui » sur 1 verdict connu, 100 %",
+  );
 });

@@ -8,6 +8,7 @@ import {
   completeLine,
   emptyFieldTable,
   familiesLine,
+  verdictLine,
   type HealthAnswer,
   type HealthTitle,
   healthPath,
@@ -258,6 +259,13 @@ export function BankHealthView({ onOpenTable }: { onOpenTable: (table: Record<st
                 <dt>Familles</dt>
                 <dd>{familiesLine(health.figures)}</dd>
               </div>
+              {/* FON-80 : seulement le verdict allumé ; éteint, le moteur n'en dit rien. */}
+              {verdictLine(health.figures) ? (
+                <div>
+                  <dt>Femme ou minorité de genre</dt>
+                  <dd>{verdictLine(health.figures)}</dd>
+                </div>
+              ) : null}
             </dl>
           </section>
 

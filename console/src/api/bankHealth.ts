@@ -33,6 +33,8 @@ export type BankHealth = {
     complete: number;
     families: Array<{ value: string; label: string; count: number }>;
     without_family: number;
+    /** The known verdicts, only while the verdict is switched on (FON-80). */
+    verdicts?: { oui: number; mixte: number; non: number };
   };
   spellings: { count: number; titles: number; groups: SpellingGroup[] };
   duplicates: { count: number; titles: number; groups: DuplicateGroup[] };
@@ -71,6 +73,22 @@ export function completeLine(figures: BankHealth["figures"]): string {
   if (titles === 0) return "La banque est vide.";
   const share = Math.round((complete / titles) * 100);
   return `${complete.toLocaleString("fr-FR")} sur ${plural(titles, "fiche complète", "fiches complètes")}, ${share} %`;
+}
+
+/**
+ * « 140 « oui » sur 340 verdicts connus, 41 % » : la part des « oui » parmi les
+ * verdicts connus, en titres (FON-80). null quand le verdict est éteint.
+ */
+export function verdictLine(figures: BankHealth["figures"]): string | null {
+  if (!figures.verdicts) return null;
+  const { oui, mixte, non } = figures.verdicts;
+  const known = oui + mixte + non;
+  if (!known) return "Aucun verdict connu pour l'instant.";
+  const share = Math.round((oui / known) * 100);
+  const rest = [mixte ? plural(mixte, "mixte", "mixtes") : "", non ? `${non.toLocaleString("fr-FR")} « non »` : ""]
+    .filter(Boolean)
+    .join(", ");
+  return `${oui.toLocaleString("fr-FR")} « oui » sur ${plural(known, "verdict connu", "verdicts connus")}, ${share} %${rest ? ` (${rest})` : ""}`;
 }
 
 /** « 3 familles », et les plus grandes, avec leur nombre de titres. */

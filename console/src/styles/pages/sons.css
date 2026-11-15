@@ -2793,6 +2793,11 @@
   width: 7rem;
 }
 
+/* FON-80 : le verdict, seulement allumé ; son en-tête tient sur deux lignes. */
+.banque-titles .c-fmg {
+  width: 8rem;
+}
+
 .banque-titles .c-year {
   width: 4rem;
   font-variant-numeric: tabular-nums;
