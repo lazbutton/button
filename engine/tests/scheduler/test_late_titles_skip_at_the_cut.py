@@ -36,6 +36,7 @@ from tests.scheduler.test_hard_break_cuts import (
     _times,
 )
 from tests.scheduler.test_titles_sent_first import _sent
+from tests.scheduler.test_wait_title_end import _payloads
 
 # The value of the switch, and whether it is on. A missing key: it is.
 SWITCH = [
@@ -89,13 +90,18 @@ def _beat(
         "remaining": str(remaining),
     }
     if queued is not None:
-        beat["next_autodj"] = {
-            "rid": 4,
-            "title": "Titre",
-            "initial_uri": f'annotate:radiotomate_item_id="{queued.id}":/media/t.mp3',
-        }
-        beat["autodj_queued"] = 1
+        beat.update(_loaded(queued))
     return _live(THE_MINUTE, **beat)
+
+
+def _loaded(line: RundownItem) -> dict:
+    """What the beat says of the queue of the Auto-DJ: ``line`` is loaded next,
+    and one title counts in the queue."""
+    uri = f'annotate:radiotomate_item_id="{line.id}":/media/t.mp3'
+    return {
+        "next_autodj": {"rid": 4, "title": "Titre", "initial_uri": uri},
+        "autodj_queued": 1,
+    }
 
 
 def _sound_on_air(**said) -> dict:
@@ -269,3 +275,42 @@ async def test_a_title_planned_after_the_break_does_not_skip(
     await tick(dbsession, beat, _client(), beets_integration)
     assert (await _line(dbsession, ready)).status == RundownStatus.IN_QUEUE.value
     assert datetime(2026, 9, 15, 10, 20) < ready.planned_at
+
+
+@pytest.mark.parametrize(("value", "goes"), [(None, True), ("0", False)])
+async def test_the_jingle_after_the_sound_goes_while_the_queue_names_the_late_title(  # noqa: PLR0913
+    dbsession: ormSession,
+    jingles_cart: Cart,
+    pubs_cart: Cart,
+    beets_integration: BeetsIntegration,
+    value: str | None,
+    goes: bool,
+):
+    """Seen on the bench of the conducteur on 15 November 2026. During the sound
+    of the break, the queue of the Auto-DJ keeps the title closed too late for it
+    loaded, and the beat names it, until the queue takes the antenna back. The
+    jingle planned after the sound goes behind it all the same, at its turn: it
+    waited for that title as for a title ahead of it, never went, and closed
+    « tour passé » when the title after it aired. The switch off, that title airs
+    after the sound, and the jingle waits for it, as before."""
+    await _switch(dbsession, value)
+    previous, late, pub, after = await _the_last_two(dbsession, beets_integration)
+    jingle = after[0]
+    assert jingle.kind == "jingle"
+    await _says(dbsession, previous, previous.planned_at + timedelta(seconds=3))
+    _sent(late, timedelta(seconds=30))
+    await dbsession.commit()
+
+    beat = _beat(previous, elapsed=previous.duration - 1, remaining=1, queued=late)
+    actions = await tick(dbsession, beat, _client(), beets_integration)
+    assert "anchor:20" in actions
+    await _says(dbsession, pub, SPOT_STARTS, source="carts")
+
+    client = _client()
+    actions = await tick(
+        dbsession, _sound_on_air(**_loaded(late)), client, beets_integration
+    )
+    assert ("jingle" in actions) is goes
+    if goes:
+        [sent] = _payloads(client, "jingles")
+        assert sent["radiotomate_item_id"] == jingle.id

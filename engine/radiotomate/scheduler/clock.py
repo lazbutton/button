@@ -686,6 +686,16 @@ def _queue_head(live_data: dict, queue: str, *, loaded: bool = True) -> str | No
     return found.group(1) if found else None
 
 
+def _left_at_the_cut(line: RundownItem) -> bool:
+    """Whether a title its queue still names is behind the conducteur: played,
+    as the title a hard anchor cut, or closed too late for the anchor
+    (``TOO_LATE_FOR_THE_CUT``, FON-90)."""
+    return line.status == RundownStatus.PLAYED.value or (
+        line.status == RundownStatus.SKIPPED.value
+        and line.reason == TOO_LATE_FOR_THE_CUT
+    )
+
+
 async def _line_turn(
     session: ormSession,
     line: RundownItem,
@@ -719,15 +729,14 @@ async def _line_turn(
         if head == "" and not sent_first:
             continue
         queued = await RundownItem.from_id(session, head) if head else None
-        if head == "" or (
-            queued is not None and queued.status == RundownStatus.PLAYED.value
-        ):
-            # The title a hard anchor cut: its queue keeps it loaded until it
-            # takes the antenna back, then skips it. It is not ahead of the
-            # line, but hides the titles queued behind it. A queue the beat
-            # says empty may hold a line too: the beat left before the clock
-            # pushed it. The lines sent to that queue tell which one airs next;
-            # when the beat counts none, only one pushed a moment ago.
+        if head == "" or (queued is not None and _left_at_the_cut(queued)):
+            # The title a hard anchor cut, or closed too late for it (FON-90):
+            # its queue keeps it loaded until it takes the antenna back, then
+            # skips it. It is not ahead of the line, but hides the titles queued
+            # behind it. A queue the beat says empty may hold a line too: the
+            # beat left before the clock pushed it. The lines sent to that queue
+            # tell which one airs next; when the beat counts none, only one
+            # pushed a moment ago.
             counted = queued_count(live_data, count_key, cue_key) > 0
             since = None if counted else _beat_lag_start()
             queued = await _next_sent_to(session, queue, since=since)
