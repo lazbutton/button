@@ -3,6 +3,10 @@ import test from "node:test";
 import {
   NO_FILTERS,
   bankLabel,
+  chunks,
+  decidedMessage,
+  propositionStatus,
+  sureShown,
   levelChips,
   count,
   duration,
@@ -124,4 +128,82 @@ test("la tête dit les niveaux à relire, puis les introuvables et les erreurs",
   assert.deepEqual(levelChips({ levels: [], statuses: {} }), []);
   assert.equal(bankLabel("rotation"), "Rotation");
   assert.equal(bankLabel("20-archives/Jazz"), "20-archives/Jazz");
+});
+
+const DECIDED = { accepted: 0, refused: 0, written: 0, waiting: [], failed: [], stale: 0, entry: null };
+
+test("un geste se dit en clair, avec son ton", () => {
+  assert.deepEqual(decidedMessage({ ...DECIDED, accepted: 3, written: 3, entry: 4 }), {
+    text: "3 propositions écrites.",
+    tone: "success",
+  });
+  assert.deepEqual(decidedMessage({ ...DECIDED, refused: 1 }), { text: "1 proposition refusée.", tone: "success" });
+  assert.deepEqual(
+    decidedMessage({
+      ...DECIDED,
+      accepted: 2,
+      written: 1,
+      waiting: [{ id: 3, label: "Nina Simone – Sinnerman", code: "queued", reason: "Il est en file." }],
+    }),
+    { text: "1 proposition écrite. « Nina Simone – Sinnerman » s'écrira après son passage à l'antenne.", tone: "info" },
+  );
+  assert.equal(
+    decidedMessage({ ...DECIDED, accepted: 1, waiting: [{ id: 3, label: "", code: "busy", reason: "" }] }).text,
+    "La bibliothèque est occupée : les valeurs acceptées s'écriront dans un instant.",
+  );
+  assert.deepEqual(
+    decidedMessage({
+      ...DECIDED,
+      accepted: 2,
+      failed: [
+        { id: 3, label: "Brume", code: "read_only", reason: "Le moteur n'a pas le droit d'écrire son fichier." },
+        { id: 4, label: "Dune", code: "missing", reason: "Son fichier a disparu du disque." },
+      ],
+    }),
+    {
+      text: "« Brume » n'a pas pu s'écrire : Le moteur n'a pas le droit d'écrire son fichier. Et 1 autre titre.",
+      tone: "error",
+    },
+  );
+  assert.deepEqual(decidedMessage({ ...DECIDED, accepted: 1, stale: 1 }), {
+    text: "1 proposition a changé depuis : le titre sera cherché de nouveau.",
+    tone: "info",
+  });
+});
+
+test("l'état d'une proposition se lit, reportée comme en erreur", () => {
+  assert.equal(propositionStatus({ state: "proposée", error: "" }), null);
+  assert.deepEqual(propositionStatus({ state: "acceptée", error: "Il est à l'antenne." }), {
+    label: "Reportée",
+    color: "orange",
+    note: "Il est à l'antenne.",
+  });
+  assert.equal(propositionStatus({ state: "acceptée", error: "" })?.label, "Acceptée");
+  assert.equal(propositionStatus({ state: "écrite", error: "" })?.label, "Écrite");
+  assert.equal(propositionStatus({ state: "en erreur", error: "" })?.note, "Elle n'a pas pu s'écrire.");
+  assert.equal(propositionStatus({ state: "refusée", error: "" })?.label, "Refusée");
+});
+
+test("un lot ne prend que les propositions sûres à relire, par gestes de 500", () => {
+  const prop = (id: number, level: string, state = "proposée") => ({
+    id,
+    field: "album",
+    before: "",
+    value: "x",
+    level,
+    why: "",
+    source: "",
+    state,
+    error: "",
+  });
+  assert.deepEqual(
+    sureShown([
+      { id: 1, propositions: [prop(1, "sûr"), prop(2, "à revoir")] },
+      { id: 2, propositions: [prop(3, "sûr", "écrite")] },
+      { id: 3, propositions: [prop(4, "sûr"), prop(5, "sûr")] },
+    ]),
+    { ids: [1, 4, 5], titles: 2 },
+  );
+  assert.deepEqual(chunks([1, 2, 3, 4, 5], 2), [[1, 2], [3, 4], [5]]);
+  assert.equal(chunks(Array.from({ length: 1001 }, (_, i) => i)).length, 3);
 });
