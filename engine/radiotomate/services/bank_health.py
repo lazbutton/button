@@ -156,7 +156,7 @@ def _marks(text: str) -> int:
     return sum(1 for char in plain if unicodedata.combining(char) or char.isupper())
 
 
-def duplicates(entries: list[dict]) -> dict:
+def duplicate_groups(entries: list[dict]) -> list[list[dict]]:
     """The same artist and title once normalized, lasting the same within 2 s.
 
     A title without a duration, or without an artist or a title, is no one's
@@ -180,6 +180,12 @@ def duplicates(entries: list[dict]) -> dict:
             cluster = [entry]
         if len(cluster) > 1:
             groups.append(cluster)
+    return groups
+
+
+def duplicates(entries: list[dict]) -> dict:
+    """The duplicates of the bank, by group (`duplicate_groups`)."""
+    groups = duplicate_groups(entries)
     payload = [
         {
             "label": f"{group[0]['artist']} - {group[0]['title']}",
