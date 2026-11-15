@@ -8,6 +8,8 @@ disque de la rotation et des collections, puis compte :
 - les doublons : le même artiste et le même titre normalisés, et une durée à 2 s
   près ;
 - les fichiers mal nommés, d'après un modèle de FON-68 (`bank_names.py`) ;
+- les titres dont l'artiste est un numéro de piste, « 01 », avec l'artiste et le
+  titre que donne le nom de leur fichier ;
 - les fiches incomplètes, champ par champ (`FICHE_FIELDS`) ;
 - le genre « Archive » que posait l'ancienne boucle d'import (FON-77) ;
 - les fichiers audio de la banque que la bibliothèque n'a pas.
@@ -30,7 +32,12 @@ from typing import TYPE_CHECKING
 from radiotomate.domain.errors import DomainError, DomainValidationError
 from radiotomate.fiches.normalize import normalize_text, squash
 from radiotomate.models import Setting
-from radiotomate.services.bank_names import MODELS, renamed
+from radiotomate.services.bank_names import (
+    MODELS,
+    fields_after_number,
+    renamed,
+    track_number,
+)
 from radiotomate.services.bank_titles import (
     FICHE_FIELDS,
     bank_tidy_enabled,
@@ -239,6 +246,22 @@ def misnamed(entries: list[dict], model: str) -> dict:
     return {"count": len(found), "titles": _listed(found)}
 
 
+def numbered(entries: list[dict]) -> dict:
+    """The titles whose artist is a track number, « 01 » (`track_number`).
+
+    Each one says, in ``guess``, the artist and the title its file's name gives
+    after that number, or None: « 01 - Ana - Fado.mp3 » gives Ana and Fado. The
+    console offers them; a person accepts (ADR 0017).
+    """
+    found = [
+        {**entry, "guess": fields_after_number(entry["path"])}
+        for entry in entries
+        if track_number(entry["artist"])
+    ]
+    found.sort(key=_by_name)
+    return {"count": len(found), "titles": _listed(found)}
+
+
 def incomplete(entries: list[dict]) -> dict:
     """The fiches with an empty field, counted field by field."""
     return {
@@ -331,6 +354,7 @@ def bank_health(
         "spellings": spellings(entries),
         "duplicates": duplicates(entries),
         "misnamed": misnamed(entries, model),
+        "numbered": numbered(entries),
         "incomplete": incomplete(entries),
         "archive": archive(entries),
         "unindexed": unindexed(entries, root),

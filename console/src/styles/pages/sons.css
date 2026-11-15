@@ -2666,6 +2666,25 @@
   gap: 0.75rem;
 }
 
+/* On a phone, the views share the width, in equal columns: Radix places its
+   indicator on them. Its root keeps its widest content otherwise. */
+.banque-views > .rt-SegmentedControlRoot {
+  min-width: 0;
+  max-width: 100%;
+  grid-auto-columns: minmax(0, 1fr);
+}
+
+@media (max-width: 520px) {
+  .banque-views > .rt-SegmentedControlRoot {
+    width: 100%;
+  }
+
+  .banque-views > .rt-SegmentedControlRoot .rt-SegmentedControlItemLabel {
+    padding-right: var(--space-2);
+    padding-left: var(--space-2);
+  }
+}
+
 .banque-views-tools {
   display: flex;
   align-items: center;
@@ -3621,15 +3640,35 @@ button.banque-tag:focus-visible {
   color: var(--app-text);
 }
 
-/* ---------- The health of the bank (FON-72) ---------- */
+/* ---------- What is left to tidy in the bank (FON-92) ---------- */
 
-.banque-health {
+.banque-views-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.25rem;
+  height: 1.25rem;
+  margin-left: 0.4rem;
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  background: var(--app-accent);
+  color: var(--app-bg);
+  font-size: 0.72rem;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.banque-back {
+  align-self: flex-start;
+}
+
+.banque-tasks {
   display: grid;
   gap: 1rem;
   max-width: 60rem;
 }
 
-.banque-health-head {
+.banque-tasks-head {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-start;
@@ -3637,227 +3676,220 @@ button.banque-tag:focus-visible {
   gap: 0.75rem;
 }
 
-.banque-health-head h2 {
+.banque-tasks-head h2 {
   margin: 0;
   color: var(--app-text);
   font-size: 1.05rem;
 }
 
-.banque-health-when {
+.banque-tasks-intro {
+  margin: 0.25rem 0 0;
+  color: var(--app-text-muted);
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.banque-tasks-when {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 0.4rem;
-  margin: 0.2rem 0 0;
+  gap: 0.5rem;
   color: var(--app-text-muted);
   font-size: 0.8rem;
 }
 
-.banque-health-problem {
+.banque-tasks-when > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.banque-tasks-when .rt-Button {
+  min-height: 2.5rem;
+}
+
+.banque-tasks-problem {
   margin: 0;
   color: var(--app-danger-ink);
   font-size: 0.85rem;
 }
 
-.banque-health-figures,
-.banque-health-section {
+.banque-task-list {
   display: grid;
-  gap: 0.6rem;
-  padding: 0.9rem 1rem;
-  border: 1px solid var(--app-border);
-  border-radius: var(--app-radius-md);
-}
-
-.banque-health-figures h3,
-.banque-health-section h3 {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.5rem;
-  margin: 0;
-  color: var(--app-text);
-  font-size: 0.92rem;
-}
-
-.banque-health-figures dl {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
   gap: 0.75rem;
-  margin: 0;
-}
-
-.banque-health-figures dt {
-  color: var(--app-text-muted);
-  font-size: 0.76rem;
-}
-
-.banque-health-figures dd {
-  margin: 0.15rem 0 0;
-  color: var(--app-text);
-  font-size: 0.9rem;
-}
-
-.banque-health-list {
-  display: grid;
-  gap: 0;
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-.banque-health-list li {
+/* The title and why on the left, the gesture on their right; below, what the task lists. */
+.banque-task {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.5rem 1rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  background: var(--app-surface-1);
+}
+
+.banque-task > * {
+  grid-column: 1 / -1;
+}
+
+.banque-task > h3 {
+  grid-column: 1;
+  margin: 0;
+  color: var(--app-text);
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.banque-task > .banque-task-why {
+  grid-column: 1;
+}
+
+.banque-task > .banque-task-actions {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+  align-self: center;
+}
+
+.banque-task-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+@media (max-width: 520px) {
+  .banque-task {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .banque-task > .banque-task-actions {
+    grid-row: auto;
+    grid-column: 1;
+    justify-self: start;
+  }
+}
+
+.banque-task .rt-Button {
+  min-height: 2.5rem;
+}
+
+.banque-task-why,
+.banque-task-more {
+  margin: 0;
+  color: var(--app-text-muted);
+  font-size: 0.82rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.banque-task-names {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--app-text);
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
+
+.banque-task-rows {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.banque-task-rows li,
+.banque-task-row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
+}
+
+.banque-task-rows li {
   padding: 0.5rem 0;
   border-top: 1px solid var(--app-border);
 }
 
-.banque-health-list li:first-child {
+.banque-task-rows li:first-child {
   border-top: 0;
 }
 
-.banque-health-list li > div {
+.banque-task-rows li > div {
   display: grid;
   gap: 0.15rem;
   min-width: 0;
 }
 
-.banque-health-list strong {
+.banque-task-rows strong {
   color: var(--app-text);
+  font-size: 0.85rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.banque-task-rows span {
+  color: var(--app-text-muted);
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
+.banque-task-row .banque-task-why {
+  flex: 1 1 16rem;
+}
+
+.banque-tasks-optional {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.banque-tasks-optional h3 {
+  margin: 0;
+  color: var(--app-text-muted);
   font-size: 0.85rem;
   font-weight: 600;
 }
 
-.banque-health-list span,
-.banque-health-note,
-.banque-health-more {
+.banque-tasks-foot {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.banque-tasks-foot p {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
   margin: 0;
   color: var(--app-text-muted);
   font-size: 0.8rem;
-  overflow-wrap: anywhere;
+  line-height: 1.5;
 }
 
-.banque-health-more:empty {
-  display: none;
+.banque-tasks-foot svg {
+  flex: none;
 }
 
-.banque-health-names {
-  display: grid;
-  gap: 0.2rem;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  color: var(--app-text);
-  font-size: 0.8rem;
-  overflow-wrap: anywhere;
-}
-
-.banque-health-section .rt-Button {
-  min-height: 2.5rem;
-}
-
-/* ---------- The arrivals of the bank (FON-81) ---------- */
-
-.banque-arrivals {
-  display: grid;
-  gap: 1rem;
-  max-width: 60rem;
-}
-
-.banque-arrival-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.banque-arrival-actions .rt-Button,
-.banque-arrival-decide .rt-Button {
-  min-height: 2.5rem;
-}
-
-.banque-arrival-list {
-  display: grid;
-  gap: 0;
-  margin: 0;
-  padding: 0;
-  border: 1px solid var(--app-border);
-  border-radius: var(--app-radius-md);
-  list-style: none;
-}
-
-.banque-arrival {
-  display: grid;
-  gap: 0.4rem;
-  padding: 0.75rem 1rem;
-  border-top: 1px solid var(--app-border);
-}
-
-.banque-arrival:first-child {
-  border-top: 0;
-}
-
-.banque-arrival-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+.banque-spelling.rt-RadioCardsItem {
   justify-content: space-between;
-  gap: 0.5rem;
+  gap: 0.75rem;
 }
 
-.banque-arrival-head > div:first-child {
-  display: grid;
-  gap: 0.15rem;
+.banque-spelling-value {
   min-width: 0;
-}
-
-.banque-arrival-head strong {
-  color: var(--app-text);
-  font-size: 0.88rem;
+  overflow-wrap: anywhere;
   font-weight: 600;
-  overflow-wrap: anywhere;
 }
 
-.banque-arrival-head span,
-.banque-arrival-note,
-.banque-arrival-name {
-  margin: 0;
+.banque-spelling-count {
+  flex: none;
   color: var(--app-text-muted);
-  font-size: 0.8rem;
-  overflow-wrap: anywhere;
-}
-
-.banque-arrival-propositions {
-  display: grid;
-  gap: 0.3rem;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  color: var(--app-text);
-  font-size: 0.8rem;
-}
-
-.banque-arrival-propositions li {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.4rem;
-  overflow-wrap: anywhere;
-}
-
-.banque-arrival-decide {
-  display: inline-flex;
-  gap: 0.4rem;
-}
-
-.banque-arrival-twin {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  margin: 0;
-  color: var(--app-warn-ink);
   font-size: 0.8rem;
 }
 

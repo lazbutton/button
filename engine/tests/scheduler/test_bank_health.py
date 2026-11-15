@@ -23,6 +23,7 @@ from radiotomate.services.bank_health import (
     duplicates,
     health_on,
     misnamed,
+    numbered,
     spellings,
 )
 from radiotomate.services.bank_titles import title_of
@@ -205,6 +206,50 @@ def test_a_name_with_decomposed_accents_is_well_named():
     assert misnamed(_entries(seeded), "artiste-titre")["count"] == 0
 
 
+# promote-inbox.sh cut « 01 - Ana - Fado.mp3 » at its first « - »: the artist
+# « 01 », and the title the file had, here its whole name.
+NUMBERED = [
+    (
+        1,
+        "10-rotation/01 - Ana - Fado.mp3",
+        "01 - Ana - Fado",
+        "01",
+        "",
+        0,
+        "",
+        200.0,
+        "",
+    ),
+    (2, "10-rotation/02 - Ana - Mar - Live.mp3", "Mar", "02", "", 0, "", 201.0, ""),
+    (3, "10-rotation/7 - Rio.mp3", "Rio", "7", "", 0, "", 202.0, ""),
+    (4, "10-rotation/down.mp3", "Down", "311", "", 0, "", 203.0, ""),
+]
+
+
+def test_a_track_number_for_artist_names_no_file():
+    # Never « 01 - 01 - Ana - Fado.mp3 », worse than the name the file has.
+    named = {
+        title["id"]: title["to"]
+        for title in misnamed(_entries(NUMBERED), "artiste-titre")["titles"]
+    }
+    assert named == {4: "311 - Down.mp3"}
+
+
+def test_a_track_number_for_artist_is_counted_with_its_name():
+    found = numbered(_entries(NUMBERED))
+
+    # « 311 » is a band, not a track number.
+    assert found["count"] == 3
+    guesses = {title["id"]: title["guess"] for title in found["titles"]}
+    assert guesses == {
+        1: {"artist": "Ana", "title": "Fado"},
+        # The title keeps what follows the artist, « - » included.
+        2: {"artist": "Ana", "title": "Mar - Live"},
+        # The name gives no artist after its number.
+        3: None,
+    }
+
+
 def test_every_count_of_the_seeded_bank(tmp_path: Path):
     root = tmp_path / "media"
     for rel in [
@@ -237,6 +282,7 @@ def test_every_count_of_the_seeded_bank(tmp_path: Path):
     assert health["spellings"]["count"] == 1
     assert health["duplicates"]["count"] == 1
     assert health["misnamed"]["count"] == 7
+    assert health["numbered"] == {"count": 0, "titles": []}
     assert health["incomplete"]["count"] == 1
     assert {row["field"]: row["count"] for row in health["incomplete"]["fields"]} == {
         "title": 0,

@@ -2,8 +2,8 @@
  * Reconnaître un fichier dès l'envoi (FON-82) : ce que la banque sait d'un fichier que la vue Ajouter
  * vient d'envoyer. Pur : pas de React, testable en node.
  *
- * Un doublon se range comme les autres fichiers, et se signale ici, comme dans Arrivées : la console
- * ne retire ni ne refuse rien. Le doublon est celui que la santé de la banque compte (FON-72).
+ * Un doublon se range comme les autres fichiers, et se signale ici, comme dans « À ranger » (FON-92) :
+ * la console ne retire ni ne refuse rien. Le doublon est celui que la santé de la banque compte (FON-72).
  */
 
 export const UPLOADS_JSON = "/fiches/envois.json";

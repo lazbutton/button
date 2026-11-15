@@ -129,16 +129,22 @@ async def test_what_keeps_its_name_and_why(
     twin = _ada(place, media, "b.mp3", artist="Cy", title="Trois")
     gone = _ada(place, media, "parti.mp3", artist="Dan")
     (media / "20-archives" / "jazz" / "parti.mp3").unlink()
+    # promote-inbox.sh took the track number for the artist.
+    numbered = _ada(place, media, "01 - Ada - Un.mp3", artist="01", title="Un")
 
     plans = await _plan(
         dbsession,
         place,
-        [same.id, no_artist.id, taken.id, first.id, twin.id, gone.id, 9999],
+        [
+            *(same.id, no_artist.id, numbered.id, taken.id),
+            *(first.id, twin.id, gone.id, 9999),
+        ],
     )
 
     assert plans == [
         (STATE_SAME, "20-archives/jazz/Ada - Un.mp3", "Il porte déjà ce nom."),
         (STATE_INCOMPLETE, None, "La fiche n'a pas d'artiste."),
+        (STATE_INCOMPLETE, None, "L'artiste de la fiche est un numéro de piste."),
         (
             STATE_TAKEN,
             "20-archives/jazz/Bea - Deux.mp3",

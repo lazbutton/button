@@ -25,5 +25,5 @@ Le 14 novembre 2026, l'utilisateur a demandé de pouvoir trier et ranger la banq
 - Déplacer et renommer passent par le moteur, qui tient Beets et la base. Il réécrit les chemins qu'il garde, comme `sounds.path`, `agenda_files.path` et les lignes prévues du conducteur, sans réimport.
 - Une écriture dans un fichier attend que le titre ne soit ni à l'antenne ni en file. Chaque geste qui écrit dans un fichier passe d'abord sur un banc fait d'une copie de vraie banque.
 - Une sélection de titres qui lit `genre:Archive` ne prend plus les titres arrivés après le changement : elle se réécrit en `grouping:<dossier>`.
-- La console gagne des vues dans Sons → Banque (Arrivées, À relire, Santé) et un onglet Journal dans Sons.
+- La console gagne des vues dans Sons → Banque (Arrivées, À relire, Santé) et un onglet Journal dans Sons. Changé le 15 novembre 2026 (FON-92) : les trois disaient « ce qui cloche » chacune à sa façon, et ne se suivaient pas. Elles deviennent une seule vue, « À ranger », une tâche par chose à corriger, avec son geste ; la relecture des fiches s'ouvre depuis sa tâche, et le nom des fichiers y est facultatif.
 - Les fiches : TST-16, ARC-09 et FON-64 à FON-85, dans [P2](../feuille-de-route/P2.md). ARC-06, ARC-08, FON-26, FON-27, FON-28 et SEC-10 changent, comme UX-02 et UX-04 en [P3](../feuille-de-route/P3.md).
