@@ -378,6 +378,93 @@
   }
 }
 
+/* By nature of change (FON-79): the sure propositions of the whole bank, in groups. */
+.fiches-natures {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.85rem var(--bacs-pad);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  background: var(--app-surface-1);
+}
+
+.fiches-natures-title {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.fiches-natures-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.fiches-nature {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.6rem 0;
+  border-top: 1px solid var(--app-border);
+}
+
+.fiches-nature-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+}
+
+.fiches-nature-copy {
+  display: grid;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.fiches-nature-copy span {
+  color: var(--app-text-muted);
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.fiches-nature-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.fiches-nature-actions .rt-Button {
+  min-height: 2.5rem;
+}
+
+.fiches-nature-examples summary {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.5rem;
+  color: var(--app-text-muted);
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.fiches-nature-examples summary:focus-visible {
+  outline: 2px solid var(--app-focus);
+  outline-offset: 2px;
+}
+
+.fiches-nature-list {
+  display: grid;
+  gap: 0.2rem;
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.fiches-nature-who {
+  color: var(--app-text-muted);
+}
+
 /* Relire au clavier (FON-78): one title at a time, before and after side by side. */
 .fiches-keys {
   display: grid;
@@ -423,6 +510,12 @@
 
 .fiches-keys-progress progress::-moz-progress-bar {
   background: var(--app-accent);
+}
+
+.fiches-keys-group {
+  margin: 0.15rem 0 0;
+  color: var(--app-text-muted);
+  font-size: 0.85rem;
 }
 
 .fiches-keys-help {

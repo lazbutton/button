@@ -23,6 +23,7 @@ import {
   FICHES_JSON,
   FIELD_LABELS,
   LEVEL_LABELS,
+  NATURES_JSON,
   NO_FILTERS,
   STATE_LABELS,
   bankLabel,
@@ -46,6 +47,7 @@ import {
   type FicheTitle,
   type FichesFilters,
   type FichesPage,
+  type NatureGroup,
 } from "../../api/fiches";
 import { TITLES_SEND_DEADLINE_MS } from "../../api/sendDeadline";
 import { formatWhen } from "../../api/updates";
@@ -57,6 +59,7 @@ import { EmptyState } from "../../ui/EmptyState";
 import { Cover } from "./Cover";
 import "../../styles/pages/fiches.css";
 import { KeyboardReview } from "./KeyboardReview";
+import { AcceptGroupDialog, NatureGroups } from "./NatureGroups";
 
 // Radix ne prend pas une valeur vide pour un choix de liste.
 const ALL = "tous";
@@ -87,10 +90,14 @@ export function ReviewView() {
   // Accepter écrit les fichiers : il faut la correction des fiches ouverte.
   const canWrite = account?.features?.title_edits === true;
   const [busy, setBusy] = useState(false);
-  const [lot, setLot] = useState<{ ids: number[]; titles: number } | null>(null);
-  // FON-78 : la relecture au clavier, un titre à la fois.
-  const [keyboard, setKeyboard] = useState(false);
-  const keyboardButton = useRef<HTMLButtonElement>(null);
+  // Un lot de propositions sûres : celles affichées, ou un groupe par nature (FON-79).
+  const [lot, setLot] = useState<{ ids: number[]; titles: number; group?: NatureGroup } | null>(null);
+  // FON-78 : la relecture au clavier, de la vue ou d'un groupe ; et où rendre le focus.
+  const [keyboard, setKeyboard] = useState<"vue" | NatureGroup | null>(null);
+  const returnFocus = useRef<HTMLElement | null>(null);
+  // FON-79 : les propositions sûres de toute la banque, par nature de changement.
+  // Null : un moteur qui ne les regroupe pas, ou le rangement fermé.
+  const [groups, setGroups] = useState<NatureGroup[] | null>(null);
   const [filters, setFilters] = useState<FichesFilters>(NO_FILTERS);
   const [typed, setTyped] = useState("");
   const [page, setPage] = useState<FichesPage | null>(null);
@@ -120,6 +127,27 @@ export function ReviewView() {
       else setProblem(messageOf(caught, "Les fiches ne se sont pas lues. Réessaie."));
     }
   }, [filters]);
+
+  const loadGroups = useCallback(async () => {
+    try {
+      const payload = await apiGet<{ groups?: NatureGroup[] }>(NATURES_JSON);
+      setGroups(Array.isArray(payload.groups) ? payload.groups : []);
+    } catch (caught) {
+      setGroups(null);
+      // Un moteur d'avant FON-79, ou le rangement fermé : la section se cache.
+      if (caught instanceof ApiRequestError && (caught.status === 404 || caught.status === 409)) return;
+      show(messageOf(caught, "Les groupes de propositions ne se sont pas lus."), "error");
+    }
+  }, [show]);
+
+  useEffect(() => {
+    void loadGroups();
+  }, [loadGroups]);
+
+  const openKeyboard = (target: "vue" | NatureGroup) => {
+    returnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setKeyboard(target);
+  };
 
   useEffect(() => {
     void load();
@@ -215,7 +243,7 @@ export function ReviewView() {
       setBusy(false);
       setLot(null);
       setOpen({});
-      await load();
+      await Promise.all([load(), loadGroups()]);
     }
   };
 
@@ -308,7 +336,7 @@ export function ReviewView() {
           {(canWrite && sure.ids.length) || keyable ? (
             <div className="fiches-lot">
               {keyable ? (
-                <Button ref={keyboardButton} size="2" variant="soft" disabled={busy} onClick={() => setKeyboard(true)}>
+                <Button size="2" variant="soft" disabled={busy} onClick={() => openKeyboard("vue")}>
                   <Keyboard className="ui-button-icon" />
                   Relire au clavier
                 </Button>
@@ -363,6 +391,16 @@ export function ReviewView() {
             Réessayer
           </Button>
         </div>
+      ) : null}
+
+      {groups && groups.length ? (
+        <NatureGroups
+          groups={groups}
+          canWrite={canWrite}
+          busy={busy}
+          onAccept={(group) => setLot({ ids: group.ids, titles: group.titles, group })}
+          onKeyboard={openKeyboard}
+        />
       ) : null}
 
       {started ? (
@@ -449,7 +487,7 @@ export function ReviewView() {
         </div>
       ) : null}
       <ConfirmDialog
-        open={lot != null}
+        open={lot != null && !lot.group}
         onOpenChange={(next) => {
           if (!next && !busy) setLot(null);
         }}
@@ -464,18 +502,28 @@ export function ReviewView() {
         cancelLabel="Garder"
         onConfirm={acceptLot}
       />
+      {lot?.group ? (
+        <AcceptGroupDialog
+          group={lot.group}
+          busy={busy}
+          onCancel={() => setLot(null)}
+          onConfirm={() => void acceptLot()}
+        />
+      ) : null}
       {keyboard ? (
         <KeyboardReview
           filters={filters}
+          group={keyboard === "vue" ? null : { nature: keyboard.nature, label: keyboard.label }}
           canWrite={canWrite}
           preview={preview}
           onClose={() => {
-            setKeyboard(false);
+            setKeyboard(null);
             preview.stop();
             setOpen({});
             void load();
+            void loadGroups();
             // Le focus revient au bouton qui l'a ouverte : la fenêtre n'a pas de déclencheur à Radix.
-            requestAnimationFrame(() => keyboardButton.current?.focus());
+            requestAnimationFrame(() => returnFocus.current?.focus());
           }}
         />
       ) : null}

@@ -7,6 +7,7 @@ import {
   FICHES_JSON,
   FIELD_LABELS,
   LEVEL_LABELS,
+  NO_FILTERS,
   duration,
   durationGap,
   fichesQuery,
@@ -52,14 +53,20 @@ function messageOf(caught: unknown, fallback: string): string {
  * au suivant ou reviennent, Z défait le dernier geste, Échap ferme. Chaque geste
  * s'annonce à un lecteur d'écran. Un titre à revoir ou rapproché s'accepte ici
  * seul, ouvert, comme dans la liste (FON-26).
+ *
+ * Ouverte sur un groupe de propositions sûres (FON-79), elle relit toute la
+ * banque, et chaque titre n'y montre, n'y accepte et n'y refuse que les
+ * propositions du groupe.
  */
 export function KeyboardReview({
   filters,
+  group = null,
   canWrite,
   preview,
   onClose,
 }: {
   filters: FichesFilters;
+  group?: { nature: string; label: string } | null;
   canWrite: boolean;
   preview: Preview;
   onClose: () => void;
@@ -79,8 +86,11 @@ export function KeyboardReview({
   const loadingMore = useRef(false);
   const previewRef = useRef(preview);
   previewRef.current = preview;
-  // Seuls les titres qui attendent : l'état à relire, quels que soient les autres filtres.
-  const asked = { ...filters, state: "proposée" };
+  // Seuls les titres qui attendent : l'état à relire, quels que soient les autres
+  // filtres. Un groupe se relit sur toute la banque, comme il se compte.
+  const asked = group
+    ? { ...NO_FILTERS, nature: group.nature, state: "proposée" }
+    : { ...filters, state: "proposée" };
 
   const read = useCallback(async (beetsId: number) => {
     try {
@@ -158,8 +168,11 @@ export function KeyboardReview({
   }, [currentId]);
 
   const detail = current ? details[current.id] : undefined;
-  const propositions: FicheProposition[] =
+  const every: FicheProposition[] =
     current == null ? [] : typeof detail === "object" ? detail.propositions : current.propositions;
+  // Dans un groupe, les seules propositions du groupe : la page les a données.
+  const kept = group && current ? new Set(current.propositions.map((one) => one.id)) : null;
+  const propositions = kept ? every.filter((one) => kept.has(one.id)) : every;
 
   const say = (text: string) => {
     // Le même texte deux fois de suite se redit : la région change d'abord.
@@ -282,9 +295,12 @@ export function KeyboardReview({
     >
       <Dialog.Content maxWidth="48rem" className="fiches-keys" onKeyDown={onKeyDown}>
         <div className="fiches-keys-head">
-          <Dialog.Title size="4" mb="0">
-            Relire au clavier
-          </Dialog.Title>
+          <div>
+            <Dialog.Title size="4" mb="0">
+              Relire au clavier
+            </Dialog.Title>
+            {group ? <p className="fiches-keys-group">{group.label}</p> : null}
+          </div>
           {queue && total ? (
             <div className="fiches-keys-progress">
               <progress value={Math.min(index + 1, total)} max={total} aria-label="Avancement" />
@@ -293,8 +309,9 @@ export function KeyboardReview({
           ) : null}
         </div>
         <Dialog.Description size="2" className="fiches-keys-help">
-          <kbd>A</kbd> accepte le titre, <kbd>R</kbd> le refuse, <kbd>←</kbd> <kbd>→</kbd> passent d'un titre à
-          l'autre, <kbd>Z</kbd> défait le dernier geste, <kbd>Échap</kbd> ferme.
+          <kbd>A</kbd> accepte {group ? "ses propositions du groupe" : "le titre"}, <kbd>R</kbd>{" "}
+          {group ? "les" : "le"} refuse, <kbd>←</kbd> <kbd>→</kbd> passent d'un titre à l'autre, <kbd>Z</kbd> défait
+          le dernier geste, <kbd>Échap</kbd> ferme.
         </Dialog.Description>
 
         {/* Ce que le lecteur d'écran entend : chaque geste, et le titre où l'on arrive. */}
