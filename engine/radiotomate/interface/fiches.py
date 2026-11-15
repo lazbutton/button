@@ -10,9 +10,18 @@
 - `PUT /fiches/reglages.json` : les mêmes, et les clés. Un admin.
 - `POST /fiches/decisions.json` : accepter ou refuser des propositions (FON-27).
   Accepter écrit aussitôt, par le service de FON-66, au journal. Droit `autodj`.
+- `POST /fiches/decisions/annuler.json` : le dernier geste de la relecture au
+  clavier défait, ses propositions de nouveau à relire (FON-78). Droit `autodj`.
 - `POST /fiches/propositions/<id>/revenir.json` : une valeur écrite revient à celle
   d'avant. Droit `autodj`.
 - `POST /fiches/<beets_id>/rechercher.json` : chercher de nouveau. Droit `autodj`.
+- `GET /fiches/familles.json` : pour chaque sélection de titres, les familles de ses
+  titres ; pour chaque famille, ses titres et ceux qu'aucune sélection ne prend
+  (FON-28). Droit `autodj`.
+- `GET /fiches/verdicts.json` : ce qu'effacer les verdicts toucherait, avec les
+  sélections qui lisent `fmg`. Droit `autodj`.
+- `POST /fiches/verdicts/effacer.json` : retire `fmg` et `fmg_source` de toute la
+  bibliothèque, et les verdicts en attente. Un admin.
 - `POST /fiches/envois.json` : ce que la banque sait des fichiers que la console vient
   d'envoyer, par leur destination et leur nom (FON-82) : dans la bibliothèque ou
   pas encore, leurs doublons, et ce que la recherche en a reconnu. Il ne fait que
@@ -34,7 +43,7 @@ from radiotomate.auth import current_user, login_required
 from radiotomate.beets import BeetsIntegration
 from radiotomate.interface.json_util import forbidden_unless, read_json_object
 from radiotomate.quart import ShutdownError, or_shutdown
-from radiotomate.services import fiches_decisions, fiches_review
+from radiotomate.services import fiches_decisions, fiches_families, fiches_review
 from radiotomate.services.bank_titles import (
     bank_tidy_enabled,
     require_bank_tidy,
@@ -68,12 +77,15 @@ async def fiches_json():
     await require_bank_tidy(g.dbsession)
     query = fiches_review.ReviewQuery.from_args(request.args)
     settings = await read_settings(g.dbsession)
-    rows = await BeetsIntegration.get().title_rows()
-    return jsonify(
-        await fiches_review.review_page(
-            g.dbsession, rows, query, enabled=settings.enabled
-        )
+    beets = BeetsIntegration.get()
+    rows = await beets.title_rows()
+    page = await fiches_review.review_page(
+        g.dbsession, rows, query, enabled=settings.enabled
     )
+    # La part des « oui » parmi les verdicts connus, en titres (FON-28).
+    page["verdict"] = settings.verdict
+    page["verdicts"] = await fiches_families.verdict_counts(beets)
+    return jsonify(page)
 
 
 @blueprint.get("/fiches/<int:beets_id>.json")
@@ -130,6 +142,24 @@ async def decisions_json():
     return jsonify(outcome.payload())
 
 
+@blueprint.post("/fiches/decisions/annuler.json")
+@login_required
+async def reopen_json():
+    """« Z » de la relecture au clavier (FON-78) : le dernier geste défait."""
+    denied = forbidden_unless("autodj")
+    if denied is not None:
+        return denied
+    await require_bank_tidy(g.dbsession)
+    ids = fiches_decisions.parse_reopen(await read_json_object())
+    outcome = await fiches_decisions.reopen(
+        g.dbsession,
+        BeetsIntegration.get(),
+        ids,
+        username=current_user.user.username,
+    )
+    return jsonify(outcome.payload())
+
+
 @blueprint.post("/fiches/propositions/<int:proposition_id>/revenir.json")
 @login_required
 async def revert_json(proposition_id: int):
@@ -155,6 +185,46 @@ async def search_again_json(beets_id: int):
     await require_bank_tidy(g.dbsession)
     await fiches_decisions.search_again(g.dbsession, beets_id)
     return jsonify({"queued": True})
+
+
+@blueprint.get("/fiches/familles.json")
+@login_required
+async def families_json():
+    denied = forbidden_unless("autodj")
+    if denied is not None:
+        return denied
+    await require_bank_tidy(g.dbsession)
+    return jsonify(
+        await fiches_families.families_payload(g.dbsession, BeetsIntegration.get())
+    )
+
+
+@blueprint.get("/fiches/verdicts.json")
+@login_required
+async def verdicts_json():
+    denied = forbidden_unless("autodj")
+    if denied is not None:
+        return denied
+    await require_bank_tidy(g.dbsession)
+    return jsonify(
+        await fiches_families.verdict_summary(g.dbsession, BeetsIntegration.get())
+    )
+
+
+@blueprint.post("/fiches/verdicts/effacer.json")
+@login_required
+async def erase_verdicts_json():
+    denied = forbidden_unless("admin")
+    if denied is not None:
+        return denied
+    await require_bank_tidy(g.dbsession)
+    return jsonify(
+        await fiches_families.erase_verdicts(
+            g.dbsession,
+            BeetsIntegration.get(),
+            username=current_user.user.username,
+        )
+    )
 
 
 @blueprint.post("/fiches/envois.json")
