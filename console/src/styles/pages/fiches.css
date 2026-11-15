@@ -305,6 +305,45 @@
   line-height: 1.45;
 }
 
+/* FON-27: the gestures of a fiche, and what became of each proposition. */
+
+.fiches-lot {
+  margin-top: 0.35rem;
+}
+
+.fiches-actions,
+.fiches-prop-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.fiches-actions .rt-Button,
+.fiches-prop-actions .rt-Button,
+.fiches-lot .rt-Button {
+  min-height: 2.5rem;
+}
+
+.fiches-prop-note {
+  margin: 0;
+  color: var(--app-text-muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.fiches-prop-note.is-warn {
+  color: var(--app-warn-ink);
+}
+
+.fiches-prop-note.is-danger {
+  color: var(--app-danger-ink);
+}
+
+.fiches-summary-state {
+  color: var(--app-text-muted);
+}
+
 @media (max-width: 600px) {
   .fiches-title {
     padding: 0.7rem 0.75rem;
