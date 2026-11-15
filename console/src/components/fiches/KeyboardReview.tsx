@@ -41,6 +41,9 @@ type Preview = { playingId: string | null; toggle: (id: string) => void; stop: (
 
 // Le titre suivant se lit avant d'y arriver : la file n'attend pas.
 const AHEAD = 2;
+// La suite se relit un peu avant où elle s'arrête : un titre décidé pendant la
+// lecture, ici ou ailleurs, ne fait rien sauter, et les doublons s'écartent.
+const OVERLAP = 10;
 
 function messageOf(caught: unknown, fallback: string): string {
   return caught instanceof Error && caught.message ? caught.message : fallback;
@@ -83,7 +86,15 @@ export function KeyboardReview({
   const [said, setSaid] = useState("");
   const [problem, setProblem] = useState("");
   const [loadProblem, setLoadProblem] = useState("");
-  const loadingMore = useRef(false);
+  // La lecture de la suite en cours : une touche frappée pendant ce temps l'attend.
+  const inFlight = useRef<Promise<FicheTitle[] | null> | null>(null);
+  // Le rang où va la file : chaque frappe le réserve aussitôt, avant que la suite soit lue.
+  const indexRef = useRef(0);
+  // La file et sa suite telles qu'elles sont, pas telles qu'un rendu d'avant les a vues :
+  // une touche qui attend la suite reprend après son await, avec des valeurs d'alors.
+  const queueRef = useRef<FicheTitle[] | null>(null);
+  const moreRef = useRef(false);
+  const decidedRef = useRef(0);
   const previewRef = useRef(preview);
   previewRef.current = preview;
   // Seuls les titres qui attendent : l'état à relire, quels que soient les autres
@@ -108,6 +119,8 @@ export function KeyboardReview({
       (page) => {
         if (!alive) return;
         const first = queueOf(page.titles);
+        queueRef.current = first;
+        moreRef.current = page.next != null;
         setQueue(first);
         setTotal(page.total);
         setMore(page.next != null);
@@ -126,27 +139,34 @@ export function KeyboardReview({
    * qui attendent : chaque titre décidé en sort, et la suite commence d'autant
    * plus tôt. Un titre déjà dans la file ne s'y ajoute pas deux fois.
    */
-  const loadMore = useCallback(async (): Promise<FicheTitle[] | null> => {
-    if (!more || loadingMore.current || !queue) return queue;
-    loadingMore.current = true;
-    try {
-      let offset: number | null = Math.max(0, queue.length - history.length);
-      let longer = queue;
-      while (offset != null && longer.length === queue.length) {
-        const page: FichesPage = await apiGet<FichesPage>(`${FICHES_JSON}${fichesQuery(asked, offset)}`);
-        longer = [...longer, ...queueOf(page.titles, longer)];
-        offset = page.next;
+  const loadMore = useCallback((): Promise<FicheTitle[] | null> => {
+    if (inFlight.current) return inFlight.current;
+    const start = queueRef.current;
+    if (!moreRef.current || !start) return Promise.resolve(start);
+    const run = (async () => {
+      try {
+        let offset: number | null = Math.max(0, start.length - decidedRef.current - OVERLAP);
+        let longer = start;
+        while (offset != null && longer.length === start.length) {
+          const page: FichesPage = await apiGet<FichesPage>(`${FICHES_JSON}${fichesQuery(asked, offset)}`);
+          longer = [...longer, ...queueOf(page.titles, longer)];
+          offset = page.next;
+        }
+        queueRef.current = longer;
+        moreRef.current = offset != null;
+        setQueue(longer);
+        setMore(offset != null);
+        return longer;
+      } catch (caught) {
+        setProblem(messageOf(caught, "La suite des titres ne s'est pas lue. Réessaie."));
+        return start;
+      } finally {
+        inFlight.current = null;
       }
-      setQueue(longer);
-      setMore(offset != null);
-      return longer;
-    } catch (caught) {
-      setProblem(messageOf(caught, "La suite des titres ne s'est pas lue. Réessaie."));
-      return queue;
-    } finally {
-      loadingMore.current = false;
-    }
-  }, [history.length, more, queue]);
+    })();
+    inFlight.current = run;
+    return run;
+  }, []);
 
   const current = queue && index < queue.length ? queue[index] : null;
   const currentId = current?.id ?? null;
@@ -180,23 +200,33 @@ export function KeyboardReview({
     window.setTimeout(() => setSaid(text), 30);
   };
 
-  const arrive = (target: number, list: FicheTitle[], before = "") => {
+  const moveTo = (target: number) => {
+    indexRef.current = target;
     setIndex(target);
+  };
+
+  const arrive = (target: number, list: FicheTitle[], before = "") => {
+    moveTo(target);
     const where =
       target < list.length ? positionLine(target, total, titleName(list[target])) : endLine(done.accepted, done.refused);
     say([before, where].filter(Boolean).join(" "));
   };
 
   const go = async (delta: -1 | 1) => {
-    if (!queue) return;
-    const target = index + delta;
+    if (!queueRef.current) return;
+    const from = indexRef.current;
+    const target = from + delta;
     if (target < 0) {
       say("C'est le premier titre.");
       return;
     }
-    let list = queue;
-    if (target >= list.length && more) list = (await loadMore()) ?? list;
-    if (target > list.length) return;
+    indexRef.current = target;
+    let list = queueRef.current;
+    if (target >= list.length && moreRef.current) list = (await loadMore()) ?? list;
+    if (target > list.length) {
+      indexRef.current = Math.min(from, list.length);
+      return;
+    }
     setProblem("");
     arrive(target, list);
   };
@@ -220,6 +250,7 @@ export function KeyboardReview({
       const decided = await apiPostJson<Decided>(FICHES_DECISIONS_JSON, body, TITLES_SEND_DEADLINE_MS);
       const gesture: Gesture = { kind, beetsId: current.id, ids, name };
       setHistory((before) => [...before, gesture]);
+      decidedRef.current += 1;
       const counted = {
         accepted: done.accepted + (kind === "accept" ? 1 : 0),
         refused: done.refused + (kind === "refuse" ? 1 : 0),
@@ -232,10 +263,13 @@ export function KeyboardReview({
         setProblem(line);
         return;
       }
-      setIndex(index + 1);
+      const target = index + 1;
+      let list = queueRef.current ?? queue;
+      if (target >= list.length && moreRef.current) list = (await loadMore()) ?? list;
+      moveTo(target);
       const where =
-        index + 1 < queue.length
-          ? positionLine(index + 1, total, titleName(queue[index + 1]))
+        target < list.length
+          ? positionLine(target, total, titleName(list[target]))
           : endLine(counted.accepted, counted.refused);
       say(`${line} ${where}`);
     } catch (caught) {
@@ -258,6 +292,7 @@ export function KeyboardReview({
     try {
       const decided = await apiPostJson<Decided>(REOPEN_JSON, { ids: last.ids }, TITLES_SEND_DEADLINE_MS);
       setHistory((before) => before.slice(0, -1));
+      decidedRef.current -= 1;
       setDone((before) => ({
         accepted: before.accepted - (last.kind === "accept" ? 1 : 0),
         refused: before.refused - (last.kind === "refuse" ? 1 : 0),
