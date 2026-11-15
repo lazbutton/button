@@ -230,6 +230,16 @@
   font-weight: 600;
 }
 
+/* La pochette du titre trouvé (FON-83), par son lien. */
+.fiches-cover {
+  display: block;
+  width: 6rem;
+  height: 6rem;
+  border-radius: var(--app-radius-md);
+  background: var(--app-surface-3);
+  object-fit: cover;
+}
+
 .fiches-link {
   display: inline-flex;
   align-items: center;

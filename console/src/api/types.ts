@@ -324,6 +324,8 @@ export type LiveSnapshot = {
   radiotomate_sound_id?: string;
   /** Le lien qui ouvre ce titre sur la plateforme de chacun, seulement quand le service en est sûr (FON-84). */
   listen_url?: string;
+  /** Le lien de la pochette du titre à l'antenne, quand la station les montre (FON-83). */
+  cover_url?: string;
   /** Le bac du son à l'antenne, null hors d'un bac. Absent d'un moteur plus ancien. */
   cart_id?: number | null;
   next_autodj?: Cue | null;

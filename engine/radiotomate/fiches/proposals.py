@@ -121,6 +121,9 @@ class Match:
     # Un enregistrement rapproché dans MusicBrainz que seules des compilations
     # contiennent : sa date est la leur.
     compilation: bool = False
+    # Le lien de sa pochette, chez une plateforme qui n'a pas d'album à part
+    # (Bandcamp) : FON-83.
+    cover: str | None = None
 
 
 @dataclass(frozen=True)
@@ -131,6 +134,8 @@ class DeezerAlbum:
     date: str | None = None
     record_type: str | None = None
     genres: tuple[str, ...] = ()
+    # Le lien de sa pochette (FON-83), jamais l'image.
+    cover: str | None = None
 
 
 @dataclass(frozen=True)
@@ -151,6 +156,8 @@ class AppleDetails:
     genre: str | None = None
     date: str | None = None
     album: str | None = None
+    # Le lien de sa pochette (FON-83), jamais l'image.
+    cover: str | None = None
 
 
 @dataclass(frozen=True)
