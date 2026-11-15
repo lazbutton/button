@@ -23,9 +23,8 @@ l'acceptation d'une proposition (FON-27) passent par lui.
   tel titre de côté et le disent : les autres s'écrivent.
 - Chaque lot se note au journal, avec la valeur d'avant (`JournalEntry`).
 - Le genre ne s'écrit jamais par une proposition ([ADR 0017]).
-- Deux interrupteurs : celui du chantier, `features.bank_tidy` (FON-64), éteint
-  tant que FON-85 ne l'a pas allumé, et celui de ce service, `features.title_edits`,
-  allumé quand la clé manque.
+- Deux interrupteurs, allumés quand la clé manque : celui du chantier,
+  `features.bank_tidy` (FON-64, FON-85), et celui de ce service, `features.title_edits`.
 
 [ADR 0017]: docs/decisions/0017-une-fiche-ne-s-ecrit-qu-acceptee.md
 """

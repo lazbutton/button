@@ -2,8 +2,8 @@ import type { Page, Route } from "@playwright/test";
 import { antenne, avis, expect, seConnecter, test } from "./banc.ts";
 
 // Classer, déplacer et copier entre les bacs (FON-70), derrière l'interrupteur
-// général de « Ranger la banque ». Le moteur du banc le garde éteint : le
-// parcours l'allume dans /account.json, et répond lui-même aux deux gestes
+// général de « Ranger la banque ». Le parcours l'allume dans /account.json,
+// quoi que dise le moteur du banc, et répond lui-même aux deux gestes
 // qui écrivent, d'après les bacs du banc (engine/tests/e2e/seed.py).
 
 type Bac = { id: number; title: string; sounds: Array<{ id: number; rank: number; title: string }> };

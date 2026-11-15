@@ -199,8 +199,10 @@ async def test_a_file_beets_does_not_know_is_asked_again_after_a_minute():
 
 
 async def test_the_covers_stay_behind_the_general_switch_of_the_tidying(dbsession):
-    """Le réglage des pochettes allumé, le rangement éteint : rien à l'antenne."""
+    """Le réglage des pochettes allumé, le rangement coupé : rien à l'antenne."""
     fiche_covers.forget_ids()
+    dbsession.add(Setting(key="features.bank_tidy", value="0"))
+    await dbsession.commit()
     await _fiche(dbsession, 1, COVER)
     await _covers(dbsession, True)
 

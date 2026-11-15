@@ -25,7 +25,7 @@
 - `POST /fiches/verdicts/effacer.json` : retire `fmg` et `fmg_source` de toute la
   bibliothèque, et les verdicts en attente. Un admin.
 
-Derrière l'interrupteur du rangement de la banque, `features.bank_tidy` : éteint,
+Derrière l'interrupteur du rangement de la banque, `features.bank_tidy` : coupé,
 les routes refusent. Écrire demande aussi `features.title_edits`, pas coupé.
 """
 

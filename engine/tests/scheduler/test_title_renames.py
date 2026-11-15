@@ -250,8 +250,13 @@ def test_a_lot_is_checked():
 
 
 async def test_the_renaming_waits_for_its_switches(dbsession: ormSession):
+    # On by default since FON-85, under the general switch.
+    assert await renames_on(dbsession) is True
+    tidy = Setting(key="features.bank_tidy", value="0")
+    dbsession.add(tidy)
+    await dbsession.commit()
     assert await renames_on(dbsession) is False
-    dbsession.add(Setting(key="features.bank_tidy", value="1"))
+    tidy.value = "1"
     await dbsession.commit()
     assert await renames_on(dbsession) is True
     dbsession.add(Setting(key="features.title_renames", value="0"))
@@ -351,6 +356,8 @@ async def test_the_route_is_for_the_programmateur_and_its_switch(  # noqa: PLR09
         "prog",
         {"autodj": True},
     )
+    dbsession.add(Setting(key="features.bank_tidy", value="0"))
+    await dbsession.commit()
     off = await prog.post("/media/titles/rename.json", json=body)
     assert off.status_code == 409
     assert (await off.get_json())["code"] == "title_renames_off"

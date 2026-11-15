@@ -224,8 +224,13 @@ async def test_a_file_not_indexed_yet_goes_and_comes_back(
 
 
 async def test_the_switches(raw_app, dbsession, media, place):
+    # On by default since FON-85, under the general switch.
+    assert await removals_on(dbsession) is True
+    await Setting.upsert(dbsession, SETTING_BANK_TIDY, "0")
+    await dbsession.commit()
     assert await removals_on(dbsession) is False
-    await _open(dbsession)
+    await Setting.upsert(dbsession, SETTING_BANK_TIDY, "1")
+    await dbsession.commit()
     assert await removals_on(dbsession) is True
     dbsession.add(Setting(key=bank_removals.SETTING_REMOVALS, value="0"))
     await dbsession.commit()
@@ -244,11 +249,14 @@ async def test_remove_json(  # noqa: PLR0913
     await _login(client, "prog", users_password)
     body = {"paths": ["10-rotation/a.mp3"]}
 
-    # le rangement fermé : le catalogue retire comme avant
+    # le rangement coupé : le moteur ne retire rien
+    await Setting.upsert(dbsession, SETTING_BANK_TIDY, "0")
+    await dbsession.commit()
     closed = await client.post("/media/remove.json", json=body)
     assert closed.status_code == 409
-    assert (await closed.get_json())["code"] == "bank_removals_off"
-    await _open(dbsession)
+    assert (await closed.get_json())["code"] == "bank_tidy_off"
+    await Setting.upsert(dbsession, SETTING_BANK_TIDY, "1")
+    await dbsession.commit()
     assert (await client.post("/media/remove.json", json={})).status_code == 400
 
     response = await client.post("/media/remove.json", json=body)

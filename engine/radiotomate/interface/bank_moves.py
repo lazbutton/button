@@ -20,6 +20,7 @@ from radiotomate.services.bank_moves import (
     move_titles,
     moves_on,
 )
+from radiotomate.services.bank_titles import require_bank_tidy
 from radiotomate.services.title_renames import (
     RenamesOffError,
     parse_lot,
@@ -56,8 +57,10 @@ async def move_json():
     if user is None or not (user.can_carts() or user.can_autodj()):
         return jsonify({"error": "forbidden"}), 403
     moves = _moves(await read_json_object())
+    # Le rangement coupé, rien ne s'écrit : ni ici, ni par le catalogue (FON-85).
+    await require_bank_tidy(g.dbsession)
     if not await moves_on(g.dbsession):
-        raise MovesOffError("Le moteur ne déplace pas encore les titres de la banque.")
+        raise MovesOffError("Le moteur ne déplace pas les titres de la banque.")
     place = BeetsPlace.of(BeetsIntegration.get().lib)
     report = await move_titles(g.dbsession, place, moves, username=user.username)
     return jsonify(report.payload())

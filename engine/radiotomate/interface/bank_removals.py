@@ -18,6 +18,7 @@ from radiotomate.services.bank_removals import (
     removals_on,
     remove_titles,
 )
+from radiotomate.services.bank_titles import require_bank_tidy
 
 blueprint = Blueprint("bank_removals", __name__)
 
@@ -41,6 +42,8 @@ async def remove_json():
     if user is None or not (user.can_carts() or user.can_autodj()):
         return jsonify({"error": "forbidden"}), 403
     paths = _paths(await read_json_object())
+    # Le rangement coupé, rien ne s'écrit : ni ici, ni par le catalogue (FON-85).
+    await require_bank_tidy(g.dbsession)
     if not await removals_on(g.dbsession):
         raise RemovalsOffError("Le moteur ne retire pas les titres de la banque.")
     place = BeetsPlace.of(BeetsIntegration.get().lib)

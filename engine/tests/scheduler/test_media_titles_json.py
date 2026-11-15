@@ -60,12 +60,23 @@ def _beets(tmp_path: Path) -> BeetsIntegration:
     return beets
 
 
-async def _client(app_configration, beets, dbsession, users_password, *, on=True):
-    user = User(username="banque-json")
+async def _client(  # noqa: PLR0913
+    app_configration,
+    beets,
+    dbsession,
+    users_password,
+    *,
+    on: bool | None = True,
+    permissions: dict | None = None,
+):
+    """An account of the bank; the general switch said on or off, or left unsaid."""
+    user = User(username="banque-json", permissions=permissions or {})
     user.update_password(users_password)
     dbsession.add(user)
-    if on:
-        dbsession.add(Setting(key=bank_titles.SETTING_BANK_TIDY, value="1"))
+    if on is not None:
+        dbsession.add(
+            Setting(key=bank_titles.SETTING_BANK_TIDY, value="1" if on else "0")
+        )
     await dbsession.commit()
     client = _interface_client(app_configration, beets)
     await _login(client, "banque-json", users_password)
@@ -88,22 +99,50 @@ async def test_titles_ask_for_a_session(raw_app, app_configration, tmp_path):
     assert response.status_code == 401
 
 
-async def test_switch_off_keeps_the_table_closed(
+async def test_the_switch_is_on_when_unsaid(
+    raw_app, app_configration, dbsession, users_password, tmp_path
+):
+    # FON-85: a station that never set it has the bank's tidying.
+    client = await _client(
+        app_configration, _beets(tmp_path), dbsession, users_password, on=None
+    )
+    account = await (await client.get("/account.json")).get_json()
+    assert account["features"]["bank_tidy"] is True
+    assert await bank_titles.bank_tidy_enabled(dbsession)
+
+
+async def test_switch_off_leaves_the_table_to_read(
     raw_app, app_configration, dbsession, users_password, tmp_path
 ):
     client = await _client(
-        app_configration, _beets(tmp_path), dbsession, users_password, on=False
+        app_configration,
+        _beets(tmp_path),
+        dbsession,
+        users_password,
+        on=False,
+        permissions={"autodj": True, "carts": True},
     )
-    response = await client.get("/media/titles.json")
-    assert response.status_code == 409
-    assert (await response.get_json())["code"] == "bank_tidy_off"
+    # The table, its views and a title's plays still read (FON-85).
+    assert (await client.get("/media/titles.json")).status_code == 200
+    assert (await client.get("/media/views.json")).status_code == 200
+    # What writes in the files is refused: an edit of a fiche, a removal, a move.
+    for path, body in (
+        ("/media/titles/edit.json", {"titles": [{"id": 1, "values": {"title": "X"}}]}),
+        ("/media/remove.json", {"paths": ["10-rotation/a.mp3"]}),
+        (
+            "/media/move.json",
+            {"moves": [{"from": "10-rotation/a.mp3", "to": "20-archives/a.mp3"}]},
+        ),
+    ):
+        refused = await client.post(path, json=body)
+        assert refused.status_code == 409, path
     account = await (await client.get("/account.json")).get_json()
     assert account["features"] == {
         "bank_tidy": False,
         "title_edits": False,
         "bank_moves": False,
         "bank_removals": False,
-        "station_tags": False,
+        "station_tags": True,
         "title_renames": False,
         "bank_health": False,
         "bank_arrivals": False,
@@ -111,15 +150,16 @@ async def test_switch_off_keeps_the_table_closed(
     }
 
 
-@pytest.mark.parametrize("value", ["0", "false", "off", ""])
+@pytest.mark.parametrize("value", ["0", "false", "off", "non", ""])
 async def test_switch_turned_off_by_value(  # noqa: PLR0913
     raw_app, app_configration, dbsession, users_password, tmp_path, value
 ):
     dbsession.add(Setting(key=bank_titles.SETTING_BANK_TIDY, value=value))
     client = await _client(
-        app_configration, _beets(tmp_path), dbsession, users_password, on=False
+        app_configration, _beets(tmp_path), dbsession, users_password, on=None
     )
-    assert (await client.get("/media/titles.json")).status_code == 409
+    account = await (await client.get("/account.json")).get_json()
+    assert account["features"]["bank_tidy"] is False
 
 
 async def test_a_row_says_everything_the_table_shows(

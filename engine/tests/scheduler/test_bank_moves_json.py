@@ -81,7 +81,7 @@ async def test_a_move_keeps_the_title(  # noqa: PLR0913
     )
 
 
-async def test_with_the_tidying_off_the_catalogue_moves_as_before(  # noqa: PLR0913
+async def test_the_switches_say_who_moves(  # noqa: PLR0913
     raw_app,
     app_configration: dict,
     beets_integration: BeetsIntegration,
@@ -92,12 +92,23 @@ async def test_with_the_tidying_off_the_catalogue_moves_as_before(  # noqa: PLR0
 ):
     source = media / "10-rotation" / "Ada - Un.mp3"
     _title(engine_library, source)
+    dbsession.add(Setting(key="features.bank_tidy", value="0"))
+    await dbsession.commit()
     client = await _admin_client(
         app_configration, beets_integration, dbsession, users_password, "admin"
     )
 
     response = await client.post("/media/move.json", json=MOVE)
 
+    # FON-85: the general switch off, the catalogue does not move either.
+    assert response.status_code == 409
+    assert (await response.get_json())["code"] == "bank_tidy_off"
+    assert source.is_file()
+    # The switch of the moves alone off: the catalogue moves, as before ARC-09.
+    await Setting.upsert(dbsession, "features.bank_tidy", "1")
+    dbsession.add(Setting(key="features.bank_moves_keep_identity", value="0"))
+    await dbsession.commit()
+    response = await client.post("/media/move.json", json=MOVE)
     assert response.status_code == 409
     assert (await response.get_json())["code"] == "bank_moves_off"
     assert source.is_file()
