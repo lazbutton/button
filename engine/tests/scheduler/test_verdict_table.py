@@ -146,3 +146,28 @@ async def test_switched_on_a_column_a_filter_and_its_share(  # noqa: PLR0913
     assert "fmg" not in str(
         {key: value for key, value in health.items() if key != "figures"}
     )
+
+
+async def test_the_tidying_off_the_table_still_reads_its_verdict(  # noqa: PLR0913
+    raw_app, app_configration, dbsession, users_password, tmp_path, monkeypatch
+):
+    # FON-85 : coupé, l'interrupteur général laisse le tableau en lecture, la
+    # colonne du verdict comprise quand il est allumé.
+    monkeypatch.setenv("MEDIA_ROOT", str(tmp_path / "media"))
+    beets = _with_verdicts(tmp_path)
+    client = await _client(app_configration, beets, dbsession, users_password)
+    await Setting.upsert(dbsession, bank_titles.SETTING_BANK_TIDY, "0")
+    dbsession.add(Setting(key=SETTING_FMG, value="1"))
+    await dbsession.commit()
+
+    account = await (await client.get("/account.json")).get_json()
+    assert account["features"]["bank_tidy"] is False
+    assert account["features"]["fiches_fmg"] is True
+    oui = await (await client.get("/media/titles.json?fmg=oui&facets=fmg")).get_json()
+    assert sorted(row["title"] for row in oui["titles"]) == ["Brume", "Dune"]
+    assert {facet["value"] for facet in oui["facets"]["fmg"]} == {
+        "oui",
+        "mixte",
+        "non",
+        "",
+    }
