@@ -1,6 +1,7 @@
 import { FichesCard } from "../components/reglages/FichesCard";
 import { ListenLinkCard } from "../components/reglages/ListenLinkCard";
 import { SettingsHead } from "../components/reglages/SettingsCard";
+import { VerdictEraser } from "../components/reglages/VerdictEraser";
 import "../styles/pages/reglages.css";
 
 /**
@@ -18,6 +19,7 @@ export function FichesReglagesPage() {
       <div className="reglages-stack reglages-stack--form">
         <FichesCard />
         <ListenLinkCard title="Lien d’écoute" />
+        <VerdictEraser />
       </div>
     </div>
   );

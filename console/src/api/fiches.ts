@@ -7,6 +7,9 @@
 export const FICHES_JSON = "/fiches.json";
 export const FICHES_SETTINGS_JSON = "/fiches/reglages.json";
 export const FICHES_DECISIONS_JSON = "/fiches/decisions.json";
+export const FICHES_FAMILIES_JSON = "/fiches/familles.json";
+export const FICHES_VERDICTS_JSON = "/fiches/verdicts.json";
+export const FICHES_VERDICTS_ERASE_JSON = "/fiches/verdicts/effacer.json";
 /** Ce qu'un geste prend au plus, comme le moteur. */
 export const MAX_DECISIONS = 500;
 
@@ -63,6 +66,9 @@ export type FichesPage = {
   titles: FicheTitle[];
   total: number;
   next: number | null;
+  /** Le verdict allumé, et les verdicts que la bibliothèque connaît (FON-28). Absents d'un moteur plus ancien. */
+  verdict?: boolean;
+  verdicts?: Partial<Record<"oui" | "mixte" | "non", number>>;
 };
 
 export type FicheDetail = {
@@ -441,4 +447,109 @@ export function natureCount(group: Pick<NatureGroup, "count" | "titles">): strin
 /** Combien de gestes un groupe demande au moteur, qui en prend 500 à la fois. */
 export function lotsOf(count: number, size = MAX_DECISIONS): number {
   return Math.ceil(count / size);
+}
+
+// -- familles et verdict (FON-28) ---------------------------------------------------
+
+export type FamilySelection = { id: number; name: string; count: number };
+
+export type FamilyRow = {
+  value: string;
+  label: string;
+  count: number;
+  uncategorized: number;
+  selections: FamilySelection[];
+  sample: { id: number; title: string; artist: string }[];
+};
+
+export type FamiliesPayload = {
+  library: number;
+  verdict: boolean;
+  selections: {
+    id: number;
+    name: string;
+    query: string;
+    count: number | null;
+    reads_verdict: boolean;
+    families: { value: string; label: string; count: number }[];
+  }[];
+  families: FamilyRow[];
+};
+
+export type VerdictSummary = {
+  titles: number;
+  waiting: number;
+  selections: { id: number; name: string; query: string; count: number | null }[];
+};
+
+/** « Verdict connu pour 340 titres : 140 « oui » (41 %), 30 mixtes, 170 « non ». » Vide sans verdict connu. */
+export function verdictShare(verdicts: FichesPage["verdicts"]): string {
+  const oui = verdicts?.oui ?? 0;
+  const mixte = verdicts?.mixte ?? 0;
+  const non = verdicts?.non ?? 0;
+  const known = oui + mixte + non;
+  if (!known) return "";
+  const share = Math.round((oui / known) * 100);
+  const parts = [`${count(oui)} « oui » (${share} %)`];
+  if (mixte) parts.push(`${count(mixte)} ${mixte === 1 ? "mixte" : "mixtes"}`);
+  if (non) parts.push(`${count(non)} « non »`);
+  return `Verdict connu pour ${counted(known, "titre", "titres")} : ${parts.join(", ")}.`;
+}
+
+/** Les exemples sous la requête d'une sélection : la famille avec le rangement, le verdict s'il est allumé. */
+export function queryExamples(bankTidy: boolean, verdict: boolean): string {
+  const examples = ["grouping:matinale", "genres:Jazz"];
+  if (bankTidy) examples.push("famille:jazz");
+  if (bankTidy && verdict) examples.push("fmg:oui");
+  return `Exemples : ${examples.join(" · ")}`;
+}
+
+/** Ce qu'effacer les verdicts fera, dit avant de confirmer : les sélections qui se videront d'abord. */
+export function eraseQuestion(summary: VerdictSummary): string {
+  const parts: string[] = [];
+  if (summary.selections.length) {
+    const names = summary.selections
+      .map((one) =>
+        one.count == null ? `« ${one.name} »` : `« ${one.name} » (${counted(one.count, "titre", "titres")})`,
+      )
+      .join(", ");
+    parts.push(
+      summary.selections.length === 1
+        ? `La sélection ${names} lit le verdict : elle se videra.`
+        : `Ces sélections lisent le verdict, et se videront : ${names}.`,
+    );
+  } else {
+    parts.push("Aucune sélection ne lit le verdict.");
+  }
+  parts.push(
+    `Le verdict et sa source s'effacent de ${counted(summary.titles, "titre", "titres")} de la bibliothèque` +
+      (summary.waiting
+        ? `, et ${counted(summary.waiting, "verdict en attente part", "verdicts en attente partent")}.`
+        : "."),
+  );
+  parts.push("Les fichiers ne changent pas. Un titre cherché de nouveau, verdict allumé, retrouvera sa proposition.");
+  return parts.join(" ");
+}
+
+/**
+ * Une erreur du client dite en clair, sans importer `client.ts` : chaque erreur y
+ * porte son nom. Une session expirée, un droit manquant ou un moteur injoignable
+ * ont chacun leur phrase ; un refus du moteur garde son message, déjà en français.
+ */
+export function fichesErrorText(
+  caught: unknown,
+  fallback: string,
+  forbidden = "Il faut le rôle Programmateur.",
+): string {
+  if (!(caught instanceof Error)) return fallback;
+  switch (caught.name) {
+    case "ApiAuthError":
+      return "Session expirée : reconnecte-toi.";
+    case "ApiForbiddenError":
+      return forbidden;
+    case "ApiUnavailableError":
+      return "L’automate ne répond pas. Réessaie dans un instant.";
+    default:
+      return caught.message || fallback;
+  }
 }
