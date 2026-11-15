@@ -6,6 +6,8 @@ Le détail des changements du moteur par rapport à l'amont : [docs/moteur/chang
 
 ## Non publié
 
+- Corrigé : derrière un programme lancé par une coupure « Coupe pile », le jingle de l'heure type prévu après lui pouvait se perdre. Son tour vient dans les dernières secondes du titre à l'antenne : quand ce titre finissait autour de la minute, l'horloge envoyait le jingle juste avant elle, la coupure tranchait le titre, et le jingle attendait derrière le programme, d'où le nettoyeur des files le retirait au bout de dix minutes. Sur une station, cela arrivait derrière un programme de plus de dix minutes, comme celui d'une heure lancé à :00 ; le banc du conducteur rougissait dessus. Le jingle attend maintenant que le son de la coupure soit à l'antenne, puis part derrière lui, peu avant sa fin. Un jingle qui finit avant la minute, quand l'antenne est en avance sur le conducteur, part à son tour, comme avant. Le réglage `features.jingles_wait_for_hard_anchors` de la table `settings`, à faux, rend l'ancien comportement sans redéployer. Rien à faire sur une station : le correctif vient avec les images du moteur. Voir [les changements du moteur](docs/moteur/changements-radiotomate.md#conducteur-et-vérité-dantenne).
+
 ## 2.1.0
 
 Une mineure : rien d'autre que la mise à jour habituelle, voir [docs/deploiement.md](docs/deploiement.md#mettre-à-jour). Le schéma de la base reste en v22 : aucune migration. Dans **Sons → Banque**, l'onglet **À ranger** remplace Arrivées, Santé et À relire.

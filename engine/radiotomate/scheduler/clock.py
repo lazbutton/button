@@ -23,7 +23,7 @@ from datetime import datetime, timedelta, timezone
 from time import perf_counter
 from typing import TYPE_CHECKING
 
-from sqlalchemy import case, func, select
+from sqlalchemy import and_, case, func, or_, select
 
 from radiotomate.domain.emission import is_harbor_source
 from radiotomate.enums import (
@@ -31,6 +31,7 @@ from radiotomate.enums import (
     PlayoutAction,
     PositionKind,
     RundownStatus,
+    SyncMode,
     WhenMode,
 )
 from radiotomate.models import (
@@ -129,6 +130,11 @@ SETTING_REBUILD_AFTER_UPGRADE = "features.rebuild_conducteur_after_upgrade"
 # it went ahead of the title sent before it, loaded behind a sound, or pushed
 # after the beat had left (FON-61).
 SETTING_TITLES_SENT_FIRST = "features.titles_sent_go_first"
+# ADR 0009: turned off, a jingle of the motif planned after a hard anchor goes at
+# its turn in the last seconds before the minute, as before: the anchor cut the
+# title on air, the jingle waited behind its sound, and the queue cleaner took it
+# out behind a long one (FON-89).
+SETTING_JINGLES_WAIT_FOR_CUT = "features.jingles_wait_for_hard_anchors"
 _SETTING_OFF = {"0", "false", "off", ""}
 # Why an anchor line closes without going, as the conducteur shows it.
 HELD_BY_LIVE = "retenue pendant le direct"
@@ -733,6 +739,66 @@ def _beat_lag_start() -> datetime:
     return datetime.now() - LOST_AFTER
 
 
+# An anchor line that cuts on its minute, as ``execution._is_hard_line`` reads it.
+_HARD_LINE = or_(
+    RundownItem.sync == SyncMode.DURE.value,
+    and_(
+        or_(RundownItem.sync.is_(None), RundownItem.sync == ""),
+        RundownItem.kind == PositionKind.PUB.value,
+    ),
+)
+# An anchor line whose sound has not aired yet: the clock has not sent it, or the
+# playout has not played it.
+_BEFORE_AIR = {
+    RundownStatus.PLANNED.value,
+    RundownStatus.RESCUE.value,
+    RundownStatus.RESERVED.value,
+    RundownStatus.PENDING_PUSH.value,
+    RundownStatus.SENT.value,
+    RundownStatus.ACCEPTED.value,
+    RundownStatus.IN_QUEUE.value,
+}
+
+
+async def _waits_for_the_cut(
+    session: ormSession, line: RundownItem, live_data: dict, now: datetime
+) -> bool:
+    """
+    Whether a jingle of the motif, at its turn, waits for the sound of the hard
+    anchor planned before it (``features.jingles_wait_for_hard_anchors``, FON-89).
+
+    Its turn comes in the last seconds of the title on air, and ``_line_turn``
+    does not look at the anchor to come. In the seconds before the minute, the
+    jingle went to its queue; the anchor cut the title, the jingle waited behind
+    its sound, and the queue cleaner took it out behind a long one. It now waits
+    until the beat shows that sound on air, then goes behind it, near its end
+    (``features.titles_queued_close_to_air``). The tick that sends the anchor
+    reads the beat of before, and the as-run may come before the beat. A jingle
+    that ends before the minute, on an antenna ahead of the conducteur, goes.
+    """
+    if line.planned_at is None:
+        return False
+    anchor = await session.scalar(
+        select(RundownItem)
+        .where(
+            RundownItem.when_mode == WhenMode.ANCHORED.value,
+            RundownItem.origin == "clock",
+            RundownItem.planned_at <= line.planned_at,
+            _HARD_LINE,
+        )
+        .order_by(RundownItem.planned_at.desc(), RundownItem.sequence.desc())
+        .limit(1)
+    )
+    if anchor is None or anchor.planned_at is None:
+        return False
+    if anchor.status == RundownStatus.ON_AIR.value:
+        return source_id(live_data) != "carts"
+    if anchor.status not in _BEFORE_AIR:
+        return False
+    wait = remaining_seconds(live_data) + float(line.duration or 0)
+    return now.replace(tzinfo=None) + timedelta(seconds=wait) > anchor.planned_at
+
+
 async def _next_sent_to(
     session: ormSession, queue: str, *, since: datetime | None = None
 ) -> RundownItem | None:
@@ -1191,6 +1257,8 @@ async def _fill_sequential_from_rundown(  # noqa: PLR0912, PLR0913, PLR0915
     # A jingle or a sound of the desk waits for the title sent before it, though
     # the beat counts none in its queue.
     sent_first = await titles_sent_go_first(session)
+    # A jingle planned after a hard anchor waits for its sound to air.
+    cut_first = await jingles_wait_for_hard_anchors(session)
     for _ in range(8):
         if hold:
             break
@@ -1256,6 +1324,10 @@ async def _fill_sequential_from_rundown(  # noqa: PLR0912, PLR0913, PLR0915
                         or long_wait
                         or not await _line_turn(
                             session, item, live_data, sent_first=sent_first
+                        )
+                        or (
+                            cut_first
+                            and await _waits_for_the_cut(session, item, live_data, now)
                         )
                     ):
                         # The desk lines after it wait too, or they would air
@@ -1559,6 +1631,14 @@ async def titles_sent_go_first(session: ormSession) -> bool:
     loaded behind the sound on air, or pushed after the beat left. A missing key
     says so."""
     row = await Setting.from_key(session, SETTING_TITLES_SENT_FIRST)
+    return row is None or str(row.value).strip().lower() not in _SETTING_OFF
+
+
+async def jingles_wait_for_hard_anchors(session: ormSession) -> bool:
+    """Whether a jingle of the motif planned after a hard anchor waits for the
+    sound of that anchor to air, when it would not end before its minute. A
+    missing key says so."""
+    row = await Setting.from_key(session, SETTING_JINGLES_WAIT_FOR_CUT)
     return row is None or str(row.value).strip().lower() not in _SETTING_OFF
 
 
