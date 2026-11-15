@@ -2,6 +2,8 @@
 
 - `GET /fiches.json` : où en est la recherche, ses comptes, et une page de titres à
   relire, filtrée par niveau, champ, banque, état et texte. Droit `autodj`.
+- `GET /fiches/natures.json` : les propositions sûres de toute la banque, par
+  nature de changement, avec dix exemples (FON-79). Droit `autodj`.
 - `GET /fiches/<beets_id>.json` : un titre, sa fiche, ses propositions et ses
   preuves lisibles, avec le lien de sa pochette quand la station les montre
   (`features.fiches_covers`, FON-83). Droit `autodj`.
@@ -39,7 +41,12 @@ from radiotomate.auth import current_user, login_required
 from radiotomate.beets import BeetsIntegration
 from radiotomate.interface.json_util import forbidden_unless, read_json_object
 from radiotomate.quart import ShutdownError, or_shutdown
-from radiotomate.services import fiches_decisions, fiches_families, fiches_review
+from radiotomate.services import (
+    fiches_decisions,
+    fiches_families,
+    fiches_natures,
+    fiches_review,
+)
 from radiotomate.services.bank_titles import bank_tidy_enabled, require_bank_tidy
 from radiotomate.services.fiches import (
     read_settings,
@@ -76,6 +83,18 @@ async def fiches_json():
     page["verdict"] = settings.verdict
     page["verdicts"] = await fiches_families.verdict_counts(beets)
     return jsonify(page)
+
+
+@blueprint.get("/fiches/natures.json")
+@login_required
+async def natures_json():
+    """Les propositions sûres de toute la banque, par nature de changement (FON-79)."""
+    denied = forbidden_unless("autodj")
+    if denied is not None:
+        return denied
+    await require_bank_tidy(g.dbsession)
+    rows = await BeetsIntegration.get().title_rows()
+    return jsonify({"groups": await fiches_natures.nature_groups(g.dbsession, rows)})
 
 
 @blueprint.get("/fiches/<int:beets_id>.json")

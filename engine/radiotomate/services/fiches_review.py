@@ -3,7 +3,8 @@
 - `review_page`: where the search stands, the counts by level, field, state and
   bank, the titles in error grouped by their cause, and a page of titles, each with
   its propositions. Without a level or a state asked, the titles that wait to be
-  read: a proposition « proposée ».
+  read: a proposition « proposée ». A nature (FON-79) keeps only the sure
+  propositions of that group, still to read.
 - `review_detail`: one title, its fiche, its propositions, and its evidence, made
   readable by the rules: what was found, where, and its length.
 
@@ -28,6 +29,7 @@ from radiotomate.fiches.proposals import Track, build_row
 from radiotomate.models import Fiche
 from radiotomate.models.fiche import PROPOSED
 from radiotomate.services.bank_titles import ROTATION, bank_rel, fold, title_of
+from radiotomate.services.fiches_natures import NATURES, in_group
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -57,13 +59,15 @@ FAILURES_SAID = 5
 
 @dataclass(frozen=True)
 class ReviewQuery:
-    """What the view asks: a level, a field, a bank, a state, a text, and a page."""
+    """What the view asks: a level, a field, a bank, a state, a text, a nature of
+    change (FON-79), and a page."""
 
     level: str = ""
     field: str = ""
     bank: str = ""
     state: str = ""
     q: str = ""
+    nature: str = ""
     offset: int = 0
     limit: int = PAGE
 
@@ -95,6 +99,7 @@ class ReviewQuery:
             bank=str(args.get("bank") or "").strip(),
             state=one_of("state", STATES),
             q=" ".join(str(args.get("q") or "").split()),
+            nature=one_of("nature", NATURES),
             offset=number("offset", 0, 0, 10**9),
             limit=number("limit", PAGE, 1, MAX_PAGE),
         )
@@ -208,8 +213,9 @@ async def review_page(
             for one in fiche.propositions
             if (not wanted or one.state == wanted)
             and (not query.field or one.field == query.field)
+            and (not query.nature or in_group(one) == query.nature)
         ]
-        if (wanted or query.field) and not shown:
+        if (wanted or query.field or query.nature) and not shown:
             continue
         picked.append((fiche, title, shown))
     rank = {level: index for index, level in enumerate(LEVELS)}

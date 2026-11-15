@@ -24,6 +24,8 @@ import {
   settingsChanged,
   settingsForm,
   type FichesSettings,
+  natureCount,
+  lotsOf,
 } from "./fiches.ts";
 
 const SETTINGS: FichesSettings = {
@@ -216,6 +218,17 @@ test("un lot ne prend que les propositions sûres à relire, par gestes de 500",
   );
   assert.deepEqual(chunks([1, 2, 3, 4, 5], 2), [[1, 2], [3, 4], [5]]);
   assert.equal(chunks(Array.from({ length: 1001 }, (_, i) => i)).length, 3);
+});
+
+test("a group of propositions by nature: its count, its lots, its page", () => {
+  assert.equal(natureCount({ count: 1240, titles: 980 }), `${count(1240)} propositions, sur 980 titres`);
+  assert.equal(natureCount({ count: 1, titles: 1 }), "1 proposition");
+  assert.equal(natureCount({ count: 3, titles: 3 }), "3 propositions");
+  // Le moteur prend 500 propositions par geste : 600 en font deux.
+  assert.equal(lotsOf(600), 2);
+  assert.equal(lotsOf(500), 1);
+  assert.equal(lotsOf(1), 1);
+  assert.equal(fichesQuery({ ...NO_FILTERS, nature: "graphie", state: "proposée" }), "?state=propos%C3%A9e&nature=graphie");
 });
 
 test("la part des « oui » se lit parmi les verdicts connus, en titres", () => {

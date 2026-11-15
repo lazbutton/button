@@ -293,11 +293,13 @@ test("les flèches traversent la file, page après page, sans rien décider", as
   const titres = cent().slice(0, 70);
   const { decisions } = await banc(page, titres);
   const { fenetre } = await ouvrir(page);
+  // La file lue d'abord : une touche frappée avant ne trouve rien à faire.
+  await expect(fenetre.getByText("1 sur 70", { exact: true })).toBeVisible();
 
-  for (let rang = 2; rang <= 70; rang += 1) {
-    await page.keyboard.press("ArrowRight");
-    await expect(fenetre.getByText(`${rang} sur 70`, { exact: true })).toBeVisible();
-  }
+  // Frappées d'affilée, sans attendre : une flèche frappée pendant la lecture de la
+  // suite l'attend, et aucune ne se perd.
+  for (let rang = 2; rang <= 70; rang += 1) await page.keyboard.press("ArrowRight");
+  await expect(fenetre.getByText("70 sur 70", { exact: true })).toBeVisible();
   await expect(fenetre.getByRole("heading", { name: "Titre 070" })).toBeVisible();
   await page.keyboard.press("r");
   await expect(fenetre.getByText("Tout est relu : 1 refusé.", { exact: true })).toBeVisible();
